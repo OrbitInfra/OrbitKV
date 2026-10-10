@@ -360,15 +360,16 @@ def test_cross_backend_reference_requires_the_same_engine_runtime(tmp_path):
         result = compare_outputs(run, reference)
         assert result["compared_requests"] == 1
         assert result["output_mismatches"] == 0
-        changed = {
-            **run,
-            "manifest": {
-                **run["manifest"],
-                "arguments": {**run["manifest"]["arguments"], "deterministic_inference": True},
-            },
-        }
-        with pytest.raises(ValueError, match="different deterministic_inference"):
-            compare_outputs(changed, reference)
+        for setting in ("deterministic_inference", "enforce_eager"):
+            changed = {
+                **run,
+                "manifest": {
+                    **run["manifest"],
+                    "arguments": {**run["manifest"]["arguments"], setting: True},
+                },
+            }
+            with pytest.raises(ValueError, match=f"different {setting}"):
+                compare_outputs(changed, reference)
         for field in ("gpu", "python", "cpu_affinity", "model_revision", "kv_bytes_per_token"):
             changed = {**run, "manifest": {**run["manifest"], field: "different"}}
             with pytest.raises(ValueError, match=f"different {field}"):
