@@ -15,6 +15,7 @@ import statistics
 from pathlib import Path
 
 from .artifacts import external_path
+from .shutdown import validate_component_stops
 
 
 def summarize(root: Path, contract: dict) -> dict:
@@ -37,6 +38,7 @@ def summarize(root: Path, contract: dict) -> dict:
         run = runs[name]
         if run["status"] != "PASS_COMPONENT_CELL" or run["spec"] != cell:
             raise ValueError(f"Invalid cell or changed design: {name}")
+        validate_component_stops(cell, run.get("stops"))
         path = root / f"{name}-profile.json"
         if hashlib.sha256(path.read_bytes()).hexdigest() != run["profile_sha256"]:
             raise ValueError(f"Changed profile: {name}")

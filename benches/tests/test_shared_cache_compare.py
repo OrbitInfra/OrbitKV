@@ -8,6 +8,12 @@ import pytest
 
 from benches.shared_cache_compare import summarize
 
+VLLM_SHUTDOWN = "API server: engine client stopped\nApplication shutdown complete.\n"
+SGLANG_SHUTDOWN = (
+    "SIGTERM received.\nRemaining number of requests 0.\n"
+    "Finished server process [123]\ninclude_parent=False\n"
+)
+
 
 def comparison(tmp_path):
     design = {
@@ -43,6 +49,8 @@ def comparison(tmp_path):
                 "variant": variant,
                 "batch_mib": batch,
                 "order_index": pair * 2 + order,
+                "source_host": 1,
+                "consumer_host": 0,
             }
             contract["cells"].append(cell)
             calls = math.ceil(16 / (batch // 9))
@@ -89,6 +97,28 @@ def comparison(tmp_path):
                     "spec": cell,
                     "status": "PASS_COMPONENT_CELL",
                     "profile_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "stops": [
+                        {
+                            "op": "stopped",
+                            "name": f"{name}-{kind}-h{host}-r0",
+                            "kind": kind,
+                            "host": host,
+                            "pid": 100 + index,
+                            "was_running": True,
+                            "pre_stop_exit_code": None,
+                            "requested_signal": "SIGTERM",
+                            "stop_requested": True,
+                            "exit_code": 0,
+                            "forced_cleanup": False,
+                            "remaining_group": [],
+                            "ownership_retained": False,
+                            "shutdown_log": VLLM_SHUTDOWN if kind == "engine" else "",
+                            "shutdown_log_truncated": False,
+                        }
+                        for index, (kind, host) in enumerate(
+                            [("engine", 0), ("engine", 1), ("manager", 0), ("manager", 1)]
+                        )
+                    ],
                 }
             )
     (tmp_path / "CAMPAIGN.json").write_text(json.dumps(campaign))
@@ -162,6 +192,49 @@ def test_valid_regression_is_retained_as_component_failure(tmp_path):
     assert summarize(tmp_path, contract)["state"] == "VALID_COMPONENT_FAIL"
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("shutdown_log", VLLM_SHUTDOWN + "EngineDeadError"),
+        ("shutdown_log", VLLM_SHUTDOWN + "Traceback (most recent call last):"),
+        ("shutdown_log", "server stopped"),
+        ("shutdown_log", ""),
+        ("shutdown_log_truncated", True),
+        ("forced_cleanup", True),
+        ("remaining_group", [101]),
+        ("ownership_retained", True),
+        ("pre_stop_exit_code", 0),
+        ("exit_code", -15),
+        ("exit_code", False),
+        ("name", "different-engine-h0-r0"),
+        ("host", 1),
+    ],
+)
+def test_pass_label_and_correct_outputs_do_not_waive_invalid_shutdown(tmp_path, field, value):
+    contract, campaign = comparison(tmp_path)
+    campaign["cells"][0]["stops"][0][field] = value
+    (tmp_path / "CAMPAIGN.json").write_text(json.dumps(campaign))
+    with pytest.raises(ValueError):
+        summarize(tmp_path, contract)
+
+
+@pytest.mark.parametrize(
+    "fault", ["missing", "manager_before_source_engine", "source_before_consumer"]
+)
+def test_all_engines_stop_before_their_managers_and_every_stop_is_required(tmp_path, fault):
+    contract, campaign = comparison(tmp_path)
+    stops = campaign["cells"][0]["stops"]
+    if fault == "missing":
+        stops.pop()
+    elif fault == "manager_before_source_engine":
+        stops[1], stops[3] = stops[3], stops[1]
+    else:
+        stops[0], stops[1] = stops[1], stops[0]
+    (tmp_path / "CAMPAIGN.json").write_text(json.dumps(campaign))
+    with pytest.raises(ValueError):
+        summarize(tmp_path, contract)
+
+
 @pytest.mark.parametrize("changed_count", [None, "prompt_tokens", "completion_tokens"])
 def test_sglang_request_metadata_is_preserved_but_only_native_counts_must_match(
     tmp_path, changed_count
@@ -170,6 +243,9 @@ def test_sglang_request_metadata_is_preserved_but_only_native_counts_must_match(
     contract["design"]["engines"] = ["sglang"]
     for index, run in enumerate(campaign["cells"]):
         run["spec"]["engine"] = "sglang"
+        for stop in run["stops"]:
+            if stop["kind"] == "engine":
+                stop["shutdown_log"] = SGLANG_SHUTDOWN
         path = tmp_path / f"{run['name']}-profile.json"
         profile = json.loads(path.read_text())
         profile["engine"] = "sglang"

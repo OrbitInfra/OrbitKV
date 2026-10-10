@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import errno
 import hashlib
 import importlib.metadata
@@ -20,7 +21,10 @@ from pathlib import Path
 
 import requests
 
+from .shutdown import validate_engine_shutdown
+
 ROOT = Path(__file__).resolve().parents[1]
+_PR_SET_CHILD_SUBREAPER = 36
 
 
 def free_port() -> int:
@@ -50,7 +54,15 @@ def server(
     url: str,
     log: Path,
     health_path: str = "/health",
+    *,
+    engine: str | None = None,
 ):
+    if engine is not None and engine not in {"vllm", "sglang"}:
+        raise ValueError(f"Unsupported shutdown protocol: {engine}")
+    if int(Path("/proc/self/stat").read_text().split(maxsplit=1)[0]) != os.getpid():
+        raise RuntimeError("Service cleanup requires /proc in the benchmark's PID namespace")
+    if ctypes.CDLL(None, use_errno=True).prctl(_PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "Cannot own orphaned service workers")
     with log.open("w") as output:
         process = subprocess.Popen(
             command,
@@ -59,6 +71,7 @@ def server(
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+    primary_error = None
     try:
         deadline = time.monotonic() + 900
         while time.monotonic() < deadline:
@@ -73,11 +86,71 @@ def server(
         else:
             raise TimeoutError(f"Server startup timed out: {log}")
         yield process
+    except BaseException as error:
+        primary_error = error
+        raise
     finally:
-        stop_owned_process(process, log.with_suffix(".cleanup.json"))
+        cleanup = log.with_suffix(".cleanup.json")
+        try:
+            start = None
+            if engine is not None:
+                with contextlib.suppress(OSError):
+                    start = log.stat().st_size
+            record = stop_owned_process(process, cleanup)
+            if engine is not None:
+                try:
+                    if start is None:
+                        raise ValueError("Missing native engine shutdown log boundary")
+                    end = log.stat().st_size
+                    with log.open("rb") as output:
+                        output.seek(start)
+                        shutdown_log = output.read(65536)
+                    record.update(
+                        shutdown_log_start_bytes=start,
+                        shutdown_log_end_bytes=end,
+                        shutdown_log_truncated=end - start > len(shutdown_log),
+                    )
+                    if record["shutdown_log_truncated"]:
+                        raise ValueError("Truncated native engine shutdown log")
+                    validate_engine_shutdown(shutdown_log.decode(errors="replace"), engine)
+                except (OSError, ValueError) as error:
+                    record["shutdown_error"] = str(error)
+                    raise
+                finally:
+                    cleanup.write_text(json.dumps(record, indent=2) + "\n")
+            if (
+                not record["was_running"]
+                or record["exit_code"] != 0
+                or record["forced_kill"]
+                or record["remaining_group"]
+                or record["process_group_errors"]
+            ):
+                raise RuntimeError(f"Service shutdown failed: {cleanup}")
+        except BaseException as error:
+            if primary_error is None:
+                raise
+            with contextlib.suppress(OSError, ValueError):
+                print(
+                    f"Service cleanup also failed: {error!r}; evidence: {cleanup}",
+                    file=sys.stderr,
+                )
 
 
-def stop_owned_process(process: subprocess.Popen, cleanup: Path | None = None) -> None:
+def _process_group_members(pgid: int) -> list[tuple[int, str]]:
+    members = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        if int(fields[2]) == pgid:
+            members.append((int(entry.name), fields[0]))
+    return sorted(members)
+
+
+def stop_owned_process(process: subprocess.Popen, cleanup: Path | None = None) -> dict:
     """Reap the service before callers can release exported GPU allocations."""
     interrupted = False
 
@@ -94,13 +167,26 @@ def stop_owned_process(process: subprocess.Popen, cleanup: Path | None = None) -
     graceful = True
     warned = False
     exit_code = None
+    remaining = []
+    adopted_children = []
+    process_group_errors = 0
+    last_process_group_error = None
+    pre_stop_exit_code = process.poll()
     try:
         while True:
             try:
                 # Sending SIGKILL is a request, not evidence that a process stuck
                 # in a driver has exited. Keep this scope alive until wait reaps it.
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGTERM if graceful else signal.SIGKILL)
+                try:
+                    if not graceful:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    elif pre_stop_exit_code is None:
+                        os.kill(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                except OSError as error:
+                    process_group_errors += 1
+                    last_process_group_error = repr(error)[:512]
                 exit_code = process.wait(timeout=30 if graceful else 10)
                 break
             except subprocess.TimeoutExpired:
@@ -118,25 +204,77 @@ def stop_owned_process(process: subprocess.Popen, cleanup: Path | None = None) -
                 # exception raised by a custom wait implementation.
                 interrupted = True
                 graceful = False
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                try:
+                    owned_children_pending = False
+                    try:
+                        while True:
+                            child, status = os.waitpid(-process.pid, os.WNOHANG)
+                            if child == 0:
+                                owned_children_pending = True
+                                break
+                            adopted_children.append(
+                                {"pid": child, "exit_code": os.waitstatus_to_exitcode(status)}
+                            )
+                    except ChildProcessError:
+                        pass
+                    remaining = _process_group_members(process.pid)
+                except (OSError, ValueError, IndexError) as error:
+                    process_group_errors += 1
+                    last_process_group_error = repr(error)[:512]
+                    try:
+                        os.killpg(process.pid, 0)
+                    except ProcessLookupError:
+                        remaining = []
+                        break
+                    except OSError:
+                        pass
+                    graceful = False
+                    with contextlib.suppress(OSError):
+                        os.killpg(process.pid, signal.SIGKILL)
+                    time.sleep(0.1)
+                    continue
+                if not any(state != "Z" for _, state in remaining):
+                    if remaining and owned_children_pending:
+                        time.sleep(0.1)
+                        continue
+                    break
+                if not graceful or time.monotonic() >= deadline:
+                    graceful = False
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    except OSError as error:
+                        process_group_errors += 1
+                        last_process_group_error = repr(error)[:512]
+                time.sleep(0.1)
+            except KeyboardInterrupt:
+                interrupted = True
+                graceful = False
     finally:
         if defer_sigint:
             signal.signal(signal.SIGINT, previous)
+        record = {
+            "pid": process.pid,
+            "exit_code": exit_code,
+            "forced_kill": not graceful,
+            "reaped": exit_code is not None,
+            "interrupted": interrupted,
+            "was_running": pre_stop_exit_code is None,
+            "pre_stop_exit_code": pre_stop_exit_code,
+            "remaining_group": [pid for pid, _ in remaining],
+            "adopted_children": adopted_children,
+            "process_group_errors": process_group_errors,
+            "last_process_group_error": last_process_group_error,
+        }
         if cleanup is not None:
-            cleanup.write_text(
-                json.dumps(
-                    {
-                        "pid": process.pid,
-                        "exit_code": exit_code,
-                        "forced_kill": not graceful,
-                        "reaped": exit_code is not None,
-                        "interrupted": interrupted,
-                    },
-                    indent=2,
-                )
-                + "\n"
-            )
+            cleanup.write_text(json.dumps(record, indent=2) + "\n")
     if interrupted:
         raise KeyboardInterrupt
+    return record
 
 
 def storage_manifest(pid: int, cache_path: Path) -> dict:

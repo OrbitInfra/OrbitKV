@@ -262,7 +262,13 @@ def main() -> None:
                         json.dumps(storage_manifest(manager.pid, args.ssd_path), indent=2) + "\n"
                     )
             stack.enter_context(
-                server(launch.command, launch.env, launch.base_url, args.output / "engine.log")
+                server(
+                    launch.command,
+                    launch.env,
+                    launch.base_url,
+                    args.output / "engine.log",
+                    engine=args.engine,
+                )
             )
             if launch.manager_command:
                 usage_before = process_usage(manager.pid)

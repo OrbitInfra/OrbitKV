@@ -27,6 +27,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `shared_cache.py` | Independent-replica serving requests with remote-byte, GPU-copy, output and reservation-drain evidence |
 | `shared_cache_serving.py` | First/repeated serving recovery, retained warmup, source SSD bytes and terminal ownership |
 | `shared_cache_compare.py` | Frozen independent-pair serial read-batch comparisons with consumed batch counts and no automatic promotion |
+| `shutdown.py` | Native engine shutdown protocol and ordered engine/Manager stop evidence checks |
 | `launch.py` | Engine/backend commands and matched memory budgets |
 | `runtime.py` | Owned process groups, readiness, teardown, and launch manifest |
 | `workload.py` | Token-exact requests, streaming timings, and pressure traffic |
@@ -1093,9 +1094,16 @@ consumer DRAM, followed by local H2D; this does not measure remote GPU-buffer
 RDMA or native GDS. No timer sampler or tracer is enabled; reset, metadata fences,
 drain and metrics collection remain outside request timing.
 
-Stop and reap both engines while their node-local Managers remain available
-for context unregister, then stop the Managers. Preserve literal service exit
-codes, native child termination and cleanup failures separately. The first
+The comparator independently validates each cell's `stops` records; a PASS label
+and correct output are insufficient. The frozen `source_host`/`consumer_host`
+indices and service names must match. Stop and reap the consumer engine, source
+engine, consumer Manager and source Manager in that order. Both Managers remain
+available for context unregister. Each record must establish a requested SIGTERM
+to a running service, zero leader exit, no forced cleanup, no remaining process
+group and released ownership. Engine shutdown logs must be complete and contain
+the selected release's completion markers without tracebacks, `EngineDeadError`
+or native bootstrap/ignored-exception/SIGQUIT failures. Preserve literal service
+exit codes, native child termination and cleanup failures separately. The first
 invalid runtime, correctness or cleanup cell stops dependent launches; retain
 its profile rows and never analyze the completed subset as a qualified cohort.
 Valid performance failures remain in the predeclared comparison.
@@ -1109,3 +1117,24 @@ exit means the analysis completed: inspect its `state` for the component result.
 Even `VALID_COMPONENT_PASS` leaves `production_qualified=false`; matched pressure
 and cancellation/drain controls precede a production recommendation. This cohort
 does not qualify p99, throughput or an advantage over another cache backend.
+
+`benches.single_node` consumes the same native log check. Its service owner sends
+normal SIGTERM to the leader so the engine can drain its own workers, then waits
+for the leader and live members of its process group. It rejects a mismatched
+`/proc` PID namespace before launching any service. A required group SIGKILL,
+an unreaped zombie, an early/nonzero exit, an inspection error, a missing/truncated
+shutdown log or a native failure prevents `summary.json` from being written.
+The Linux owner adopts orphaned workers and reaps only its registered process
+group. If inspection fails, it retains the caller's ownership while checking
+kernel group existence and terminating/reaping that group; it never treats an
+inspection error as an empty group. Cleanup records retain adopted child exits,
+inspection failures and
+the shutdown byte range and failure; a workload failure stays the primary error.
+These Linux process checks do not establish physical CUDA/RDMA lifetime proof.
+
+The retained vLLM consumer shutdown error matches the ordering described in
+upstream [issue #48745](https://github.com/vllm-project/vllm/issues/48745): engine
+teardown can wake the output handler before its cancellation. The related
+[PR #49000](https://github.com/vllm-project/vllm/pull/49000) is open as checked on
+2026-10-10. Official vLLM 0.31.0 remains unchanged. Do not suppress this error in
+the benchmark or treat a CPU protocol check as a repaired hardware lifecycle.

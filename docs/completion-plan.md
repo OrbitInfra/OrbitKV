@@ -1732,10 +1732,38 @@ inputs, failures, raw logs, postflight and reviews are outside Git at
 `/root/orbitkv-artifacts/s5-ssd-peer-batch-20261010/`.
 See [the comparison methodology](../benches/README.md#independent-ssd-read-batch-comparisons).
 
-The next S5.5 delivery is independent acceptance of the controller remedy and
-a fresh runtime bundle. Resolve the consumer vLLM shutdown failure on the
-unchanged official release before a separately frozen full read-batch cohort;
-CPU ordering controls do not establish that repair. No retry or replacement
+**Serving shutdown validation accepted for CPU software; runtime qualification open
+(2026-10-10):** the reusable benchmark now consumes the controller's required
+engine-before-Manager stop order and native shutdown error checks. The offline
+read-batch comparator validates all four stop records independently of cell PASS
+labels. Single-node benchmarks signal the engine leader, wait for its process
+group and reject early/nonzero exits, forced cleanup, unreaped workers and missing,
+truncated or failed native shutdown protocols before emitting a summary. Launch
+requires matching PID/proc namespaces; the owner adopts orphaned workers and
+retains cleanup ownership across process-inspection failures. CPU parent/child
+controls verify leader-only SIGTERM, actual child reap and inspection-error
+cleanup with and without a primary workload failure; these
+controls do not repair or relabel the retained hardware cohort.
+
+The consumer vLLM log matches the intentional-shutdown ordering reported in
+upstream [issue #48745](https://github.com/vllm-project/vllm/issues/48745).
+[PR #49000](https://github.com/vllm-project/vllm/pull/49000) remains open as checked
+on 2026-10-10; the same engine-before-handler shutdown order exists in selected
+vLLM 0.31.0. This is an inference from the source and log ordering, not proof that
+all `EngineDeadError` occurrences are harmless. Keep the official installation
+unchanged and the benchmark's failure check active. Evidence for this software
+substage is outside Git at
+`/root/orbitkv-artifacts/s5-serving-shutdown-20261010/`.
+Independent review accepts commit `5a30417a` for this CPU
+software substage: 45 targeted and 364 benchmark tests, six real process-fault
+controls and optimized-Python rejection of all eleven retained invalid cells.
+The initial rejection and final review remain preserved with their raw controls;
+no new GPU run or physical lifetime qualification is implied.
+
+The next S5.5 delivery is a fresh runtime bundle and independent launch review.
+Resolve the consumer vLLM shutdown failure on the unchanged official release
+before a separately frozen full read-batch cohort; CPU ordering controls do not
+establish that repair. No retry or replacement
 cell belongs to the stopped campaign. A passing serial
 component still needs matched pressure and cancellation/drain controls before
 production promotion, followed by matched official engine/backend comparisons.
