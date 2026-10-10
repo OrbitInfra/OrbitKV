@@ -165,7 +165,12 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=5)
-        members, errors = identity_group_members(process.pid)
+        deadline = time.monotonic() + 30
+        while True:
+            members, errors = identity_group_members(process.pid)
+            if not members or errors or time.monotonic() >= deadline:
+                break
+            time.sleep(0.01)
         (tmp_path / f"sglang-{process.pid}.cleanup.json").write_text(
             json.dumps(
                 {
