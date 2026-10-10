@@ -15,6 +15,13 @@ startup. Every node has an independent Manager. Distributed mode needs a concret
 peer address, etcd endpoints, a unique stable node ID and the same cluster name.
 `orbitkv-catalog` is an embedded local index, not a separate service.
 
+Client and Manager CUDA ordinals may differ. Registration joins the tensor's full
+GPU UUID to the Manager-visible device and retains that route for Publish/Restore;
+use matching lifecycle-protocol-7 artifacts. NUMA selection uses those visible
+UUIDs. Known payload placement uses `mbind` before first touch and requires the
+selected memory node in the process's allowed nodes. CPU affinity alone cannot
+override an inherited interleave memory policy; inspect actual resident pages.
+
 For remote metadata scope, omission means `AllNamespaces`. Repeat
 `--metadata-namespace` only with complete storage namespaces logged by actual
 registration, or use `--metadata-empty-scope` for an explicit empty set. Scope is

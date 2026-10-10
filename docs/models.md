@@ -1,6 +1,6 @@
 # Model qualification
 
-The current official vLLM 0.30.0 adapter supports V1 with one attention cache
+The current official vLLM 0.31.0 adapter supports V1 with one attention cache
 group (`VLLM_USE_V2_MODEL_RUNNER=0`). Multi-group/recurrent serving is rejected;
 historical hybrid evidence below does not reopen that profile. Shared recovery
 contracts and SGLang component work remain available with their stated limits.
@@ -10,18 +10,45 @@ OrbitKV qualifies a checkpoint, engine release, cache format and execution
 path together. A model family name or an engine's ability to load weights is
 not evidence that OrbitKV can restore every state it needs.
 
-The current engine pins are **vLLM 0.30.0** and **SGLang 0.5.20**. Engines
+The current engine pins are **vLLM 0.31.0** and **SGLang 0.5.21**. Engines
 own GPU allocation; OrbitKV restores registered attention pages and sealed
 checkpoints through the [compiled recovery contract](hybrid-recovery.md).
 See [deployment patterns](deployment.md) for topology limits.
 
 The historical model tables below use vLLM 0.29.0 and SGLang 0.5.20. Their
-results do not automatically qualify 0.30.0; see the [upgrade gates](completion-plan.md#s51--release-and-interface-audit)
+results do not automatically qualify the current pins; see the [upgrade gates](completion-plan.md#s51--release-and-interface-audit)
 for the new release's measured scope.
 
 Engine-native FP8 KV is qualified separately from FP8 weights. See
 [KV precision and SSD compression](storage-formats.md) for format boundaries,
 scale identity and reproduction commands.
+
+An independently accepted ordinary dense-model gate uses
+[Qwen3-32B](https://huggingface.co/Qwen/Qwen3-32B/tree/9216db5781bf21249d130ec9da846c4624c16137),
+BF16, TP=1/PP=1 on H20, with each gate's recorded engine configuration.
+vLLM uses CUDA Graph mode `NONE`; this does not disable `torch.compile`.
+SGLang uses the official release's default graph settings. DRAM and io_uring
+file recovery pass 14 checks with two expected hybrid-only skips across the
+official engine gates; all sixteen service leaders exit zero. The
+[completion plan](completion-plan.md#s55--deployment-matrix-and-upstream-maintenance)
+records the exact scope and independent report. Its complete 24-file input,
+including 17 weight shards, is independently verified. The launch freeze checks full model and
+installed-runtime hashes around each cell and uses an explicit immutable
+deployment fingerprint; automatic per-connect content hashing is outside that
+profile. Native shutdown warnings and internally signalled SG child exits remain
+recorded; physical CUDA IPC lifetime, S3 and performance remain unqualified.
+The 64-layer, eight-KV-head layout needs 262,144 raw KV bytes per token: a
+16,384-token GPU cache would use 4 GiB before allocation overhead. Larger-model
+pressure comparisons must also fix actual token counts, cache budgets, effective
+NUMA placement and reuse patterns. The reusable report rejects reference runs
+with different eager/Graph or deterministic-inference settings; matching output
+alone cannot establish comparable execution modes.
+
+The requested Qwen3.8-27B and DeepSeek-V4.1-Flash are separate model/state
+targets. Qwen3.8's recurrent state and DeepSeek's compressed/indexer/auxiliary
+state require their own released-engine and complete recovery gates. Eight
+available GPUs do not establish physical TP=8 recovery support, and historical
+Qwen3.8-FP8 or DeepSeek-V2 results do not qualify those targets.
 
 ## Pretrained checkpoints
 

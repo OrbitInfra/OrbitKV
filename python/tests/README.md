@@ -196,11 +196,18 @@ export ORBITKV_E2E_CACHE_ROOT=/var/tmp/orbitkv-e2e/run-001/cache
 export TORCHINDUCTOR_CACHE_DIR="$ORBITKV_E2E_CACHE_ROOT/inductor"
 export TRITON_CACHE_DIR="$ORBITKV_E2E_CACHE_ROOT/triton"
 export VLLM_CACHE_ROOT="$ORBITKV_E2E_CACHE_ROOT/vllm"
+export TORCH_EXTENSIONS_DIR="$ORBITKV_E2E_CACHE_ROOT/torch-extensions"
+export PATH="$PWD/../.venv/vllm-release/bin:$PATH"
+export PYTHONDONTWRITEBYTECODE=1
 ```
 
 Preserve shared-cache failures before retrying with these isolated directories.
 A successful isolated run does not repair or qualify an older compiler cache.
 The installed-wheel gate already assigns independent cache paths per cell.
+Select the SGLang environment's `bin` directory for its gate. Invoking an
+environment's Python alone does not put its Ninja executable on `PATH`.
+Benchmark launch and the SGLang direct helper also select that executable
+directory and use a private Torch extension cache.
 
 This is the main correctness E2E. It runs the same ordered prompt plan with
 vLLM native prefix caching and with OrbitKV, then requires exact completion
@@ -234,6 +241,15 @@ environment. It checks exact generated text, a nonzero external prefix hit
 after `/flush_cache`, and an actual Cache Manager GPU load after the SGLang
 process restarts while the Cache Manager remains alive. A separate namespace
 provides a true cold inference control for the restarted process.
+
+The SGLang helper sends SIGTERM to the service leader and waits for the native
+worker lifecycle before inspecting process-group clearance. A timeout records
+forced cleanup. The release outcome must also inspect real cleanup receipts and
+ordered native zero-request/ASGI completion for each leader PID. Repeated
+child-only cleanup messages alone do not imply a failed exit. Preserve actual
+producer-lifetime warnings and internally signalled child exits: passing model
+assertions and zero service-leader exits do not qualify physical CUDA IPC
+lifetime or S3 crash reclamation.
 
 SGLang P/D payload-engine or cache-composition changes additionally require
 `tests/e2e/test_sglang_pd_e2e.py`. Use the official engine in `docs/pd.md`, a built
