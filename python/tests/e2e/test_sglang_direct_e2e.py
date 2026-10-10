@@ -106,6 +106,8 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             "1",
         ]
     env = dict(os.environ)
+    env["PATH"] = os.pathsep.join([str(Path(sys.executable).parent), env.get("PATH", "")])
+    env["TORCH_EXTENSIONS_DIR"] = str(tmp_path / "torch-extensions")
     env["PYTHONPATH"] = os.pathsep.join(
         [env.get("PYTHONPATH", ""), str(PYTHON_ROOT), str(tmp_path)]
     )
