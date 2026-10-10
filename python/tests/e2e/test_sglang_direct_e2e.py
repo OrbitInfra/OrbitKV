@@ -157,9 +157,9 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
     def stop_server(process: subprocess.Popen) -> None:
         forced_kill = False
         with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGTERM)
+            process.send_signal(signal.SIGTERM)
         try:
-            process.wait(timeout=10)
+            process.wait(timeout=30)
         except subprocess.TimeoutExpired:
             forced_kill = True
             with contextlib.suppress(ProcessLookupError):
@@ -171,6 +171,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                 {
                     "pid": process.pid,
                     "exit_code": process.returncode,
+                    "sigterm_target": process.pid,
                     "forced_kill": forced_kill,
                     "remaining_processes": members,
                     "inspection_errors": errors,
