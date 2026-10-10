@@ -275,7 +275,7 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
     METRICS.get_or_init(|| {
         let meter = init_meter();
 
-        CoreMetrics {
+        let metrics = CoreMetrics {
             cost_operations: meter.u64_counter("orbitkv_cost_operations")
                 .with_description("Batch outcomes; abandoned means no terminal service evidence")
                 .build(),
@@ -714,7 +714,23 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 )
                 .with_boundaries(remote_fetch_plan_segment_boundaries())
                 .build(),
+        };
+        for counter in [
+            &metrics.query_reserved_bytes,
+            &metrics.inflight_bytes,
+            &metrics.transfer_lock_active,
+            &metrics.transfer_reserved_bytes,
+            &metrics.ssd_prefetch_inflight,
+            &metrics.ssd_read_pinned_bytes,
+            &metrics.ssd_write_queue_pending,
+            &metrics.ssd_write_inflight,
+        ] {
+            counter.add(0, &[]);
         }
+        #[cfg(feature = "mooncake")]
+        metrics.transfer_completion_outstanding.add(0, &[]);
+        metrics.load_bytes.add(0, &[]);
+        metrics
     })
 }
 

@@ -1760,10 +1760,42 @@ controls and optimized-Python rejection of all eleven retained invalid cells.
 The initial rejection and final review remain preserved with their raw controls;
 no new GPU run or physical lifetime qualification is implied.
 
-The next S5.5 delivery is a fresh runtime bundle and independent launch review.
-Resolve the consumer vLLM shutdown failure on the unchanged official release
-before a separately frozen full read-batch cohort; CPU ordering controls do not
-establish that repair. No retry or replacement
+**Initial ownership export and standalone Manager readiness independently accepted
+(2026-10-10):** `2c9d4b73` initializes ordinary query, Publish, peer-transfer and
+SSD ownership instruments, plus the load-byte counter, inside the existing
+metrics singleton. Real SDK/Prometheus tests verify initial zero, active values,
+repeat singleton access and release; restoring the original source fails the
+same missing-series regression. Independent CPU review accepts this producer
+fix. A complete repaired CUDA 13 CPython 3.11 wheel passes isolated native import.
+The fresh two-cell diagnostic generates two matching native responses, but
+official vLLM 0.31.0 logs an `EngineDeadError` matching the upstream shutdown
+order and
+the guard stops it before starting any Manager or cache request. Independent
+review accepts the retained invalid evidence, not engine shutdown or cache
+qualification.
+
+The separate standalone smoke using that complete wheel passes: all ten baseline
+instruments have their required Prometheus types and exact zero values in the
+first raw response and pre-stop snapshot. The literal Manager and executor exits
+are zero with actual reaping, no forced cleanup and empty GPU/port/UDS postflight.
+All 66,583 official engine files, 127 private installed files and 97 ELF closure
+paths remain unchanged. Live Manager identity/maps are retained. Independent
+result review accepts first-export readiness and bounded idle shutdown only;
+real ownership allocation/drain remains unqualified. It starts no model or cache
+requests and cannot complete or retry the failed two-cell
+shutdown contract. The first Manager-only run stops before reading metrics at a
+TENT-presence check that does not apply to standalone mode: the frozen source
+constructs its transport only when a global index exists. Its literal Manager
+exit is zero, while the diagnostic exits one and remains invalid. A separately
+frozen standalone contract instead requires no native transport mapping; native
+input/ELF hashes stay checked without claiming TENT execution. Its frozen
+inputs, unlaunched rejection, invalid run, raw controls and
+reviews remain outside Git at
+`/root/orbitkv-artifacts/s5-initial-ownership-metrics-20261010/`.
+
+Resolve native and consumer vLLM shutdown on an unchanged official release
+before a separately frozen full read-batch cohort; initial exporter acceptance
+and CPU ordering controls do not establish that repair. No retry or replacement
 cell belongs to the stopped campaign. A passing serial
 component still needs matched pressure and cancellation/drain controls before
 production promotion, followed by matched official engine/backend comparisons.
