@@ -71,6 +71,13 @@ Source/destination holds and partial-submission drain are unchanged. Exact H20
 native attribution and separately queued production-shader event timing require
 their own frozen input/review and byte gates before selecting another candidate.
 
+The native fixture also creates a new `*.device.json` sidecar from its actual
+CUDA context UUID, ordinal and PID before backend initialization, and repeats
+that UUID in each timing row. Launch validation binds the receipt to the exact
+native executable, process identity and consumed library maps. NVML numeric PID
+visibility is a separate observation; equal PID namespaces are not assumed.
+This fixture targets a non-MIG GPU and does not qualify MIG device identity.
+
 ## Current qualification
 
 **Implemented; A100 SM80 local gates pass; independent acceptance open.** The

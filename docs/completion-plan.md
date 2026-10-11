@@ -1810,6 +1810,17 @@ Sequential isolated-target CUDA 13 native-fixture build and targeted Clippy
 `/root/orbitkv-artifacts/s5-kda-attribution-preparation-20261011/implementation-gates-1/`.
 No CUDA runtime executes in those build/check gates.
 
+The two subsequent attribution launches remain `INVALID_FAIL_STOP`: the first
+stops before CUDA because nested CPU binding lacked `numactl --all`; the second
+enters CUDA but rejects an unobserved numeric native PID in NVML and terminates
+the owned process. Neither partial timing output qualifies performance. The
+original failing NVML snapshot was not serialized, so its namespace/timing cause
+is not established. Both immutable outcomes and normal/forced cleanup distinctions
+are retained in the external task directory. The fixture now records its actual
+CUDA context UUID in a new device-identity sidecar and every row. This observation
+repair requires fresh software and launch review before another hardware gate;
+production shaders, owners and defaults remain unchanged.
+
 The requested `Qwen/Qwen3.8-27B` and `deepseek-ai/DeepSeek-V4.1-Flash` belong to
 subsequent model/state qualification: inspect immutable configurations and
 released-engine support before any weights/download or serving launch. Qwen3.8

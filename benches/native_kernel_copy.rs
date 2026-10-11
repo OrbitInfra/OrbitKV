@@ -11,6 +11,7 @@ use orbitkv_core::transfer::{CopyDesc, KernelBackend, MemcpyBackend, TransferBac
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use serde_json::json;
+use uuid::Uuid;
 
 const GUARD: usize = 32;
 
@@ -176,12 +177,40 @@ fn main() {
         }
     }
     assert!(samples > 0);
+    let output = output.expect("--output requires a new external JSONL path");
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(output.expect("--output requires a new external JSONL path"))
+        .open(&output)
         .expect("new output");
     let context = CudaContext::new(0).expect("CUDA context");
+    let device_uuid = format!(
+        "GPU-{}",
+        Uuid::from_bytes(
+            context
+                .uuid()
+                .expect("CUDA device UUID")
+                .bytes
+                .map(|v| v as u8)
+        )
+    );
+    let mut device_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output.with_extension("device.json"))
+        .expect("new device identity output");
+    writeln!(
+        device_file,
+        "{}",
+        json!({
+            "schema": 1,
+            "cuda_device_ordinal": 0,
+            "cuda_device_uuid": device_uuid,
+            "native_pid": std::process::id(),
+        })
+    )
+    .expect("write device identity");
+    device_file.flush().expect("flush device identity");
     let stream = context.default_stream();
     let kernel = KernelBackend::new(&context).expect("native kernel");
     let dma = MemcpyBackend::new(&context).expect("native DMA");
@@ -300,6 +329,7 @@ fn main() {
             }
             let row = json!({
                 "case": case.name, "direction": if h2d { "h2d" } else { "d2h" },
+                "cuda_device_uuid": device_uuid,
                 "sizes": case.sizes, "descriptors": copies.len(), "seed": seed,
                 "warmup": 5, "samples": samples, "bytes": case.sizes.iter().sum::<usize>(),
                 "byte_source_guard_oracle": "passed", "kernel_submit_to_drain_ms": timings[0],
