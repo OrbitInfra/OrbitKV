@@ -292,13 +292,17 @@ def main() -> None:
                 samples, batches = workload.run_workload(args, launch.base_url, launch.manager_url)
                 workload.validate(vars(args), samples, batches)
                 validate_observation(
-                    args.observation_mode, batches, manager_present=launch.manager_url is not None
+                    args.observation_mode,
+                    batches,
+                    manager_backend=args.backend if launch.manager_url is not None else None,
                 )
                 summary = workload.summarize(samples, batches)
             else:
                 samples = run_workload(args, launch.base_url, launch.manager_url)
                 validate_observation(
-                    args.observation_mode, samples, manager_present=launch.manager_url is not None
+                    args.observation_mode,
+                    samples,
+                    manager_backend=args.backend if launch.manager_url is not None else None,
                 )
                 summary = summarize(samples, args.lengths)
             if launch.manager_command:

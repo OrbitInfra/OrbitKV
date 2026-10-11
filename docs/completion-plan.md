@@ -1771,6 +1771,21 @@ The recovered durable source passes 379 benchmark tests and the source-only
 Python gate (370 passed, one skipped), plus Ruff and experiment-output checks.
 Its new source snapshots and CPU gates are retained in
 `/root/orbitkv-artifacts/s5-observation-timing-recovery-20261011/`.
+Independent CPU review of candidate `3d6853ff` requires correction of one P2:
+missing/nonfinite owner snapshots could be accepted as drained. Its rejection
+and actual live/offline controls remain immutable in
+`/root/orbitkv-artifacts/s5-observation-timing-independent-review-20261011/`.
+The corrective source declares the actual Manager backend and requires eight
+always-exported OrbitKV query/transfer/SSD owner gauges, plus validation of
+present optional owners. Every applicable snapshot and poll must be finite and
+nonnegative, and final owners must be zero. Offline validation applies the same
+contract to serial, concurrent and sustained runs. LMCache/no-Manager records
+retain their separate ownership scope. This correction requires fresh CPU gates
+and independent acceptance before a dependent hardware run.
+The corrected source passes 433 benchmark tests and source-only Python
+(370 passed, one skipped), Ruff/format, experiment-output and diff checks in
+`/root/orbitkv-artifacts/s5-observation-timing-20261011/ownership-remediation-3/`.
+Both earlier test-fixture failures are retained separately; they are not passes.
 Earlier uncommitted source and `/tmp` gate-record loss has unknown cause;
 the missing original source hash/results are not reused to qualify this source.
 

@@ -14,6 +14,23 @@ import requests
 REMOTE_STAGES = ("authorization", "allocation", "read", "rebuild", "release")
 ENGINE_ITL = {engine: f"{engine}:inter_token_latency_seconds" for engine in ("vllm", "sglang")}
 OBSERVATION_MODES = ("sampled", "boundary")
+MANAGER_BACKENDS = ("orbitkv", "lmcache")
+REQUIRED_OWNERSHIP_GAUGES = (
+    "orbitkv_query_reserved_bytes",
+    "orbitkv_inflight_bytes",
+    "orbitkv_transfer_lock_active",
+    "orbitkv_transfer_reserved_bytes",
+    "orbitkv_ssd_write_queue_pending",
+    "orbitkv_ssd_write_inflight",
+    "orbitkv_ssd_prefetch_inflight",
+    "orbitkv_ssd_read_pinned_bytes",
+)
+DRAIN_GAUGES = (
+    *REQUIRED_OWNERSHIP_GAUGES,
+    "orbitkv_transfer_completion_outstanding",
+    "orbitkv_ssd_cufile_inflight_batches",
+    "orbitkv_storage_codec_reserved_bytes",
+)
 
 
 def delta(before: dict, after: dict) -> dict:
@@ -38,17 +55,24 @@ def measure(
     manager_url: str | None,
     settle_seconds: float,
     *,
+    backend: str,
     observation_mode: str = "sampled",
 ):
     if observation_mode not in OBSERVATION_MODES:
         raise ValueError(f"Invalid observation mode: {observation_mode}")
+    if (manager_url is not None) != (backend in MANAGER_BACKENDS):
+        raise ValueError("Backend and Manager presence do not match")
+    manager_backend = backend if manager_url is not None else None
     before, manager_before = metrics(base_url), metrics(manager_url)
+    if manager_backend == "orbitkv":
+        validate_ownership(manager_before, drained=False)
     stop = threading.Event()
     peaks = {} if observation_mode == "sampled" and manager_url is not None else None
     errors = []
     result = {
         "observation_mode": observation_mode,
         "manager_present": manager_url is not None,
+        "manager_backend": manager_backend,
         "memory_samples": 0,
     }
 
@@ -56,10 +80,13 @@ def measure(
         while not stop.is_set():
             try:
                 observed = metrics(manager_url)
+                if manager_backend == "orbitkv":
+                    validate_ownership(observed, drained=False)
                 result["memory_samples"] += 1
                 for key, value in observed.items():
                     if key in (
                         "orbitkv_pool_used_bytes",
+                        "orbitkv_inflight_bytes",
                         "orbitkv_cache_protected_bytes",
                         "orbitkv_warmup_pending_bytes",
                         "orbitkv_query_speculative_reserved_bytes",
@@ -88,18 +115,10 @@ def measure(
         quiet = 0
         while True:
             manager_after = metrics(manager_url)
-            busy = any(
-                manager_after.get(name, 0) != 0
-                for name in (
-                    "orbitkv_query_reserved_bytes",
-                    "orbitkv_inflight_bytes",
-                    "orbitkv_ssd_write_queue_pending",
-                    "orbitkv_ssd_write_inflight",
-                    "orbitkv_ssd_prefetch_inflight",
-                    "orbitkv_ssd_read_pinned_bytes",
-                    "orbitkv_ssd_cufile_inflight_batches",
-                    "orbitkv_storage_codec_reserved_bytes",
-                )
+            if manager_backend == "orbitkv":
+                validate_ownership(manager_after, drained=False)
+            busy = manager_backend == "orbitkv" and any(
+                manager_after[name] != 0 for name in DRAIN_GAUGES if name in manager_after
             )
             quiet = 0 if busy else quiet + 1
             if quiet >= 3:
@@ -123,16 +142,45 @@ def measure(
         raise RuntimeError(f"Memory observation failed: {errors}")
 
 
-def validate_observation(mode: str, measurements: list[dict], *, manager_present: bool) -> None:
+def validate_ownership(snapshot: dict, *, drained: bool) -> None:
+    if not isinstance(snapshot, dict) or any(
+        name not in snapshot for name in REQUIRED_OWNERSHIP_GAUGES
+    ):
+        raise ValueError("Missing required OrbitKV ownership snapshot")
+    for name in DRAIN_GAUGES:
+        if name not in snapshot:
+            continue
+        value = snapshot[name]
+        if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+            raise ValueError(f"Invalid OrbitKV ownership metric: {name}")
+        if drained and value != 0:
+            raise ValueError(f"OrbitKV ownership did not drain: {name}={value}")
+
+
+def validate_observation(
+    mode: str, measurements: list[dict], *, manager_backend: str | None
+) -> None:
     if mode not in OBSERVATION_MODES or not measurements:
         raise ValueError("Missing or invalid observation mode")
+    if manager_backend is not None and manager_backend not in MANAGER_BACKENDS:
+        raise ValueError("Invalid Manager backend")
     for row in measurements:
-        if row.get("observation_mode") != mode or row.get("manager_present") is not manager_present:
+        if (
+            row.get("observation_mode") != mode
+            or row.get("manager_present") is not (manager_backend is not None)
+            or "manager_backend" not in row
+            or row["manager_backend"] != manager_backend
+        ):
             raise ValueError("Mixed or missing observation metadata")
+        for field in ("manager_before", "manager_after"):
+            if not isinstance(row.get(field), dict):
+                raise ValueError("Missing Manager boundary snapshot")
+            if manager_backend == "orbitkv":
+                validate_ownership(row[field], drained=field == "manager_after")
         count, peaks = row.get("memory_samples"), row.get("sampled_peak_bytes")
         if type(count) is not int or count < 0 or "sampled_peak_bytes" not in row:
             raise ValueError("Missing or invalid memory observation")
-        if mode == "sampled" and manager_present:
+        if mode == "sampled" and manager_backend is not None:
             if count == 0 or not isinstance(peaks, dict):
                 raise ValueError("Missing sampled memory observations")
             if any(
@@ -140,6 +188,11 @@ def validate_observation(mode: str, measurements: list[dict], *, manager_present
                 for value in peaks.values()
             ):
                 raise ValueError("Invalid sampled memory peak")
+            if manager_backend == "orbitkv" and any(
+                name not in peaks
+                for name in ("orbitkv_query_reserved_bytes", "orbitkv_inflight_bytes")
+            ):
+                raise ValueError("Missing sampled OrbitKV ownership peaks")
         elif count != 0 or peaks is not None:
             raise ValueError("Unsampled memory peaks must remain unknown")
 
@@ -168,6 +221,8 @@ def metrics(url: str | None) -> dict[str, float]:
         if name.endswith("_created"):
             continue
         number = float(value)
+        if name in DRAIN_GAUGES and (not math.isfinite(number) or number < 0):
+            raise ValueError(f"Invalid OrbitKV ownership metric: {name}")
         if math.isfinite(number):
             if "bucket" in name:
                 if name in {f"{prefix}_bucket" for prefix in ENGINE_ITL.values()}:

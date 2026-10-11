@@ -346,6 +346,12 @@ def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:
         "cost_observations": "1" if launch.env.get("ORBITKV_COST_OBSERVATIONS") == "1" else "0",
         "observation_mode": args.observation_mode,
         "manager_present": launch.manager_url is not None,
+        "manager_backend": args.backend if launch.manager_url is not None else None,
+        "ownership_scope": (
+            "Eight required query/transfer/SSD owner gauges and present optional owners validated through drain"
+            if args.backend == "orbitkv"
+            else "Backend ownership gauges not validated; service cleanup and snapshots retained"
+        ),
         "memory_peak_scope": (
             "25 ms in-process Manager sampling; observed peaks are lower bounds"
             if args.observation_mode == "sampled" and launch.manager_url is not None

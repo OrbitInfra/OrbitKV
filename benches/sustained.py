@@ -16,7 +16,11 @@ from .workload import generate
 def run_window(args, base_url, manager_url, vocabulary, prefixes, concurrency, emit):
     samples = []
     with measure(
-        base_url, manager_url, args.settle_seconds, observation_mode=args.observation_mode
+        base_url,
+        manager_url,
+        args.settle_seconds,
+        backend=args.backend,
+        observation_mode=args.observation_mode,
     ) as window:
         started = time.perf_counter()
         deadline = started + args.duration_seconds

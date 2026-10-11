@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from benches.launch import STORAGE_CODECS, configure, storage_codec_budget
-from benches.metrics import codec_summary, delta, measure, metrics
+from benches.metrics import REQUIRED_OWNERSHIP_GAUGES, codec_summary, delta, measure, metrics
 from benches.report import compare_outputs
 
 
@@ -404,6 +404,7 @@ def test_cross_backend_reference_requires_the_same_engine_runtime(tmp_path):
 
 def test_idle_retained_codec_workspace_does_not_prevent_measurement_drain(monkeypatch):
     observed = {
+        **dict.fromkeys(REQUIRED_OWNERSHIP_GAUGES, 0),
         "orbitkv_storage_codec_workspace_bytes": 67108864,
         "orbitkv_storage_codec_reserved_bytes": 0,
     }
@@ -411,7 +412,7 @@ def test_idle_retained_codec_workspace_does_not_prevent_measurement_drain(monkey
     monkeypatch.setattr("benches.metrics.time.sleep", lambda seconds: None)
     ticks = iter(range(0, 1000, 10))
     monkeypatch.setattr("benches.metrics.time.monotonic", lambda: next(ticks))
-    with measure("engine", "manager", 0) as measurement:
+    with measure("engine", "manager", 0, backend="orbitkv") as measurement:
         pass
     assert measurement["manager_after"] == observed
     summary = codec_summary([measurement])

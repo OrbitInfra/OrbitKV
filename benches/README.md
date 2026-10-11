@@ -419,7 +419,14 @@ after the interval, quiet/drain checks and service cleanup still run. The defaul
 `sampled` mode retains the 25 ms Manager observer for memory diagnostics; its
 Python and Manager work can affect request timing. Sampling does not occur when
 there is no Manager. Each manifest and measured interval records the mode,
-Manager presence and sample count. JSON sampled peaks are `null` when unavailable;
+Manager presence, backend and sample count. OrbitKV snapshots and every drain
+poll require its eight always-exported query/transfer/SSD ownership gauges to be
+finite and nonnegative; all required and present optional owners must end at zero.
+Sampled OrbitKV intervals also require real query/inflight peak observations.
+Live measurements and offline reports reject missing or invalid ownership
+evidence. LMCache and no-Manager profiles retain snapshots and service cleanup
+without claiming validation of OrbitKV's resource owners.
+JSON sampled peaks are `null` when unavailable;
 boundary snapshots cannot be labeled as sampled peaks or prove transient memory
 capacity. Codec boundary maxima and Manager-owned reservation peaks retain their
 separate scopes.

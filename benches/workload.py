@@ -167,6 +167,7 @@ def run_workload(args: Namespace, base_url: str, manager_url: str | None) -> lis
                         base_url,
                         manager_url,
                         args.settle_seconds,
+                        backend=args.backend,
                         observation_mode=args.observation_mode,
                     ) as measurement:
                         result = generate(

@@ -37,7 +37,7 @@ def test_window_bounds_inflight_and_drains_admitted_requests(monkeypatch, reques
         }
 
     @contextmanager
-    def measure(*args, observation_mode):
+    def measure(*args, backend, observation_mode):
         result = {"observation_mode": observation_mode}
         started = time.perf_counter()
         yield result
@@ -53,6 +53,7 @@ def test_window_bounds_inflight_and_drains_admitted_requests(monkeypatch, reques
     monkeypatch.setattr(sustained, "measure", measure)
     args = SimpleNamespace(
         engine="vllm",
+        backend="native",
         model="model",
         duration_seconds=1 if request_limit == 5 else 0.045,
         max_requests=request_limit,
@@ -122,9 +123,11 @@ def evidence():
             "drain_seconds": 0.2,
             "working_set_tokens": 64,
             "manager_after": {},
+            "manager_before": {},
             "sampled_peak_bytes": None,
             "observation_mode": "boundary",
             "manager_present": False,
+            "manager_backend": None,
             "memory_samples": 0,
             "manager_delta": {"orbitkv_ssd_prefetch_bytes_total": 4096},
         }
@@ -135,7 +138,14 @@ def evidence():
 def test_report_counts_window_bytes_once_and_preserves_output_differences(tmp_path):
     args, samples, windows = evidence()
     (tmp_path / "manifest.json").write_text(
-        json.dumps({"arguments": args, "observation_mode": "boundary", "manager_present": False})
+        json.dumps(
+            {
+                "arguments": args,
+                "observation_mode": "boundary",
+                "manager_present": False,
+                "manager_backend": None,
+            }
+        )
     )
     (tmp_path / "samples.jsonl").write_text("\n".join(map(json.dumps, samples)))
     (tmp_path / "windows.jsonl").write_text("\n".join(map(json.dumps, windows)))
