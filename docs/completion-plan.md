@@ -1742,6 +1742,20 @@ wheel bytes unchanged; the strengthened E2E helper requires a fresh consumer
 gate before runtime acceptance. They do not revise the retained Qwen3-32B
 cohort or close S5 pressure, performance or S3 lifetime qualification.
 
+The fresh exact-harness `09849c91` consumer gate is independently accepted for
+official SGLang 0.5.21/Qwen3-32B ordinary DRAM/io_uring file-cache recovery and
+positive shutdown: two tests pass, six engine leaders and two Managers exit
+zero, and all six per-PID native shutdown protocols pass. Six CUDA IPC producer
+warnings and six internally terminated adopted processes (`-9`) remain limits;
+this is not physical IPC lifetime, pressure, performance or S3 qualification.
+The exact executed assertions and raw native logs are retained; complete response
+bodies and numeric metric snapshots were not serialized for offline re-comparison.
+After local `/tmp` loss of unknown cause, 322 original remote files and one link
+are recovered and hash-verified in a new durable packet. Missing original local
+foreground records are not fabricated; a separate fresh postflight checks known
+PIDs, ports, UDS, GPU and lease release. The original raw result stays unchanged.
+See `/root/orbitkv-artifacts/pr217-sglang-shutdown-consumer-execution-review-20261011/REVIEW.md`.
+
 **Request-timing observation mode implemented; qualification open (2026-10-11):**
 the maintained serial, concurrent and sustained benchmark supports explicit
 `boundary` mode without a request-time metrics thread. The default `sampled`
