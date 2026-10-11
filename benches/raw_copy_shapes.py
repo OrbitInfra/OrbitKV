@@ -50,19 +50,25 @@ def _validate_shape(event: dict) -> None:
         or size < (descriptors - zero) * smallest
     ):
         raise ValueError("Inconsistent raw-copy shape counters")
-    lower = upper = 0
-    for bucket, count in enumerate(histogram):
-        positive = count - zero if bucket == 0 else count
-        low = 1 if bucket == 0 else SIZE_LIMITS[bucket - 1] + 1
-        high = SIZE_LIMITS[bucket] if bucket < len(SIZE_LIMITS) else largest
-        lower += positive * low
-        upper += positive * min(high, largest)
-    if not lower <= size <= upper:
-        raise ValueError("Raw-copy bytes disagree with the fragment histogram")
-    for extreme in (smallest, largest):
+    remaining = histogram.copy()
+    remaining[0] -= zero
+    fixed_bytes = 0
+    for extreme in {smallest, largest} - {0}:
         bucket = sum(extreme > limit for limit in SIZE_LIMITS)
-        if histogram[bucket] == 0:
+        if remaining[bucket] == 0:
             raise ValueError("Raw-copy extrema disagree with the fragment histogram")
+        remaining[bucket] -= 1
+        fixed_bytes += extreme
+    lower = upper = fixed_bytes
+    for bucket, count in enumerate(remaining):
+        low = max(smallest, 1 if bucket == 0 else SIZE_LIMITS[bucket - 1] + 1)
+        high = min(largest, SIZE_LIMITS[bucket] if bucket < len(SIZE_LIMITS) else largest)
+        if count and low > high:
+            raise ValueError("Raw-copy histogram lies outside the observed extrema")
+        lower += count * low
+        upper += count * high
+    if not lower <= size <= upper:
+        raise ValueError("Raw-copy bytes disagree with the fragment histogram and extrema")
 
 
 def collect(log_path: Path) -> dict:

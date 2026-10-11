@@ -70,6 +70,20 @@ def test_counts_actual_batches_separately_from_other_stages_and_processes(tmp_pa
         {"dma_ranges": 3},
         {"bytes": 1},
         {"bytes": 20000},
+        {
+            "descriptors": 1,
+            "bytes": 4096,
+            "min_bytes": 257,
+            "size_histogram": [0, 1, 0, 0, 0, 0, 0, 0],
+        },
+        {"min_bytes": 257},
+        {"bytes": 4096, "min_bytes": 257},
+        {
+            "bytes": 5000,
+            "min_bytes": 4096,
+            "max_bytes": 4097,
+            "size_histogram": [0, 1, 1, 0, 0, 0, 0, 0],
+        },
         {"zero_descriptors": 1},
         {"min_bytes": 0},
         {"max_bytes": 10000},
@@ -85,6 +99,25 @@ def test_counts_actual_batches_separately_from_other_stages_and_processes(tmp_pa
 def test_malformed_or_failed_shapes_invalidate_evidence(tmp_path, changes):
     with pytest.raises(ValueError):
         collect(write_log(tmp_path, finalized(shape(**changes))))
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"descriptors": 1, "bytes": 4096, "size_histogram": [0, 1, 0, 0, 0, 0, 0, 0]},
+        {"bytes": 4353, "min_bytes": 257},
+        {
+            "bytes": 4353,
+            "min_bytes": 0,
+            "zero_descriptors": 1,
+            "descriptors": 3,
+            "size_histogram": [1, 2, 0, 0, 0, 0, 0, 0],
+        },
+    ],
+)
+def test_extrema_consume_real_fragments_including_zero_and_one_fragment(tmp_path, changes):
+    summary = collect(write_log(tmp_path, finalized(shape(**changes))))
+    assert summary["batches"][0]["bytes"] == changes["bytes"]
 
 
 @pytest.mark.parametrize(
