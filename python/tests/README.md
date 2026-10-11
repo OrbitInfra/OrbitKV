@@ -82,6 +82,13 @@ Runs:
 
 This gate must collect and run without torch, vLLM, CUDA, external models, or a running OrbitKV server. Stub modules are allowed only inside tests that explicitly mock the connector boundary, and they must not shadow a real runtime during integration or E2E collection.
 
+`test_sglang_shutdown.py` uses real CPU parent/worker processes and an inherited
+file lock to protect the direct SGLang E2E cleanup contract. The E2E sends normal
+SIGTERM to the service leader, waits for the owned group and fails on nonzero
+exit, inspection errors or forced cleanup of residual workers. Cleanup also
+preserves any original workload failure. These controls do not establish GPU
+worker or physical CUDA IPC lifetime qualification.
+
 Shared client ownership is tested in Rust under
 `crates/orbitkv-channel/tests/unit/cache_client.rs`: query revisions, immutable
 hash snapshots and shared views, warming limits/expiry, separate publish traffic, lost restore

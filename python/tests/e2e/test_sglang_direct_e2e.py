@@ -26,6 +26,82 @@ from tests.support.paths import PYTHON_ROOT
 pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
 
+def _stop_server(process: subprocess.Popen, directory: Path, timeout: float = 30) -> None:
+    primary_error = sys.exc_info()[1]
+    forced_kill = False
+    errors = []
+    inspection_errors = []
+    before_forced_kill = []
+    with contextlib.suppress(ProcessLookupError):
+        process.send_signal(signal.SIGTERM)
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        forced_kill = True
+        before_forced_kill, inspected = identity_group_members(process.pid)
+        inspection_errors.extend(inspected)
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        try:
+            process.wait(timeout=min(timeout, 5))
+        except subprocess.TimeoutExpired:
+            errors.append("SGLang leader did not exit after SIGKILL")
+
+    deadline = time.monotonic() + timeout
+    while True:
+        members, inspected = identity_group_members(process.pid)
+        inspection_errors.extend(inspected)
+        if not members or inspected or time.monotonic() >= deadline:
+            break
+        time.sleep(0.01)
+    if members or inspected:
+        forced_kill = True
+        before_forced_kill.extend(members)
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        deadline = time.monotonic() + min(timeout, 5)
+        while True:
+            members, inspected = identity_group_members(process.pid)
+            inspection_errors.extend(inspected)
+            if not members or inspected or time.monotonic() >= deadline:
+                break
+            time.sleep(0.01)
+
+    if forced_kill:
+        errors.append("SGLang required forced process-group cleanup")
+    if process.returncode != 0:
+        errors.append(f"SGLang leader exit code {process.returncode}")
+    if members:
+        errors.append("SGLang workers remain after cleanup")
+    if inspection_errors:
+        errors.append("SGLang process-group inspection failed")
+    cleanup = {
+        "pid": process.pid,
+        "exit_code": process.returncode,
+        "sigterm_target": process.pid,
+        "forced_kill": forced_kill,
+        "before_forced_kill": before_forced_kill,
+        "remaining_processes": members,
+        "inspection_errors": inspection_errors,
+        "errors": errors,
+        "primary_failure": (
+            {"type": type(primary_error).__name__, "message": str(primary_error)}
+            if primary_error is not None
+            else None
+        ),
+    }
+    try:
+        (directory / f"sglang-{process.pid}.cleanup.json").write_text(
+            json.dumps(cleanup, indent=2) + "\n"
+        )
+        if errors:
+            raise AssertionError(f"SGLang cleanup failed: {cleanup}")
+    except BaseException as cleanup_error:
+        if primary_error is not None:
+            raise primary_error from cleanup_error
+        raise
+
+
 @pytest.mark.parametrize(
     "channel_server",
     [
@@ -151,40 +227,8 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                 pytest.fail(f"SGLang startup timed out:\n{log_path.read_text()[-8000:]}")
             return process, base_url
         except BaseException:
-            stop_server(process)
+            _stop_server(process, tmp_path)
             raise
-
-    def stop_server(process: subprocess.Popen) -> None:
-        forced_kill = False
-        with contextlib.suppress(ProcessLookupError):
-            process.send_signal(signal.SIGTERM)
-        try:
-            process.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            forced_kill = True
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=5)
-        deadline = time.monotonic() + 30
-        while True:
-            members, errors = identity_group_members(process.pid)
-            if not members or errors or time.monotonic() >= deadline:
-                break
-            time.sleep(0.01)
-        (tmp_path / f"sglang-{process.pid}.cleanup.json").write_text(
-            json.dumps(
-                {
-                    "pid": process.pid,
-                    "exit_code": process.returncode,
-                    "sigterm_target": process.pid,
-                    "forced_kill": forced_kill,
-                    "remaining_processes": members,
-                    "inspection_errors": errors,
-                },
-                indent=2,
-            )
-            + "\n"
-        )
 
     from transformers import AutoTokenizer
 
@@ -223,7 +267,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             channel_server.read_logs()[-8000:],
         )
     finally:
-        stop_server(process)
+        _stop_server(process, tmp_path)
 
     # Keep the Cache Manager alive while SGLang's HBM prefix tree disappears.
     if channel_server.ssd_cache_path is not None:
@@ -298,7 +342,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                 sum(recovered.get(key, 0) - before_restart.get(key, 0) for key in read_metrics) > 0
             )
     finally:
-        stop_server(process)
+        _stop_server(process, tmp_path)
 
     # A changed model identity must miss even with identical page hashes and the
     # same model, sampling seed, and Cache Manager process.
@@ -331,4 +375,4 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             f"transfer backend {env['ORBITKV_TRANSFER_BACKEND']}" in line for line in registrations
         )
     finally:
-        stop_server(process)
+        _stop_server(process, tmp_path)

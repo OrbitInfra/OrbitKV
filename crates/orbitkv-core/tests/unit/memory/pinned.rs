@@ -104,8 +104,10 @@ fn payload_binding_installs_a_real_shared_memory_policy() {
 
 #[test]
 fn unavailable_numa_node_fails_before_cuda_registration() {
-    let node = std::fs::read_dir("/sys/devices/system/node")
-        .unwrap()
+    let Ok(nodes) = std::fs::read_dir("/sys/devices/system/node") else {
+        return;
+    };
+    let Some(node) = nodes
         .filter_map(|entry| {
             entry
                 .ok()?
@@ -116,8 +118,10 @@ fn unavailable_numa_node_fails_before_cuda_registration() {
                 .ok()
         })
         .max()
-        .unwrap()
-        + 1;
+        .and_then(|node| node.checked_add(1))
+    else {
+        return;
+    };
     assert!(matches!(
         PinnedMemory::allocate(4096, PagePolicy::Regular, NumaNode(node)),
         Err(PinnedMemError::NumaBindFailed(NumaNode(actual), _)) if actual == node

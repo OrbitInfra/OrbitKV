@@ -1733,6 +1733,15 @@ This run establishes an io_uring file route without new underlying-device
 provenance. The frozen raw outcome remains unchanged; scoped acceptance is in
 `/root/orbitkv-artifacts/qwen32b-consumer-execution-independent-review-20261011/REVIEW.md`.
 
+The direct SGLang E2E now treats residual workers, inspection errors and forced
+cleanup as failures instead of only recording them. CPU controls exercise real
+leader/worker shutdown and inherited lease release, including preservation of
+the primary output failure. The invalid-NUMA-node unit returns when sysfs
+topology is unavailable. These test-only changes leave production and installed
+wheel bytes unchanged; the strengthened E2E helper requires a fresh consumer
+gate before runtime acceptance. They do not revise the retained Qwen3-32B
+cohort or close S5 pressure, performance or S3 lifetime qualification.
+
 The requested `Qwen/Qwen3.8-27B` and `deepseek-ai/DeepSeek-V4.1-Flash` belong to
 subsequent model/state qualification: inspect immutable configurations and
 released-engine support before any weights/download or serving launch. Qwen3.8
