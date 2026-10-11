@@ -50,6 +50,25 @@ state require their own released-engine and complete recovery gates. Eight
 available GPUs do not establish physical TP=8 recovery support, and historical
 Qwen3.8-FP8 or DeepSeek-V2 results do not qualify those targets.
 
+The 2026-10-11 preparation freezes the requested current official artifacts:
+
+| Checkpoint | Official revision | Weight files / total bytes | Current scope |
+| --- | --- | --- | --- |
+| [Qwen3.8-27B BF16](https://huggingface.co/Qwen/Qwen3.8-27B/tree/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0) | `1d4bf0f2…` | 18 / 55,563,006,776 | Metadata/config checked; full released-engine recovery unqualified |
+| [Qwen3.8-27B FP8](https://huggingface.co/Qwen/Qwen3.8-27B-FP8/tree/017b9c7af6b5689d5dd426a76e0bc077eb5ca20a) | `017b9c7a…` | 66 / 30,866,866,928 | Metadata/config checked; historical gates do not qualify the current pins |
+| [DeepSeek-V4.1-Flash](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/2cba9e42aa026125f3ed06c6d98c1db82f7ca027) | `2cba9e42…` | 48 / 510,296,708,312 | Metadata/config checked; native topology and complete compressed/auxiliary-state recovery unqualified |
+
+These are whole checkpoint weight-file sizes from the official Hub metadata,
+not runtime GPU-memory estimates. No weight download or model execution is
+established by this preparation. Qwen3.8 has 16 full-attention and 48 GDN layers;
+its parameter count alone does not determine its cache traffic. The current
+vLLM multi-group/recurrent safety guard remains active. DeepSeek's selected
+checkpoint combines FP8 configuration with FP4 experts and requires its own
+engine/kernel/topology checks. Native serving, complete external state recovery
+and a matched native/OrbitKV/LMCache performance comparison need separate results.
+Retained official metadata, exact configs and retrieval hashes are at
+`/root/orbitkv-artifacts/s5-h2d-shapes-latest-models-20261011/model-metadata-1/`.
+
 ## Pretrained checkpoints
 
 The larger-model qualification uses one H20 with approximately 96 GiB of

@@ -715,6 +715,15 @@ pub fn diagnostic_enabled() -> bool {
     *ENABLED && *DIAGNOSTIC_LIMIT > 0
 }
 
+/// The bounded record budget shared by opt-in native diagnostics.
+pub fn diagnostic_event_limit() -> usize {
+    if *ENABLED {
+        *DIAGNOSTIC_LIMIT as usize
+    } else {
+        0
+    }
+}
+
 pub fn record_restore(stage: &'static str, fields: RestoreTimelineFields) {
     if !*ENABLED {
         return;

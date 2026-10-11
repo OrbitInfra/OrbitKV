@@ -19,7 +19,17 @@ def _integer(event: dict, field: str, minimum: int = 0) -> int:
     return value
 
 
-def _validate_shape(event: dict) -> None:
+def _validate_shape(
+    event: dict,
+    *,
+    timing_fields: tuple[str, ...] = (
+        "device",
+        "cpu_submit_ns",
+        "host_drain_ns",
+        "diagnostic_event",
+        "monotonic_ns",
+    ),
+) -> None:
     if event.get("backend") not in {"direct", "kernel"} or event.get("direction") not in {
         "h2d",
         "d2h",
@@ -27,7 +37,7 @@ def _validate_shape(event: dict) -> None:
         raise ValueError("Unknown raw-copy backend/direction")
     if event.get("success") is not True:
         raise ValueError("Unsuccessful raw-copy submission; retain the failure evidence")
-    for field in ("device", "cpu_submit_ns", "host_drain_ns", "diagnostic_event", "monotonic_ns"):
+    for field in timing_fields:
         _integer(event, field)
     descriptors = _integer(event, "descriptors", 1)
     ranges = _integer(event, "dma_ranges", 1)

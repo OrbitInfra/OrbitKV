@@ -1911,8 +1911,33 @@ analysis are at
 Scoped independent outcome acceptance is at
 `/root/orbitkv-artifacts/s5-kda-layout-comparison-outcome-review-20261011/REVIEW.md`.
 
-Next capture engine-local H2D geometry and measure the consumed copy backends
-under matched official-engine inference pressure before changing a default.
+**Engine-local H2D capture implemented; qualification open:** the local Rust
+Restore executor now owns an opt-in bounded capture of its actual sorted H2D
+batches, physical owner identities, granted source allocation bounds and registered
+destination spans. It reuses the production DMA compiler. Per-batch CPU submission
+and the single shared part drain remain distinct; no additional synchronization,
+layer callback or source grant is introduced. JSON is emitted when that executor
+is dropped, before its registered CUDA fields unregister. The strict offline
+parser rejects incomplete, failed, overflowing or inconsistent geometry and
+requires a native CPU replay of each batch through the production DMA compiler.
+Registrations are immutable across the entire executor trace. A footer
+establishes capture coverage, not process cleanup or physical failure drain.
+
+The requested newer model inputs are pinned separately: official Qwen3.8-27B at
+`1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`, Qwen3.8-27B-FP8 at
+`017b9c7af6b5689d5dd426a76e0bc077eb5ca20a`, and DeepSeek-V4.1-Flash at
+`2cba9e42aa026125f3ed06c6d98c1db82f7ca027`. Official metadata/configs and whole
+weight sizes are frozen; this preparation has not downloaded weights or run a
+model. H20 direct Hugging Face access is unavailable, so preparation must use
+the established relay. Qwen3.8 requires attention and GDN state together; the
+released-vLLM multi-group/recurrent rejection stays active. Native model serving,
+complete OrbitKV recovery and performance comparison remain separate gates.
+An older dense-model regression cannot be reported as newer-model support.
+
+Next independently review the H2D capture and final installed artifact, then run
+one bounded structural/byte gate before a matched inference-pressure campaign.
+Continue newer-model preparation with native controls and complete state gates;
+changing a production backend still requires consumed application evidence.
 Separate copy-path observations from TTFT/TPOT/throughput and compare native HBM,
 OrbitKV and LMCache only with equal tokens, memory budgets and independent runs.
 

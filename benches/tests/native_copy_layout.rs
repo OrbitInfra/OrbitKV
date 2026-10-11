@@ -1,9 +1,36 @@
 use orbitkv_core::transfer::CopyDesc;
 
+#[path = "../native_copy_layout/capture.rs"]
+mod capture;
 #[path = "../native_copy_layout/geometry.rs"]
 mod geometry;
 #[path = "../../crates/orbitkv-core/src/transfer/memcpy/ranges.rs"]
 mod ranges;
+
+#[test]
+fn captured_ranges_are_recomputed_with_actual_pitch_and_owners() {
+    use serde_json::json;
+
+    let mut summary = json!({
+        "executors": 1, "batches": 1, "descriptors": 2, "dma_ranges": 2,
+        "traces": [{"header": {"max_pitch": 1, "limit": 100}, "batches": [{
+            "descriptors": 2, "dma_ranges": 2, "copies": [
+                {"device": 65536, "host": 1048832, "host_device": 2097408,
+                 "size": 4096, "device_allocation": 7, "host_registration": 1048576},
+                {"device": 73728, "host": 1057024, "host_device": 2105600,
+                 "size": 4096, "device_allocation": 7, "host_registration": 1048576}
+            ]
+        }]}]
+    });
+    assert!(capture::validate(&summary).is_ok());
+    summary["dma_ranges"] = json!(1);
+    summary["traces"][0]["batches"][0]["dma_ranges"] = json!(1);
+    assert!(capture::validate(&summary).is_err());
+    summary["traces"][0]["header"]["max_pitch"] = json!(8192);
+    assert!(capture::validate(&summary).is_ok());
+    summary["traces"][0]["batches"][0]["copies"][1]["host_registration"] = json!(1056768);
+    assert!(capture::validate(&summary).is_err());
+}
 
 #[test]
 fn representative_shapes_match_all_observed_descriptor_and_range_pairs() {

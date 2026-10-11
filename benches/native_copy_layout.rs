@@ -15,6 +15,8 @@ use serde::Serialize;
 use serde_json::json;
 use uuid::Uuid;
 
+#[path = "native_copy_layout/capture.rs"]
+mod capture;
 #[path = "native_copy_layout/geometry.rs"]
 mod geometry;
 #[path = "../crates/orbitkv-core/src/transfer/memcpy/ranges.rs"]
@@ -342,6 +344,7 @@ fn main() {
     let mut seed = 2026101111;
     let mut samples: usize = 100;
     let mut validate_only = false;
+    let mut local_geometry: Option<PathBuf> = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--output" => output = Some(args.next().expect("output path").into()),
@@ -354,6 +357,9 @@ fn main() {
                     .expect("numeric samples");
             }
             "--validate-layout-only" => validate_only = true,
+            "--validate-local-geometry" => {
+                local_geometry = Some(args.next().expect("geometry path").into());
+            }
             "--bench" => {}
             _ => panic!("unknown argument {arg}"),
         }
@@ -368,6 +374,16 @@ fn main() {
         .create_new(true)
         .open(&output)
         .expect("new output");
+    if let Some(path) = local_geometry {
+        assert!(!validate_only, "select one CPU validation mode");
+        let summary =
+            serde_json::from_reader(std::fs::File::open(path).expect("captured geometry input"))
+                .expect("captured geometry JSON");
+        let receipt = capture::validate(&summary).expect("production compiler verification");
+        writeln!(file, "{receipt}").expect("write compiler receipt");
+        file.flush().expect("flush compiler receipt");
+        return;
+    }
     let mut layouts = geometry::layouts();
     for layout in &layouts {
         let copies = layout.virtual_copies().expect("valid pointer-free layout");

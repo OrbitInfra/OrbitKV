@@ -195,6 +195,55 @@ per-process statistics are preserved at
 independent outcome acceptance is at
 `/root/orbitkv-artifacts/s5-kda-layout-comparison-outcome-review-20261011/REVIEW.md`.
 
+## Engine-local raw H2D capture
+
+Manager save observations do not cover raw restoration performed inside the
+engine process. `LocalRestoreExecutor` captures that actual submission path when
+`ORBITKV_TRACE_TRANSFERS=1` and `ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT` is positive.
+The existing 65,536-unit capture ceiling applies to each executor. Its conservative
+reservation charges two geometry units per descriptor plus one per part; this
+bounds retained descriptors/parts rather than claiming an exact memory-byte cap.
+It is default off.
+The chosen backend, existing device-address sorting, layer-ready events, final
+enqueue notification and physical stream drain stay at their existing boundaries.
+
+Each submitted batch records ordered descriptors, physical device-allocation and
+host-registration identities, mapped host GPU addresses, granted source allocation
+bounds and registered destination spans. A registered tensor span can be smaller
+than its physical CUDA allocation; no full allocation size is inferred. Range
+counts use the same private production DMA compiler and actual maximum pitch.
+CPU submission is recorded per batch; stream waiting is recorded once for the
+whole part, including its layer events. Neither isolates GPU execution time.
+
+The executor retains bounded scalar records and serializes them when it is
+dropped. `local_raw_copy_complete` seals that capture before its fields unregister;
+normal engine/Manager exit, byte correctness and owned-resource postflight must
+be checked independently. Capacity/allocation failure or unfinished/failed parts
+invalidate the capture rather than supplying truncated successful evidence.
+This diagnostic has no instrumentation-overhead or application qualification yet.
+
+After an independently reviewed installed model gate and normal shutdown, parse
+the retained engine log into a new external output:
+
+```bash
+python -m benches.local_restore_shapes \
+  --engine-log /var/tmp/orbitkv-kda/h2d-001/engine.log \
+  --native-fixture /var/tmp/orbitkv-kda/frozen/native-copy-layout \
+  --output /var/tmp/orbitkv-kda/h2d-001/local-h2d.json
+```
+
+The parser requires all opened executors to have matching complete footers,
+contiguous batch/part coverage, source and destination bounds, nonoverlapping
+destinations, exact byte histograms and the declared bounded reservation.
+The frozen native fixture then recomputes every batch's DMA ranges using captured
+addresses, owners and maximum pitch through the production compiler, before any
+CUDA initialization. Scalar-only parsing is explicitly unqualified; the final
+output requires a matching compiler receipt and records the fixture/input hashes.
+Arena/tensor registration spans stay consistent across the entire executor trace.
+Empty managed/codec parts remain visible but do not count as raw H2D geometry. Request
+or source-operation linkage, physical failure drain, pinned NUMA residency and
+native-HBM/OrbitKV/LMCache model performance remain separate qualifications.
+
 ## Current qualification
 
 **Implemented; A100 SM80 local gates pass; independent acceptance open.** The

@@ -11,6 +11,9 @@ use super::layout::{KVCacheGeometry, KVCacheLayout};
 use super::{CopyDesc, KernelBackend, MemcpyBackend, TransferBackend, TransferMode};
 use crate::PayloadArena;
 
+mod trace;
+use trace::LocalCopyTrace;
+
 pub const MAX_PLAN_BYTES: usize = 1024 * 1024;
 pub const MAX_RESTORE_PLAN_BYTES: usize = 32 * MAX_PLAN_BYTES;
 
@@ -313,6 +316,15 @@ pub struct LocalRestoreExecutor {
     backend: Box<dyn TransferBackend>,
     tensors: HashMap<String, LocalTensor>,
     arenas: HashMap<u64, ImportedArena>,
+    trace: Option<LocalCopyTrace>,
+}
+
+impl Drop for LocalRestoreExecutor {
+    fn drop(&mut self) {
+        if let Some(trace) = self.trace.take() {
+            trace.flush();
+        }
+    }
 }
 
 /// CUDA operations in registration and readiness run on a framework thread.
@@ -392,6 +404,14 @@ impl LocalRestoreExecutor {
             TransferMode::Direct => Box::new(MemcpyBackend::new(&context)?),
             TransferMode::Kernel => Box::new(KernelBackend::new(&context)?),
         };
+        let limit = orbitkv_common::timeline::diagnostic_event_limit();
+        let trace = (limit > 0).then(|| {
+            LocalCopyTrace::new(
+                device,
+                MemcpyBackend::new(&context).map(|dma| dma.max_pitch),
+                limit,
+            )
+        });
         Ok(Self {
             context,
             stream,
@@ -399,6 +419,7 @@ impl LocalRestoreExecutor {
             backend,
             tensors: bindings,
             arenas: imported,
+            trace,
         })
     }
 
@@ -524,6 +545,17 @@ impl LocalRestoreExecutor {
                 return Err("overlapping Restore destination ranges".into());
             }
         }
+        if let Some(trace) = self.trace.as_mut() {
+            trace.begin_part(copies.len(), final_part);
+            for (raw, copy) in plan.copies.iter().zip(&copies) {
+                if let (Some(tensor), Some(arena)) = (
+                    self.tensors.get(&raw.layer),
+                    self.arenas.get(&raw.source.arena_id),
+                ) {
+                    trace.record_geometry(raw, copy, tensor, arena.size);
+                }
+            }
+        }
         let mut batches: Vec<(&str, Vec<CopyDesc>)> = Vec::new();
         let mut indices = HashMap::new();
         for (raw, copy) in plan.copies.iter().zip(copies) {
@@ -541,22 +573,40 @@ impl LocalRestoreExecutor {
         let submitted = (|| -> Result<(), String> {
             for (layer, mut copies) in batches {
                 copies.sort_unstable_by_key(|copy| copy.device);
-                #[cfg(feature = "test-hooks")]
-                if !copies.is_empty()
-                    && (crate::test_faults::active("local_restore_dma")
-                        || crate::test_faults::active("local_restore_error"))
-                {
-                    self.backend.h2d(&copies[..1], &self.stream)?;
-                    crate::test_faults::pause_blocking("local_restore_dma");
-                    if crate::test_faults::active("local_restore_error") {
-                        return Err("injected failure after first local Restore enqueue".into());
+                let captured = self
+                    .trace
+                    .as_mut()
+                    .and_then(|trace| trace.begin_batch(&copies, self.backend.name()));
+                let started = captured.map(|_| std::time::Instant::now());
+                let enqueue_result = (|| -> Result<(), String> {
+                    #[cfg(feature = "test-hooks")]
+                    if !copies.is_empty()
+                        && (crate::test_faults::active("local_restore_dma")
+                            || crate::test_faults::active("local_restore_error"))
+                    {
+                        self.backend.h2d(&copies[..1], &self.stream)?;
+                        crate::test_faults::pause_blocking("local_restore_dma");
+                        if crate::test_faults::active("local_restore_error") {
+                            return Err("injected failure after first local Restore enqueue".into());
+                        }
+                        self.backend.h2d(&copies[1..], &self.stream)?;
+                    } else {
+                        self.backend.h2d(&copies, &self.stream)?;
                     }
-                    self.backend.h2d(&copies[1..], &self.stream)?;
-                } else {
+                    #[cfg(not(feature = "test-hooks"))]
                     self.backend.h2d(&copies, &self.stream)?;
+                    Ok(())
+                })();
+                if let (Some(trace), Some(index), Some(started)) =
+                    (self.trace.as_mut(), captured, started)
+                {
+                    trace.finish_batch(
+                        index,
+                        started.elapsed().as_nanos() as u64,
+                        enqueue_result.is_ok(),
+                    );
                 }
-                #[cfg(not(feature = "test-hooks"))]
-                self.backend.h2d(&copies, &self.stream)?;
+                enqueue_result?;
                 if plan.completed_layers.iter().any(|name| name == layer)
                     && let Some(event) = layer_events.remove(layer)
                 {
@@ -582,9 +632,13 @@ impl LocalRestoreExecutor {
         if let Some(submitted_at) = submitted_at {
             *submitted_at = Some(std::time::Instant::now());
         }
+        let drain_started = self.trace.as_ref().map(|_| std::time::Instant::now());
         if let Err(error) = self.stream.synchronize() {
             log::error!("Cannot establish engine-local Restore drain: {error}; terminating engine");
             std::process::abort();
+        }
+        if let (Some(trace), Some(started)) = (self.trace.as_mut(), drain_started) {
+            trace.finish_part(started.elapsed().as_nanos() as u64, submitted.is_ok());
         }
         submitted
     }
