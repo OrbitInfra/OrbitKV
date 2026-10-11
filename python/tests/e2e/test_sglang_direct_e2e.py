@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import importlib.metadata
 import json
 import math
@@ -32,40 +31,58 @@ def _stop_server(process: subprocess.Popen, directory: Path, timeout: float = 30
     errors = []
     inspection_errors = []
     before_forced_kill = []
-    with contextlib.suppress(ProcessLookupError):
-        process.send_signal(signal.SIGTERM)
-    try:
-        process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        forced_kill = True
-        before_forced_kill, inspected = identity_group_members(process.pid)
-        inspection_errors.extend(inspected)
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
-        try:
-            process.wait(timeout=min(timeout, 5))
-        except subprocess.TimeoutExpired:
-            errors.append("SGLang leader did not exit after SIGKILL")
+    members, group_known = [], False
 
-    deadline = time.monotonic() + timeout
-    while True:
-        members, inspected = identity_group_members(process.pid)
-        inspection_errors.extend(inspected)
-        if not members or inspected or time.monotonic() >= deadline:
-            break
-        time.sleep(0.01)
-    if members or inspected:
-        forced_kill = True
-        before_forced_kill.extend(members)
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
-        deadline = time.monotonic() + min(timeout, 5)
+    def wait_for_workers(wait_seconds):
+        deadline = time.monotonic() + wait_seconds
         while True:
-            members, inspected = identity_group_members(process.pid)
+            try:
+                members, inspected = identity_group_members(process.pid)
+            except (OSError, ValueError, IndexError) as error:
+                members, inspected = [], [f"{type(error).__name__}: {error}"]
             inspection_errors.extend(inspected)
-            if not members or inspected or time.monotonic() >= deadline:
-                break
+            if inspected:
+                return members, False
+            if not members or time.monotonic() >= deadline:
+                return members, True
             time.sleep(0.01)
+
+    try:
+        try:
+            process.send_signal(signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError as error:
+            errors.append(f"SIGTERM failed: {type(error).__name__}: {error}")
+        leader_wait_failed = False
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            leader_wait_failed = True
+            errors.append("SGLang normal leader exit timed out")
+        except OSError as error:
+            leader_wait_failed = True
+            errors.append(f"Leader wait failed: {type(error).__name__}: {error}")
+        members, group_known = wait_for_workers(0 if leader_wait_failed else timeout)
+        if leader_wait_failed or members or not group_known:
+            forced_kill = True
+            before_forced_kill = members
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except OSError as error:
+                errors.append(f"Group SIGKILL failed: {type(error).__name__}: {error}")
+            try:
+                process.wait(timeout=min(timeout, 5))
+            except subprocess.TimeoutExpired:
+                errors.append("SGLang leader did not exit after SIGKILL")
+            except OSError as error:
+                errors.append(f"Forced leader wait failed: {type(error).__name__}: {error}")
+            members, group_known = wait_for_workers(min(timeout, 5))
+    except BaseException as error:
+        group_known = False
+        errors.append(f"Unexpected cleanup error: {type(error).__name__}: {error}")
 
     if forced_kill:
         errors.append("SGLang required forced process-group cleanup")
@@ -75,6 +92,8 @@ def _stop_server(process: subprocess.Popen, directory: Path, timeout: float = 30
         errors.append("SGLang workers remain after cleanup")
     if inspection_errors:
         errors.append("SGLang process-group inspection failed")
+    if not group_known:
+        errors.append("SGLang process-group ownership is unknown")
     cleanup = {
         "pid": process.pid,
         "exit_code": process.returncode,
@@ -82,6 +101,8 @@ def _stop_server(process: subprocess.Popen, directory: Path, timeout: float = 30
         "forced_kill": forced_kill,
         "before_forced_kill": before_forced_kill,
         "remaining_processes": members,
+        "process_group_known": group_known,
+        "reaped": process.returncode is not None,
         "inspection_errors": inspection_errors,
         "errors": errors,
         "primary_failure": (

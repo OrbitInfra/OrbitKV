@@ -85,8 +85,9 @@ This gate must collect and run without torch, vLLM, CUDA, external models, or a 
 `test_sglang_shutdown.py` uses real CPU parent/worker processes and an inherited
 file lock to protect the direct SGLang E2E cleanup contract. The E2E sends normal
 SIGTERM to the service leader, waits for the owned group and fails on nonzero
-exit, inspection errors or forced cleanup of residual workers. Cleanup also
-preserves any original workload failure. These controls do not establish GPU
+exit, inspection errors or forced cleanup of residual workers. Signal/wait errors
+and unknown group ownership are recorded as failures, and cleanup preserves any
+original workload failure. These controls do not establish GPU
 worker or physical CUDA IPC lifetime qualification.
 
 Shared client ownership is tested in Rust under

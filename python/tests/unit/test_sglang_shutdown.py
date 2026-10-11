@@ -164,3 +164,62 @@ def test_sglang_shutdown_preserves_the_foreground_failure(owned_server, tmp_path
     assert cleanup["primary_failure"] == {"type": "ValueError", "message": str(primary)}
     with lock_path.open("a") as probe:
         fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+@pytest.mark.parametrize(
+    ("owned_server", "operation"),
+    [
+        ("clean", "signal"),
+        ("clean", "wait"),
+        ("orphan", "group_kill"),
+        ("orphan", "inspection"),
+    ],
+    indirect=["owned_server"],
+)
+def test_sglang_shutdown_records_early_operation_errors(
+    owned_server, operation, tmp_path, monkeypatch
+):
+    process, child_pid, lock_path, _ = owned_server
+    primary = ValueError("foreground output oracle failed")
+
+    def deny_operation(*args, **kwargs):
+        raise PermissionError(f"denied {operation}")
+
+    with monkeypatch.context() as patch:
+        if operation == "group_kill":
+            patch.setattr(sglang_direct.os, "killpg", deny_operation)
+        elif operation == "inspection":
+            patch.setattr(sglang_direct, "identity_group_members", deny_operation)
+        else:
+            patch.setattr(
+                process, "send_signal" if operation == "signal" else "wait", deny_operation
+            )
+        with pytest.raises(ValueError, match="foreground output oracle failed") as failed:
+            try:
+                raise primary
+            finally:
+                sglang_direct._stop_server(process, tmp_path, timeout=0.2)
+    assert failed.value is primary and isinstance(primary.__cause__, AssertionError)
+    cleanup = json.loads((tmp_path / f"sglang-{process.pid}.cleanup.json").read_text())
+    reported_errors = cleanup["errors"] + cleanup["inspection_errors"]
+    assert any(f"denied {operation}" in error for error in reported_errors)
+    assert cleanup["forced_kill"]
+    assert cleanup["process_group_known"] == (operation != "inspection")
+    assert cleanup["primary_failure"] == {"type": "ValueError", "message": str(primary)}
+    if operation == "group_kill":
+        assert any(member["pid"] == child_pid for member in cleanup["remaining_processes"])
+        with lock_path.open("a") as probe, pytest.raises(BlockingIOError):
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    else:
+        assert cleanup["reaped"] == (operation != "wait")
+        if operation == "inspection":
+            assert "SGLang process-group ownership is unknown" in cleanup["errors"]
+        with lock_path.open("a") as probe:
+            deadline = time.monotonic() + 5
+            while True:
+                try:
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    assert time.monotonic() < deadline, "signalled worker still holds its lease"
+                    time.sleep(0.01)
