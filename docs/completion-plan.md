@@ -1845,6 +1845,18 @@ completion remain open. Original invalid attempts remain unchanged. Exact inputs
 all raw values, normal cleanup and the independent report are retained at
 `/root/orbitkv-artifacts/s5-kda-native-attribution-r3-outcome-independent-review-20261011/REVIEW.md`.
 
+The next bounded KDA substage implements actual Manager worker raw-copy shape
+diagnostics. It reuses the fixed-capacity timeline, records descriptor byte
+histograms and the existing legal DMA compiler's range count, and separates CPU
+backend submission from host stream waiting. The default remains off; there is
+no change to CUDA shaders, backend selection, descriptor ordering or physical
+drain. Successful flush receipts and strict offline record-count validation
+reject partial/overflow/failed evidence. Engine-local asynchronous raw restores
+remain outside this observation scope. Software and actual model/overhead gates
+require independent acceptance before any performance conclusion or next kernel
+candidate. The task definition precedes implementation at
+`/root/orbitkv-artifacts/s5-kda-real-copy-shapes-20261011/definition-1/`.
+
 The requested `Qwen/Qwen3.8-27B` and `deepseek-ai/DeepSeek-V4.1-Flash` belong to
 subsequent model/state qualification: inspect immutable configurations and
 released-engine support before any weights/download or serving launch. Qwen3.8

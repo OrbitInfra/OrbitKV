@@ -1,4 +1,4 @@
-use crate::transfer::finish_gpu_transfer;
+use crate::transfer::copy_and_drain;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Weak, mpsc as std_mpsc};
@@ -719,9 +719,12 @@ fn worker_loop(
                         );
                     }
                     gpu_cost.submitted();
-                    finish_gpu_transfer(
+                    copy_and_drain(
+                        runtime.backend.as_ref(),
                         &runtime.stream,
-                        runtime.backend.h2d(&copies, &runtime.stream),
+                        &copies,
+                        true,
+                        runtime.max_dma_pitch,
                     )?;
                     Ok(bytes + decoded_bytes)
                 })();
@@ -1151,8 +1154,7 @@ fn process_save_task(
         observation,
     );
     observation.submitted();
-    let submitted = backend.d2h(&copies, stream);
-    finish_gpu_transfer(stream, submitted)?;
+    copy_and_drain(backend, stream, &copies, false, runtime.max_dma_pitch)?;
 
     let elapsed = start.elapsed();
     let bandwidth_gbps = if elapsed.as_secs_f64() > 0.0 {

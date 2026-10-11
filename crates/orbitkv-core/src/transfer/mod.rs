@@ -93,6 +93,61 @@ pub(crate) fn finish_gpu_transfer(
     submitted.map_err(crate::EngineError::Storage)
 }
 
+fn raw_copy_shape(
+    copies: &[CopyDesc],
+    max_pitch: usize,
+) -> orbitkv_common::timeline::RawCopyTimelineFields {
+    let mut fields = orbitkv_common::timeline::RawCopyTimelineFields {
+        descriptors: copies.len() as u64,
+        dma_ranges: memcpy::dma_copies(copies, max_pitch).count() as u64,
+        min_bytes: copies.first().map_or(0, |copy| copy.size as u64),
+        ..Default::default()
+    };
+    const LIMITS: [usize; 7] = [256, 4096, 16384, 65536, 262144, 1048576, 4194304];
+    for copy in copies {
+        let size = copy.size as u64;
+        fields.bytes = fields.bytes.saturating_add(size);
+        fields.zero_descriptors += u64::from(size == 0);
+        fields.min_bytes = fields.min_bytes.min(size);
+        fields.max_bytes = fields.max_bytes.max(size);
+        let bucket = LIMITS.partition_point(|limit| copy.size > *limit);
+        fields.size_histogram[bucket] += 1;
+    }
+    fields
+}
+
+/// Manager raw batches keep their original enqueue and physical drain boundary.
+pub(crate) fn copy_and_drain(
+    backend: &dyn TransferBackend,
+    stream: &Arc<CudaStream>,
+    copies: &[CopyDesc],
+    to_device: bool,
+    max_pitch: usize,
+) -> Result<(), crate::EngineError> {
+    let diagnostic = orbitkv_common::timeline::diagnostic_enabled() && !copies.is_empty();
+    let started = diagnostic.then(std::time::Instant::now);
+    let submitted = if to_device {
+        backend.h2d(copies, stream)
+    } else {
+        backend.d2h(copies, stream)
+    };
+    let cpu_submit_ns = started.map(|started| started.elapsed().as_nanos() as u64);
+    let drain_started = diagnostic.then(std::time::Instant::now);
+    let result = finish_gpu_transfer(stream, submitted);
+    if let (Some(cpu_submit_ns), Some(drain_started)) = (cpu_submit_ns, drain_started) {
+        let host_drain_ns = drain_started.elapsed().as_nanos() as u64;
+        let mut fields = raw_copy_shape(copies, max_pitch);
+        fields.device = stream.context().ordinal() as u64;
+        fields.backend = backend.name();
+        fields.direction = if to_device { "h2d" } else { "d2h" };
+        fields.cpu_submit_ns = cpu_submit_ns;
+        fields.host_drain_ns = host_drain_ns;
+        fields.success = result.is_ok();
+        orbitkv_common::timeline::record_raw_copy(fields);
+    }
+    result
+}
+
 #[cfg(test)]
 #[path = "../../tests/unit/transfer/mod.rs"]
 mod tests;

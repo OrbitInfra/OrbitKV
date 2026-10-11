@@ -79,6 +79,43 @@ native executable, process identity and consumed library maps. NVML numeric PID
 visibility is a separate observation; equal PID namespaces are not assumed.
 This fixture targets a non-MIG GPU and does not qualify MIG device identity.
 
+## Consumed Manager raw-copy shapes
+
+Manager worker diagnostics record the actual validated raw-copy descriptors
+after their existing physical stream drain. Enable both
+`ORBITKV_TRACE_TRANSFERS=1` and a positive
+`ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT` (at most 65,536). These observations share the
+existing bounded buffer with other diagnostic stages and serialize at normal
+Manager shutdown. Default execution adds no diagnostic clocks, descriptor scan
+or event allocation. Empty batches still drain but emit no raw-copy sample.
+
+Each `manager_raw_copy_complete` record contains the backend/direction/device,
+bytes, fragment histogram, legal compiled DMA ranges, CPU backend submission
+and host stream waiting. The histogram's upper bounds are 256 B, 4 KiB, 16 KiB,
+64 KiB, 256 KiB, 1 MiB and 4 MiB, followed by larger fragments. DMA range counts
+use the actual compiler and device pitch limit, even for a kernel batch; they
+do not count that kernel's CUDA launches. No addresses or extra source owners
+are recorded. Partial enqueue errors still drain before returning failure.
+
+After independently verifying normal Manager exit and owned-process cleanup,
+parse its finalized log into a new external artifact:
+
+```bash
+python -m benches.raw_copy_shapes \
+  --manager-log /var/tmp/orbitkv-kda/model-001/manager.log \
+  --output /var/tmp/orbitkv-kda/model-001/raw-copy-shapes.json
+```
+
+The parser requires successful flush coverage, exact buffered record counts and
+consistent shapes; missing records, overflow, late records and failed submissions
+invalidate evidence. CPU submission and host waiting are not device-event time,
+bandwidth or request latency. Stream waiting can include earlier queued work.
+The summary includes cold batches and does not infer request linkage or a
+confidence interval. Engine-local asynchronous raw restores are outside this
+Manager-only scope; do not change their layer events or add synchronization to
+obtain these records. Software review and matched model/overhead gates remain
+open before selecting a performance candidate.
+
 ## Current qualification
 
 **Implemented; A100 SM80 local gates pass; independent acceptance open.** The

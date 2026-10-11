@@ -2,8 +2,52 @@ use std::sync::Arc;
 
 use super::{
     BufferedTimeline, DiagnosticEvent, DiagnosticFields, FlushSummary, QueryControlEvent,
-    RestoreEvent, RestoreTimelineFields,
+    RawCopyEvent, RawCopyTimelineFields, RestoreEvent, RestoreTimelineFields,
 };
+
+#[test]
+fn raw_copy_event_is_fixed_bounded_and_preserves_shape_and_cpu_boundaries() {
+    assert!(std::mem::size_of::<RawCopyEvent>() <= std::mem::size_of::<super::QueryPathEvent>());
+    let event = RawCopyEvent {
+        index: 0,
+        pid: 11,
+        monotonic_ns: 13,
+        fields: RawCopyTimelineFields {
+            device: 7,
+            backend: "direct",
+            direction: "d2h",
+            bytes: 8192,
+            descriptors: 2,
+            dma_ranges: 1,
+            min_bytes: 4096,
+            max_bytes: 4096,
+            size_histogram: [0, 2, 0, 0, 0, 0, 0, 0],
+            cpu_submit_ns: 17,
+            host_drain_ns: 19,
+            success: true,
+            ..Default::default()
+        },
+    };
+    let expected = serde_json::json!({
+        "stage": "manager_raw_copy_complete", "diagnostic_event": 0,
+        "pid": 11, "monotonic_ns": 13, "device": 7,
+        "backend": "direct", "direction": "d2h", "bytes": 8192,
+        "descriptors": 2, "dma_ranges": 1, "zero_descriptors": 0,
+        "min_bytes": 4096, "max_bytes": 4096,
+        "size_histogram": [0, 2, 0, 0, 0, 0, 0, 0],
+        "cpu_submit_ns": 17, "host_drain_ns": 19, "success": true,
+    });
+    assert_eq!(super::raw_copy_event_json(&event), expected);
+    let timeline = BufferedTimeline::start(1).unwrap();
+    timeline.record_raw_copy(event.fields);
+    timeline.record_diagnostic("overflow", DiagnosticFields::default());
+    let mut records = Vec::new();
+    let summary = timeline.flush_with(|event| records.push(event)).unwrap();
+    assert!(summary.overflow);
+    assert_eq!(records[0]["stage"], "manager_raw_copy_complete");
+    assert_eq!(records[1]["stage"], "diagnostic_timeline_limit");
+    assert_eq!(super::diagnostic_complete_event(&summary)["reserved"], 1);
+}
 
 #[test]
 fn monotonic_clock_advances() {
