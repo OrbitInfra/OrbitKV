@@ -67,9 +67,10 @@ includes packing, upload and driver calls; waiting measures the host's stream
 synchronization. The existing outer submission-to-drain boundary remains, with
 the added clocks' overhead included. These fields do not measure isolated GPU
 execution, and historical totals must not be relabelled as stage timings.
-Source/destination holds and partial-submission drain are unchanged. Exact H20
-native attribution and separately queued production-shader event timing require
-their own frozen input/review and byte gates before selecting another candidate.
+Source/destination holds and partial-submission drain are unchanged. The bounded
+H20 CPU-attribution result below is accepted; separately queued production-shader
+event timing and actual model layouts require their own frozen input/review and
+byte gates before selecting another candidate.
 
 The native fixture also creates a new `*.device.json` sidecar from its actual
 CUDA context UUID, ordinal and PID before backend initialization, and repeats
@@ -162,6 +163,34 @@ values remain at `/root/orbitkv-artifacts/s4-readv-kda-20261008/`, mirrored at
 [SSD performance](ssd-performance.md) points the next investigation at existing
 SSD preparation and waiting. Rejected attempts do not change kernel defaults
 or establish an inference speedup.
+
+## H20 native CPU attribution (2026-10-11)
+
+**Independently accepted within the native fixture; no candidate promoted.**
+Exact `d001b4e2` consumes the production Rust backends and shader on H20 SM90.
+Three independent processes retain 102 case/direction rows and 20,400 backend
+submissions, with full byte/source/guard checks before each backend's warmup.
+All native, guardian, controller and SSH exits are zero and reaped without forced
+cleanup. Actual context UUID, executable and mapped runtime inputs match the
+freeze; final GPU memory/processes are empty and the lease is free. Numeric
+NVML PID visibility is recorded separately and does not prove PID namespace
+mapping. Earlier invalid attempts and the rejected observation guard are retained.
+
+The reversed synthetic H2D fixture with 4096 4 KiB fragments spends about 75% of
+DMA time in CPU submission; its ascending counterpart spends about 6%. These
+fixtures call the backends directly with synthetic owner IDs. Production worker
+and local descriptors already sort by device address. Capture actual recovery
+layouts and consume existing raw-copy cost observations, including compiled DMA
+range counts, before selecting a candidate; do not add duplicate sorting.
+
+Statistics use every sample and type7 per-run quantiles. Three-run observed
+min/max ranges are descriptive, not confidence intervals. CPU submission includes
+packing, upload and driver work; host synchronization is not device-only time or
+bandwidth. Byte controls do not run on every timed repetition. Physical pinned
+NUMA residency, transfer faults, compute contention, model benefit and S2/S5/S3
+completion remain unqualified. The full independent result and verified raw-data
+references are external at
+`/root/orbitkv-artifacts/s5-kda-native-attribution-r3-outcome-independent-review-20261011/REVIEW.md`.
 
 ## Consumed follow-up requirements
 

@@ -1794,7 +1794,7 @@ The sealed review is at
 Earlier uncommitted source and `/tmp` gate-record loss has unknown cause;
 the missing original source hash/results are not reused to qualify this source.
 
-**KDA native-copy attribution implemented; runtime qualification open:** the
+**KDA native-copy CPU attribution accepted; application qualification open:** the
 maintained `benches/native_kernel_copy.rs` separates CPU backend submission from
 host stream-synchronization waiting while retaining its outer total timer and
 existing full-byte/source/guard controls. Physical drain still precedes propagation
@@ -1803,8 +1803,9 @@ are unchanged. These CPU boundaries include additional clock overhead and cannot
 be labelled isolated device execution or request latency. The bounded KDA task
 contract is external at
 `/root/orbitkv-artifacts/s5-kda-attribution-preparation-20261011/`.
-Exact source/binary/launch review and H20 byte/timing gates remain required; no
-new kernel candidate, hardware campaign or support qualification is claimed.
+The exact source/binary and bounded H20 collection are independently accepted
+within the native fixture scope below. No new production kernel candidate or
+support qualification is claimed.
 Sequential isolated-target CUDA 13 native-fixture build and targeted Clippy
 (`-D warnings`), Rust format, diff and experiment-output checks exit zero in
 `/root/orbitkv-artifacts/s5-kda-attribution-preparation-20261011/implementation-gates-1/`.
@@ -1817,9 +1818,32 @@ the owned process. Neither partial timing output qualifies performance. The
 original failing NVML snapshot was not serialized, so its namespace/timing cause
 is not established. Both immutable outcomes and normal/forced cleanup distinctions
 are retained in the external task directory. The fixture now records its actual
-CUDA context UUID in a new device-identity sidecar and every row. This observation
-repair requires fresh software and launch review before another hardware gate;
-production shaders, owners and defaults remain unchanged.
+CUDA context UUID in a new device-identity sidecar and every row. The observation
+repair passes fresh software and launch review; production shaders, owners and
+defaults remain unchanged.
+
+The new `d001b4e2` H20 SM90 collection is independently accepted for native CPU
+attribution: three processes, 102 case/direction rows and 20,400 timed backend
+submissions. Each backend/direction retains its full-byte/source/guard check
+before warmup; the check does not run on every timed repetition. All native,
+guardian, controller and SSH exits are zero and reaped, with no forced cleanup.
+Actual context UUID and mapped runtime inputs match the freeze; the final GPU
+is empty and the lease is free. Independent type7 statistics and sample-wise CPU
+fractions match all raw data. The three-run observed range is not a confidence
+interval. CPU submission includes upload/driver work, and synchronization waiting
+is not isolated device duration or bandwidth.
+
+The reversed synthetic H2D fixture with 4096 4 KiB fragments spends about 75% of
+DMA time in CPU submission, versus about 6% for its ascending counterpart.
+Production worker and local descriptors already sort by device address; the
+native fixture calls the backends directly with synthetic owner IDs. This is not
+evidence to add duplicate sorting or change the backend default. Next consume
+actual recovery layouts and existing raw-copy cost observations, including
+compiled DMA range counts, before another KDA candidate. Model contention,
+device-event timing, physical pinned NUMA residency, transfer faults and S2/S5/S3
+completion remain open. Original invalid attempts remain unchanged. Exact inputs,
+all raw values, normal cleanup and the independent report are retained at
+`/root/orbitkv-artifacts/s5-kda-native-attribution-r3-outcome-independent-review-20261011/REVIEW.md`.
 
 The requested `Qwen/Qwen3.8-27B` and `deepseek-ai/DeepSeek-V4.1-Flash` belong to
 subsequent model/state qualification: inspect immutable configurations and
