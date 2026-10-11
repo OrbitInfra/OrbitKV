@@ -141,6 +141,11 @@ class VLLMServer:
         if self.orbitkv_port is not None:
             env["ORBITKV_PORT"] = str(self.orbitkv_port)
         env.update(self.env_overrides)
+        import_cwd = os.getcwd()
+        env["PYTHONPATH"] = os.pathsep.join(
+            entry if os.path.isabs(entry) else os.path.join(import_cwd, entry)
+            for entry in env["PYTHONPATH"].split(os.pathsep)
+        )
 
         # Resolve vllm binary from the current Python environment's bin dir
         import sys
@@ -223,6 +228,7 @@ class VLLMServer:
             self.log_handle = open(self.log_file, "w")
             self.process = subprocess.Popen(
                 cmd,
+                cwd=PYTHON_ROOT.parent,
                 stdout=self.log_handle,
                 stderr=subprocess.STDOUT,
                 env=env,
@@ -232,6 +238,7 @@ class VLLMServer:
         else:
             self.process = subprocess.Popen(
                 cmd,
+                cwd=PYTHON_ROOT.parent,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 env=env,

@@ -1913,15 +1913,17 @@ Scoped independent outcome acceptance is at
 
 **Engine-local H2D capture implemented; qualification open:** the local Rust
 Restore executor now owns an opt-in bounded capture of its actual sorted H2D
-batches, physical owner identities, granted source allocation bounds and registered
+batches, retained registration/owner tags, granted source allocation bounds and registered
 destination spans. It reuses the production DMA compiler. Per-batch CPU submission
 and the single shared part drain remain distinct; no additional synchronization,
 layer callback or source grant is introduced. JSON is emitted when that executor
 is dropped, before its registered CUDA fields unregister. The strict offline
 parser rejects incomplete, failed, overflowing or inconsistent geometry and
 requires a native CPU replay of each batch through the production DMA compiler.
-Registrations are immutable across the entire executor trace. A footer
-establishes capture coverage, not process cleanup or physical failure drain.
+Registrations are immutable across the entire executor trace. Device owner tags
+are existing registered tensor/view addresses, not independently queried complete
+CUDA allocation bases, extents or distinct allocation counts. A footer establishes
+capture coverage, not process cleanup or physical failure drain.
 
 The requested newer model inputs are pinned separately: official Qwen3.8-27B at
 `1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`, Qwen3.8-27B-FP8 at
@@ -1934,8 +1936,33 @@ released-vLLM multi-group/recurrent rejection stays active. Native model serving
 complete OrbitKV recovery and performance comparison remain separate gates.
 An older dense-model regression cannot be reported as newer-model support.
 
-Next independently review the H2D capture and final installed artifact, then run
-one bounded structural/byte gate before a matched inference-pressure campaign.
+The exact `9a4c8b4b` capture source has independent CPU/software acceptance, and
+its complete CUDA 13 wheel passes isolated import and installed ELF-closure
+checks. The single independently executed H20 installed pilot remains
+`INVALID_FAIL_STOP`: all twelve native-control requests complete, but the
+OrbitKV child imports the source-only package before any H2D or restart restore.
+Python's module launcher inserts the inherited `harness/python` working directory
+ahead of the installed-first PYTHONPATH. Guardian/SSH exit 1 and are waited/reaped;
+final GPU/process ownership is empty. Official internal force-kill diagnostics
+remain retained and do not establish fault or IPC lifetime qualification.
+The failed cohort and complete input/wait receipts are preserved externally at
+`/root/orbitkv-artifacts/s5-h2d-shapes-latest-models-20261011/cohort-1/` and
+`/root/orbitkv-artifacts/s5-h2d-capture-independent-execution-20261011/`.
+
+The test helper now starts both logged and unlogged vLLM children from the
+parent of the Python source directory. It interprets relative PYTHONPATH entries
+against the original caller directory after environment overrides, preserving
+search order, empty-entry meaning and absolute path text. Twelve real CPU
+module-child controls cover these boundaries, source-only use and symlink/parent
+components; the source-only gate is 382 passed/1 skipped. Independent review
+accepted the complete invalid-run evidence and rejected the intermediate helper
+because four relative-path controls lost installed-package precedence; that
+rejection and the consumed negative controls remain archived. Production code, wheel
+and the invalid run are unchanged; no retry/replacement or performance campaign
+was launched. Independently review this helper correction and the invalid outcome,
+then freeze a separate installed structural task that verifies the exact child
+module/cwd/import boundary before model admission. Actual H2D geometry and the
+matched inference-pressure gate remain open.
 Continue newer-model preparation with native controls and complete state gates;
 changing a production backend still requires consumed application evidence.
 Separate copy-path observations from TTFT/TPOT/throughput and compare native HBM,

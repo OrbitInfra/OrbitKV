@@ -207,11 +207,14 @@ It is default off.
 The chosen backend, existing device-address sorting, layer-ready events, final
 enqueue notification and physical stream drain stay at their existing boundaries.
 
-Each submitted batch records ordered descriptors, physical device-allocation and
-host-registration identities, mapped host GPU addresses, granted source allocation
-bounds and registered destination spans. A registered tensor span can be smaller
-than its physical CUDA allocation; no full allocation size is inferred. Range
-counts use the same private production DMA compiler and actual maximum pitch.
+Each submitted batch records ordered descriptors, the existing CopyDesc device
+owner and host-registration tags, mapped host GPU addresses, granted source
+allocation bounds and registered destination spans. The device owner tag is the
+retained registered tensor/view address; it is not a driver query of the complete
+CUDA allocation base. A registered tensor span can be smaller than its physical
+CUDA allocation, so neither full allocation size nor distinct physical allocation
+count is inferred. Range counts use the same private production DMA compiler and
+actual maximum pitch.
 CPU submission is recorded per batch; stream waiting is recorded once for the
 whole part, including its layer events. Neither isolates GPU execution time.
 
@@ -221,6 +224,21 @@ normal engine/Manager exit, byte correctness and owned-resource postflight must
 be checked independently. Capacity/allocation failure or unfinished/failed parts
 invalidate the capture rather than supplying truncated successful evidence.
 This diagnostic has no instrumentation-overhead or application qualification yet.
+
+The first installed H20 dense structural pilot is `INVALID_FAIL_STOP`. Native
+control requests finish, but the OrbitKV child starts from the source package
+directory and shadows the installed wheel before any H2D submission. The test
+helper correction uses a neutral parent working directory on both launch paths;
+relative PYTHONPATH entries are interpreted against the caller directory after
+environment overrides, without changing explicit search order or absolute path
+text. Real CPU module-child controls cover installed/source precedence, relative
+entries, overrides, empty entries and symlink/parent components. Independent
+review accepted the failure evidence and rejected an intermediate correction
+that changed relative-path meaning; its controls and rejection remain retained.
+The whole failed run, warnings and normal final resource postflight are retained.
+There is no accepted engine-local H2D geometry or new performance result from
+that pilot; a separately reviewed installed task remains necessary. See the
+[S5.5 execution record](completion-plan.md#s55--deployment-matrix-and-upstream-maintenance).
 
 After an independently reviewed installed model gate and normal shutdown, parse
 the retained engine log into a new external output:
