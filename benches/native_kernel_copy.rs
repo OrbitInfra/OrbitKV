@@ -114,15 +114,27 @@ fn cases() -> Vec<Case> {
     cases
 }
 
-fn submit(backend: &dyn TransferBackend, copies: &[CopyDesc], stream: &Arc<CudaStream>, h2d: bool) {
+fn submit(
+    backend: &dyn TransferBackend,
+    copies: &[CopyDesc],
+    stream: &Arc<CudaStream>,
+    h2d: bool,
+) -> (f64, f64) {
+    let started = Instant::now();
     let result = if h2d {
         backend.h2d(copies, stream)
     } else {
         backend.d2h(copies, stream)
     };
+    let submitted = Instant::now();
     // Even a partial submission error cannot release either allocation early.
     stream.synchronize().expect("physical stream drain");
+    let drained = Instant::now();
     result.expect("native submission");
+    (
+        submitted.duration_since(started).as_secs_f64() * 1000.0,
+        drained.duration_since(submitted).as_secs_f64() * 1000.0,
+    )
 }
 
 fn main() {
@@ -227,6 +239,8 @@ fn main() {
         }
         for h2d in [true, false] {
             let mut timings = [Vec::new(), Vec::new()];
+            let mut submissions = [Vec::new(), Vec::new()];
+            let mut waits = [Vec::new(), Vec::new()];
             for (id, backend) in backends.iter().enumerate() {
                 let (source, destination, result) = if h2d {
                     (&pattern, vec![0xCD; total], &expected)
@@ -271,13 +285,17 @@ fn main() {
                     submit(*backend, &copies, &stream, h2d);
                 }
                 timings[id].reserve(samples);
+                submissions[id].reserve(samples);
+                waits[id].reserve(samples);
             }
             for sample in 0..samples {
                 let order = if sample % 4 < 2 { [0, 1] } else { [1, 0] };
                 for id in order {
                     let started = Instant::now();
-                    submit(backends[id], &copies, &stream, h2d);
+                    let (submission, wait) = submit(backends[id], &copies, &stream, h2d);
                     timings[id].push(started.elapsed().as_secs_f64() * 1000.0);
+                    submissions[id].push(submission);
+                    waits[id].push(wait);
                 }
             }
             let row = json!({
@@ -285,7 +303,11 @@ fn main() {
                 "sizes": case.sizes, "descriptors": copies.len(), "seed": seed,
                 "warmup": 5, "samples": samples, "bytes": case.sizes.iter().sum::<usize>(),
                 "byte_source_guard_oracle": "passed", "kernel_submit_to_drain_ms": timings[0],
-                "dma_submit_to_drain_ms": timings[1], "scope": "native batch mechanics, no inference latency claim"
+                "dma_submit_to_drain_ms": timings[1],
+                "kernel_cpu_submission_ms": submissions[0], "kernel_stream_wait_ms": waits[0],
+                "dma_cpu_submission_ms": submissions[1], "dma_stream_wait_ms": waits[1],
+                "scope": "Native batch CPU wall time with attribution clocks; no inference latency claim",
+                "attribution_scope": "CPU submission includes packing, upload and driver calls; stream wait is host synchronization waiting, not isolated GPU duration. Total retains the outer call-to-return boundary and includes clock overhead."
             });
             writeln!(file, "{row}").expect("write evidence");
             file.flush().expect("flush evidence");

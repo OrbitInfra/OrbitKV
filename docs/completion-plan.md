@@ -1786,8 +1786,29 @@ The corrected source passes 433 benchmark tests and source-only Python
 (370 passed, one skipped), Ruff/format, experiment-output and diff checks in
 `/root/orbitkv-artifacts/s5-observation-timing-20261011/ownership-remediation-3/`.
 Both earlier test-fixture failures are retained separately; they are not passes.
+Independent rereview accepts exact `73de36f6` for CPU measurement software only,
+including 126 additional live/offline/backend and actual observer controls;
+no P1/P2 remains. It authorizes no hardware launch or performance promotion.
+The sealed review is at
+`/root/orbitkv-artifacts/s5-observation-timing-ownership-rereview-20261011/`.
 Earlier uncommitted source and `/tmp` gate-record loss has unknown cause;
 the missing original source hash/results are not reused to qualify this source.
+
+**KDA native-copy attribution implemented; runtime qualification open:** the
+maintained `benches/native_kernel_copy.rs` separates CPU backend submission from
+host stream-synchronization waiting while retaining its outer total timer and
+existing full-byte/source/guard controls. Physical drain still precedes propagation
+of partial-submission errors. Production shader, native owners and backend defaults
+are unchanged. These CPU boundaries include additional clock overhead and cannot
+be labelled isolated device execution or request latency. The bounded KDA task
+contract is external at
+`/root/orbitkv-artifacts/s5-kda-attribution-preparation-20261011/`.
+Exact source/binary/launch review and H20 byte/timing gates remain required; no
+new kernel candidate, hardware campaign or support qualification is claimed.
+Sequential isolated-target CUDA 13 native-fixture build and targeted Clippy
+(`-D warnings`), Rust format, diff and experiment-output checks exit zero in
+`/root/orbitkv-artifacts/s5-kda-attribution-preparation-20261011/implementation-gates-1/`.
+No CUDA runtime executes in those build/check gates.
 
 The requested `Qwen/Qwen3.8-27B` and `deepseek-ai/DeepSeek-V4.1-Flash` belong to
 subsequent model/state qualification: inspect immutable configurations and

@@ -61,6 +61,16 @@ When comparing worktrees, use isolated Cargo target directories and verify the
 CUDA source embedded in the resulting binary; build-cache reuse alone does not
 prove the intended shader was consumed. Keep GPU measurements sequential.
 
+The maintained native fixture also retains `kernel_cpu_submission_ms` and
+`dma_cpu_submission_ms` beside their `*_stream_wait_ms` arrays. CPU submission
+includes packing, upload and driver calls; waiting measures the host's stream
+synchronization. The existing outer submission-to-drain boundary remains, with
+the added clocks' overhead included. These fields do not measure isolated GPU
+execution, and historical totals must not be relabelled as stage timings.
+Source/destination holds and partial-submission drain are unchanged. Exact H20
+native attribution and separately queued production-shader event timing require
+their own frozen input/review and byte gates before selecting another candidate.
+
 ## Current qualification
 
 **Implemented; A100 SM80 local gates pass; independent acceptance open.** The
