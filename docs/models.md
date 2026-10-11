@@ -69,6 +69,17 @@ and a matched native/OrbitKV/LMCache performance comparison need separate result
 Retained official metadata, exact configs and retrieval hashes are at
 `/root/orbitkv-artifacts/s5-h2d-shapes-latest-models-20261011/model-metadata-1/`.
 
+Complete input-copy definitions are also prepared for the two Qwen3.8 variants:
+32 BF16 files (55,586,114,863 bytes) and 81 FP8 files (30,890,049,597 bytes),
+including tokenizer/template, configuration and license files. The definitions
+require official LFS SHA256 or Git-blob SHA1 and matching sender/receiver SHA256
+before publishing each file. The official empty FP8 checksum file remains in
+the input set. This is prepared copy methodology, not a completed transfer or
+model execution. Definitions are preserved under `qwen38-bf16-inputs-1/` and
+`qwen38-fp8-inputs-1/` in the same external artifact root. Complete verified
+inputs, official-engine native controls and complete-state recovery are the
+next separate gates before a matched performance comparison.
+
 ## Pretrained checkpoints
 
 The larger-model qualification uses one H20 with approximately 96 GiB of

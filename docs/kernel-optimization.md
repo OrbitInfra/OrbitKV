@@ -251,8 +251,38 @@ warnings and final postflight evidence remain immutable. The separate
 drained-part publication repair includes a real CPU child that exits without
 destructors: the old recorder produces zero records and fails that regression.
 Missing/failed checkpoints and cumulative budget/registration controls remain
-strict. Actual engine-local H2D geometry still needs a newly built installed
-artifact and separately reviewed structural task. See the
+strict. The separate repair at `37b48c50` now has scoped installed H20 acceptance:
+one official-vLLM 0.31.0/Qwen3-32B DRAM TP1/PP1 structural task returns six passes
+and one expected hybrid-only skip in 449.48 s. Actual execution uses Inductor
+compilation and CUDA Graph `NONE`. Generated text matches the native control;
+restart cache loads and four normal outer API/Manager cleanup receipts pass.
+Independent outcome review accepts the complete capture after verifying the
+full archive and rerunning the public parser with the frozen native compiler.
+
+Five drained parts from one retained executor contain 320 direct H2D batches,
+2,048 descriptors, 1,984 compiled DMA ranges and 160 MiB. The five actual shape
+families each have 64 batches, with descriptor/range pairs 3/3, 5/5, 7/7, 8/8
+and 9/8. The histogram includes 64 KiB, 256 KiB and 384 KiB descriptors. These
+small H2D batches differ from the representative D2H layouts above; the earlier
+native comparison cannot select a backend for this path.
+Recorded CPU submission totals 3.690573 ms; the five shared whole-part host
+waits total 6.128049 ms. They are descriptive instrumented intervals, without an
+independent-run confidence interval, overhead qualification, isolated GPU time
+or inference-performance claim. Registered tensor/view tags remain registration
+bounds, not queried complete CUDA allocation bases/counts.
+
+All 335 opening/batch/part/checkpoint records and the cumulative 4,101/65,536
+reservation validate. The complete mirror retains all 1,392 regular files plus
+original symlink metadata/TAR. Guardian/SSH wait and final known-process/GPU
+cleanup pass; official inner abort/force-kill/semaphore warnings remain S3/IPC
+lifetime limits. No separate full raw GPU KV tensor-byte oracle is provided.
+The production shader/backend defaults and support boundaries remain unchanged.
+Definitions, earlier failures, frozen inputs, complete cohort and descriptive
+analysis are at
+`/root/orbitkv-artifacts/s5-h2d-shapes-latest-models-20261011/`;
+independent outcome acceptance is at
+`/root/orbitkv-artifacts/s5-h2d-capture-part-publication-outcome-review-20261012/REVIEW.md`.
+See the
 [S5.5 execution record](completion-plan.md#s55--deployment-matrix-and-upstream-maintenance).
 
 After an independently reviewed installed model gate and normal shutdown, parse

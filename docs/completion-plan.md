@@ -1911,7 +1911,7 @@ analysis are at
 Scoped independent outcome acceptance is at
 `/root/orbitkv-artifacts/s5-kda-layout-comparison-outcome-review-20261011/REVIEW.md`.
 
-**Engine-local H2D capture implemented; qualification open:** the local Rust
+**Engine-local H2D capture has scoped H20 structural acceptance (2026-10-12):** the local Rust
 Restore executor now owns an opt-in bounded capture of its actual sorted H2D
 batches, retained registration/owner tags, granted source allocation bounds and registered
 destination spans. It reuses the production DMA compiler. Per-batch CPU submission
@@ -1984,11 +1984,36 @@ subprocess that calls the actual recorder and exits without running destructors.
 That control fails against the old publication boundary with zero records.
 Five Rust recorder tests and 493 benchmark tests pass, including cumulative
 budget, missing/failed checkpoints, skipped parts and inconsistent registrations;
-targeted Clippy, native DMA-compiler units and formatting also pass. Source review,
-the newly built installed wheel and a separately frozen hardware structural gate
-must pass before accepting actual H2D geometry. Diagnostic overhead,
-source-operation linkage, physical failure drain and the matched
-inference-pressure gate remain open.
+targeted Clippy, native DMA-compiler units and formatting also pass. Independent
+source and launch reviews accept repair `37b48c50` and its complete CUDA 13 wheel
+(`96e692bd…`). The first deployment freeze is rejected before launch because
+its consumed model fingerprint still refers to the earlier source/wheel; the
+separate corrected freeze binds the actual inputs and leaves that rejection intact.
+
+Exactly one installed official-vLLM 0.31.0/Qwen3-32B DRAM TP=1/PP=1 gate returns
+6 passed/1 expected hybrid-only skip in 449.48 s. Its actual mode is Inductor
+compilation with CUDA Graph `NONE`. Generated text matches the native control,
+cache metrics and restart loads pass, and all four outer API/Manager cleanup
+receipts return zero. It captures one retained executor, five complete drained
+parts and 320 direct H2D batches: 160 MiB, 2,048 descriptors and 1,984 compiled
+DMA ranges. All 335 schema-2 records agree; the cumulative reservation is
+4,101/65,536. Independent full-mirror review reruns the public parser/native
+compiler and recomputes every shape and descriptive statistic without finding
+a P1/P2. The source CI run `38152700331` passes 13/13 jobs.
+
+The complete cohort retains 1,392 regular files and the original absolute-link
+metadata/TAR; every file hash is checked. Guardian and blocking SSH are actually
+waited/reaped, owned processes are absent, GPU7 is empty and no quarantine is
+needed. Official inner EngineCore abort/force-kill and semaphore warnings remain
+physical IPC/S3 lifetime limits. This gate does not provide a separate full raw
+GPU KV tensor-byte oracle. Diagnostic overhead, source-operation linkage,
+physical failure drain, latest-model state recovery and matched inference
+performance remain open. No shader, backend default or support boundary changes;
+S2/S5 remain Partial. Complete frozen inputs, invalid attempts, cohort and
+descriptive analysis are at
+`/root/orbitkv-artifacts/s5-h2d-shapes-latest-models-20261011/`;
+scoped outcome acceptance is at
+`/root/orbitkv-artifacts/s5-h2d-capture-part-publication-outcome-review-20261012/REVIEW.md`.
 Continue newer-model preparation with native controls and complete state gates;
 changing a production backend still requires consumed application evidence.
 Separate copy-path observations from TTFT/TPOT/throughput and compare native HBM,
