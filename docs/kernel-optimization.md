@@ -166,6 +166,35 @@ Unknown physical completion aborts the fixture instead of releasing memory.
 Software/launch/outcome acceptance and application performance promotion are
 separate gates; no new shader or backend default is selected by this fixture.
 
+Scoped H20 outcome: three separately launched processes at source `ec8fe990`
+pass all byte/guard controls and normal exit/known cleanup checks. The complete
+cohort contains 21,600 measured submissions and 75,600 raw clock values, with
+all 100 samples retained per backend/event mode. Independent outcome review
+accepts the descriptive comparison only. Source CI run `38126055714` passes
+13/13 jobs.
+
+In event-off D2H, kernel wall medians are lower in all three processes for all
+nine representative layouts. The 64-descriptor/64-range case is 96.210 us versus
+237.048 us (median of three process medians); CPU submission is 6.302 us versus
+75.633 us. Frozen 34-batch shape weights estimate 7.584–7.608 ms for kernel and
+15.574–15.635 ms for DMA. These are representative estimated copy costs,
+not measured model runtime. Synthetic H2D has DMA-faster counterexamples at
+192/64, 448/192 and 512/192 descriptors/ranges, so direction/layout cannot be
+collapsed into a global kernel preference.
+
+Event-on/off observations are separate: the smallest D2H kernel layout has a
+1.078 median wall ratio. Stream-event intervals include descriptor upload and
+host-feed/scheduling gaps. This does not qualify instrumentation overhead or
+isolated GPU execution. Physical pinned NUMA residency, physical fault drain,
+inference contention and TTFT/TPOT/native-HBM/LMCache comparisons remain open.
+The actual production shader and backend defaults are unchanged.
+
+Definition, rejected launch controls, corrected freeze, complete cohort and
+per-process statistics are preserved at
+`/root/orbitkv-artifacts/s5-kda-layout-comparison-20261011/`;
+independent outcome acceptance is at
+`/root/orbitkv-artifacts/s5-kda-layout-comparison-outcome-review-20261011/REVIEW.md`.
+
 ## Current qualification
 
 **Implemented; A100 SM80 local gates pass; independent acceptance open.** The

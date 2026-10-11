@@ -1870,27 +1870,51 @@ definition, rejected parser/launch controls and raw evidence remain outside Git.
 Scoped independent acceptance is at
 `/root/orbitkv-artifacts/s5-kda-real-copy-shapes-outcome-independent-review-20261011/REVIEW.md`.
 
-Next use the captured 64 KiB fragment batches in a separately frozen native
-DMA/kernel comparison that preserves actual allocation/registration boundaries.
-Scalar shape counters alone cannot reconstruct those boundaries, addresses or
-pitch. Engine-local asynchronous
-H2D geometry, matched instrumentation overhead, device-event timing and consumed
-application comparisons remain open before performance or backend promotion.
+The new native comparison consumes the captured 64 KiB descriptor/range histogram
+with explicit allocation boundaries; it cannot reconstruct uncaptured model
+addresses or pitch. Engine-local asynchronous H2D geometry, matched
+instrumentation overhead and consumed application comparisons remain open.
 
-**Allocation-aware native comparison implemented; qualification open:** the
-next bounded KDA fixture uses 64 retained device allocations and explicit mapped
-host registrations. Eight representative layouts match the captured 64 KiB
-descriptor/range pairs; a ninth checks independent host registration boundaries.
-The fixture consumes the unchanged private production DMA compiler, records its
-actual pitch-constrained range counts and discloses all normalized offsets and
-allocation extents. It does not reconstruct uncaptured model addresses/pitch.
-Balanced kernel/DMA and event-off/on observations separate CPU submission,
-physical stream waiting and stream-event intervals. Full output/source/guard
-checks precede warmup and follow measurements; unknown drain aborts without
-releasing owners. No CUDA shader or backend policy changes. Independent software,
-launch and outcome acceptance remain required before using the new collection;
-application promotion stays open. Definition precedes implementation at
-`/root/orbitkv-artifacts/s5-kda-layout-comparison-20261011/definition-1/`.
+**Allocation-aware native comparison independently accepted:** source
+`ec8fe990` consumes the unchanged production DMA compiler with 64 retained device
+allocations, mapped host registrations and complete normalized offsets/extents.
+Three separately launched H20 processes each cover nine representative layouts
+and both directions, with 100 balanced samples per backend/event mode: 21,600
+measured submissions and 75,600 raw timing values. All processes and the
+foreground executor exit zero; source/output/guard controls and known
+process/GPU/lease cleanup pass without forced cleanup. The source CI run
+`38126055714` passes all 13 jobs.
+
+The descriptive event-off D2H comparison has lower kernel wall medians for all
+nine layouts. For 64 descriptors/64 DMA ranges, the median of three process
+medians is 96.210 us for kernel and 237.048 us for DMA; CPU submission medians are
+6.302 us and 75.633 us. Synthetic H2D retains DMA-faster counterexamples, including
+512 descriptors/192 ranges at 1303.933 us for kernel versus 1184.664 us for DMA.
+The frozen 34-batch D2H weighting estimates 7.584–7.608 ms for kernel versus
+15.574–15.635 ms for DMA across processes; this is a representative cost
+estimate, not measured model time. All raw samples and per-process p50/p95/p99
+remain outside Git.
+
+The original rejected launch packet and controls remain immutable. Its three
+guard/controller defects are corrected and independently rereviewed before the
+single hardware cohort. Full output/source/guard checks precede each mode's
+warmups and follow final measurements, not every timed repetition. Guard padding
+and disclosed chosen pitches make this a range-count-matched representative
+family, not model address replay. Stream-event intervals include descriptor
+upload and host-feed/scheduling gaps; event-on/off results are descriptive, not
+an instrumentation-overhead qualification. Physical pinned NUMA residency,
+physical fault drain, inference contention, TTFT/TPOT, LMCache comparison and
+application/backend promotion remain open. No shader, backend default or support
+boundary changes; S2/S5 stay Partial. Definition, frozen inputs, raw cohort and
+analysis are at
+`/root/orbitkv-artifacts/s5-kda-layout-comparison-20261011/`.
+Scoped independent outcome acceptance is at
+`/root/orbitkv-artifacts/s5-kda-layout-comparison-outcome-review-20261011/REVIEW.md`.
+
+Next capture engine-local H2D geometry and measure the consumed copy backends
+under matched official-engine inference pressure before changing a default.
+Separate copy-path observations from TTFT/TPOT/throughput and compare native HBM,
+OrbitKV and LMCache only with equal tokens, memory budgets and independent runs.
 
 The requested `Qwen/Qwen3.8-27B` and `deepseek-ai/DeepSeek-V4.1-Flash` belong to
 subsequent model/state qualification: inspect immutable configurations and
