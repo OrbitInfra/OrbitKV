@@ -132,6 +132,40 @@ comparison must preserve allocation/registration boundaries and compiled range
 counts representative of these batches; this scalar log cannot reconstruct
 actual addresses or pitch.
 
+## Allocation-aware native comparison
+
+`benches/native_copy_layout.rs` compares the production copy backends with 64
+separate retained device allocations and either one mapped host registration or
+one per block. Eight layouts match the observed 64 KiB descriptor/range-count
+pairs; a ninth tests host-registration boundaries. Explicit page permutations,
+allocation sizes and normalized offsets are serialized with each row. Guard
+padding and chosen pitches make this a disclosed representative family, not
+replay of captured model addresses. H2D is a synthetic direction control.
+
+The private DMA compiler is shared by source with this fixture; its existing
+algorithm and production submission contract are unchanged. Validate layout
+equations before initializing CUDA, then run against a new external output:
+
+```bash
+cargo bench -p orbitkv-core --bench native_copy_layout \
+  --no-default-features --features cuda-13,mooncake -- \
+  --validate-layout-only --output /var/tmp/orbitkv-kda/layout-001.jsonl
+cargo bench -p orbitkv-core --bench native_copy_layout \
+  --no-default-features --features cuda-13,mooncake -- \
+  --output /var/tmp/orbitkv-kda/layout-native-001.jsonl --samples 100 --seed 2026101111
+```
+
+Each backend/direction/event mode passes full output, source and guard checks
+before five warmups; a final check follows all measured submissions. Four modes
+(kernel/DMA, events off/on) alternate positions within every four samples.
+Event-off wall/submission/drain arrays remain separate from event-on arrays and
+CUDA stream-event intervals. Event intervals include descriptor upload and may
+include host-feed gaps or scheduling; they are not isolated GPU execution or
+bandwidth. All memory owners survive physical drain, including enqueue errors.
+Unknown physical completion aborts the fixture instead of releasing memory.
+Software/launch/outcome acceptance and application performance promotion are
+separate gates; no new shader or backend default is selected by this fixture.
+
 ## Current qualification
 
 **Implemented; A100 SM80 local gates pass; independent acceptance open.** The

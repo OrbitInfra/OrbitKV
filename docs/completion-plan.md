@@ -1877,6 +1877,21 @@ pitch. Engine-local asynchronous
 H2D geometry, matched instrumentation overhead, device-event timing and consumed
 application comparisons remain open before performance or backend promotion.
 
+**Allocation-aware native comparison implemented; qualification open:** the
+next bounded KDA fixture uses 64 retained device allocations and explicit mapped
+host registrations. Eight representative layouts match the captured 64 KiB
+descriptor/range pairs; a ninth checks independent host registration boundaries.
+The fixture consumes the unchanged private production DMA compiler, records its
+actual pitch-constrained range counts and discloses all normalized offsets and
+allocation extents. It does not reconstruct uncaptured model addresses/pitch.
+Balanced kernel/DMA and event-off/on observations separate CPU submission,
+physical stream waiting and stream-event intervals. Full output/source/guard
+checks precede warmup and follow measurements; unknown drain aborts without
+releasing owners. No CUDA shader or backend policy changes. Independent software,
+launch and outcome acceptance remain required before using the new collection;
+application promotion stays open. Definition precedes implementation at
+`/root/orbitkv-artifacts/s5-kda-layout-comparison-20261011/definition-1/`.
+
 The requested `Qwen/Qwen3.8-27B` and `deepseek-ai/DeepSeek-V4.1-Flash` belong to
 subsequent model/state qualification: inspect immutable configurations and
 released-engine support before any weights/download or serving launch. Qwen3.8
