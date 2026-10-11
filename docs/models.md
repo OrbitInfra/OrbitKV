@@ -54,13 +54,14 @@ The 2026-10-11 preparation freezes the requested current official artifacts:
 
 | Checkpoint | Official revision | Weight files / total bytes | Current scope |
 | --- | --- | --- | --- |
-| [Qwen3.8-27B BF16](https://huggingface.co/Qwen/Qwen3.8-27B/tree/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0) | `1d4bf0f2…` | 18 / 55,563,006,776 | Metadata/config checked; full released-engine recovery unqualified |
-| [Qwen3.8-27B FP8](https://huggingface.co/Qwen/Qwen3.8-27B-FP8/tree/017b9c7af6b5689d5dd426a76e0bc077eb5ca20a) | `017b9c7a…` | 66 / 30,866,866,928 | Metadata/config checked; historical gates do not qualify the current pins |
+| [Qwen3.8-27B BF16](https://huggingface.co/Qwen/Qwen3.8-27B/tree/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0) | `1d4bf0f2…` | 18 / 55,563,006,776 | Official-engine native output controls accepted; external recovery unqualified |
+| [Qwen3.8-27B FP8](https://huggingface.co/Qwen/Qwen3.8-27B-FP8/tree/017b9c7af6b5689d5dd426a76e0bc077eb5ca20a) | `017b9c7a…` | 66 / 30,866,866,928 | Official-engine native output controls accepted; external recovery unqualified |
 | [DeepSeek-V4.1-Flash](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/2cba9e42aa026125f3ed06c6d98c1db82f7ca027) | `2cba9e42…` | 48 / 510,296,708,312 | Metadata/config checked; native topology and complete compressed/auxiliary-state recovery unqualified |
 
 These are whole checkpoint weight-file sizes from the official Hub metadata,
-not runtime GPU-memory estimates. No weight download or model execution is
-established by this preparation. Qwen3.8 has 16 full-attention and 48 GDN layers;
+not runtime GPU-memory estimates. The metadata snapshot alone does not establish
+weight completeness or model execution; their separate gates are recorded below.
+Qwen3.8 has 16 full-attention and 48 GDN layers;
 its parameter count alone does not determine its cache traffic. The current
 vLLM multi-group/recurrent safety guard remains active. DeepSeek's selected
 checkpoint combines FP8 configuration with FP4 experts and requires its own
@@ -82,6 +83,30 @@ reviews are at
 Input acceptance does not establish model output or external recovery.
 Official-engine native controls and complete-state recovery remain separate
 gates before a matched performance comparison.
+
+Official vLLM 0.31.0 and SGLang 0.5.21 have independently accepted native output
+controls for both Qwen3.8 BF16 and FP8 on H20. Each separately frozen model/engine
+cell completes six serial greedy requests at input lengths 128, 1,024 and 4,096,
+with 16 generated tokens and two repeats per input. All 24 requests, 384 output
+token IDs/counts and finite selected-token log probabilities pass; repeated text
+and token IDs match within each cell. This is TP=1/PP=1, text-only eager inference
+with BF16 KV cache for both weight variants. It does not establish cross-engine
+or cross-precision output equivalence, semantic quality, external state recovery
+or performance.
+The official installations and complete model inventories retain their frozen
+hashes. All four API processes exit zero and final owned processes, ports and GPU
+usage are empty. Native vLLM EngineCore force-kill/semaphore diagnostics and
+SGLang adopted-child exits of -9 remain shutdown/lifetime limits; these results
+do not prove normal exit or physical drain for every child.
+The original missing-`ninja` startup failure is preserved separately. A distinct
+reviewed PATH definition resolves the active official environment's tools before
+launch. Full raw responses, JIT output and cleanup evidence are at
+`/root/orbitkv-artifacts/s5-qwen38-fp8-native-path-cohort-1-20261012/` and
+`/root/orbitkv-artifacts/s5-qwen38-bf16-native-cohort-1-20261012/`. Independent
+acceptance is recorded separately at
+`/root/orbitkv-artifacts/s5-qwen38-fp8-native-path-outcome-review-20261012/REVIEW.md`
+and
+`/root/orbitkv-artifacts/s5-qwen38-bf16-native-outcome-review-20261012/REVIEW.md`.
 
 The native output gate accepts separately owned official engine services and a
 frozen JSON array of token-ID arrays. It makes repeated serial greedy requests,

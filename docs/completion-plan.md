@@ -2038,8 +2038,24 @@ files/30,890,049,597 bytes. Fresh official metadata, full remote hashes and all
 retained. These reviews establish input completeness only, at
 `/root/orbitkv-artifacts/s5-qwen38-bf16-complete-input-review-20261012/` and
 `/root/orbitkv-artifacts/s5-qwen38-fp8-complete-input-review-20261012/`.
-Next consume official-engine native controls before complete-state OrbitKV
-recovery and matched performance. DeepSeek-V4.1-Flash requires a
+The separately frozen FP8 and BF16 native-output definitions now have scoped
+independent acceptance on official vLLM 0.31.0 and SGLang 0.5.21/H20 TP=1/PP=1
+eager: six requests per model/engine cell, 128/1,024/4,096 input tokens, 16 output
+tokens and two repeats. All 24 requests, 384 output token IDs/counts and finite
+log probabilities pass, with exact repeated text/IDs within each cell. Both
+weight variants use BF16 KV cache; no cross-engine or cross-precision equivalence
+is claimed. Complete cohorts retain 493 FP8 and 492 BF16 regular payload files;
+their intact installed/model hashes and actual SSH wait/cleanup receipts are
+accepted separately at
+`/root/orbitkv-artifacts/s5-qwen38-fp8-native-path-outcome-review-20261012/` and
+`/root/orbitkv-artifacts/s5-qwen38-bf16-native-outcome-review-20261012/`.
+Native internal EngineCore force-kill/semaphore diagnostics and a SGLang adopted
+child exit of -9 remain explicit lifetime limits. The first missing-tool PATH
+failure stays immutable; its separately reviewed repair uses each official
+environment's existing tools and changes no installed engine files. Native output
+acceptance does not establish complete-state OrbitKV recovery or matched
+performance; attention and recurrent state must first pass consistent-boundary
+handoff and recovery gates. DeepSeek-V4.1-Flash requires a
 separately declared and leased native topology for its 510 GB checkpoint plus
 released kernel/auxiliary-state checks. Qwen3.8
 includes recurrent DeltaNet state; neither weight fit nor native inference
