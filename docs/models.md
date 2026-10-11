@@ -80,6 +80,36 @@ model execution. Definitions are preserved under `qwen38-bf16-inputs-1/` and
 inputs, official-engine native controls and complete-state recovery are the
 next separate gates before a matched performance comparison.
 
+The native output gate accepts separately owned official engine services and a
+frozen JSON array of token-ID arrays. It makes repeated serial greedy requests,
+requires exact prompt/completion counts and generated token coverage, and checks
+finite selected-token log probabilities and identical repeated output. Raw
+requests and responses survive a failure, including HTTP errors and nonfinite
+numbers. It does not start an engine or establish external-state recovery,
+shutdown safety, HBM hit rates or a performance advantage; the deployment gate
+owns installed-artifact checks, GPU leases and actual process drain.
+
+```bash
+uv run --isolated --no-project --with requests python -m benches.native_model_readiness \
+  --engine vllm --url http://127.0.0.1:8000 --model /path/to/immutable-model \
+  --prompts /path/to/frozen-token-ids.json --output-tokens 16 --repeats 2 \
+  --output /var/tmp/orbitkv-native-readiness/vllm-001
+# Use --engine sglang against its independently owned native /generate service.
+```
+
+Input preparation and native serving remain separate. The earlier two Qwen3.8
+range-relay copies failed with HTTP 429 and were stopped and actually reaped;
+their partials and per-file records remain intact. A separate official-SDK
+full-file copy was superseded after observing a few MB/s, with its SIGTERM/-15
+wait receipt and partials retained. The next input-only definition resolves each
+nonempty file through the official SDK once and sends exact ranges from the
+resolved CDN address, retaining both official and sender/receiver hashes. Its
+bounded source probe and real CPU receiver controls do not establish complete
+weights. The rejected first source's cancellation/admission and failed-child
+receipt gaps are preserved separately; no GPU serving is admitted by that review.
+Input definitions and controls are at
+`/root/orbitkv-artifacts/s5-model-input-resolved-cdn-20261012/`.
+
 ## Pretrained checkpoints
 
 The larger-model qualification uses one H20 with approximately 96 GiB of

@@ -2019,6 +2019,16 @@ changing a production backend still requires consumed application evidence.
 Separate copy-path observations from TTFT/TPOT/throughput and compare native HBM,
 OrbitKV and LMCache only with equal tokens, memory budgets and independent runs.
 
+The separate native-output request gate is implemented with 16 real CPU HTTP
+controls; the complete benchmark suite has 509 passed. It checks generated token
+IDs, exact counts, finite selected-token log probabilities and repeated greedy
+output through each engine's released API. Invalid responses survive as raw
+evidence. It owns no engine process, GPU allocation or external-cache state and
+does not establish native model serving, shutdown safety or performance. See
+[the native output methodology](models.md) and
+`benches/native_model_readiness.py`. Its deployment inputs and launch ownership
+must be independently accepted before it consumes H20 model requests.
+
 The requested `Qwen/Qwen3.8-27B` and `deepseek-ai/DeepSeek-V4.1-Flash` belong to
 subsequent model/state qualification; their immutable metadata/configuration
 preparation above is complete. Next prepare the complete Qwen3.8-27B BF16/FP8
