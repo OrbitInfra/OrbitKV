@@ -2031,9 +2031,15 @@ must be independently accepted before it consumes H20 model requests.
 
 The requested `Qwen/Qwen3.8-27B` and `deepseek-ai/DeepSeek-V4.1-Flash` belong to
 subsequent model/state qualification; their immutable metadata/configuration
-preparation above is complete. Next prepare the complete Qwen3.8-27B BF16/FP8
-artifacts and consume official-engine native controls before complete-state
-OrbitKV recovery and matched performance. DeepSeek-V4.1-Flash requires a
+preparation above is complete. Both Qwen3.8 complete-input audits are now
+independently accepted: 32 BF16 files/55,586,114,863 bytes and 81 FP8
+files/30,890,049,597 bytes. Fresh official metadata, full remote hashes and all
+113 source/receiver receipts match, and the relay's actual successful wait is
+retained. These reviews establish input completeness only, at
+`/root/orbitkv-artifacts/s5-qwen38-bf16-complete-input-review-20261012/` and
+`/root/orbitkv-artifacts/s5-qwen38-fp8-complete-input-review-20261012/`.
+Next consume official-engine native controls before complete-state OrbitKV
+recovery and matched performance. DeepSeek-V4.1-Flash requires a
 separately declared and leased native topology for its 510 GB checkpoint plus
 released kernel/auxiliary-state checks. Qwen3.8
 includes recurrent DeltaNet state; neither weight fit nor native inference

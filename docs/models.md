@@ -69,16 +69,19 @@ and a matched native/OrbitKV/LMCache performance comparison need separate result
 Retained official metadata, exact configs and retrieval hashes are at
 `/root/orbitkv-artifacts/s5-h2d-shapes-latest-models-20261011/model-metadata-1/`.
 
-Complete input-copy definitions are also prepared for the two Qwen3.8 variants:
+Complete inputs for both Qwen3.8 variants have independent input-only acceptance:
 32 BF16 files (55,586,114,863 bytes) and 81 FP8 files (30,890,049,597 bytes),
-including tokenizer/template, configuration and license files. The definitions
-require official LFS SHA256 or Git-blob SHA1 and matching sender/receiver SHA256
-before publishing each file. The official empty FP8 checksum file remains in
-the input set. This is prepared copy methodology, not a completed transfer or
-model execution. Definitions are preserved under `qwen38-bf16-inputs-1/` and
-`qwen38-fp8-inputs-1/` in the same external artifact root. Complete verified
-inputs, official-engine native controls and complete-state recovery are the
-next separate gates before a matched performance comparison.
+including tokenizer/template, configuration and license files. Independent fresh
+official metadata and full remote inventories match every LFS SHA256 or Git-blob
+SHA1 and sender/receiver SHA256. All 113 file receipts have matching sizes and
+actual successful SSH waits; the relay itself exited zero and was reaped. The
+official empty FP8 checksum file remains in the input set. The complete-input
+reviews are at
+`/root/orbitkv-artifacts/s5-qwen38-bf16-complete-input-review-20261012/` and
+`/root/orbitkv-artifacts/s5-qwen38-fp8-complete-input-review-20261012/`.
+Input acceptance does not establish model output or external recovery.
+Official-engine native controls and complete-state recovery remain separate
+gates before a matched performance comparison.
 
 The native output gate accepts separately owned official engine services and a
 frozen JSON array of token-ID arrays. It makes repeated serial greedy requests,
@@ -88,6 +91,11 @@ requests and responses survive a failure, including HTTP errors and nonfinite
 numbers. It does not start an engine or establish external-state recovery,
 shutdown safety, HBM hit rates or a performance advantage; the deployment gate
 owns installed-artifact checks, GPU leases and actual process drain.
+Directly invoking an official environment's `bin/python` does not activate its
+tool search path. Set each service's `PATH` to its own official `bin` directory,
+the selected CUDA `bin` directory and the declared system directories. Record
+the resolved JIT tools and check their frozen identities before engine admission;
+do not borrow another engine's environment or modify installed release files.
 
 ```bash
 uv run --isolated --no-project --with requests python -m benches.native_model_readiness \
@@ -101,11 +109,12 @@ Input preparation and native serving remain separate. The earlier two Qwen3.8
 range-relay copies failed with HTTP 429 and were stopped and actually reaped;
 their partials and per-file records remain intact. A separate official-SDK
 full-file copy was superseded after observing a few MB/s, with its SIGTERM/-15
-wait receipt and partials retained. The next input-only definition resolves each
+wait receipt and partials retained. The completed input-only definition resolves each
 nonempty file through the official SDK once and sends exact ranges from the
-resolved CDN address, retaining both official and sender/receiver hashes. Its
-bounded source probe and real CPU receiver controls do not establish complete
-weights. The rejected first source's cancellation/admission and failed-child
+resolved CDN address, retaining both official and sender/receiver hashes. The
+113-file transfer and independent full-input audits are complete; transient range
+errors remain recorded with their bounded retries. The rejected first source's
+cancellation/admission and failed-child
 receipt gaps are preserved separately; no GPU serving is admitted by that review.
 Input definitions and controls are at
 `/root/orbitkv-artifacts/s5-model-input-resolved-cdn-20261012/`.
