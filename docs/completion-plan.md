@@ -1845,17 +1845,37 @@ completion remain open. Original invalid attempts remain unchanged. Exact inputs
 all raw values, normal cleanup and the independent report are retained at
 `/root/orbitkv-artifacts/s5-kda-native-attribution-r3-outcome-independent-review-20261011/REVIEW.md`.
 
-The next bounded KDA substage implements actual Manager worker raw-copy shape
-diagnostics. It reuses the fixed-capacity timeline, records descriptor byte
+**Manager raw-copy shapes independently accepted (2026-10-11):** software
+`c0b4ff3f` implements actual Manager worker raw-copy shape diagnostics. It reuses
+the fixed-capacity timeline, records descriptor byte
 histograms and the existing legal DMA compiler's range count, and separates CPU
 backend submission from host stream waiting. The default remains off; there is
 no change to CUDA shaders, backend selection, descriptor ordering or physical
 drain. Successful flush receipts and strict offline record-count validation
 reject partial/overflow/failed evidence. Engine-local asynchronous raw restores
-remain outside this observation scope. Software and actual model/overhead gates
-require independent acceptance before any performance conclusion or next kernel
-candidate. The task definition precedes implementation at
-`/root/orbitkv-artifacts/s5-kda-real-copy-shapes-20261011/definition-1/`.
+remain outside this observation scope. Independent CPU review accepts the
+corrected shape parser; code CI `38120248710` passes all thirteen jobs.
+
+One independently accepted H20 official-vLLM 0.31.0/Qwen3-32B dense TP1/PP1 DRAM
+structural pilot passes six correctness checks with one dense-inapplicable HMA
+skip. Complete generated-text assertions and restart loads pass; full responses
+and raw HBM payloads were not serialized for offline replay. All recorded Manager
+save fragments are 64 KiB; see [the actual shape totals](kernel-optimization.md#consumed-manager-raw-copy-shapes).
+The diagnostic Manager consumes the unchanged accepted client wheel, so this
+does not qualify a complete new wheel. All four service leaders and the actual
+foreground executor exit zero, with complete timeline/input hashes and known
+GPU/process/port/UDS/lease cleanup. Official internal child-force and semaphore
+warnings remain recorded; physical IPC/S3 lifetime is unqualified. The task
+definition, rejected parser/launch controls and raw evidence remain outside Git.
+Scoped independent acceptance is at
+`/root/orbitkv-artifacts/s5-kda-real-copy-shapes-outcome-independent-review-20261011/REVIEW.md`.
+
+Next use the captured 64 KiB fragment batches in a separately frozen native
+DMA/kernel comparison that preserves actual allocation/registration boundaries.
+Scalar shape counters alone cannot reconstruct those boundaries, addresses or
+pitch. Engine-local asynchronous
+H2D geometry, matched instrumentation overhead, device-event timing and consumed
+application comparisons remain open before performance or backend promotion.
 
 The requested `Qwen/Qwen3.8-27B` and `deepseek-ai/DeepSeek-V4.1-Flash` belong to
 subsequent model/state qualification: inspect immutable configurations and

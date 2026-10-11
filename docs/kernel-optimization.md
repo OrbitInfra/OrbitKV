@@ -113,8 +113,24 @@ bandwidth or request latency. Stream waiting can include earlier queued work.
 The summary includes cold batches and does not infer request linkage or a
 confidence interval. Engine-local asynchronous raw restores are outside this
 Manager-only scope; do not change their layer events or add synchronization to
-obtain these records. Software review and matched model/overhead gates remain
-open before selecting a performance candidate.
+obtain these records.
+
+Software `c0b4ff3f` and one H20 official-vLLM 0.31.0/Qwen3-32B dense TP1/PP1 DRAM
+structural pilot are independently accepted. The model gate passes six checks
+with one dense-inapplicable HMA skip. Its complete 34 direct D2H batches contain
+296 MiB, 4,736 descriptors of exactly 64 KiB and 3,648 legal DMA ranges. Existing
+DMA compilation reduces the observed range count by about 23%; this describes
+the consumed layout without establishing a new speedup. All cold batches remain.
+The new diagnostic Manager uses the unchanged accepted client wheel; complete
+new-wheel qualification remains open. Original logs, complete input hashes,
+normal leader exits, known-resource cleanup and independent recomputation are at
+`/root/orbitkv-artifacts/s5-kda-real-copy-shapes-outcome-independent-review-20261011/REVIEW.md`.
+Official internal child-force and semaphore warnings remain physical IPC/S3
+lifetime limits. Matched overhead, engine-local H2D geometry, device-event timing
+and application comparisons remain open before performance promotion. A native
+comparison must preserve allocation/registration boundaries and compiled range
+counts representative of these batches; this scalar log cannot reconstruct
+actual addresses or pitch.
 
 ## Current qualification
 
