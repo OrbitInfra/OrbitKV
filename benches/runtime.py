@@ -56,6 +56,7 @@ def server(
     health_path: str = "/health",
     *,
     engine: str | None = None,
+    pass_fds: tuple[int, ...] = (),
 ):
     if engine is not None and engine not in {"vllm", "sglang"}:
         raise ValueError(f"Unsupported shutdown protocol: {engine}")
@@ -70,6 +71,7 @@ def server(
             stdout=output,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            pass_fds=pass_fds,
         )
     primary_error = None
     try:
