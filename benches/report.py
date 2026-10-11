@@ -9,12 +9,23 @@ import math
 from pathlib import Path
 
 from .artifacts import external_path
-from .metrics import cache_source, summarize, workload_phases
+from .metrics import (
+    OBSERVATION_MODES,
+    cache_source,
+    summarize,
+    validate_observation,
+    workload_phases,
+)
 
 
 def compare_outputs(run: dict, reference: dict) -> dict:
     """Compare matched inputs and runtimes against an unencoded reference backend."""
     args, control = run["manifest"]["arguments"], reference["manifest"]["arguments"]
+    if (
+        args.get("observation_mode") not in OBSERVATION_MODES
+        or control.get("observation_mode") not in OBSERVATION_MODES
+    ):
+        raise ValueError("Output comparison requires explicit observation modes")
     if control.get("storage_codec", "none") != "none":
         raise ValueError("Output reference must use --storage-codec none")
     for key in (
@@ -44,6 +55,7 @@ def compare_outputs(run: dict, reference: dict) -> dict:
         "seed",
         "deterministic_inference",
         "enforce_eager",
+        "observation_mode",
     ):
         if args.get(key) != control.get(key):
             raise ValueError(
@@ -126,6 +138,12 @@ def collect_run(directory: Path) -> dict:
         raise ValueError(f"Failed run has no complete latency result: {directory}")
     manifest = json.loads((directory / "manifest.json").read_text())
     args = manifest["arguments"]
+    mode = args.get("observation_mode")
+    if mode not in OBSERVATION_MODES or manifest.get("observation_mode") != mode:
+        raise ValueError(f"Missing or inconsistent observation mode: {directory}")
+    manager_present = manifest.get("manager_present")
+    if type(manager_present) is not bool:
+        raise ValueError(f"Missing or invalid Manager observation metadata: {directory}")
     timeline = directory / "timeline-summary.json"
     timeline_summary = json.loads(timeline.read_text()) if timeline.exists() else None
     usage = directory / "manager-usage.json"
@@ -139,6 +157,7 @@ def collect_run(directory: Path) -> dict:
             json.loads(line) for line in (directory / measurement_file).read_text().splitlines()
         ]
         workload.validate(args, samples, batches)
+        validate_observation(mode, batches, manager_present=manager_present)
         summary = workload.summarize(samples, batches)
     else:
         expected = {
@@ -155,6 +174,7 @@ def collect_run(directory: Path) -> dict:
                 if not math.isfinite(sample[metric]) or sample[metric] < 0:
                     raise ValueError(f"Invalid {metric} in {directory}")
             sample["cache_source"] = cache_source(args["engine"], sample)
+        validate_observation(mode, samples, manager_present=manager_present)
         summary = summarize(samples, args["lengths"])
     return {
         "directory": str(directory.resolve()),
@@ -198,6 +218,7 @@ def main() -> None:
                     "run": run["directory"],
                     "engine": config["engine"],
                     "backend": config["backend"],
+                    "observation_mode": config["observation_mode"],
                     "orbitkv_transfer_backend": config.get("orbitkv_transfer_backend"),
                     "gpu_tokens": config["gpu_tokens"],
                     "host_gib": config["host_gib"],

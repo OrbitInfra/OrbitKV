@@ -9,13 +9,15 @@ import statistics
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
-from .metrics import cached_tokens, codec_summary, measure, percentile
+from .metrics import cached_tokens, codec_summary, measure, percentile, sampled_peak
 from .workload import generate
 
 
 def run_window(args, base_url, manager_url, vocabulary, prefixes, concurrency, emit):
     samples = []
-    with measure(base_url, manager_url, args.settle_seconds) as window:
+    with measure(
+        base_url, manager_url, args.settle_seconds, observation_mode=args.observation_mode
+    ) as window:
         started = time.perf_counter()
         deadline = started + args.duration_seconds
 
@@ -180,7 +182,12 @@ def validate(args: dict, samples: list[dict], windows: list[dict]) -> None:
         if window["manager_after"].get("orbitkv_query_reserved_bytes", 0) != 0:
             raise ValueError("Sustained query reservations did not drain")
         query_limit = args.get("query_budget_gib")
-        protected_peak = window["sampled_peak_bytes"].get("orbitkv_cache_protected_bytes", 0)
+        observed = (
+            window.get("manager_before", {}),
+            window["manager_after"],
+            window["sampled_peak_bytes"] or {},
+        )
+        protected_peak = max(row.get("orbitkv_cache_protected_bytes", 0) for row in observed)
         protected_limit = (
             args.get("host_gib", 0) * 1024**3 * args.get("cache_protected_percent", 0) // 100
         )
@@ -188,13 +195,19 @@ def validate(args: dict, samples: list[dict], windows: list[dict]) -> None:
             raise ValueError("Protected cache residency exceeded its byte limit")
         if (
             query_limit is not None
-            and window["sampled_peak_bytes"].get("orbitkv_query_reserved_bytes", 0)
+            and max(
+                max(
+                    row.get("orbitkv_query_reserved_bytes", 0),
+                    row.get("orbitkv_query_reserved_peak_bytes", 0),
+                )
+                for row in observed
+            )
             > query_limit * 1024**3
         ):
             raise ValueError("Query reservations exceeded their total byte budget")
         if (
             query_limit is not None
-            and window["sampled_peak_bytes"].get("orbitkv_query_speculative_reserved_bytes", 0)
+            and max(row.get("orbitkv_query_speculative_reserved_bytes", 0) for row in observed)
             > query_limit * 1024**3 / 4
         ):
             raise ValueError("Speculative reservations exceeded their quarter-budget limit")
@@ -242,6 +255,7 @@ def summarize(samples: list[dict], windows: list[dict]) -> list[dict]:
         result.append(
             {
                 "concurrency": window["concurrency"],
+                "observation_mode": window.get("observation_mode"),
                 "n": len(rows),
                 "reuse_requests": len(reused),
                 "cold_requests": len(rows) - len(reused),
@@ -272,24 +286,23 @@ def summarize(samples: list[dict], windows: list[dict]) -> list[dict]:
                     "cached_tier_unknown": sum(s["cached_tokens"] > 0 for s in rows),
                     "miss": sum(s["cached_tokens"] == 0 for s in rows),
                 },
-                "sampled_peak_pool_bytes": window["sampled_peak_bytes"].get(
-                    "orbitkv_pool_used_bytes", 0
+                "query_reserved_peak_bytes_since_manager_start": window["manager_after"].get(
+                    "orbitkv_query_reserved_peak_bytes"
                 ),
-                "sampled_peak_protected_bytes": window["sampled_peak_bytes"].get(
-                    "orbitkv_cache_protected_bytes", 0
-                ),
-                "sampled_peak_query_bytes": window["sampled_peak_bytes"].get(
-                    "orbitkv_query_reserved_bytes", 0
-                ),
-                "sampled_peak_warmup_bytes": window["sampled_peak_bytes"].get(
-                    "orbitkv_query_reserved_bytes_warming", 0
-                ),
-                "sampled_peak_speculative_bytes": window["sampled_peak_bytes"].get(
-                    "orbitkv_query_speculative_reserved_bytes", 0
-                ),
-                "sampled_peak_warmup_pending_bytes": window["sampled_peak_bytes"].get(
-                    "orbitkv_warmup_pending_bytes", 0
-                ),
+                "query_instance_reserved_peak_bytes_since_manager_start": window[
+                    "manager_after"
+                ].get("orbitkv_query_instance_reserved_peak_bytes"),
+                **{
+                    f"sampled_peak_{name}_bytes": sampled_peak([window], metric)
+                    for name, metric in (
+                        ("pool", "orbitkv_pool_used_bytes"),
+                        ("protected", "orbitkv_cache_protected_bytes"),
+                        ("query", "orbitkv_query_reserved_bytes"),
+                        ("warmup", "orbitkv_query_reserved_bytes_warming"),
+                        ("speculative", "orbitkv_query_speculative_reserved_bytes"),
+                        ("warmup_pending", "orbitkv_warmup_pending_bytes"),
+                    )
+                },
                 "warmup_pending_bytes_before": window.get("manager_before", {}).get(
                     "orbitkv_warmup_pending_bytes", 0
                 ),

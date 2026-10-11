@@ -19,7 +19,14 @@ from pathlib import Path
 from . import concurrent, sustained
 from .artifacts import external_path
 from .launch import STORAGE_CODECS, configure, storage_codec_budget
-from .metrics import codec_summary, delta, metrics, summarize
+from .metrics import (
+    OBSERVATION_MODES,
+    codec_summary,
+    delta,
+    metrics,
+    summarize,
+    validate_observation,
+)
 from .runtime import manifest, process_usage, server, storage_manifest
 from .workload import run_workload
 
@@ -140,6 +147,12 @@ def main() -> None:
     )
     parser.add_argument("--seed", type=int, default=20260920)
     parser.add_argument("--settle-seconds", type=float, default=1.2)
+    parser.add_argument(
+        "--observation-mode",
+        choices=OBSERVATION_MODES,
+        default="sampled",
+        help="Boundary mode collects snapshots/drain checks without a request-time metrics thread",
+    )
     args = parser.parse_args()
     if args.backend != "orbitkv" and (
         args.storage_codec != "none" or args.storage_codec_budget != 64 * 1024**2 or args.ssd_dir
@@ -278,9 +291,15 @@ def main() -> None:
                 workload = sustained if args.workload == "sustained" else concurrent
                 samples, batches = workload.run_workload(args, launch.base_url, launch.manager_url)
                 workload.validate(vars(args), samples, batches)
+                validate_observation(
+                    args.observation_mode, batches, manager_present=launch.manager_url is not None
+                )
                 summary = workload.summarize(samples, batches)
             else:
                 samples = run_workload(args, launch.base_url, launch.manager_url)
+                validate_observation(
+                    args.observation_mode, samples, manager_present=launch.manager_url is not None
+                )
                 summary = summarize(samples, args.lengths)
             if launch.manager_command:
                 usage_after = process_usage(manager.pid)

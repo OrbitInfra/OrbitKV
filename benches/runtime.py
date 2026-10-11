@@ -344,6 +344,13 @@ def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:
         "manager_command": launch.manager_command,
         "manager_binary_sha256": manager_sha256,
         "cost_observations": "1" if launch.env.get("ORBITKV_COST_OBSERVATIONS") == "1" else "0",
+        "observation_mode": args.observation_mode,
+        "manager_present": launch.manager_url is not None,
+        "memory_peak_scope": (
+            "25 ms in-process Manager sampling; observed peaks are lower bounds"
+            if args.observation_mode == "sampled" and launch.manager_url is not None
+            else "No request-time memory sampling; sampled peaks are unknown"
+        ),
         "backend_configuration": launch.backend_configuration,
         "library_path": launch.env.get("LD_LIBRARY_PATH", ""),
         "tool_path": launch.env.get("PATH", ""),
@@ -405,9 +412,9 @@ def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:
         else None,
         "concurrency": args.concurrencies if args.workload != "serial" else 1,
         "notes": (
-            "Sustained closed-loop traffic with at most C client requests in flight. Throughput includes admitted requests' drain time; cache counters cover the whole window and post-request drain. Prepared-prefix output comparisons are diagnostic, not batch-invariant correctness proofs. Memory peaks are sampled lower bounds."
+            "Sustained closed-loop traffic with at most C client requests in flight. Throughput includes admitted requests' drain time; cache counters cover the whole window and post-request drain. Prepared-prefix output comparisons are diagnostic, not batch-invariant correctness proofs."
             if args.workload == "sustained"
-            else "Closed-loop bursts; tier counters belong to entire batches, not individual requests. Memory peaks are sampled every 25 ms."
+            else "Closed-loop bursts; tier counters belong to entire batches, not individual requests."
             if args.workload == "concurrent"
             else "Serial latency experiment; pressure traffic and startup are excluded from request timings."
         ),

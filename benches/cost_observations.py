@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 from .artifacts import external_path
-from .metrics import engine_itl_summary, percentile
+from .metrics import OBSERVATION_MODES, engine_itl_summary, percentile
 from .report import collect_run
 from .runtime import ROOT
 
@@ -68,6 +68,7 @@ MATCHED_ARGUMENTS = (
     "cache_protected_percent",
     "ssd_write_policy",
     "settle_seconds",
+    "observation_mode",
 )
 
 
@@ -115,6 +116,7 @@ def plan(args) -> list[dict]:
                             if args.comparison == "transfer-backends"
                             else None,
                             "settle_seconds": 1.2,
+                            "observation_mode": args.observation_mode,
                             "seed": args.seed,
                             "ssd_dir": str(args.ssd_dir) if tier == "ssd" else None,
                             "output": str(args.output / "runs" / name),
@@ -524,6 +526,7 @@ def main() -> None:
     parser.add_argument("--pairs", type=int, default=3)
     parser.add_argument("--requests", type=int, default=128)
     parser.add_argument("--seed", type=int, default=20260924)
+    parser.add_argument("--observation-mode", choices=OBSERVATION_MODES, default="sampled")
     parser.add_argument("--ttft-slo-ms", type=float, default=2000)
     parser.add_argument("--average-decode-slo-ms", type=float, default=100)
     parser.add_argument(

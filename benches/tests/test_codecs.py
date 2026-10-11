@@ -297,7 +297,13 @@ def test_codec_labels_batch_histograms_and_retained_workspace_are_not_combined(m
 
 
 def test_none_reference_retains_output_drift_and_requires_verified_inputs(tmp_path):
-    args = {"engine": "vllm", "workload": "sustained", "seed": 42, "storage_codec": "none"}
+    args = {
+        "engine": "vllm",
+        "workload": "sustained",
+        "seed": 42,
+        "storage_codec": "none",
+        "observation_mode": "sampled",
+    }
     control = tmp_path / "none"
     control.mkdir()
     samples = [
@@ -338,7 +344,13 @@ def test_none_reference_retains_output_drift_and_requires_verified_inputs(tmp_pa
 
 
 def test_cross_backend_reference_requires_the_same_engine_runtime(tmp_path):
-    args = {"engine": "vllm", "backend": "native", "storage_codec": "none", "seed": 42}
+    args = {
+        "engine": "vllm",
+        "backend": "native",
+        "storage_codec": "none",
+        "seed": 42,
+        "observation_mode": "sampled",
+    }
     sample = {"length": 1024, "phase": "after_pressure", "prompt_sha256": "same", "text": "ok"}
     (tmp_path / "samples.jsonl").write_text(json.dumps(sample) + "\n")
     manifest = {
@@ -360,12 +372,16 @@ def test_cross_backend_reference_requires_the_same_engine_runtime(tmp_path):
         result = compare_outputs(run, reference)
         assert result["compared_requests"] == 1
         assert result["output_mismatches"] == 0
-        for setting in ("deterministic_inference", "enforce_eager"):
+        for setting, value in (
+            ("deterministic_inference", True),
+            ("enforce_eager", True),
+            ("observation_mode", "boundary"),
+        ):
             changed = {
                 **run,
                 "manifest": {
                     **run["manifest"],
-                    "arguments": {**run["manifest"]["arguments"], setting: True},
+                    "arguments": {**run["manifest"]["arguments"], setting: value},
                 },
             }
             with pytest.raises(ValueError, match=f"different {setting}"):

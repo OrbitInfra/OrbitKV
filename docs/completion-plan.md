@@ -1742,6 +1742,24 @@ wheel bytes unchanged; the strengthened E2E helper requires a fresh consumer
 gate before runtime acceptance. They do not revise the retained Qwen3-32B
 cohort or close S5 pressure, performance or S3 lifetime qualification.
 
+**Request-timing observation mode implemented; qualification open (2026-10-11):**
+the maintained serial, concurrent and sustained benchmark supports explicit
+`boundary` mode without a request-time metrics thread. The default `sampled`
+mode retains the 25 ms Manager observer. Both modes preserve before/after
+snapshots, quiet/drain checks and normal service cleanup. Missing memory peaks
+remain unknown; codec boundary maxima and native lifetime reservation peaks are
+reported separately. Reports reject missing/mixed mode metadata and references
+with different modes. This is measurement infrastructure: matched overhead,
+native/CPU/OrbitKV/LMCache comparisons, pressure and KDA application attribution
+still require separate frozen hardware gates. No production cache policy,
+kernel, engine installation or support boundary changes.
+The recovered durable source passes 379 benchmark tests and the source-only
+Python gate (370 passed, one skipped), plus Ruff and experiment-output checks.
+Its new source snapshots and CPU gates are retained in
+`/root/orbitkv-artifacts/s5-observation-timing-recovery-20261011/`.
+Earlier uncommitted source and `/tmp` gate-record loss has unknown cause;
+the missing original source hash/results are not reused to qualify this source.
+
 The requested `Qwen/Qwen3.8-27B` and `deepseek-ai/DeepSeek-V4.1-Flash` belong to
 subsequent model/state qualification: inspect immutable configurations and
 released-engine support before any weights/download or serving launch. Qwen3.8

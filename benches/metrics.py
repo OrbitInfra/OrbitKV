@@ -13,6 +13,7 @@ import requests
 
 REMOTE_STAGES = ("authorization", "allocation", "read", "rebuild", "release")
 ENGINE_ITL = {engine: f"{engine}:inter_token_latency_seconds" for engine in ("vllm", "sglang")}
+OBSERVATION_MODES = ("sampled", "boundary")
 
 
 def delta(before: dict, after: dict) -> dict:
@@ -32,15 +33,31 @@ def cached_tokens(engine: str, sample: dict) -> int:
 
 
 @contextmanager
-def measure(base_url: str, manager_url: str | None, settle_seconds: float):
+def measure(
+    base_url: str,
+    manager_url: str | None,
+    settle_seconds: float,
+    *,
+    observation_mode: str = "sampled",
+):
+    if observation_mode not in OBSERVATION_MODES:
+        raise ValueError(f"Invalid observation mode: {observation_mode}")
     before, manager_before = metrics(base_url), metrics(manager_url)
     stop = threading.Event()
-    peaks, errors, result = {}, [], {}
+    peaks = {} if observation_mode == "sampled" and manager_url is not None else None
+    errors = []
+    result = {
+        "observation_mode": observation_mode,
+        "manager_present": manager_url is not None,
+        "memory_samples": 0,
+    }
 
     def observe():
         while not stop.is_set():
             try:
-                for key, value in metrics(manager_url).items():
+                observed = metrics(manager_url)
+                result["memory_samples"] += 1
+                for key, value in observed.items():
                     if key in (
                         "orbitkv_pool_used_bytes",
                         "orbitkv_cache_protected_bytes",
@@ -57,8 +74,10 @@ def measure(base_url: str, manager_url: str | None, settle_seconds: float):
                 return
             stop.wait(0.025)
 
-    monitor = threading.Thread(target=observe, daemon=True)
-    monitor.start()
+    monitor = None
+    if peaks is not None:
+        monitor = threading.Thread(target=observe, daemon=True)
+        monitor.start()
     started = time.perf_counter()
     try:
         yield result
@@ -98,9 +117,36 @@ def measure(base_url: str, manager_url: str | None, settle_seconds: float):
         )
     finally:
         stop.set()
-        monitor.join(timeout=12)
-    if monitor.is_alive() or errors:
+        if monitor is not None:
+            monitor.join(timeout=12)
+    if (monitor is not None and monitor.is_alive()) or errors:
         raise RuntimeError(f"Memory observation failed: {errors}")
+
+
+def validate_observation(mode: str, measurements: list[dict], *, manager_present: bool) -> None:
+    if mode not in OBSERVATION_MODES or not measurements:
+        raise ValueError("Missing or invalid observation mode")
+    for row in measurements:
+        if row.get("observation_mode") != mode or row.get("manager_present") is not manager_present:
+            raise ValueError("Mixed or missing observation metadata")
+        count, peaks = row.get("memory_samples"), row.get("sampled_peak_bytes")
+        if type(count) is not int or count < 0 or "sampled_peak_bytes" not in row:
+            raise ValueError("Missing or invalid memory observation")
+        if mode == "sampled" and manager_present:
+            if count == 0 or not isinstance(peaks, dict):
+                raise ValueError("Missing sampled memory observations")
+            if any(
+                type(value) not in (int, float) or not math.isfinite(value) or value < 0
+                for value in peaks.values()
+            ):
+                raise ValueError("Invalid sampled memory peak")
+        elif count != 0 or peaks is not None:
+            raise ValueError("Unsampled memory peaks must remain unknown")
+
+
+def sampled_peak(measurements: list[dict], metric: str) -> float | None:
+    values = [(row.get("sampled_peak_bytes") or {}).get(metric) for row in measurements]
+    return max(values) if values and all(value is not None for value in values) else None
 
 
 def workload_phases(ssd: bool = False) -> tuple[str, ...]:
@@ -275,11 +321,12 @@ def codec_summary(measurements: list[dict]) -> dict:
     }
     for name in ("reserved", "workspace"):
         metric = f"orbitkv_storage_codec_{name}_bytes"
-        summary[f"sampled_peak_codec_{name}_bytes"] = max(
+        summary[f"sampled_peak_codec_{name}_bytes"] = sampled_peak(measurements, metric)
+        summary[f"boundary_max_codec_{name}_bytes"] = max(
             (
                 row[snapshot][metric]
                 for row in measurements
-                for snapshot in ("manager_before", "sampled_peak_bytes", "manager_after")
+                for snapshot in ("manager_before", "manager_after")
                 if metric in row.get(snapshot, {})
             ),
             default=None,
@@ -340,6 +387,7 @@ def summarize(samples: list[dict], lengths: list[int]) -> list[dict]:
                 {
                     "length": length,
                     "phase": phase,
+                    "observation_mode": group[0].get("observation_mode"),
                     "n": len(group),
                     "ttft_p50_ms": statistics.median(times),
                     "ttft_p95_ms": percentile(times, 0.95),
