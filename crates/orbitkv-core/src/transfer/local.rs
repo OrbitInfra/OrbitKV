@@ -319,14 +319,6 @@ pub struct LocalRestoreExecutor {
     trace: Option<LocalCopyTrace>,
 }
 
-impl Drop for LocalRestoreExecutor {
-    fn drop(&mut self) {
-        if let Some(trace) = self.trace.take() {
-            trace.flush();
-        }
-    }
-}
-
 /// CUDA operations in registration and readiness run on a framework thread.
 /// Restore its context after all temporary CUDA owners have been dropped.
 struct CallerContext(Option<sys::CUcontext>);

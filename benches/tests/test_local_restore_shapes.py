@@ -7,7 +7,7 @@ from benches.local_restore_shapes import _collect
 
 
 def records():
-    base = {"schema": 1, "pid": 17, "trace_id": 1, "device": 0}
+    base = {"schema": 2, "pid": 17, "trace_id": 1, "device": 0, "sequence": 0}
     geometry = {
         "device": 0x10000,
         "host": 0x100100,
@@ -26,7 +26,13 @@ def records():
         "source_offset": 256,
     }
     return [
-        {**base, "stage": "local_raw_copy_open", "limit": 100, "max_pitch": 65536},
+        {
+            **base,
+            "stage": "local_raw_copy_open",
+            "limit": 100,
+            "max_pitch": 65536,
+            "records_before": 0,
+        },
         {
             **base,
             "stage": "local_raw_copy_batch",
@@ -108,6 +114,11 @@ def test_actual_geometry_and_shared_part_wait_are_reported_separately(tmp_path):
         "changed_arena_next_part",
         "changed_tensor_next_part",
         "changed_generation_next_part",
+        "missing_previous_footer",
+        "replenished_budget",
+        "skipped_sequence",
+        "changed_limit",
+        "changed_pitch",
     ],
 )
 def test_partial_failed_or_inconsistent_capture_is_rejected(tmp_path, case):
@@ -149,16 +160,45 @@ def test_partial_failed_or_inconsistent_capture_is_rejected(tmp_path, case):
             2**64 - 8192 if case == "mapped_span_overflow" else 256
         )
     else:
-        second = copy.deepcopy(events[1:3])
-        second[0]["part_id"] = second[1]["part_id"] = 1
+        second = copy.deepcopy(events)
+        for event in second:
+            event["sequence"] = 1
+        second[0]["records_before"] = 3
+        second[1]["part_id"] = second[2]["part_id"] = 1
+        second[-1].update(parts=2, batches=2, descriptors=2, records_reserved=6)
         if case == "changed_arena_next_part":
-            second[0]["copies"][0]["host_device"] += 65536
+            second[1]["copies"][0]["host_device"] += 65536
         elif case == "changed_tensor_next_part":
-            second[0]["copies"][0]["registered_device_bytes"] += 65536
-        else:
-            second[0]["copies"][0]["source_allocation_bytes"] -= 4096
+            second[1]["copies"][0]["registered_device_bytes"] += 65536
+        elif case == "changed_generation_next_part":
+            second[1]["copies"][0]["source_allocation_bytes"] -= 4096
+        elif case == "missing_previous_footer":
+            events.pop()
+        elif case == "replenished_budget":
+            second[0]["records_before"] = 0
+        elif case == "skipped_sequence":
+            second[0]["sequence"] = 2
+        elif case == "changed_limit":
+            second[0]["limit"] += 1
+        elif case == "changed_pitch":
+            second[0]["max_pitch"] += 1
         events[2]["final_part"] = False
-        events[3:3] = second
-        events[-1].update(parts=2, batches=2, descriptors=2, records_reserved=6)
+        events.extend(second)
     with pytest.raises(ValueError):
         _collect(log(tmp_path, events))
+
+
+def test_drained_checkpoints_share_executor_geometry_and_cumulative_budget(tmp_path):
+    events = records()
+    events[2]["final_part"] = False
+    second = copy.deepcopy(records())
+    for event in second:
+        event["sequence"] = 1
+    second[0]["records_before"] = 3
+    second[1]["part_id"] = second[2]["part_id"] = 1
+    second[-1].update(parts=2, batches=2, descriptors=2, records_reserved=6)
+    events.extend(second)
+    result = _collect(log(tmp_path, events))
+    assert (result["executors"], result["parts"], result["bytes"]) == (1, 2, 8192)
+    assert result["traces"][0]["checkpoints"] == [events[3], events[7]]
+    assert result["traces"][0]["headers"] == [events[0], events[4]]

@@ -218,9 +218,15 @@ actual maximum pitch.
 CPU submission is recorded per batch; stream waiting is recorded once for the
 whole part, including its layer events. Neither isolates GPU execution time.
 
-The executor retains bounded scalar records and serializes them when it is
-dropped. `local_raw_copy_complete` seals that capture before its fields unregister;
-normal engine/Manager exit, byte correctness and owned-resource postflight must
+The executor publishes a schema-2 opening record before each part's submission,
+then serializes its bounded scalar geometry after the existing physical stream
+drain. `local_raw_copy_complete` checkpoints all records through that drained
+part under the same retained executor identity. It does not seal executor
+lifetime or whole-operation completion. Publishing frees that part's buffered
+geometry without replenishing the cumulative record budget. JSON/logging is
+diagnostic overhead outside the backend submission and stream-wait intervals;
+it can affect opt-in operation latency.
+Normal engine/Manager exit, byte correctness and owned-resource postflight must
 be checked independently. Capacity/allocation failure or unfinished/failed parts
 invalidate the capture rather than supplying truncated successful evidence.
 This diagnostic has no instrumentation-overhead or application qualification yet.
@@ -235,9 +241,18 @@ text. Real CPU module-child controls cover installed/source precedence, relative
 entries, overrides, empty entries and symlink/parent components. Independent
 review accepted the failure evidence and rejected an intermediate correction
 that changed relative-path meaning; its controls and rejection remain retained.
-The whole failed run, warnings and normal final resource postflight are retained.
-There is no accepted engine-local H2D geometry or new performance result from
-that pilot; a separately reviewed installed task remains necessary. See the
+The final import helper is independently accepted. A separate lease-precheck
+task stops before model admission, and its successor returns 6 passed/1 skipped
+on Qwen3-32B with compilation enabled and CUDA Graph disabled. The successor
+still fails collection: both engine logs contain zero records because the
+Drop-only recorder has no reliably consumed publication boundary before the
+released API owner's immediate EngineCore abort. All three whole failed runs,
+warnings and final postflight evidence remain immutable. The separate
+drained-part publication repair includes a real CPU child that exits without
+destructors: the old recorder produces zero records and fails that regression.
+Missing/failed checkpoints and cumulative budget/registration controls remain
+strict. Actual engine-local H2D geometry still needs a newly built installed
+artifact and separately reviewed structural task. See the
 [S5.5 execution record](completion-plan.md#s55--deployment-matrix-and-upstream-maintenance).
 
 After an independently reviewed installed model gate and normal shutdown, parse
@@ -250,9 +265,12 @@ python -m benches.local_restore_shapes \
   --output /var/tmp/orbitkv-kda/h2d-001/local-h2d.json
 ```
 
-The parser requires all opened executors to have matching complete footers,
+The parser requires every opened part to have a matching complete checkpoint,
 contiguous batch/part coverage, source and destination bounds, nonoverlapping
-destinations, exact byte histograms and the declared bounded reservation.
+destinations, exact byte histograms and the cumulative bounded reservation.
+Part sequences must be contiguous; executor device, maximum pitch, budget and
+source/destination registrations must remain stable across checkpoints. Schema-1
+Drop-only output is not accepted as an alternative input.
 The frozen native fixture then recomputes every batch's DMA ranges using captured
 addresses, owners and maximum pitch through the production compiler, before any
 CUDA initialization. Scalar-only parsing is explicitly unqualified; the final

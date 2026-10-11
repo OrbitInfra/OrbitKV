@@ -35,12 +35,10 @@ struct Part {
     planned_descriptors: usize,
     final_part: bool,
     batches: Vec<Batch>,
-    host_drain_ns: Option<u64>,
-    success: bool,
 }
 
-/// Retains bounded scalar observations until the owning executor has drained.
-/// JSON and logging happen when that executor is dropped, outside submission.
+/// Publishes each physically drained part under one cumulative executor budget.
+/// Opening records precede submission; geometry serialization follows drain.
 pub(super) struct LocalCopyTrace {
     id: u64,
     device: usize,
@@ -48,7 +46,11 @@ pub(super) struct LocalCopyTrace {
     limit: usize,
     used: usize,
     invalid: Option<&'static str>,
-    parts: Vec<Part>,
+    parts: usize,
+    batches: usize,
+    descriptors: usize,
+    closed: bool,
+    part: Option<Part>,
     geometry: HashMap<u64, Geometry>,
 }
 
@@ -65,7 +67,11 @@ impl LocalCopyTrace {
             limit,
             used: 0,
             invalid,
-            parts: Vec::new(),
+            parts: 0,
+            batches: 0,
+            descriptors: 0,
+            closed: false,
+            part: None,
             geometry: HashMap::new(),
         }
     }
@@ -87,29 +93,45 @@ impl LocalCopyTrace {
     }
 
     pub(super) fn begin_part(&mut self, planned_descriptors: usize, final_part: bool) {
-        if self
-            .parts
-            .last()
-            .is_some_and(|part| part.host_drain_ns.is_none())
-        {
-            self.invalid = Some("unfinished_previous_part");
-        }
-        if !self.admit(planned_descriptors.saturating_mul(2).saturating_add(1)) {
+        self.begin_part_with(planned_descriptors, final_part, Self::write);
+    }
+
+    fn base(&self) -> serde_json::Value {
+        serde_json::json!({
+            "schema": 2, "pid": std::process::id(), "trace_id": self.id,
+            "device": self.device, "sequence": self.parts,
+        })
+    }
+
+    fn begin_part_with(
+        &mut self,
+        planned_descriptors: usize,
+        final_part: bool,
+        mut write: impl FnMut(serde_json::Value),
+    ) {
+        if self.closed {
             return;
         }
+        if self.part.is_some() {
+            self.invalid = Some("unfinished_previous_part");
+            return;
+        }
+        let mut header = self.base();
+        header["stage"] = "local_raw_copy_open".into();
+        header["max_pitch"] = self.max_pitch.into();
+        header["limit"] = self.limit.into();
+        header["records_before"] = self.used.into();
+        write(header);
         self.geometry.clear();
-        if self.parts.try_reserve(1).is_err()
-            || self.geometry.try_reserve(planned_descriptors).is_err()
+        if self.admit(planned_descriptors.saturating_mul(2).saturating_add(1))
+            && self.geometry.try_reserve(planned_descriptors).is_err()
         {
             self.invalid = Some("capture_allocation_failed");
-            return;
         }
-        self.parts.push(Part {
+        self.part = Some(Part {
             planned_descriptors,
             final_part,
             batches: Vec::new(),
-            host_drain_ns: None,
-            success: false,
         });
     }
 
@@ -169,7 +191,7 @@ impl LocalCopyTrace {
         shape.device = self.device as u64;
         shape.backend = backend;
         shape.direction = "h2d";
-        let Some(part) = self.parts.last_mut() else {
+        let Some(part) = self.part.as_mut() else {
             self.invalid = Some("submission_part_missing");
             return None;
         };
@@ -184,8 +206,8 @@ impl LocalCopyTrace {
 
     pub(super) fn finish_batch(&mut self, index: usize, cpu_submit_ns: u64, success: bool) {
         if let Some(batch) = self
-            .parts
-            .last_mut()
+            .part
+            .as_mut()
             .and_then(|part| part.batches.get_mut(index))
         {
             batch.shape.cpu_submit_ns = cpu_submit_ns;
@@ -196,32 +218,26 @@ impl LocalCopyTrace {
     }
 
     pub(super) fn finish_part(&mut self, host_drain_ns: u64, success: bool) {
-        self.geometry.clear();
-        if self.invalid.is_some() {
+        if self.part.is_none() {
             return;
         }
-        if let Some(part) = self.parts.last_mut() {
-            part.host_drain_ns = Some(host_drain_ns);
-            part.success = success;
-        } else {
-            self.invalid = Some("drain_part_missing");
-        }
+        self.finish_part_with(host_drain_ns, success, Self::write);
+        log::logger().flush();
     }
 
-    fn flush_with(&self, mut write: impl FnMut(serde_json::Value)) {
-        let pid = std::process::id();
-        let base = serde_json::json!({
-            "schema": 1, "pid": pid, "trace_id": self.id, "device": self.device,
-        });
-        let mut header = base.clone();
-        header["stage"] = "local_raw_copy_open".into();
-        header["max_pitch"] = self.max_pitch.into();
-        header["limit"] = self.limit.into();
-        write(header);
-        let mut batches = 0;
-        let mut descriptors = 0;
-        let mut successful = true;
-        for (part_id, part) in self.parts.iter().enumerate() {
+    fn finish_part_with(
+        &mut self,
+        host_drain_ns: u64,
+        success: bool,
+        mut write: impl FnMut(serde_json::Value),
+    ) {
+        let Some(part) = self.part.take() else {
+            return;
+        };
+        let base = self.base();
+        let part_id = self.parts;
+        let mut successful = success;
+        {
             let submitted: usize = part.batches.iter().map(|batch| batch.geometry.len()).sum();
             for (batch_id, batch) in part.batches.iter().enumerate() {
                 let shape = &batch.shape;
@@ -243,8 +259,8 @@ impl LocalCopyTrace {
                 event["copies"] = serde_json::json!(batch.geometry);
                 write(event);
                 successful &= shape.success;
-                batches += 1;
-                descriptors += batch.geometry.len();
+                self.batches += 1;
+                self.descriptors += batch.geometry.len();
             }
             let mut event = base.clone();
             event["stage"] = "local_raw_copy_part".into();
@@ -253,27 +269,30 @@ impl LocalCopyTrace {
             event["planned_descriptors"] = part.planned_descriptors.into();
             event["submitted_descriptors"] = submitted.into();
             event["batches"] = part.batches.len().into();
-            event["host_drain_ns"] = part.host_drain_ns.into();
-            event["success"] = part.success.into();
+            event["host_drain_ns"] = host_drain_ns.into();
+            event["success"] = success.into();
             write(event);
-            successful &= part.success
-                && part.host_drain_ns.is_some()
-                && submitted == part.planned_descriptors;
+            successful &= submitted == part.planned_descriptors;
+        }
+        if !successful && self.invalid.is_none() {
+            self.invalid = Some("incomplete_or_failed_part");
         }
         let mut complete = base;
         complete["stage"] = "local_raw_copy_complete".into();
-        complete["parts"] = self.parts.len().into();
-        complete["batches"] = batches.into();
-        complete["descriptors"] = descriptors.into();
+        complete["parts"] = (self.parts + 1).into();
+        complete["batches"] = self.batches.into();
+        complete["descriptors"] = self.descriptors.into();
         complete["records_reserved"] = self.used.into();
         complete["invalid_reason"] = self.invalid.into();
         complete["complete"] = (self.invalid.is_none() && successful).into();
         write(complete);
+        self.parts += 1;
+        self.closed = self.invalid.is_some();
+        self.geometry.clear();
     }
 
-    pub(super) fn flush(&self) {
-        self.flush_with(|fields| log::info!("local_raw_copy {fields}"));
-        log::logger().flush();
+    fn write(fields: serde_json::Value) {
+        log::info!("local_raw_copy {fields}");
     }
 }
 

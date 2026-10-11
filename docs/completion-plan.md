@@ -1916,14 +1916,20 @@ Restore executor now owns an opt-in bounded capture of its actual sorted H2D
 batches, retained registration/owner tags, granted source allocation bounds and registered
 destination spans. It reuses the production DMA compiler. Per-batch CPU submission
 and the single shared part drain remain distinct; no additional synchronization,
-layer callback or source grant is introduced. JSON is emitted when that executor
-is dropped, before its registered CUDA fields unregister. The strict offline
+layer callback or source grant is introduced. A schema-2 opening record precedes
+each part's submission; scalar geometry and a cumulative completion checkpoint
+are published after its existing physical stream drain. Publication does not
+depend on executor destruction. JSON/logging contributes opt-in operation latency
+outside the recorded backend-submission and stream-wait intervals; observation
+overhead remains unqualified. The strict offline
 parser rejects incomplete, failed, overflowing or inconsistent geometry and
 requires a native CPU replay of each batch through the production DMA compiler.
 Registrations are immutable across the entire executor trace. Device owner tags
 are existing registered tensor/view addresses, not independently queried complete
-CUDA allocation bases, extents or distinct allocation counts. A footer establishes
-capture coverage, not process cleanup or physical failure drain.
+CUDA allocation bases, extents or distinct allocation counts. Every opened part
+requires a completion checkpoint. Publishing does not replenish the executor's
+record budget. A checkpoint establishes coverage through that drained part,
+not whole-operation completion, executor shutdown or physical failure drain.
 
 The requested newer model inputs are pinned separately: official Qwen3.8-27B at
 `1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`, Qwen3.8-27B-FP8 at
@@ -1936,7 +1942,7 @@ released-vLLM multi-group/recurrent rejection stays active. Native model serving
 complete OrbitKV recovery and performance comparison remain separate gates.
 An older dense-model regression cannot be reported as newer-model support.
 
-The exact `9a4c8b4b` capture source has independent CPU/software acceptance, and
+The earlier `9a4c8b4b` Drop-only capture source has independent CPU/software acceptance, and
 its complete CUDA 13 wheel passes isolated import and installed ELF-closure
 checks. The single independently executed H20 installed pilot remains
 `INVALID_FAIL_STOP`: all twelve native-control requests complete, but the
@@ -1957,20 +1963,44 @@ module-child controls cover these boundaries, source-only use and symlink/parent
 components; the source-only gate is 382 passed/1 skipped. Independent review
 accepted the complete invalid-run evidence and rejected the intermediate helper
 because four relative-path controls lost installed-package precedence; that
-rejection and the consumed negative controls remain archived. Production code, wheel
-and the invalid run are unchanged; no retry/replacement or performance campaign
-was launched. Independently review this helper correction and the invalid outcome,
-then freeze a separate installed structural task that verifies the exact child
-module/cwd/import boundary before model admission. Actual H2D geometry and the
-matched inference-pressure gate remain open.
+rejection and the consumed negative controls remain archived. The final helper
+correction at `e90248f4` has independent CPU/software acceptance. A separately
+frozen task fails before model admission because its precheck declares a GPU
+lease FD without inheriting it; independent review accepts that invalid evidence.
+The next distinct task fixes only that admission boundary and actually returns
+6 passed/1 skipped in 451.31 s, with four normal outer cleanup receipts and
+positive restart cache loads. Its actual mode is Inductor compilation with CUDA
+Graph disabled, not eager execution. Both engine logs nevertheless contain zero
+capture records, so the strict parser rejects the whole task before native DMA
+compiler replay. Released API shutdown logs abort/kill EngineCore; Drop-only
+publication is not a reliably consumed boundary. These three invalid tasks have
+not been retried or reclassified as structural/performance qualification.
+
+Independent failed-outcome review and the complete third mirror are at
+`/root/orbitkv-artifacts/s5-h2d-capture-lease-admission-outcome-review-20261011/` and
+`/root/orbitkv-artifacts/s5-h2d-shapes-latest-models-20261011/lease-admission-cohort-1/`.
+The separate drained-part publication repair is implemented with a real CPU
+subprocess that calls the actual recorder and exits without running destructors.
+That control fails against the old publication boundary with zero records.
+Five Rust recorder tests and 493 benchmark tests pass, including cumulative
+budget, missing/failed checkpoints, skipped parts and inconsistent registrations;
+targeted Clippy, native DMA-compiler units and formatting also pass. Source review,
+the newly built installed wheel and a separately frozen hardware structural gate
+must pass before accepting actual H2D geometry. Diagnostic overhead,
+source-operation linkage, physical failure drain and the matched
+inference-pressure gate remain open.
 Continue newer-model preparation with native controls and complete state gates;
 changing a production backend still requires consumed application evidence.
 Separate copy-path observations from TTFT/TPOT/throughput and compare native HBM,
 OrbitKV and LMCache only with equal tokens, memory budgets and independent runs.
 
 The requested `Qwen/Qwen3.8-27B` and `deepseek-ai/DeepSeek-V4.1-Flash` belong to
-subsequent model/state qualification: inspect immutable configurations and
-released-engine support before any weights/download or serving launch. Qwen3.8
+subsequent model/state qualification; their immutable metadata/configuration
+preparation above is complete. Next prepare the complete Qwen3.8-27B BF16/FP8
+artifacts and consume official-engine native controls before complete-state
+OrbitKV recovery and matched performance. DeepSeek-V4.1-Flash requires a
+separately declared and leased native topology for its 510 GB checkpoint plus
+released kernel/auxiliary-state checks. Qwen3.8
 includes recurrent DeltaNet state; neither weight fit nor native inference
 establishes OrbitKV recovery support. Larger dense models, longer prefixes and
 concurrency can provide pressure within the accepted state contract, while
