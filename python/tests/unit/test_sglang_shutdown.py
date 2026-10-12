@@ -223,3 +223,57 @@ def test_sglang_shutdown_records_early_operation_errors(
                 except BlockingIOError:
                     assert time.monotonic() < deadline, "signalled worker still holds its lease"
                     time.sleep(0.01)
+
+
+@pytest.mark.parametrize("owned_server", ["orphan"], indirect=True)
+@pytest.mark.parametrize("interrupt_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("operation", ["signal", "wait", "inspection", "primary_failure"])
+def test_sglang_shutdown_interrupt_stops_workers_and_releases_lease(
+    owned_server, interrupt_type, operation, tmp_path, monkeypatch
+):
+    process, child_pid, lock_path, _ = owned_server
+    interrupt = interrupt_type("shutdown interrupted")
+    primary = ValueError("foreground output oracle failed")
+    target, attribute = (
+        (sglang_direct, "identity_group_members")
+        if operation in {"inspection", "primary_failure"}
+        else (process, "send_signal" if operation == "signal" else "wait")
+    )
+    original = getattr(target, attribute)
+    interrupted = False
+
+    def interrupt_once(*args, **kwargs):
+        nonlocal interrupted
+        if not interrupted:
+            interrupted = True
+            raise interrupt
+        return original(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(target, attribute, interrupt_once)
+        if operation == "primary_failure":
+            with pytest.raises(ValueError) as failed:
+                try:
+                    raise primary
+                finally:
+                    sglang_direct._stop_server(process, tmp_path, timeout=0.5)
+            assert failed.value is primary and primary.__cause__ is interrupt
+        else:
+            with pytest.raises(interrupt_type) as failed:
+                sglang_direct._stop_server(process, tmp_path, timeout=0.5)
+            assert failed.value is interrupt
+
+    assert process.returncode is not None
+    cleanup = json.loads((tmp_path / f"sglang-{process.pid}.cleanup.json").read_text())
+    assert cleanup["interrupted"] and cleanup["forced_kill"] and cleanup["reaped"]
+    assert cleanup["process_group_known"]
+    assert all(member["state"] == "Z" for member in cleanup["remaining_processes"])
+    assert any(interrupt_type.__name__ in error for error in cleanup["errors"])
+    assert cleanup["primary_failure"] == (
+        {"type": "ValueError", "message": str(primary)} if operation == "primary_failure" else None
+    )
+    with lock_path.open("a") as probe:
+        fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    waited, status = os.waitpid(child_pid, 0)
+    assert waited == child_pid and os.WIFSIGNALED(status)
+    assert os.WTERMSIG(status) == signal.SIGKILL

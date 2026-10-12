@@ -32,6 +32,7 @@ def _stop_server(process: subprocess.Popen, directory: Path, timeout: float = 30
     inspection_errors = []
     before_forced_kill = []
     members, group_known = [], False
+    unexpected_error = None
 
     def wait_for_workers(wait_seconds):
         deadline = time.monotonic() + wait_seconds
@@ -46,6 +47,24 @@ def _stop_server(process: subprocess.Popen, directory: Path, timeout: float = 30
             if not members or time.monotonic() >= deadline:
                 return members, True
             time.sleep(0.01)
+
+    def force_cleanup():
+        nonlocal forced_kill, before_forced_kill, members, group_known
+        forced_kill = True
+        before_forced_kill = members
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError as error:
+            errors.append(f"Group SIGKILL failed: {type(error).__name__}: {error}")
+        try:
+            process.wait(timeout=min(timeout, 5))
+        except subprocess.TimeoutExpired:
+            errors.append("SGLang leader did not exit after SIGKILL")
+        except OSError as error:
+            errors.append(f"Forced leader wait failed: {type(error).__name__}: {error}")
+        members, group_known = wait_for_workers(min(timeout, 5))
 
     try:
         try:
@@ -65,24 +84,22 @@ def _stop_server(process: subprocess.Popen, directory: Path, timeout: float = 30
             errors.append(f"Leader wait failed: {type(error).__name__}: {error}")
         members, group_known = wait_for_workers(0 if leader_wait_failed else timeout)
         if leader_wait_failed or members or not group_known:
-            forced_kill = True
-            before_forced_kill = members
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            except OSError as error:
-                errors.append(f"Group SIGKILL failed: {type(error).__name__}: {error}")
-            try:
-                process.wait(timeout=min(timeout, 5))
-            except subprocess.TimeoutExpired:
-                errors.append("SGLang leader did not exit after SIGKILL")
-            except OSError as error:
-                errors.append(f"Forced leader wait failed: {type(error).__name__}: {error}")
-            members, group_known = wait_for_workers(min(timeout, 5))
+            force_cleanup()
     except BaseException as error:
+        unexpected_error = error
         group_known = False
         errors.append(f"Unexpected cleanup error: {type(error).__name__}: {error}")
+        try:
+            force_cleanup()
+        except BaseException as fallback_error:
+            group_known = False
+            errors.append(
+                f"Forced cleanup error: {type(fallback_error).__name__}: {fallback_error}"
+            )
+            if isinstance(fallback_error, (KeyboardInterrupt, SystemExit)) and not isinstance(
+                unexpected_error, (KeyboardInterrupt, SystemExit)
+            ):
+                unexpected_error = fallback_error
 
     if forced_kill:
         errors.append("SGLang required forced process-group cleanup")
@@ -103,6 +120,7 @@ def _stop_server(process: subprocess.Popen, directory: Path, timeout: float = 30
         "remaining_processes": members,
         "process_group_known": group_known,
         "reaped": process.returncode is not None,
+        "interrupted": isinstance(unexpected_error, (KeyboardInterrupt, SystemExit)),
         "inspection_errors": inspection_errors,
         "errors": errors,
         "primary_failure": (
@@ -115,11 +133,18 @@ def _stop_server(process: subprocess.Popen, directory: Path, timeout: float = 30
         (directory / f"sglang-{process.pid}.cleanup.json").write_text(
             json.dumps(cleanup, indent=2) + "\n"
         )
+        if isinstance(unexpected_error, (KeyboardInterrupt, SystemExit)):
+            raise unexpected_error
         if errors:
-            raise AssertionError(f"SGLang cleanup failed: {cleanup}")
+            raise AssertionError(f"SGLang cleanup failed: {cleanup}") from unexpected_error
     except BaseException as cleanup_error:
         if primary_error is not None:
             raise primary_error from cleanup_error
+        if (
+            isinstance(unexpected_error, (KeyboardInterrupt, SystemExit))
+            and cleanup_error is not unexpected_error
+        ):
+            raise unexpected_error from cleanup_error
         raise
 
 
