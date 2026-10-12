@@ -16,8 +16,10 @@ import statistics
 import subprocess
 import threading
 import time
+import traceback
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import requests
 
@@ -314,16 +316,22 @@ class Campaign:
         result = {"cell": cell, "before": before}
         launched = []
         error = None
+        cleanup_error = None
         try:
             for name in ("manager", "fixture"):
                 for host in self.hosts:
                     self.launch(host, cell["id"], name)
                     launched.append((host, name))
-                    self.health(
+                    url = (
                         cell["manager_urls"][host]
                         if name == "manager"
                         else cell["fixture_urls"][host]
                     )
+                    ports = [urlsplit(url).port]
+                    if name == "manager":
+                        argv = self.contract["launches"][host][cell["id"]][name]["argv"]
+                        ports.append(urlsplit("tcp://" + argv[argv.index("--addr") + 1]).port)
+                    result.setdefault("readiness", []).append(self.health(host, name, url, ports))
             source, target = cell["source_host"], cell["target_host"]
             evidence = profile(
                 SimpleNamespace(
@@ -348,28 +356,58 @@ class Campaign:
             result["pre_stop_idle"] = quiet
         except Exception as caught:
             error = caught
-            result.update(status="INVALID_OR_FAILED", error=str(caught))
-        finally:
-            if launched and all(not owner.uncertain for owner in self.hosts.values()):
-                for host, name in launched:
-                    if name == "fixture":
-                        self.health(cell["fixture_urls"][host])
-                quiet = drain(*urls)
-                for row in quiet:
-                    if any(row.get(key) != 0 for key in self.contract["required_idle_metrics"]):
-                        raise RuntimeError("No complete owner drain proof before service stop")
-                result["cleanup_idle"] = quiet
-                result["exits"] = []
-                for host, name in reversed(launched):
-                    receipt = self.stop(host, name, idle_proven=True)
-                    result["exits"].append(receipt)
-                    expected = 143 if name == "fixture" else 0
-                    if error is None and receipt["exit_code"] != expected:
-                        raise RuntimeError(("Unexpected normal service exit", expected, receipt))
-                self.members_absent(cell)
+            result.update(
+                status="INVALID_OR_FAILED",
+                error=str(caught),
+                error_type=type(caught).__name__,
+                traceback=traceback.format_exc(),
+            )
             save(output, result)
+        finally:
+            try:
+                if launched and all(not owner.uncertain for owner in self.hosts.values()):
+                    payload_admitted = any(name == "fixture" for _, name in launched)
+                    if payload_admitted:
+                        for host, name in launched:
+                            if name == "fixture":
+                                url = cell["fixture_urls"][host]
+                                self.health(host, name, url, [urlsplit(url).port])
+                        quiet = drain(*urls)
+                        for row in quiet:
+                            if any(
+                                row.get(key) != 0 for key in self.contract["required_idle_metrics"]
+                            ):
+                                raise RuntimeError(
+                                    "No complete owner drain proof before service stop"
+                                )
+                        result["cleanup_idle"] = quiet
+                    else:
+                        result["cleanup_proof"] = (
+                            "No fixture/payload actor was admitted in this fresh cell"
+                        )
+                    result["exits"] = []
+                    for host, name in reversed(launched):
+                        receipt = self.stop(host, name, idle_proven=True)
+                        result["exits"].append(receipt)
+                        expected = 143 if name == "fixture" else 0
+                        if error is None and receipt["exit_code"] != expected:
+                            raise RuntimeError(
+                                ("Unexpected normal service exit", expected, receipt)
+                            )
+                    self.members_absent(cell)
+            except Exception as caught:
+                cleanup_error = caught
+                result.update(
+                    status="INVALID_OR_FAILED",
+                    cleanup_error=str(caught),
+                    cleanup_traceback=traceback.format_exc(),
+                )
+            finally:
+                save(output, result)
         if error:
             raise error
+        if cleanup_error:
+            raise cleanup_error
         after = {host: owner.rpc("snapshot") for host, owner in self.hosts.items()}
         result.update(
             status="PASS_DESCRIPTIVE_PROFILE",
@@ -379,13 +417,22 @@ class Campaign:
         save(output, result)
         return result
 
-    @staticmethod
-    def health(url: str) -> None:
+    def health(self, host: str, name: str, url: str, ports: list[int]) -> dict:
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
+            state = self.hosts[host].rpc("process-status", name=name)
+            if state["exit_code"] is not None:
+                raise ChildProcessError(("Owned service exited before readiness", state))
             try:
-                if requests.get(url + "/health", timeout=3).status_code == 200:
-                    return
+                if (
+                    set(ports) <= set(state["listen_ports"])
+                    and requests.get(url + "/health", timeout=3).status_code == 200
+                ):
+                    after = self.hosts[host].rpc("process-status", name=name)
+                    if after["exit_code"] is not None:
+                        raise ChildProcessError(("Owned service exited during readiness", after))
+                    if set(ports) <= set(after["listen_ports"]):
+                        return after
             except requests.RequestException:
                 pass
             time.sleep(0.2)

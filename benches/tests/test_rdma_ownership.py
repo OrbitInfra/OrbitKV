@@ -5,6 +5,7 @@ import errno
 import fcntl
 import json
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -13,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from benches.rdma_owner import HostOwner
-from benches.rdma_profile import HostConnection
+from benches.rdma_profile import Campaign, HostConnection
 from benches.tent_gpu import CAPACITY, slices, validate_stop
 
 
@@ -315,3 +316,106 @@ while not (root/'cpu-only-release').exists():time.sleep(.01)
         owner.thread.join(timeout=5)
         for stream in (owner.process.stdin, owner.process.stdout, owner.stdout, owner.stderr):
             stream.close()
+
+
+@pytest.mark.parametrize("foreign_listener", [False, True])
+def test_service_status_requires_the_actual_owned_listening_socket(tmp_path, foreign_listener):
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    port = listener.getsockname()[1]
+    if foreign_listener:
+        program = "import time; time.sleep(30)"
+    else:
+        listener.close()
+        program = (
+            "import socket,time; s=socket.socket(); "
+            "s.bind(('127.0.0.1',int(__import__('sys').argv[1]))); s.listen(); time.sleep(30)"
+        )
+    owner = service_owner(tmp_path, [sys.executable, "-u", "-c", program, str(port)])
+    try:
+        deadline = time.monotonic() + 5
+        while True:
+            result = owner.process_status({"name": "manager"})
+            assert result["exit_code"] is None and not result["actual_wait_reap"]
+            if foreign_listener or port in result["listen_ports"]:
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert (port in result["listen_ports"]) is not foreign_listener
+    finally:
+        listener.close()
+        receipt = owner.stop({"name": "manager", "idle_proven": True})
+        assert receipt["exit_code"] == -signal.SIGTERM and receipt["actual_wait_reap"]
+
+
+def service_owner(tmp_path, argv):
+    contract = {
+        "hosts": {
+            "local": {"boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip()}
+        },
+        "file_stamps": {"local": {}},
+        "launches": {
+            "local": {"startup": {"manager": {"argv": argv, "environment": {}, "kind": "service"}}}
+        },
+    }
+    owner = HostOwner(contract, "local", tmp_path)
+    owner.launch({"cell": "startup", "name": "manager", "argv": argv, "environment": {}})
+    return owner
+
+
+@pytest.mark.parametrize("cleanup_failure", [False, True])
+def test_manager_bootstrap_failure_preserves_primary_error_and_reaps_real_child(
+    monkeypatch, tmp_path, cleanup_failure
+):
+    owner = service_owner(
+        tmp_path, [sys.executable, "-u", "-c", "raise SystemExit(17)", "--addr", "127.0.0.1:1"]
+    )
+    campaign = Campaign(
+        {"launches": {"local": {"startup": owner.contract["launches"]["local"]["startup"]}}},
+        tmp_path,
+    )
+
+    class LocalConnection:
+        uncertain = False
+
+        def rpc(self, operation, **fields):
+            if operation == "snapshot":
+                return {"cpu_only_control": True}
+            if operation == "process-status":
+                return owner.process_status(fields)
+            if operation == "stop":
+                return owner.stop(fields)
+            raise AssertionError(operation)
+
+    campaign.hosts["local"] = LocalConnection()
+    monkeypatch.setattr(campaign, "launch", lambda *args: None)
+
+    def membership_check(cell):
+        if cleanup_failure:
+            raise ConnectionError("controlled unavailable etcd during cleanup")
+
+    monkeypatch.setattr(campaign, "members_absent", membership_check)
+
+    def forbidden_drain(*args):
+        pytest.fail("A fresh cell without a fixture must not contact its dead Manager for drain")
+
+    monkeypatch.setattr("benches.rdma_profile.drain", forbidden_drain)
+    campaign.active = {"local": {"manager": "startup"}}
+    output = tmp_path / "failed-cell.json"
+    try:
+        with pytest.raises(ChildProcessError, match="Owned service exited before readiness"):
+            campaign.manager_cell(
+                {"id": "startup", "manager_urls": {"local": "http://127.0.0.1:1"}}, output
+            )
+        result = json.loads(output.read_text())
+        assert result["status"] == "INVALID_OR_FAILED"
+        assert result["error_type"] == "ChildProcessError"
+        assert "17" in result["error"] and "Owned service exited" in result["traceback"]
+        assert result["exits"][0]["exit_code"] == 17
+        assert result["exits"][0]["actual_wait_reap"]
+        assert ("cleanup_error" in result) is cleanup_failure
+        assert owner.children == {} and campaign.active == {"local": {}}
+    finally:
+        if "manager" in owner.children:
+            owner.stop({"name": "manager", "idle_proven": True})

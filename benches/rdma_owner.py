@@ -291,6 +291,45 @@ class HostOwner:
             item["native_stopped"] = True
         return value
 
+    def process_status(self, message: dict) -> dict:
+        item = self.children[message["name"]]
+        process = item["process"]
+        code = process.poll()
+        result = {
+            "pid": process.pid,
+            "cell": item["cell"],
+            "name": message["name"],
+            "exit_code": code,
+            "actual_wait_reap": code is not None,
+            "listen_ports": [],
+        }
+        if code is not None:
+            return result
+        directory = Path("/proc") / str(process.pid)
+        inodes = set()
+        try:
+            for path in (directory / "fd").iterdir():
+                try:
+                    target = path.readlink().as_posix()
+                except FileNotFoundError:
+                    continue
+                if target.startswith("socket:["):
+                    inodes.add(target[8:-1])
+            for name in ("tcp", "tcp6"):
+                for row in (directory / "net" / name).read_text().splitlines()[1:]:
+                    fields = row.split()
+                    if fields[3] == "0A" and fields[9] in inodes:
+                        result["listen_ports"].append(int(fields[1].rsplit(":", 1)[1], 16))
+        except FileNotFoundError:
+            if process.poll() is None:
+                raise
+        # A child can exit while procfs is inspected. poll() records its real wait status.
+        code = process.poll()
+        result.update(exit_code=code, actual_wait_reap=code is not None)
+        if code is not None:
+            result["listen_ports"] = []
+        return result
+
     def stop(self, message: dict) -> dict:
         name = message["name"]
         item = self.children[name]
@@ -435,6 +474,8 @@ def main() -> None:
                     result = owner.stop(request)
                 elif operation == "snapshot":
                     result = snapshot()
+                elif operation == "process-status":
+                    result = owner.process_status(request)
                 elif operation == "finish":
                     result = owner.finish()
                     finished = True
