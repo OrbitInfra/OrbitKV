@@ -384,7 +384,8 @@ both directions, packed/gapped payloads and NIC allowlists. The 13 completed
 Manager cells retain remote/H2D bytes, payload/sentinel oracles and source release.
 The 108-cell campaign stopped at cell 86 when the target Manager's gRPC bind
 failed with `AddrInUse`, before fixture or payload admission; no later cells
-were launched or substituted. The complete Manager comparison remains open.
+were launched or substituted. That frozen campaign's complete Manager comparison
+was not obtained.
 See [performance](performance.md) and [external evidence](benchmark-evidence.md).
 
 The failed harness also masked the startup error with a dead-endpoint drain
@@ -394,19 +395,31 @@ the repair was not inserted into the frozen GPU campaign. Normal SIGTERM of
 the remaining idle Manager/private etcd released all native resources. The
 two CPU-only orphaned owners required forced termination, and platform PID 1
 did not reap five zombie records. All sixteen GPUs, owned UDS/listeners and
-resource FDs are empty, but all 32 quarantine markers remain. This does not
-satisfy complete actual-wait cleanup or close S2/S3/S5.
+resource FDs are empty; all 32 quarantine markers were retained at that terminal
+handoff. This does not satisfy complete actual-wait cleanup or close S2/S3/S5.
 
-**Next bounded delivery:** independently review the failed outcome and harness
-repair, resolve the platform process-reap quarantine or use a fresh authorized
-environment, then freeze a new full Manager-only profile. Select distinct
-service ports outside the actual ephemeral range and consume the owned-listener
-readiness gate. Retain cold/warm stages, exact bytes, source ownership and
-physical NIC counters. A new cohort cannot fill the missing cells of the old
-one. Then profile the SGLang 8K restore/first-layer boundary before choosing a
-CUDA or scheduling change. Native GDS and physical failure-domain qualification
-remain separate; component throughput does not promote a kernel or establish
-model-serving advantage.
+**Accepted bounded delivery:** independent review accepts
+physical-resource readmission for a new normal-path stage after matching the five
+historical zombie identities, empty native ownership and exact archived markers
+under the real resource locks. Their old actual wait/reap stays blocked. The
+new `00c4a041` Manager-only harness, including repair `c89ad887`, consumes unchanged
+`37b48c50` native bytes, fresh namespaces and distinct non-ephemeral service ports.
+All 36 cells complete across three restarted runs, both directions, three sizes
+and near/four-NIC allowlists: 1,080 measured and 1,224 complete restores, exact
+remote/H2D bytes, full tensor/sentinel hashes and source release. New owned
+processes have actual normal waits and empty physical postflight, independently
+accepted with the descriptive outcome; 72 raw CUDA IPC warnings remain an S3/IPC
+lifetime limit. This collection does not repair the old cohort, expand support,
+qualify p99 or establish serving gains. See
+[performance](performance.md) and [external evidence](benchmark-evidence.md).
+
+**Next bounded delivery:** profile the SGLang 8K restore/first-layer boundary
+against the released HiCache control before
+choosing a CUDA or scheduling change. Preserve model/output, equal host-hit
+coverage, layout, memory budgets, engine pins and normal/fault lifetime limits.
+Use KDA for a demonstrated GPU copy bottleneck with the actual consumed layout;
+representative copy wins cannot select a production default. Native GDS and
+physical failure-domain qualification remain separate. S2/S4/S5 stay Partial.
 
 The initial 14-cell exploratory cohort stopped after three valid local vLLM
 cells: the released LMCache MP server completed its lifespan shutdown and
