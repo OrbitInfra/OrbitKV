@@ -131,6 +131,14 @@ while True:
         assert receipt["exit_code"] == 0 and receipt["reaped"]
         assert not receipt["forced_kill"] and not receipt["remaining_group"]
         assert not Path(f"/proc/{receipt['pid']}").exists()
+    cache_exit = json.loads((output / "manager.cleanup.json").read_text())
+    engine_exit = json.loads((output / "engine.cleanup.json").read_text())
+    assert (
+        cache_exit["stop_started_mono_ns"]
+        <= cache_exit["stop_finished_mono_ns"]
+        <= engine_exit["stop_started_mono_ns"]
+        <= engine_exit["stop_finished_mono_ns"]
+    )
 
 
 @pytest.mark.parametrize(

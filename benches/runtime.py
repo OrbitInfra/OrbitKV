@@ -166,6 +166,7 @@ def _process_group_members(pgid: int) -> list[tuple[int, str]]:
 
 def stop_owned_process(process: subprocess.Popen, cleanup: Path | None = None) -> dict:
     """Reap the service before callers can release exported GPU allocations."""
+    stop_started_mono_ns = time.monotonic_ns()
     interrupted = False
 
     def defer_interrupt(signum, frame):
@@ -275,6 +276,8 @@ def stop_owned_process(process: subprocess.Popen, cleanup: Path | None = None) -
             signal.signal(signal.SIGINT, previous)
         record = {
             "pid": process.pid,
+            "stop_started_mono_ns": stop_started_mono_ns,
+            "stop_finished_mono_ns": time.monotonic_ns(),
             "exit_code": exit_code,
             "forced_kill": not graceful,
             "reaped": exit_code is not None,

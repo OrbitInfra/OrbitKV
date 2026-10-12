@@ -12,6 +12,8 @@ After a completed workload or foreground failure, `single_node` stops the cache
 service before the GPU engine, retaining the producer while its external
 consumer exits. A failed engine startup still follows that service's own cleanup
 path; this order does not establish arbitrary native-child or crash drain.
+Cleanup receipts retain monotonic stop boundaries for comparing service order;
+those process timestamps are not CUDA completion events.
 LMCache MP's Uvicorn lifespan shutdown may re-emit the requested SIGTERM and
 return `-15`. Only this explicit protocol accepts that literal status, after
 checking fresh, ordered cache/HTTP shutdown logs, the exact service PID, actual
