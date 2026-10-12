@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="850" viewBox="0 0 1280 850" role="img" aria-labelledby="title desc">
   <title id="title">OrbitKV process ownership and communication paths</title>
-  <desc id="desc">Each engine owns HBM, framework scheduling and the Rust raw DRAM restore executor. Its Manager owns shared pinned DRAM, SSD, source grants and budgets. UDS transfers file descriptors; iceoryx2 carries commands; completion records and eventfd report progress. Manager Publish and SSD or encoded restores use CUDA IPC. Independent Managers discover historical cache locations in complete local indexes and authorize source reads over gRPC and transfer payloads with Mooncake TENT. Experimental native P/D lifecycles use explicit TENT backends to write current-request KV between engines. etcd replicates locations and membership; background publication and snapshot/Watch maintain local indexes. Raw restore plans are partitioned under one whole-operation fence. Raw restores publish per-layer CUDA events while retaining one final drain. vLLM uses piecewise graphs; SGLang captures persistent external event waits. A unified route optimizer and production-scale distributed qualification remain planned.</desc>
+  <desc id="desc">Engines own HBM, scheduling and raw DRAM Restore. Managers own DRAM, SSD, Publish, codecs, source grants and budgets. UDS/iceoryx2 carries local control and CUDA IPC supports Manager GPU work. Bounded inventory streams maintain covered local indexes; etcd maintains protocol identity and leased membership. Peer grants authorize historical DRAM/SSD recovery through TENT READ over TCP or RDMA. Official native engine backends own real-time P/D; composition fault qualification remains open. Layer readiness is separate from final physical drain and process reaping. Unified route planning and broader lifetime/HA qualification remain open.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 10 5 0 10" fill="#203b30"/></marker>
     <marker id="arrow-start" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M10 0 0 5 10 10" fill="#203b30"/></marker>
@@ -16,7 +16,7 @@
 <text x="272" y="176" font-size="23" text-anchor="middle" fill="#f6f5f0" font-weight="700">vLLM or SGLang</text>
 <text x="272" y="201" font-size="16" text-anchor="middle" fill="#f6f5f0">Engine-owned HBM + scheduler</text>
 <text x="272" y="224" font-size="14" text-anchor="middle" fill="#f6f5f0">Rust raw Restore → layer events → retained HBM</text>
-<text x="272" y="250" font-size="13" text-anchor="middle" fill="#d7dcd2">Prefill role for P/D · separate TENT adapter</text>
+<text x="272" y="250" font-size="13" text-anchor="middle" fill="#d7dcd2">Prefill role · native engine P/D</text>
 <path d="M108 397V278" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)"/>
 <path d="M272 278V397" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)" marker-start="url(#arrow-start)"/>
 <path d="M436 278V397" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)" marker-start="url(#arrow-start)"/>
@@ -43,14 +43,14 @@
 <text x="379" y="514" font-size="12" text-anchor="middle" fill="#60695f">io_uring / cuFile staging</text>
 <text x="272" y="552" font-size="13" text-anchor="middle">CUDA workers: Publish + SSD / encoded Restore</text>
 <text x="272" y="580" font-size="14" text-anchor="middle" font-weight="700">Local global index + exact source grants</text>
-<text x="272" y="603" font-size="12" text-anchor="middle" fill="#60695f">Snapshot / Watch · leased residency versions</text>
+<text x="272" y="603" font-size="12" text-anchor="middle" fill="#60695f">Inventory streams · fenced source versions</text>
 <rect x="768" y="102" width="480" height="546" fill="#fcfbf8" stroke="#d7dcd2"/>
 <text x="788" y="129" font-size="13" text-anchor="start" fill="#60695f">HOST B</text>
 <rect x="788" y="148" width="440" height="126" fill="#203b30" stroke="#203b30"/>
 <text x="1008" y="176" font-size="23" text-anchor="middle" fill="#f6f5f0" font-weight="700">vLLM or SGLang</text>
 <text x="1008" y="201" font-size="16" text-anchor="middle" fill="#f6f5f0">Engine-owned HBM + scheduler</text>
 <text x="1008" y="224" font-size="14" text-anchor="middle" fill="#f6f5f0">Rust raw Restore → layer events → retained HBM</text>
-<text x="1008" y="250" font-size="13" text-anchor="middle" fill="#d7dcd2">Decode role for P/D · separate TENT adapter</text>
+<text x="1008" y="250" font-size="13" text-anchor="middle" fill="#d7dcd2">Decode role · native engine P/D</text>
 <path d="M844 397V278" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)"/>
 <path d="M1008 278V397" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)" marker-start="url(#arrow-start)"/>
 <path d="M1172 278V397" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)" marker-start="url(#arrow-start)"/>
@@ -77,13 +77,13 @@
 <text x="1115" y="514" font-size="12" text-anchor="middle" fill="#60695f">io_uring / cuFile staging</text>
 <text x="1008" y="552" font-size="13" text-anchor="middle">CUDA workers: Publish + SSD / encoded Restore</text>
 <text x="1008" y="580" font-size="14" text-anchor="middle" font-weight="700">Local global index + exact source grants</text>
-<text x="1008" y="603" font-size="12" text-anchor="middle" fill="#60695f">Snapshot / Watch · leased residency versions</text>
+<text x="1008" y="603" font-size="12" text-anchor="middle" fill="#60695f">Inventory streams · fenced source versions</text>
 <path d="M500 236H780" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)"/>
 <text x="640" y="169" font-size="15" text-anchor="middle" font-weight="700">EXPERIMENTAL P/D</text>
-<text x="640" y="191" font-size="19" text-anchor="middle" font-weight="700">TENT WRITE</text>
+<text x="640" y="191" font-size="19" text-anchor="middle" font-weight="700">NATIVE BACKEND</text>
 <text x="640" y="215" font-size="13" text-anchor="middle">Current-request KV</text>
 <text x="640" y="266" font-size="12" text-anchor="middle" fill="#60695f">Native engine lifecycle</text>
-<text x="640" y="285" font-size="12" text-anchor="middle" fill="#60695f">Explicit TENT backends</text>
+<text x="640" y="285" font-size="12" text-anchor="middle" fill="#60695f">NIXL / native disaggregation</text>
 <path d="M524 494H756" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)" marker-start="url(#arrow-start)"/>
 <text x="640" y="421" font-size="15" text-anchor="middle" font-weight="700">SHARED CACHE</text>
 <text x="640" y="448" font-size="19" text-anchor="middle" font-weight="700">TENT READ</text>
@@ -96,9 +96,9 @@
 <path d="M1008 650V697H850" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)" marker-start="url(#arrow-start)" stroke-dasharray="5 5"/>
 <rect x="430" y="666" width="420" height="66" fill="#203b30" stroke="#203b30"/>
 <text x="640" y="692" font-size="18" text-anchor="middle" fill="#f6f5f0" font-weight="700">etcd / background control plane</text>
-<text x="640" y="716" font-size="13" text-anchor="middle" fill="#f6f5f0">Members · epochs · replicated block locations</text>
+<text x="640" y="716" font-size="13" text-anchor="middle" fill="#f6f5f0">Members · incarnations · protocol identity</text>
 <text x="32" y="775" font-size="15" text-anchor="start" fill="#ab4d29" font-weight="700">READY ≠ DRAINED ≠ REAPED</text>
 <text x="32" y="799" font-size="14" text-anchor="start">Layer events gate consumers. Sources stay retained until all submitted work drains; credits retire afterwards.</text>
-<text x="32" y="826" font-size="13" text-anchor="start" fill="#60695f">Open: distributed scale and RDMA qualification · unified route selection · general semantic retention.</text>
+<text x="32" y="826" font-size="13" text-anchor="start" fill="#60695f">Open: HA and broader topology · physical lifetime · unified routes · semantic retention.</text>
   </g>
 </svg>

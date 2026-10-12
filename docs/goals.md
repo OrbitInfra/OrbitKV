@@ -1,43 +1,38 @@
 # Overview
 
-OrbitKV is an external KV cache for vLLM and SGLang. It retains reusable state
-in pinned DRAM and optional SSD so requests can recover prefixes that no longer
-fit in GPU memory. Run one Cache Manager per inference host and enable the
-engine adapter; begin with the [single-node quickstart](single-node.md).
+OrbitKV is an external KV cache for vLLM and SGLang. It retains reusable prefixes
+in DRAM and optional SSD so requests can recover state after GPU eviction or an
+engine restart. Run an independent Cache Manager per inference host and connect
+the official engine adapter. Begin with the [quickstart](single-node.md).
 
 ## What you can use today
 
-| Capability | Scope |
-| --- | --- |
-| Prefix reuse | DRAM/SSD recovery after GPU eviction or engine restart, with the Manager kept alive |
-| Engine integration | vLLM 0.30.0 and SGLang 0.5.20 pins, direct GPU transfers through CUDA IPC; release-specific [qualification scope](completion-plan.md#s51--release-and-interface-audit) |
-| Hybrid recovery | Compiled prefix/window/checkpoint requirements for [supported layouts](hybrid-recovery.md) |
-| Resource control | Byte budgets for reads, leased results and GPU transfers; cancellation and completion fences |
-| Observability | Prometheus metrics, optional request timelines and reproducible Qwen3-8B workloads |
-| Request preparation | Opt-in dense-layout lookahead; ready pages remain budgeted until consumed, cancelled or expired |
+The starting profile is dense TP=1/PP=1 inference on official vLLM 0.31.0 or
+SGLang 0.5.21. Engines own HBM and scheduling; OrbitKV owns external replicas,
+query budgets and transfer completion. Raw DRAM Restore executes in the engine;
+Publish and SSD/codec work execute in the Manager.
 
-Use OrbitKV for repeated documents, shared system prompts and conversation
-prefixes that extend beyond HBM capacity. A cold workload with little reuse can
-pay extra copy/storage costs; use the [measurements](single-node-performance.md)
-and your own traffic to choose capacities and policies.
+Optional peer caching uses Manager inventory streams for local discovery and
+Mooncake TENT for data transfer. Native P/D uses the engines' own transports with
+independent cache adapters. Check [compatibility and support](compatibility.md)
+before selecting a model, topology or feature.
 
 ## Ownership and compatibility
 
-The inference engine owns HBM allocation and scheduling. OrbitKV owns external
-replicas and retains source/destination holds through transfer completion.
-Cache keys bind model artifacts, computation and byte layout. Compiled recovery
-validates the requirements declared by the adapter; it does not analyze an
-arbitrary model graph or predict future tokens. A shared API does not imply
-that different engines' KV bytes are interchangeable.
+Cache identity binds model artifacts, computation and byte layout. Compiled
+recovery validates adapter-declared page/window/checkpoint requirements; it does
+not analyze arbitrary model graphs or predict future tokens. A shared API does
+not make different engines' KV bytes interchangeable. Source and destination
+holds remain owned through transfer completion.
 
 ## Experimental and planned work
 
-Local global indexes, replicated etcd metadata and the Mooncake transfer path support
-experimental remote-cache development. Scoped two-host TCP serving has recorded correctness evidence. Metadata
-scale/failure recovery, RDMA, broader parallelism and P/D with cache reuse retain
-separate gates. A future KV-aware router can use cache location and transfer costs without
-moving inference scheduling into the Manager.
+Shared-cache HA, complete hybrid external recovery, public SGLang lifecycle
+integration and broader parallelism retain separate gates. Native GDS and
+physical transfer lifetime remain unqualified. General joint retention/placement
+planning is future work; limited observations and guarded choices already exist.
 
-General lifetime analysis, page-generation enforcement and joint
-retention/placement planning remain open. See [deployment support](deployment.md),
-[architecture](architecture.md), and [the completion plan](completion-plan.md).
+The [architecture](architecture.md) explains contracts, [performance](performance.md)
+separates measurements from support claims, and the [completion plan](completion-plan.md)
+defines the remaining execution sequence. A workload with little reuse may pay
+extra copy/storage cost; size and measure the cache against your own traffic.

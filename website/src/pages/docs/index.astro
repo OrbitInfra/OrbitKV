@@ -40,10 +40,10 @@ import { localUrl, sourceUrl } from "../../data/site";
   <div class="doc-callout">
     <strong>Current scope</strong>
     <p>
-      Engine pins are vLLM 0.30.0 and SGLang 0.5.20. Single-rank
-      DRAM/SSD recovery has GPU gates. Distributed serving, P/D plus cache
-      reuse, and metadata scale and failure recovery have separate qualification gates.{" "}
-      <a href={localUrl("/docs/deployment/")}>Check deployment support.</a>
+      The pinned official engines are vLLM 0.31.0 and SGLang 0.5.21.
+      Start with dense single-rank recovery. Public lifecycle, broader topology,
+      native P/D faults and HA retain separate gates.{" "}
+      <a href={localUrl("/docs/compatibility/")}>Check compatibility and support.</a>
     </p>
   </div>
   {docGroups.map((group) => (

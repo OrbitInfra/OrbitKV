@@ -26,10 +26,10 @@ import { localUrl } from "../data/site";
       <h2>vLLM</h2>
       <p class="reading-copy">
         Enable <code>OrbitKVConnector</code> to save computed prefixes and restore
-        reusable blocks into vLLM-owned GPU memory. Version 0.29.0 is the validated
-        baseline; 0.30.0 is the next release upgrade target. Full attention, sliding-window and aligned recurrent groups use
-        compiled recovery ranges, with combined temporal native serving still a separate gate. Cross-host TP is
-        outside current support. Start with one rank and verify a restore after engine restart.
+        reusable blocks into vLLM-owned GPU memory. The pinned release is 0.31.0. Use the
+        V1 model runner and one attention cache group; V2, multi-group and recurrent
+        external recovery are rejected pending safe released lifecycle contracts.
+        Physical multi-rank and cross-host TP remain unqualified. Start with one rank and verify a restore after engine restart.
       </p>
       <a class="text-link" href={localUrl("/docs/single-node/#vllm")}>
         vLLM install and deployment <span aria-hidden="true">↗</span>
@@ -39,8 +39,8 @@ import { localUrl } from "../data/site";
       <h2>SGLang</h2>
       <p class="reading-copy">
         Enable the OrbitKV RadixCache backend and external linker on SGLang
-        0.5.20. The adapter supports full attention, Full + SWA, Full +
-        recurrent/conv with combined-layout GPU recovery tested separately from native model serving.
+        0.5.21. Dense single-rank recovery has scoped acceptance; complete hybrid
+        recovery and public lifecycle migration retain separate gates.
         SGLang owns GPU pages; OrbitKV prepares external state and returns a validated restore.
         DRAM and SSD recovery have single-rank GPU gates. Multi-rank serving
         requires further qualification.
@@ -99,9 +99,9 @@ import { localUrl } from "../data/site";
         Begin with ordinary demand and size DRAM/SSD for your working set.
         Optional request preparation has three matched Qwen3-8B controls per
         engine: vLLM improves modestly, while SGLang gains throughput with worse
-        P95 latency. It stays disabled by default. Two-host TCP replica sharing
-        has recorded correctness evidence and numerical limits; P/D with cache
-        reuse, RDMA and distributed index resilience have separate acceptance gates.
+        P95 latency. It stays disabled by default. Scoped two-H20 RDMA dense recovery and controlled restarts have acceptance.
+        Native P/D faults, distributed HA, isolation and broader topology remain
+        separate qualifications.
       </p>
       <a class="text-link" href={localUrl("/docs/completion-plan/")}>
         Read the implementation gates <span aria-hidden="true">↗</span>

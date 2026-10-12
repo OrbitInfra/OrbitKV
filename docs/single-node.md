@@ -1,52 +1,28 @@
 # Single-node cache: vLLM and SGLang
 
-OrbitKV runs an independent Cache Manager per host, shared by attached engines. The
-engine owns HBM allocation and decides when to look up, save, and restore KV.
-The manager owns external pinned DRAM and optional SSD replicas. Both adapters
-register engine-owned GPU buffers through CUDA IPC, send cache commands through
-iceoryx2, and use an authenticated Unix socket for bootstrap and lifecycle.
-No Catalog or peer gRPC listener is needed for this deployment.
-
-| Adapter | Validated release | Single-node path | Current limit |
-| --- | --- | --- | --- |
-| vLLM `OrbitKVConnector` | `0.31.0` upgrade; independent acceptance open | KV connector callbacks, CUDA IPC, UDS/iceoryx2 | Implemented Full/MLA, Full + SWA and aligned recurrent groups require equal logical block sizes; historical model/topology cells need release-specific requalification; cross-host TP remains unsupported |
-| SGLang `OrbitKVLinker` | `0.5.21` upgrade; independent acceptance open | RadixCache external linker, CUDA IPC, UDS/iceoryx2 | Full MHA/MLA, Full + SWA, Full + recurrent/conv, and their combination; ordinary contiguous pools; multi-rank serving remains unqualified |
-
-Start with a single-rank model and one Manager. Check
-[model qualification](models.md) and the
-[hybrid recovery rules](hybrid-recovery.md) before enabling other layouts.
-The first release is being prepared; the commands below build from source.
-
-The official vLLM cache profile requires `VLLM_USE_V2_MODEL_RUNNER=0`
-and one attention cache group. Set this environment variable before starting
-vLLM; unsupported V2/recurrent profiles fail at startup.
+Run one independent Cache Manager on the inference host. The engine owns HBM and
+scheduling; the Manager owns shared DRAM and optional SSD. Standalone caching
+needs neither etcd nor a peer gRPC listener. Check [compatibility](compatibility.md)
+and [model qualification](models.md) before enabling a new layout or topology.
 
 ## Install and start the common manager
 
-Build from the repository root after selecting the wheel variant that matches
-the host Python ABI and CUDA runtime. This example uses Python 3.11 and CUDA 13:
+Version 0.1.0 is not yet published. Build the complete wheel from the repository
+root; this example selects Python 3.11 and CUDA 13:
 
 ```bash
 git submodule update --init --recursive third-party/mooncake
 ./scripts/build-wheel.sh --release --no-default-features --features cuda-13,mooncake
-WHEEL="$(find target/wheels -maxdepth 1 -name 'orbitkv_llm_cu13-*.whl' -print -quit)"
-test -n "$WHEEL"
 ```
 
-Run the installation commands below from the repository root in this same
-shell, or set `WHEEL` to the built wheel's absolute path in each shell.
+Use `./scripts/build-wheel.sh --release` for CUDA 12. Select the newly built wheel
+in `target/wheels` explicitly and use its absolute path in the installation commands
+below. A complete wheel includes the Manager, extension and Mooncake libraries;
+`maturin build` alone does not stage all of them. Install only one CUDA distribution
+per environment. The Manager also needs compatible PyTorch/CUDA; it does not load
+model weights. Install the same OrbitKV build in client and Manager environments.
 
-Use `./scripts/build-wheel.sh --release` for the CUDA 12 distribution. The
-complete wheel contains the Cache Manager binary, Python extension, and
-Mooncake runtime; `maturin build` alone does not stage all of them. The Cache
-Manager still imports PyTorch to reconstruct framework CUDA IPC registrations,
-so start it in a Python environment with compatible PyTorch/CUDA packages.
-The engine and manager may use separate Python environments; install the same
-OrbitKV wheel in both. The examples below use one environment per engine and
-start the manager from that environment.
-
-Start **one** manager on the host before its engines. For the commands below,
-the bootstrap socket is `/tmp/orbitkv-50055.sock`:
+After creating an engine environment below, start one Manager from that environment:
 
 ```bash
 orbitkv-cache-manager \
@@ -55,53 +31,39 @@ orbitkv-cache-manager \
   --pool-size 8gb
 ```
 
-This reserves an external pinned-host-memory budget; it does not take over the
-engine's HBM allocator. Set `--pool-size` according to host RAM and the desired
-cache budget. To enable an SSD backing cache, add for example
-`--ssd-cache-path /data/orbitkv/cache.bin --ssd-cache-capacity 100gb` to the
-manager command. The current SSD cache file is truncated on manager startup;
-it is not durable across a manager restart. Both engines have single-rank recovery gates after forced DRAM eviction.
+Use the environment's absolute `bin/orbitkv-cache-manager` path if it is not
+activated. The default bootstrap socket is `/tmp/orbitkv-50055.sock`.
+`--pool-size` controls external pinned memory, not engine HBM.
 
-Leave `--ssd-backend` unset for normal deployments. Its default `auto` tries
-native cuFile and uses io_uring when unavailable. cuFile is an optional library
-inside the Manager, not another service or an engine setting. Only an SSD path
-enables disk caching; capacity defaults to `512gb` if omitted, so choose an
-explicit budget. Native GDS requires the matching NVIDIA/storage installation
-and [separate qualification](gds.md).
+To add SSD, use a writable path and an explicit capacity:
 
-Request preparation and queued warming are optional experiments and are disabled
-by default. Leave them off for the first deployment. See
-[request preparation](request-preparation.md) for measured policy tradeoffs and
-[Manager configuration](server.md) for capacity and queue controls.
+```bash
+orbitkv-cache-manager \
+  --addr 127.0.0.1:50055 --http-addr 127.0.0.1:9091 --pool-size 8gb \
+  --ssd-cache-path /data/orbitkv/cache.bin --ssd-cache-capacity 100gb
+```
 
-The manager, each engine process, and their GPU buffers must be on the same
-host. The Unix socket verifies peer credentials; use the same UID and make the
-socket and iceoryx2 shared-memory resources visible to both processes. If they
-run in separate containers, they must share the socket and iceoryx2 discovery
-files, IPC/shared-memory resources and GPU access. The client must also be able
-to observe the Manager process through a pidfd before publishing GPU pages;
-separate PID namespaces are not qualified. See
-[deployment requirements](deployment.md#containers-and-kubernetes), including
-GPU identity and cluster device access. A remote HTTP address is not a
-replacement for this node-local connection.
+The default SSD backend tries cuFile and uses io_uring when unavailable. cuFile is
+an optional Manager library; it needs no separate service. Native GDS has separate
+hardware requirements and remains unqualified. The SSD file is truncated on Manager
+startup; it is not durable across Manager restarts. See [GPU storage](gds.md).
 
 ## vLLM
 
-Install the validated vLLM release and the wheel in one environment:
+Create an environment with the selected official release and your complete wheel:
 
 ```bash
 uv venv .venv/vllm-release --python 3.11
 uv pip install --python .venv/vllm-release/bin/python 'vllm==0.31.0' --torch-backend=cu130
-uv pip install --python .venv/vllm-release/bin/python --reinstall "$WHEEL"
+uv pip install --python .venv/vllm-release/bin/python /absolute/path/to/the-built-wheel.whl
 ```
 
-In terminal 1, start the manager with
-`.venv/vllm-release/bin/orbitkv-cache-manager` in place of
-`orbitkv-cache-manager` in the common command. In terminal 2, start vLLM:
+Start the Manager with `.venv/vllm-release/bin/orbitkv-cache-manager`.
+In another terminal, start the dense V1 eager profile:
 
 ```bash
-.venv/vllm-release/bin/vllm serve /path/to/immutable-model \
-  --enable-prefix-caching \
+VLLM_USE_V2_MODEL_RUNNER=0 .venv/vllm-release/bin/vllm serve /path/to/immutable-model \
+  --enforce-eager --enable-prefix-caching \
   --kv-transfer-config '{
     "kv_connector": "OrbitKVConnector",
     "kv_role": "kv_both",
@@ -109,144 +71,74 @@ In terminal 1, start the manager with
   }'
 ```
 
-`OrbitKVConnector` defaults to `read_write`. vLLM first uses its own HBM
-prefix cache; the connector queries OrbitKV for missing reusable blocks,
-restores hits into vLLM-owned GPU slots, and saves newly computed full blocks
-to the manager. To prove an **external** hit, keep the manager alive, restart
-vLLM, repeat a multi-block prompt, and check manager load/hit counters. A
-same-process repeated prompt may be served entirely from vLLM's HBM and does
-not by itself demonstrate an OrbitKV restore.
-
-The default connector endpoint derives the same socket from
-`http://127.0.0.1:50055`. If you choose a different manager port, set
-`orbitkv.port` in `kv_connector_extra_config` or `ORBITKV_PORT` in the vLLM
-environment. Use `orbitkv.bootstrap_socket` for a custom socket path.
-For multiple **same-host** TP shards, see
-[the ordered shard endpoint configuration](adapters.md#tp-shards-and-host-boundary).
-Do not configure a scheduler to query TP shards on another host through this
-local connector.
+The supported starting profile has one attention cache group. V2, multiple groups
+and recurrent external recovery are rejected. vLLM uses its native HBM prefix
+cache first; OrbitKV restores missing compatible blocks and saves newly computed
+full blocks. For another Manager port, set `orbitkv.port` in
+`kv_connector_extra_config` or `ORBITKV_PORT`; use `orbitkv.bootstrap_socket` for
+an explicit socket. See [adapter configuration](adapters.md).
 
 ## SGLang
 
-Install the validated SGLang release and the same wheel in a separate
-environment:
+Use a separate official release environment:
 
 ```bash
 uv venv .venv/sglang-release --python 3.11
 uv pip install --python .venv/sglang-release/bin/python 'sglang==0.5.21' --torch-backend=cu130
-uv pip install --python .venv/sglang-release/bin/python --reinstall "$WHEEL"
+uv pip install --python .venv/sglang-release/bin/python /absolute/path/to/the-built-wheel.whl
 ```
 
-Start the manager from this environment if it is not already running. Then:
+If no Manager is running, start one from this environment. Enable the linker with
+an explicit eager starting profile:
 
 ```bash
 ORBITKV_SGLANG_ENDPOINT=unix:///tmp/orbitkv-50055.sock \
   .venv/sglang-release/bin/sglang serve \
-  --model-path /path/to/immutable-model \
-  --page-size 64 \
-  --enable-unified-cache-external-linker \
-  --radix-cache-backend orbitkv
+  --model-path /path/to/immutable-model --page-size 64 \
+  --cuda-graph-backend-decode disabled --cuda-graph-backend-prefill disabled \
+  --enable-unified-cache-external-linker --radix-cache-backend orbitkv
 ```
 
-The wheel registers the SGLang plugin. Both flags are required to schedule GPU
-restores and handle their completion. SGLang owns the radix tree and HBM pages;
-OrbitKV saves page-aligned KV externally and restores it into engine-owned slots.
-Pending reads keep their request queued until ready or until its waiting budget
-expires, when the engine can recompute. Supported hybrid layouts use compiled
-ranges and validate every selected window/checkpoint before recovery. See
-[hybrid recovery](hybrid-recovery.md) for model limits and GPU test coverage.
+Both linker flags are required. SGLang owns the radix tree and GPU slots; OrbitKV
+restores page-aligned state into those slots. Pending reads wait within their
+budget, then recompute on expiry. Full hybrid recovery requires separate model
+and lifecycle gates; native model output alone does not qualify external recovery.
 
-SGLang registers the `direct` DMA copy backend by default. For a controlled
-copy-backend comparison, set `ORBITKV_TRANSFER_BACKEND=kernel` in the SGLang
-process environment before startup; `direct` explicitly selects the default.
-This fixes the raw host/GPU copy backend for saves and restores; codec and cuFile
-execution keep their own paths. It does not enable measured selection or change
-SSD read routes. vLLM retains its model-based default (kernel for MLA,
-direct otherwise) and its existing `orbitkv.transfer_backend` override. The
-[paired benchmark](../benches/README.md#fixed-dmakernel-comparison) fixes either
-backend in both engines without changing their normal defaults.
-
-Both engines fingerprint local weights, tokenizer and processor artifacts at
-startup, and bind the computation and registered storage layout to the cache
-identity. Hub models require a full commit in `--revision`. Large deployments
-can set `ORBITKV_MODEL_FINGERPRINT` to their verified 64-digit SHA-256 artifact
-digest to avoid startup file reads. Change that digest when covered artifacts
-change. `ORBITKV_CACHE_SCOPE` provides optional tenant/experiment isolation; it
-does not override the model identity. Dynamic LoRA is rejected; live weight
-updates require an engine restart. See [state identity](state-identity.md).
-
-For a recovery check, keep the manager alive, flush the radix cache or restart
-SGLang, repeat the prompt, compare against a cold run, and verify that the
-manager's load counter rose.
+Both adapters bind model artifacts, computation and layout to cache identity.
+Use immutable local artifacts or a full Hub revision. An explicitly verified
+`ORBITKV_MODEL_FINGERPRINT` can avoid repeated artifact reads; update it when its
+covered artifacts change. Static local LoRA has scoped acceptance; dynamic adapter
+mutation and live weight updates require stopping and restarting the deployment.
+See [state identity](state-identity.md).
 
 ## Check behavior and capacity
 
 ```bash
 curl --fail http://127.0.0.1:9091/health
-curl --fail http://127.0.0.1:9091/metrics | \
-  grep -E 'orbitkv_(save_bytes_total|load_bytes_total|cache_block_hits_total)'
+curl --fail http://127.0.0.1:9091/metrics
 ```
 
-Save completion confirms that submitted reads of the engine's GPU pages have
-finished. The host path writes SSD asynchronously through a bounded queue and
-is best effort: an accepted host save does not guarantee an SSD replica.
-Complete-group cuFile writes hold Publish until GPU-storage completion;
-fragmented saves and saturated GPU write admission use the host path.
-Both adapters record a CUDA event on the producing
-stream before handing pages to their save worker. vLLM records it after the
-forward launch, outside graph capture; saving waits for those events rather
-than synchronizing the whole device. Request and checkpoint pages remain held
-until the selected native save operation completes.
+Keep the Manager alive, restart the engine, then repeat a multi-block prompt.
+Check that `orbitkv_save_bytes_total` rose before the restart and
+`orbitkv_load_bytes_total` rose on recovery. Compare output with a cold-control
+namespace. A same-process repeated prompt may hit only the engine's HBM.
 
-The SSD backend separates read and write submission queues across its existing
-io_uring workers. Reads rotate across read workers, including when there is only
-one cache file; each file's writes retain a stable queue. This avoids a read
-waiting in the submission queue of an unrelated write. It does not increase the
-configured in-flight read/write limits or remove device-level I/O contention.
-With the io_uring backend, both saves and restores allocate each stored page/segment
-independently, on its recorded NUMA node. This aligns read and write allocation
-sizes and lets eviction reclaim pages without a surviving prefix holding an
-entire batch. Page-first layouts already store a complete page as one segment.
-The DRAM-only path retains its batching option (`--blockwise-alloc` opts out).
-
-The [automatic SSD backend](gds.md) selects native cuFile when initialization on
-ext4/XFS succeeds and uses io_uring otherwise. cuFile leases SSD extents and restores selected
-state through bounded GPU staging, merging adjacent ranges across source leases
-within each file. It reserves physical SSD capacity before serving; space/quota
-errors fail startup. It shares both engines' existing API and
-ownership checks. Complete-group writes use GPU staging; fragmented saves and
-speculative preparation continue through DRAM;
-native GDS hardware/performance qualification remains separate.
-
-Optional [retention and SSD write policies](cache-policies.md) can protect
-reused DRAM pages and skip first-publication SSD writes. They remain disabled
-by default: reducing writes can cost a later SSD hit. Both engines use the
-same Rust policies, configured on the Manager.
-
-Later requests can restore ready matching blocks,
-subject to each adapter's readiness handling. On a cache miss the engine
-computes the state normally. HBM pressure and active-page eviction remain engine
-decisions; OrbitKV's `--pool-size` and SSD options control only external cache
-capacity. Pinning too much host memory or saving every low-reuse block can
-increase latency, so size and admission policy should be measured against the
-workload. To validate the current adapters, use the
-[vLLM correctness test](../python/tests/e2e/test_vllm_e2e_correctness.py) and
-[SGLang direct GPU test](../python/tests/e2e/test_sglang_direct_e2e.py) on the
-matching GPU host.
-
-For experimental multi-node cache sharing, use [P2P deployment](p2p.md).
-Live P/D uses official vLLM NIXL/MultiConnector or SGLang native disaggregation,
-with independent external-cache adapters; see [P/D qualification](pd.md).
+An accepted host save guarantees its submitted GPU reads completed, not that
+best-effort asynchronous SSD publication created a replica. Pages remain held
+through the selected transfer's completion. On a miss, the engine computes normally.
+Size DRAM, SSD and query budgets for your workload; [metrics](metrics.md) and
+[performance methodology](performance.md) describe how to measure them.
+Leave optional warming, retention and cost-selection experiments disabled for
+this first deployment.
 
 ## Deployment variants
 
-| Topology | vLLM | SGLang |
-| --- | --- | --- |
-| One engine and one manager on a host | Validated DRAM recovery and measured SSD restoration on the pinned release | Validated single-rank full-attention DRAM and SSD recovery through plugin admission |
-| Multiple engine instances sharing one host manager | Instances can use the same local socket; use immutable model identities and qualify concurrency for the workload | Instances can use the same local socket; rank/layout-scoped namespaces isolate incompatible pages, and concurrent multi-rank recovery still needs a GPU gate |
-| Replicas on separate hosts | One manager per host with a local global index, etcd metadata and Mooncake fetch; experimental | The same node-local adapter connection with one manager per host; remote fetch and multi-rank behavior still need qualification |
-| One TP replica split across hosts | Unsupported by the current scheduler-to-manager query fan-out | Not qualified by the current single-rank GPU gate |
-| P/D handoff | Official NIXL/MultiConnector composition candidate | Official native disaggregation composition candidate; [gates and limits](pd.md) |
+The Manager and engine must share a host, UID, socket, iceoryx2 resources and GPU
+access. Native clients require process visibility for lifecycle checks. Distinct
+CUDA ordinals are allowed when they resolve the same full GPU UUID. Separate PID
+namespaces and container deployment need additional qualification; see
+[deployment requirements](deployment.md#containers-and-kubernetes).
 
-The current embedded directory has one metadata copy per shard. Do not infer
-production multi-node resilience from the validated single-node paths.
+For multiple engines, optional SSD and peers, use [deployment recipes](deployment.md).
+Real-time P/D uses official NIXL/MultiConnector or SGLang disaggregation;
+Manager peer-cache bytes use TENT. See [P/D composition](pd.md) before combining them.

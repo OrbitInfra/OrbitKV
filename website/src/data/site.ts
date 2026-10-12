@@ -17,7 +17,7 @@ export const layers = [
     name: "orbitkv-state",
     role: "Name the state.",
     detail:
-      "Versioned model/storage keys and compiled rules for demanded page ranges and leased-evidence validation, shared by SGLang and vLLM hybrid adapters.",
+      "Versioned model/storage keys and compiled rules for demanded page ranges and leased-evidence validation, consumed by engine adapters within their qualified model profiles.",
     path: "crates/orbitkv-state/src/lib.rs",
   },
   {
@@ -38,7 +38,7 @@ export const layers = [
     name: "orbitkv-catalog",
     role: "Locate replicas.",
     detail:
-      "Complete local global indexes and member admission; background etcd metadata synchronization is owned by the server.",
+      "Scoped local inventory indexes and member admission; the server owns inventory streams and leased etcd membership.",
     path: "crates/orbitkv-catalog/src/lib.rs",
   },
   {
@@ -59,7 +59,7 @@ export const layers = [
     name: "orbitkv.sglang",
     role: "Link SGLang GPU pages.",
     detail:
-      "Direct GPU recovery for full attention, windows and recurrent/conv checkpoints, including combined layouts; selected-range reads validate every required group.",
+      "Official UnifiedRadixCache external linker with validated selected-range reads; public lifecycle and complete hybrid model recovery remain open.",
     path: "python/orbitkv/sglang/linker.py",
   },
   {

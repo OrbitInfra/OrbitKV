@@ -5,7 +5,7 @@ import { layers, localUrl } from "../data/site";
 
 <SiteLayout
   title="Architecture — OrbitKV"
-  description="Engine-owned HBM, one Cache Manager per host, local global indexes, replicated etcd metadata and Mooncake transfers."
+  description="Engine-owned HBM, per-host Managers, inventory-fed indexes, leased etcd membership and Mooncake cache transfers."
   active="Architecture"
 >
   <div class="container interior">
@@ -29,11 +29,11 @@ import { layers, localUrl } from "../data/site";
           src={localUrl("/architecture.svg")}
           width="1280"
           height="850"
-          alt="Engine-owned HBM and raw DRAM restore; Manager-owned Publish, SSD and codec work. Peer gRPC controls historical TENT READs; P/D adapters issue current-request TENT WRITEs. etcd replicates block locations and membership; snapshot/Watch update local indexes."
+          alt="Engine-owned HBM and raw DRAM Restore; Manager-owned Publish, SSD and codecs. Peer grants control TENT READs; inventory streams feed local indexes and etcd holds membership. Native engine backends own P/D."
         />
         <figcaption>
           Single-node recovery is validated. The multi-node path is
-          experimental; each Manager has a complete local index backed by etcd metadata. A shared API
+          experimental; each Manager maintains explicitly covered local inventory views. A shared API
           does not imply interchangeable KV layouts. Declared page demand is
           implemented; general lifetime and physical planning remain future work.
         </figcaption>
@@ -60,18 +60,19 @@ import { layers, localUrl } from "../data/site";
           <h3>Reuse across workers.</h3>
           <p>
             Managers discover compatible replicas in complete local global indexes,
-            synchronized through etcd publication and snapshot/Watch. Peer gRPC authorizes exact source
-            replicas; TENT READ moves their bytes into the consumer Manager's
-            host memory before GPU restore. Cross-host serving is a separate gate.
+            synchronized through bounded inventory streams. etcd maintains leased
+            membership; peer gRPC authorizes exact source replicas; TENT READ moves their bytes into the consumer Manager's
+            host memory before GPU restore. Scoped dense RDMA serving passes; HA and
+            broader topology remain separate gates.
           </p>
         </article>
         <article class="layer">
           <span class="package-name">03 / Prefill &amp; decode</span>
           <h3>Compose the handoff.</h3>
           <p>
-            TENT WRITE moves current-request KV from prefill HBM to decode HBM.
-            Both engines own native P/D request lifecycles and use thin TENT
-            backends at the experimental revisions. Cache reuse has a separate
+            Official vLLM NIXL/MultiConnector and SGLang native disaggregation own
+            current-request handoff and transport. OrbitKV supplies independent
+            cache adapters. Cache reuse has a separate
             source grant and completion contract.
           </p>
         </article>
@@ -99,8 +100,9 @@ import { layers, localUrl } from "../data/site";
         <li>
           <h3>Restore</h3>
           <p>
-            Compiled ranges select SGLang's transferred and retained keys and
-            vLLM's hybrid allocation. Leases hold pages through transfer completion.
+            Compiled ranges validate the state declared by a supported adapter.
+            External hybrid model profiles need separate lifecycle qualification.
+            Leases hold pages through transfer completion.
           </p>
         </li>
         <li>
@@ -120,9 +122,9 @@ import { layers, localUrl } from "../data/site";
       <p class="reading-copy">
         Shared page requirements remove duplicate adapter arithmetic. They do
         not predict future tokens, analyze arbitrary model graphs or authorize
-        reclamation. Automatic hybrid warming remains disabled. Exact GPU-byte
-        gates qualify hybrid recovery; its standalone latency benefit is not yet
-        measured. Ordinary recovery and request preparation have separate
+        reclamation. Automatic hybrid warming remains disabled. Synthetic GPU-byte
+        gates validate declared layouts; complete released hybrid model recovery
+        and its latency benefit remain unqualified. Ordinary recovery and request preparation have separate
         Qwen3-8B performance reports.
       </p>
       <a class="text-link" href={localUrl("/docs/architecture/")}>
@@ -151,8 +153,8 @@ import { layers, localUrl } from "../data/site";
         across fragmented parts remain execution work.
       </p>
       <p class="reading-copy">
-        Native P/D with reusable cache has same-A100 TCP gates; cross-host P/D
-        and independent failure domains still need qualification.
+        Bounded native P/D model controls do not close transfer-fault gates.
+        Cross-host P/D and independent failure domains still need qualification.
         Single-node preparation and stopping controls are implemented and stay
         opt-in after the first repeated measurements. Global-index scale, metadata churn and cross-host failure behavior
         require qualification before production claims.

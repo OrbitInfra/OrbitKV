@@ -1,81 +1,93 @@
 export const docGroups = [
   {
     title: "Getting started",
-    description: "Install, connect an engine, and verify a cache hit.",
+    description: "Install, select a supported profile, and verify an external hit.",
     items: [
-      { slug: "goals", title: "Overview & supported features" },
+      { slug: "goals", title: "Overview" },
       { slug: "single-node", title: "Installation & quickstart" },
-      { slug: "adapters", title: "vLLM & SGLang integration" },
+      { slug: "compatibility", title: "Compatibility & support" },
+    ],
+  },
+  {
+    title: "Deployment",
+    description: "Connect engines, share capacity, and select a topology.",
+    items: [
+      { slug: "adapters", title: "Engine adapter contracts" },
+      { slug: "deployment", title: "Deployment recipes" },
       { slug: "models", title: "Model qualification" },
-      { slug: "deployment", title: "Deployment patterns" },
+      { slug: "p2p", title: "Cross-host shared cache" },
+      { slug: "pd", title: "Native P/D composition" },
+    ],
+  },
+  {
+    title: "Operations",
+    description: "Configure capacity, inspect metrics, and diagnose failures.",
+    items: [
       { slug: "server", title: "Manager configuration" },
+      { slug: "metrics", title: "Metrics & observability" },
+      { slug: "fault-qualification", title: "Fault qualification" },
     ],
   },
   {
     title: "Architecture",
-    description: "Understand page ownership, cache identity, and transfers.",
+    description: "Understand identity, ownership, and storage paths.",
     items: [
       { slug: "architecture", title: "System architecture" },
       { slug: "transport", title: "Process & network transport" },
-      { slug: "engine-local-restore", title: "Engine-local restore ownership" },
-      { slug: "state-identity", title: "State identity & recovery" },
-      { slug: "hybrid-recovery", title: "Compiled hybrid recovery" },
-      { slug: "state-planning", title: "Demand & transfer planning" },
-      { slug: "queued-warming", title: "Queued-request warming" },
-      { slug: "request-preparation", title: "Consumer-owned preparation" },
-      { slug: "cache-policies", title: "Retention & SSD write admission" },
-      { slug: "gds", title: "GPU storage" },
-      { slug: "storage-formats", title: "GPU quantization & compression" },
-      { slug: "vllm-request-state-machine", title: "vLLM request lifecycle" },
+      { slug: "state-identity", title: "State identity" },
+      { slug: "hybrid-recovery", title: "Hybrid recovery contracts" },
+      { slug: "cache-policies", title: "Retention & SSD admission" },
+      { slug: "gds", title: "GPU storage & GDS limits" },
+      { slug: "storage-formats", title: "Storage codecs" },
     ],
   },
   {
-    title: "Distributed cache",
-    description: "Explore independent replicas and prefill/decode handoff.",
+    title: "Benchmarks",
+    description: "Read scoped results and reproduce matched measurements.",
     items: [
-      { slug: "p2p", title: "Cross-node deployment" },
-      { slug: "peer-control", title: "Peer control boundary" },
-      { slug: "shared-cache-qualification", title: "Shared-cache qualification" },
-      { slug: "distributed-cache", title: "Distributed global index" },
-      { slug: "distributed-design", title: "Inventory and recovery design" },
-      {
-        slug: "distributed-comparison",
-        title: "LMCache, FlexKV & Mooncake comparison",
-      },
-      { slug: "pd", title: "P/D, cache reuse & NIXL" },
-      { slug: "pd-mooncake-push", title: "Retired P/D protocol" },
-    ],
-  },
-  {
-    title: "Benchmarks & operations",
-    description:
-      "Inspect metrics, reproduce measurements, and read their limits.",
-    items: [
-      { slug: "metrics", title: "Metrics & observability" },
-      { slug: "fault-qualification", title: "Single-node fault gates" },
-      { slug: "client-performance", title: "Client control overhead" },
-      { slug: "benchmark-evidence", title: "Benchmark evidence & archives" },
-      { slug: "communication-performance", title: "Communication measurements" },
-      { slug: "kernel-optimization", title: "CUDA kernel optimization" },
-      { slug: "single-node-performance", title: "Single-node comparisons" },
-      { slug: "ssd-performance", title: "SSD recovery & capacity pressure" },
-      { slug: "concurrent-performance", title: "Concurrent query budgets" },
-      { slug: "sustained-performance", title: "Sustained serving" },
-      { slug: "recovery-performance", title: "Recovery stage profile" },
+      { slug: "performance", title: "Performance overview" },
+      { slug: "benchmark-evidence", title: "Methodology & evidence" },
+      { slug: "kernel-optimization", title: "CUDA kernel work" },
+      { slug: "ssd-performance", title: "SSD recovery methodology" },
     ],
   },
   {
     title: "Development",
-    description: "Follow the implementation gates and contribute changes.",
+    description: "Contribute against the single execution queue.",
     items: [
-      { slug: "completion-plan", title: "Completion stages & acceptance" },
-      { slug: "engine-release-audit", title: "Released engine interface audit" },
-      { slug: "rust-quality", title: "Rust quality gates" },
-      { slug: "releases", title: "Python releases" },
+      { slug: "contributing", title: "Contributor guide" },
+      { slug: "completion-plan", title: "Completion plan" },
+      { slug: "engine-release-audit", title: "Released interface audit" },
+      { slug: "releases", title: "Package releases" },
     ],
   },
 ];
 
-export const docPages = docGroups.flatMap((group) =>
-  group.items.map((item) => ({ ...item, group: group.title })),
-);
+// Keep stable reference routes and search entries outside the primary sidebar.
+const referencePages = [
+  { slug: "engine-local-restore", title: "Engine-local restore ownership", group: "Reference" },
+  { slug: "state-planning", title: "Demand & transfer planning", group: "Reference" },
+  { slug: "queued-warming", title: "Queued-request warming", group: "Reference" },
+  { slug: "request-preparation", title: "Consumer-owned preparation", group: "Reference" },
+  { slug: "vllm-request-state-machine", title: "vLLM request lifecycle", group: "Reference" },
+  { slug: "peer-control", title: "Peer control boundary", group: "Reference" },
+  { slug: "shared-cache-qualification", title: "Shared-cache qualification", group: "Reference" },
+  { slug: "distributed-cache", title: "Distributed global index", group: "Reference" },
+  { slug: "distributed-design", title: "Inventory and recovery design", group: "Reference" },
+  { slug: "distributed-comparison", title: "LMCache, FlexKV & Mooncake comparison", group: "Reference" },
+  { slug: "pd-mooncake-push", title: "Retired P/D protocol", group: "Reference" },
+  { slug: "client-performance", title: "Client control overhead", group: "Reference" },
+  { slug: "communication-performance", title: "Communication measurements", group: "Reference" },
+  { slug: "single-node-performance", title: "Single-node comparisons", group: "Reference" },
+  { slug: "concurrent-performance", title: "Concurrent query budgets", group: "Reference" },
+  { slug: "sustained-performance", title: "Sustained serving", group: "Reference" },
+  { slug: "recovery-performance", title: "Recovery stage profile", group: "Reference" },
+  { slug: "rust-quality", title: "Rust quality gates", group: "Reference" },
+];
+
+export const docPages = [
+  ...docGroups.flatMap((group) =>
+    group.items.map((item) => ({ ...item, group: group.title })),
+  ),
+  ...referencePages,
+];

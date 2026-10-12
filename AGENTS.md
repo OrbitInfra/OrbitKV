@@ -229,8 +229,8 @@ cargo run -r --bin orbitkv-cache-manager -- --addr 127.0.0.1:50055 --pool-size 3
 ### Distributed cache
 
 Run the same Manager with `--etcd-endpoints`, `--node-id`, and matching
-`--cluster-name` on every host. etcd stores locations and members; background
-snapshot/Watch maintains local global indexes. Peer gRPC serves source grants and
+`--cluster-name` on every host. etcd stores protocol identity and leased members; bounded owner inventory
+streams maintain explicitly covered local indexes. Peer gRPC serves source grants and
 release; there is no standalone directory binary. See `docs/p2p.md`.
 
 ## Code Style

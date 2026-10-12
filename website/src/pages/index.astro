@@ -43,7 +43,7 @@ const capabilities = [
     title: "Share across replicas.",
     label: "Experimental",
     detail:
-      "Local global indexes discover compatible replicas. etcd replicates locations and membership; Mooncake moves KV bytes.",
+      "Local inventory indexes discover compatible replicas. etcd maintains leased membership; Mooncake TENT moves cache bytes.",
     href: "/docs/p2p/",
   },
   {
@@ -127,7 +127,7 @@ const capabilities = [
       </div>
       <div class="proof-note">
         <p>
-          Use DRAM and SSD caching with vLLM 0.29.0 or SGLang 0.5.20.
+          Use DRAM and SSD caching with official vLLM 0.31.0 or SGLang 0.5.21.
           Explore shared-cache deployments after validating your single-node
           workload; multi-node serving remains experimental.
         </p>
