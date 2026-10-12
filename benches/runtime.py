@@ -58,7 +58,7 @@ def server(
     engine: str | None = None,
     pass_fds: tuple[int, ...] = (),
 ):
-    if engine is not None and engine not in {"vllm", "sglang"}:
+    if engine is not None and engine not in {"vllm", "sglang", "lmcache"}:
         raise ValueError(f"Unsupported shutdown protocol: {engine}")
     if int(Path("/proc/self/stat").read_text().split(maxsplit=1)[0]) != os.getpid():
         raise RuntimeError("Service cleanup requires /proc in the benchmark's PID namespace")
@@ -99,7 +99,14 @@ def server(
                 with contextlib.suppress(OSError):
                     start = log.stat().st_size
             record = stop_owned_process(process, cleanup)
+            signal_exit = (
+                engine == "lmcache"
+                and record["exit_code"] == -signal.SIGTERM
+                and record["termination_signal"] == signal.SIGTERM
+                and not record["interrupted"]
+            )
             if engine is not None:
+                record.update(shutdown_protocol=engine, signal_exit_accepted=False)
                 try:
                     if start is None:
                         raise ValueError("Missing native engine shutdown log boundary")
@@ -114,7 +121,9 @@ def server(
                     )
                     if record["shutdown_log_truncated"]:
                         raise ValueError("Truncated native engine shutdown log")
-                    validate_engine_shutdown(shutdown_log.decode(errors="replace"), engine)
+                    validate_engine_shutdown(
+                        shutdown_log.decode(errors="replace"), engine, pid=process.pid
+                    )
                 except (OSError, ValueError) as error:
                     record["shutdown_error"] = str(error)
                     raise
@@ -122,12 +131,15 @@ def server(
                     cleanup.write_text(json.dumps(record, indent=2) + "\n")
             if (
                 not record["was_running"]
-                or record["exit_code"] != 0
+                or (record["exit_code"] != 0 and not signal_exit)
                 or record["forced_kill"]
                 or record["remaining_group"]
                 or record["process_group_errors"]
             ):
                 raise RuntimeError(f"Service shutdown failed: {cleanup}")
+            if engine == "lmcache":
+                record["signal_exit_accepted"] = signal_exit
+                cleanup.write_text(json.dumps(record, indent=2) + "\n")
         except BaseException as error:
             if primary_error is None:
                 raise
@@ -174,6 +186,7 @@ def stop_owned_process(process: subprocess.Popen, cleanup: Path | None = None) -
     process_group_errors = 0
     last_process_group_error = None
     pre_stop_exit_code = process.poll()
+    termination_signal = None
     try:
         while True:
             try:
@@ -184,6 +197,7 @@ def stop_owned_process(process: subprocess.Popen, cleanup: Path | None = None) -
                         os.killpg(process.pid, signal.SIGKILL)
                     elif pre_stop_exit_code is None:
                         os.kill(process.pid, signal.SIGTERM)
+                        termination_signal = signal.SIGTERM
                 except ProcessLookupError:
                     pass
                 except OSError as error:
@@ -267,6 +281,7 @@ def stop_owned_process(process: subprocess.Popen, cleanup: Path | None = None) -
             "interrupted": interrupted,
             "was_running": pre_stop_exit_code is None,
             "pre_stop_exit_code": pre_stop_exit_code,
+            "termination_signal": termination_signal,
             "remaining_group": [pid for pid, _ in remaining],
             "adopted_children": adopted_children,
             "process_group_errors": process_group_errors,

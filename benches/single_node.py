@@ -285,6 +285,7 @@ def main() -> None:
                         launch.manager_url,
                         args.output / "manager.log",
                         launch.manager_health_path,
+                        engine="lmcache" if args.backend == "lmcache" else None,
                         pass_fds=tuple(args.resource_lock_fd),
                     )
                 )

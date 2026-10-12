@@ -375,6 +375,14 @@ standalone GPU-pointer RDMA have different completion paths. Existing RDMA
 hardware is available; native GDS and physical failure-domain qualification
 remain separate. This delivery does not change any S2/S5 support claim.
 
+The initial 14-cell exploratory cohort stopped after three valid local vLLM
+cells: the released LMCache MP server completed its lifespan shutdown and
+re-emitted SIGTERM, while the benchmark required zero. Its 30 recorded requests
+remain an invalid cell; ten later cells were not launched. The complete failed
+cohort is archived externally. A narrowly scoped benchmark correction preserves
+the literal signal status and requires fresh cache/HTTP shutdown evidence;
+new serving inputs and results still require independent review.
+
 - Ordinary installed dense H20 DRAM/io_uring recovery/restart and shared-Manager
   pressure have acceptance for their frozen budgets and execution settings.
 - Registered trusted-loopback query-control authority/leases are accepted at

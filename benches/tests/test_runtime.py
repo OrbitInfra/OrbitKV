@@ -16,6 +16,131 @@ import pytest
 from benches import runtime
 
 
+@pytest.mark.parametrize(
+    "fault",
+    [None, "zero", "generic", "stale", "wrong_pid", "missing_close", "native_error", "nonzero"],
+)
+def test_real_lmcache_signal_exit_requires_fresh_owned_shutdown(monkeypatch, tmp_path, fault):
+    ready = tmp_path / "ready"
+    log = tmp_path / "manager.log"
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        """
+import os, signal, sys
+from pathlib import Path
+
+fault = sys.argv[2]
+def closed():
+    print('Shutting down LMCache HTTP server...', flush=True)
+    if fault != 'missing_close':
+        print('MPCacheServer closed', flush=True)
+    print('LMCache HTTP server stopped', flush=True)
+    print('Application shutdown complete.', flush=True)
+    pid = os.getpid() + (fault == 'wrong_pid')
+    print(f'Finished server process [{pid}]', flush=True)
+
+def stop(*_):
+    if fault != 'stale':
+        closed()
+    if fault == 'native_error':
+        raise RuntimeError('controlled lifespan error')
+    if fault in {'zero', 'nonzero'}:
+        sys.exit(0 if fault == 'zero' else 7)
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    signal.raise_signal(signal.SIGTERM)
+
+signal.signal(signal.SIGTERM, stop)
+if fault == 'stale':
+    closed()
+Path(sys.argv[1]).write_text('ready')
+while True:
+    signal.pause()
+""",
+        str(ready),
+        str(fault),
+    ]
+    monkeypatch.setattr(runtime.requests, "get", lambda *a, **kw: SimpleNamespace(ok=True))
+    error = (
+        RuntimeError
+        if fault in {"generic", "nonzero"}
+        else ValueError
+        if fault in {"stale", "wrong_pid", "missing_close", "native_error"}
+        else None
+    )
+    expectation = pytest.raises(error) if error else contextlib.nullcontext()
+    with (
+        expectation,
+        runtime.server(
+            command,
+            dict(os.environ),
+            "http://cpu-control",
+            log,
+            engine=None if fault == "generic" else "lmcache",
+        ) as process,
+    ):
+        deadline = time.monotonic() + 10
+        while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists(), log.read_text()
+    receipt = json.loads(log.with_suffix(".cleanup.json").read_text())
+    expected_code = (
+        0
+        if fault == "zero"
+        else 7
+        if fault == "nonzero"
+        else 1
+        if fault == "native_error"
+        else -signal.SIGTERM
+    )
+    assert receipt["exit_code"] == expected_code
+    assert receipt["termination_signal"] == signal.SIGTERM
+    assert receipt["reaped"] and not receipt["forced_kill"] and not receipt["remaining_group"]
+    assert not Path(f"/proc/{process.pid}").exists()
+    assert receipt.get("signal_exit_accepted", False) is (fault is None)
+
+
+def test_real_uvicorn_reemits_sigterm_only_after_lifespan_shutdown(tmp_path):
+    pytest.importorskip("uvicorn", minversion="0.30")
+    port = runtime.free_port()
+    log = tmp_path / "manager.log"
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        """
+import sys
+import uvicorn
+
+async def app(scope, receive, send):
+    if scope['type'] == 'lifespan':
+        assert (await receive())['type'] == 'lifespan.startup'
+        await send({'type': 'lifespan.startup.complete'})
+        assert (await receive())['type'] == 'lifespan.shutdown'
+        print('Shutting down LMCache HTTP server...', flush=True)
+        print('MPCacheServer closed', flush=True)
+        print('LMCache HTTP server stopped', flush=True)
+        await send({'type': 'lifespan.shutdown.complete'})
+    elif scope['type'] == 'http':
+        await send({'type': 'http.response.start', 'status': 200, 'headers': []})
+        await send({'type': 'http.response.body', 'body': b'ready'})
+
+uvicorn.run(app, host='127.0.0.1', port=int(sys.argv[1]), lifespan='on')
+""",
+        str(port),
+    ]
+    with runtime.server(
+        command, dict(os.environ), f"http://127.0.0.1:{port}", log, engine="lmcache"
+    ) as process:
+        assert process.poll() is None
+    receipt = json.loads(log.with_suffix(".cleanup.json").read_text())
+    assert receipt["exit_code"] == -signal.SIGTERM
+    assert receipt["signal_exit_accepted"] and receipt["termination_signal"] == signal.SIGTERM
+    assert receipt["reaped"] and not receipt["forced_kill"] and not receipt["remaining_group"]
+    assert not Path(f"/proc/{process.pid}").exists()
+
+
 @pytest.mark.parametrize("forwarded", [True, False])
 def test_real_service_inherits_gpu_lease_until_actual_exit(monkeypatch, tmp_path, forwarded):
     lock_path = tmp_path / "gpu.lock"

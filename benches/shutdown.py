@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 
-def validate_engine_shutdown(log: str, engine: str) -> None:
-    if engine not in {"vllm", "sglang"}:
+def validate_engine_shutdown(log: str, engine: str, *, pid: int | None = None) -> None:
+    if engine not in {"vllm", "sglang", "lmcache"}:
         raise ValueError(f"Unsupported shutdown protocol: {engine}")
     if not isinstance(log, str) or not log.strip():
         raise ValueError("Missing native engine shutdown log")
@@ -17,6 +17,22 @@ def validate_engine_shutdown(log: str, engine: str) -> None:
     ):
         if marker in log:
             raise ValueError(f"Native engine shutdown failed: {marker}")
+    if engine == "lmcache":
+        if type(pid) is not int or pid <= 0:
+            raise ValueError("Missing LMCache service PID")
+        previous = -1
+        for marker in (
+            "Shutting down LMCache HTTP server...",
+            "MPCacheServer closed",
+            "LMCache HTTP server stopped",
+            "Application shutdown complete.",
+            f"Finished server process [{pid}]",
+        ):
+            position = log.find(marker, previous + 1)
+            if position < 0:
+                raise ValueError(f"Incomplete LMCache shutdown protocol: {marker}")
+            previous = position
+        return
     required = (
         ("API server: engine client stopped", "Application shutdown complete.")
         if engine == "vllm"
