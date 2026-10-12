@@ -41,7 +41,14 @@ class Launch:
 def configure(args: Namespace, bytes_per_token: int) -> Launch:
     env = dict(os.environ)
     env["PATH"] = os.pathsep.join([str(Path(sys.executable).parent), env.get("PATH", "")])
-    env["TORCH_EXTENSIONS_DIR"] = str(args.output / "torch-extensions")
+    for variable, directory in (
+        ("VLLM_CACHE_ROOT", "vllm-cache"),
+        ("TORCHINDUCTOR_CACHE_DIR", "inductor-cache"),
+        ("TRITON_CACHE_DIR", "triton-cache"),
+        ("TORCH_EXTENSIONS_DIR", "torch-extensions"),
+        ("FLASHINFER_WORKSPACE_BASE", "flashinfer-cache"),
+    ):
+        env[variable] = str(args.output / directory)
     env.update(PYTHONHASHSEED="0", VLLM_LOG_STATS_INTERVAL="1")
     if args.engine == "vllm":
         env.setdefault("VLLM_USE_V2_MODEL_RUNNER", "0")

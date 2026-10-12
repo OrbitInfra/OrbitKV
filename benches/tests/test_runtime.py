@@ -93,6 +93,111 @@ def test_server_rejects_a_different_proc_pid_namespace_before_spawning(monkeypat
     assert not (tmp_path / "manager.log").exists()
 
 
+@pytest.mark.parametrize("forwarded", [True, False])
+def test_single_node_services_keep_controller_lease_through_request_failure(
+    monkeypatch, tmp_path, forwarded
+):
+    from benches import single_node
+
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text(
+        json.dumps(
+            {"model_type": "qwen3", "num_hidden_layers": 1, "num_key_value_heads": 1, "head_dim": 1}
+        )
+    )
+    lease_path = tmp_path / "gpu.lock"
+    lease = lease_path.open("a")
+    fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    descriptor = lease.fileno()
+    output = tmp_path / "run"
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        """
+import json, os, signal, sys
+from pathlib import Path
+
+def stop(*_):
+    print('API server: engine client stopped', flush=True)
+    print('Application shutdown complete.', flush=True)
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, stop)
+try:
+    info = os.fstat(int(sys.argv[1]))
+    expected = Path(sys.argv[2]).stat()
+    received = (info.st_dev, info.st_ino) == (expected.st_dev, expected.st_ino)
+except OSError:
+    received = False
+Path(sys.argv[3]).write_text(json.dumps({'received': received, 'pid': os.getpid()}))
+while True:
+    signal.pause()
+""",
+        str(descriptor),
+        str(lease_path),
+    ]
+    launch = SimpleNamespace(
+        manager_command=[*command, str(output / "manager-ready.json")],
+        command=[*command, str(output / "engine-ready.json")],
+        manager_url="http://cpu-manager",
+        manager_health_path="/health",
+        base_url="http://cpu-engine",
+        env=dict(os.environ),
+    )
+    monkeypatch.setattr(single_node, "configure", lambda *_: launch)
+    monkeypatch.setattr(single_node, "manifest", lambda *_: {})
+    monkeypatch.setattr(single_node, "process_usage", lambda *_: {})
+    monkeypatch.setattr(single_node, "metrics", lambda *_: {})
+    monkeypatch.setattr(runtime.requests, "get", lambda *a, **kw: SimpleNamespace(ok=True))
+
+    def fail_request(*_):
+        for name in ("manager", "engine"):
+            ready = output / f"{name}-ready.json"
+            deadline = time.monotonic() + 10
+            while not ready.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert ready.exists()
+            assert json.loads(ready.read_text())["received"] is forwarded
+        lease.close()
+        with lease_path.open("a") as contender:
+            if forwarded:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            else:
+                fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        raise RuntimeError("request failed with both services alive")
+
+    monkeypatch.setattr(single_node, "run_workload", fail_request)
+    argv = [
+        "bench",
+        "--engine",
+        "vllm",
+        "--backend",
+        "orbitkv",
+        "--model",
+        str(model),
+        "--output",
+        str(output),
+    ]
+    if forwarded:
+        argv += ["--resource-lock-fd", str(descriptor)]
+    monkeypatch.setattr(sys, "argv", argv)
+    try:
+        with pytest.raises(RuntimeError, match="request failed"):
+            single_node.main()
+    finally:
+        lease.close()
+    for name in ("manager", "engine"):
+        receipt = json.loads((output / f"{name}.cleanup.json").read_text())
+        assert receipt["exit_code"] == 0 and receipt["reaped"]
+        assert not receipt["forced_kill"] and not receipt["remaining_group"]
+        assert not Path(f"/proc/{receipt['pid']}").exists()
+    with lease_path.open("a") as contender:
+        fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
 @pytest.mark.parametrize(
     ("steps", "body_failure", "expected_error", "broken_stderr"),
     [

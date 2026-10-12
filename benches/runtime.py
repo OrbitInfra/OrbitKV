@@ -381,6 +381,7 @@ def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:
                 "TORCHINDUCTOR_CACHE_DIR",
                 "TRITON_CACHE_DIR",
                 "TORCH_EXTENSIONS_DIR",
+                "FLASHINFER_WORKSPACE_BASE",
             )
             if name in launch.env
         },

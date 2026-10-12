@@ -363,6 +363,18 @@ Current commands and limits are in [P/D](pd.md).
 listed in [compatibility](compatibility.md); precise peer cohorts remain in
 [shared-cache qualification](shared-cache-qualification.md).
 
+**Current bounded delivery:** measure the accepted dense Qwen3-32B BF16
+TP=1/PP=1 profile on official vLLM 0.31.0 and SGLang 0.5.21. Freeze matched
+native-HBM, native-host, OrbitKV and available released LMCache controls;
+report cold, resident and pressure-recovery paths separately. Use boundary
+observations, private JIT caches and GPU-local NUMA placement, retain output,
+restore-byte and actual service-stop evidence. Serial exploratory samples do
+not qualify p99 or a serving advantage. Follow with separately reviewed
+contention and two-H20 TENT RDMA measurements: remote-DRAM restoration and
+standalone GPU-pointer RDMA have different completion paths. Existing RDMA
+hardware is available; native GDS and physical failure-domain qualification
+remain separate. This delivery does not change any S2/S5 support claim.
+
 - Ordinary installed dense H20 DRAM/io_uring recovery/restart and shared-Manager
   pressure have acceptance for their frozen budgets and execution settings.
 - Registered trusted-loopback query-control authority/leases are accepted at

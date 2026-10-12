@@ -4,6 +4,11 @@ Run performance experiments from the repository root. Benchmark programs, reusab
 tests live here. Generated measurements and reports belong outside the checkout. Runtime Python
 code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 
+`single_node` accepts repeated `--resource-lock-fd` arguments from an external
+controller. It forwards those already-open regular-file descriptors to both
+the Manager and engine; the controller still owns admission, quarantine and
+final physical cleanup. Compiler/JIT caches are private to each output cell.
+
 ## Layout
 
 | Path | Responsibility |

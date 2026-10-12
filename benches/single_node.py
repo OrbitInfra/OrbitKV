@@ -10,7 +10,9 @@ import argparse
 import contextlib
 import json
 import math
+import os
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -40,6 +42,13 @@ def main() -> None:
         required=True,
     )
     parser.add_argument("--model", type=Path, required=True)
+    parser.add_argument(
+        "--resource-lock-fd",
+        type=int,
+        action="append",
+        default=[],
+        help="Inherit a controller's open resource-lock file into each service process",
+    )
     parser.add_argument(
         "--enforce-eager",
         action="store_true",
@@ -154,6 +163,14 @@ def main() -> None:
         help="Boundary mode collects snapshots/drain checks without a request-time metrics thread",
     )
     args = parser.parse_args()
+    if len(set(args.resource_lock_fd)) != len(args.resource_lock_fd):
+        parser.error("resource-lock descriptors must be distinct")
+    for descriptor in args.resource_lock_fd:
+        try:
+            if descriptor < 3 or not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise ValueError("expected an open regular file descriptor >= 3")
+        except (OSError, ValueError) as error:
+            parser.error(f"invalid --resource-lock-fd {descriptor}: {error}")
     if args.backend != "orbitkv" and (
         args.storage_codec != "none" or args.storage_codec_budget != 64 * 1024**2 or args.ssd_dir
     ):
@@ -268,6 +285,7 @@ def main() -> None:
                         launch.manager_url,
                         args.output / "manager.log",
                         launch.manager_health_path,
+                        pass_fds=tuple(args.resource_lock_fd),
                     )
                 )
                 if args.ssd_gib:
@@ -281,6 +299,7 @@ def main() -> None:
                     launch.base_url,
                     args.output / "engine.log",
                     engine=args.engine,
+                    pass_fds=tuple(args.resource_lock_fd),
                 )
             )
             if launch.manager_command:
