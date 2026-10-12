@@ -18,7 +18,18 @@ from benches import runtime
 
 @pytest.mark.parametrize(
     "fault",
-    [None, "zero", "generic", "stale", "wrong_pid", "missing_close", "native_error", "nonzero"],
+    [
+        None,
+        "zero",
+        "generic",
+        "stale",
+        "wrong_pid",
+        "missing_close",
+        "native_error",
+        "logged_error",
+        "colored_error",
+        "nonzero",
+    ],
 )
 def test_real_lmcache_signal_exit_requires_fresh_owned_shutdown(monkeypatch, tmp_path, fault):
     ready = tmp_path / "ready"
@@ -34,6 +45,10 @@ from pathlib import Path
 fault = sys.argv[2]
 def closed():
     print('Shutting down LMCache HTTP server...', flush=True)
+    if fault == 'logged_error':
+        print('ERROR: controlled LMCache close failure', flush=True)
+    if fault == 'colored_error':
+        print('[time] LMCache \\x1b[31mERROR\\x1b[0m: controlled close failure', flush=True)
     if fault != 'missing_close':
         print('MPCacheServer closed', flush=True)
     print('LMCache HTTP server stopped', flush=True)
@@ -66,7 +81,8 @@ while True:
         RuntimeError
         if fault in {"generic", "nonzero"}
         else ValueError
-        if fault in {"stale", "wrong_pid", "missing_close", "native_error"}
+        if fault
+        in {"stale", "wrong_pid", "missing_close", "native_error", "logged_error", "colored_error"}
         else None
     )
     expectation = pytest.raises(error) if error else contextlib.nullcontext()
@@ -163,7 +179,10 @@ try:
     received = (inherited.st_dev, inherited.st_ino) == (expected.st_dev, expected.st_ino)
 except OSError:
     received = False
-Path(sys.argv[3]).write_text(json.dumps({'received': received}))
+ready = Path(sys.argv[3])
+temporary = ready.with_name(ready.name + '.tmp')
+temporary.write_text(json.dumps({'received': received}))
+temporary.replace(ready)
 while True:
     signal.pause()
 """,
@@ -256,7 +275,10 @@ try:
     received = (info.st_dev, info.st_ino) == (expected.st_dev, expected.st_ino)
 except OSError:
     received = False
-Path(sys.argv[3]).write_text(json.dumps({'received': received, 'pid': os.getpid()}))
+ready = Path(sys.argv[3])
+temporary = ready.with_name(ready.name + '.tmp')
+temporary.write_text(json.dumps({'received': received, 'pid': os.getpid()}))
+temporary.replace(ready)
 while True:
     signal.pause()
 """,

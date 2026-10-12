@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 
 def validate_engine_shutdown(log: str, engine: str, *, pid: int | None = None) -> None:
     if engine not in {"vllm", "sglang", "lmcache"}:
@@ -18,6 +20,9 @@ def validate_engine_shutdown(log: str, engine: str, *, pid: int | None = None) -
         if marker in log:
             raise ValueError(f"Native engine shutdown failed: {marker}")
     if engine == "lmcache":
+        plain = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", log)
+        if re.search(r"\b(?:ERROR|CRITICAL|FATAL)\s*:", plain):
+            raise ValueError("LMCache shutdown contains error-level diagnostics")
         if type(pid) is not int or pid <= 0:
             raise ValueError("Missing LMCache service PID")
         previous = -1

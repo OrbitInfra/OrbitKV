@@ -12,7 +12,8 @@ LMCache MP's Uvicorn lifespan shutdown may re-emit the requested SIGTERM and
 return `-15`. Only this explicit protocol accepts that literal status, after
 checking fresh, ordered cache/HTTP shutdown logs, the exact service PID, actual
 signal delivery, reap and empty process ownership. Forced cleanup, premature
-exit and incomplete logs invalidate the run. Other services still require zero.
+exit, error-level shutdown diagnostics and incomplete logs invalidate the run.
+Other services still require zero.
 Before running released LMCache comparisons, run the real CPU Uvicorn control
 with the installed runtime's Uvicorn version (currently 0.54.0):
 
