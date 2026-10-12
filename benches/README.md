@@ -568,7 +568,9 @@ compressed trace hashes under the external output directory. Missing traces or
 traces without GPU kernels invalidate the cell. Stop is attempted even after
 an ambiguous start failure; normal engine/Manager cleanup remains mandatory.
 Keep profiler-enabled cells separate from unprofiled timing controls: profiler
-activity can perturb CUDA submission and TTFT. Compare actual restored tokens,
+activity can perturb CUDA submission and TTFT. JSON/CSV summaries and stdout
+retain the profiling mode; mixed modes within a phase and inconsistent sample/
+manifest declarations are rejected. Compare actual restored tokens,
 output, budgets and native drain before attributing any restore-stage gap.
 
 ## SSD restoration

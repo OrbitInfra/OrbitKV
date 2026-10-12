@@ -139,6 +139,11 @@ def collect_run(directory: Path) -> dict:
         raise ValueError(f"Failed run has no complete latency result: {directory}")
     manifest = json.loads((directory / "manifest.json").read_text())
     args = manifest["arguments"]
+    profiling = args.get("sglang_profile", False)
+    if type(profiling) is not bool or (
+        profiling and (args["engine"] != "sglang" or args.get("workload", "serial") != "serial")
+    ):
+        raise ValueError(f"Invalid SGLang profiling configuration: {directory}")
     mode = args.get("observation_mode")
     if mode not in OBSERVATION_MODES or manifest.get("observation_mode") != mode:
         raise ValueError(f"Missing or inconsistent observation mode: {directory}")
@@ -176,6 +181,13 @@ def collect_run(directory: Path) -> dict:
         if actual != expected or len(samples) != len(expected):
             raise ValueError(f"Incomplete or duplicated workload: {directory}")
         for sample in samples:
+            expected_profiling = (
+                "sglang-public-cpu-cuda"
+                if profiling and sample["phase"] == "after_pressure"
+                else "off"
+            )
+            if sample.get("profiling", {}).get("mode", "off") != expected_profiling:
+                raise ValueError(f"Sample profiling mode differs from manifest: {directory}")
             for metric in ("ttft_ms", "e2e_ms"):
                 if not math.isfinite(sample[metric]) or sample[metric] < 0:
                     raise ValueError(f"Invalid {metric} in {directory}")

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 import requests
 
+from benches.metrics import summarize
 from benches.sglang_profile import sglang_profile
 
 
@@ -80,3 +81,19 @@ def test_stop_failure_preserves_foreground_failure(profiler_http):
     control = json.loads((output / "CONTROL.json").read_text())
     assert "foreground failure" in control["workload_error"]
     assert "stop failure" in control["stop_or_trace_error"]
+
+
+def test_summary_preserves_diagnostic_identity_and_rejects_mixed_modes():
+    sample = {
+        "length": 8192,
+        "phase": "after_pressure",
+        "ttft_ms": 1,
+        "e2e_ms": 2,
+        "matches_cold_output": True,
+        "cache_source": "external",
+        "manager_delta": {},
+        "profiling": {"mode": "sglang-public-cpu-cuda"},
+    }
+    assert summarize([sample], [8192])[0]["profiling_mode"] == "sglang-public-cpu-cuda"
+    with pytest.raises(ValueError, match="profiling"):
+        summarize([sample, {**sample, "profiling": {"mode": "off"}}], [8192])

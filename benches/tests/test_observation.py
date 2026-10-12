@@ -314,6 +314,30 @@ def test_offline_report_rejects_ownership_corruption(tmp_path, workload, mode, c
         collect_run(tmp_path)
 
 
+def test_report_requires_manifest_and_sample_profiling_to_match(tmp_path):
+    sample_file, samples = report_fixture(tmp_path, "serial", "boundary")
+    manifest_path = tmp_path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["arguments"].update(engine="sglang", sglang_profile=True)
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="profiling"):
+        collect_run(tmp_path)
+    for sample in samples:
+        sample["profiling"] = {
+            "mode": "sglang-public-cpu-cuda" if sample["phase"] == "after_pressure" else "off"
+        }
+    (tmp_path / sample_file).write_text("\n".join(map(json.dumps, samples)))
+    summaries = collect_run(tmp_path)["summary"]
+    assert (
+        next(row for row in summaries if row["phase"] == "after_pressure")["profiling_mode"]
+        == "sglang-public-cpu-cuda"
+    )
+    manifest["arguments"]["sglang_profile"] = False
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="profiling"):
+        collect_run(tmp_path)
+
+
 def test_boundary_codec_snapshots_cannot_be_reported_as_sampled_peaks():
     row = {
         "manager_before": {"orbitkv_storage_codec_workspace_bytes": 17},

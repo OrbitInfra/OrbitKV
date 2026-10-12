@@ -204,7 +204,9 @@ def run_workload(args: Namespace, base_url: str, manager_url: str | None) -> lis
                     output.write(json.dumps(result, allow_nan=False) + "\n")
                     output.flush()
                     print(
-                        f"{args.engine}/{args.backend} len={length} repeat={repeat} {phase}: TTFT={result['ttft_ms']:.2f}ms usage={result['usage']}",
+                        f"{args.engine}/{args.backend} len={length} repeat={repeat} {phase} "
+                        f"profiling={profiling['mode']}: TTFT={result['ttft_ms']:.2f}ms "
+                        f"usage={result['usage']}",
                         flush=True,
                     )
     return samples

@@ -438,11 +438,18 @@ def summarize(samples: list[dict], lengths: list[int]) -> list[dict]:
                 if sample["length"] == length and sample["phase"] == phase
             ]
             times = [sample["ttft_ms"] for sample in group]
+            profiling_modes = {sample.get("profiling", {}).get("mode", "off") for sample in group}
+            if len(profiling_modes) != 1 or not profiling_modes <= {
+                "off",
+                "sglang-public-cpu-cuda",
+            }:
+                raise ValueError("Cannot summarize mixed or invalid profiling modes")
             summary.append(
                 {
                     "length": length,
                     "phase": phase,
                     "observation_mode": group[0].get("observation_mode"),
+                    "profiling_mode": profiling_modes.pop(),
                     "n": len(group),
                     "ttft_p50_ms": statistics.median(times),
                     "ttft_p95_ms": percentile(times, 0.95),
