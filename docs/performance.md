@@ -48,7 +48,7 @@ NICs, after context initialization and registration. Descriptor overhead and
 lazy setup require separate attribution before changing a production path.
 
 Thirteen Manager cells completed the remote DRAM → RDMA → consumer DRAM → HBM
-path. The first complete run's 32 MiB READ medians are 28.9–39.1 GB/s; restoration
+path. The first complete run's 32 MiB READ medians are 28.9–41.8 GB/s; restoration
 medians are 1.25–1.32 ms. The fixture's separate 10 ms query polling sleep is
 not transport latency or serving TTFT. The full 108-cell campaign stopped after
 85 cells because the next Manager failed a gRPC bind before payload admission.
