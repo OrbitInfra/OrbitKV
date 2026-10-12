@@ -111,6 +111,16 @@ barriers and oracles are outside the query/restore clock. The worker's existing
 10 ms polling sleep is reported separately; its client time is not pure TENT
 latency or model-serving TTFT.
 
+Select unused service ports outside each host's actual
+`/proc/sys/net/ipv4/ip_local_port_range`, using distinct ports for restarted
+cells. Readiness requires both successful HTTP health and the HTTP/gRPC listening
+socket inodes in the owned process's file descriptors. A foreign listener or an
+already exited child cannot satisfy readiness. Preserve the original startup
+error before cleanup, and record cleanup failures separately. A fresh cell that
+has not launched a payload fixture can normally stop and reap its own Managers
+without trying to drain a dead HTTP endpoint; after payload admission, the
+complete idle proof remains mandatory.
+
 Use independently restarted cells and opposite run orders. Thirty measured
 samples support descriptive medians/p95/max, not stable p99 or a production
 performance promotion. Stop admission at the first invalid/failed cell and keep
@@ -120,6 +130,11 @@ stops require explicit idle evidence and normal SIGTERM. Children inherit the
 resource leases. Control loss, unresolved native work or failed final inspection
 retains ownership and quarantine; a timeout cannot release those locks. Successful
 postflight requires no descendants, GPU allocations or owned UDS sockets.
+An operator releasing an idle service after controller loss must distinguish
+normal native shutdown from forced CPU-only owner termination. An orphaned
+zombie with no native resources is not an actual wait/reap receipt. Preserve
+quarantine if the platform init does not reap it; do not modify a platform
+process to turn incomplete cleanup into a passing gate.
 This component profile does not qualify HA, S3 reclamation, native GDS or model
 latency. Use its stage breakdown to choose the next consumed production change.
 
