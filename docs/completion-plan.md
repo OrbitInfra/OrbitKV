@@ -388,6 +388,14 @@ or scheduling change. Existing RDMA hardware is available; native GDS and
 physical failure-domain qualification remain separate. These measurements do
 not change any S2/S5 support claim or promote a kernel from component results.
 
+The maintained `benches.rdma_profile`, host process owner and separate CUDA byte
+oracle implement this measurement path. Source/runtime preparation and independent
+review precede GPU admission. The frozen matrix retains first transfer, warm-up
+and measured samples for both directions; full-Manager cells consume the existing
+byte fixture and native stage counters. Implementation and CPU controls alone do
+not close this delivery: actual RDMA runs and independent outcome review remain
+required.
+
 The initial 14-cell exploratory cohort stopped after three valid local vLLM
 cells: the released LMCache MP server completed its lifespan shutdown and
 re-emitted SIGTERM, while the benchmark required zero. Its 30 recorded requests

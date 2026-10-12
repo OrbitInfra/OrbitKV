@@ -30,6 +30,8 @@ uv run --isolated --no-project --with pytest --with requests --with uvicorn==0.5
 | `communication.py` | Real Query miss/hit, Publish D2H, Restore submit-to-ready and empty-restore controls using matching external artifacts |
 | `tent_stage.py` | Frozen native C ABI CPU-buffer READ stages; explicit source/consumer control and terminal batch drain |
 | `tent_compare.py` | Two-host frozen-library A/B READ comparison with independent pairs, notification-slot reuse and physical RDMA counters |
+| `rdma_profile.py` / `rdma_owner.py` | Frozen two-host GPU-pointer and full-Manager profiles; inherited host leases, actual process drain and physical postflight |
+| `tent_gpu.py` / `tent_gpu_oracle.cu` | Registered device READ/WRITE with complete CPU/GPU payload and sentinel checks outside the transfer clock |
 | `tent_native_trace.cpp` / `tent_trace.py` | Bounded pinned-native metadata/QP/bootstrap interposition and offline per-host trace validation |
 | `cpu_codec.rs` | Production scalar/AVX2/AVX-512/auto CPU FP8 conversion with an independent oracle before timing |
 | `cost_observations.py` | Same-binary off/on observation overhead, three reversed-order pairs on both engines |
@@ -59,6 +61,67 @@ uv run --isolated --no-project --with pytest --with requests --with uvicorn==0.5
 | `tests/` | CPU-only checks for measurement and report correctness |
 | `artifacts.py` | Validate external output locations, including symlink resolution |
 | `reproduce_preparation.sh` | Repeated preparation controls with an explicit external output root |
+
+### GPU-pointer and full-Manager RDMA profile
+
+`rdma_profile` consumes an external `CONTRACT.json`, its SHA256 input index and
+an independent `LAUNCH-ACCEPTED.json` bound to that exact index. The contract
+freezes both host boot IDs and complete GPU UUID inventories, source/runtime
+hashes, file identities, CPU/NUMA binding, RDMA-only configuration, NIC allowlists,
+resource lock paths, exact child commands and the ordered cell/sample matrix.
+Copy the complete installed wheel runtime into new private directories on both
+hosts. Verify ELF closure, actual TENT loading and native import before launch;
+never overwrite a mapped library. Keep `harness/benches` separate from the Python
+package so source-only imports cannot shadow the installed extension.
+
+Compile the byte oracle on each test host before freezing its resulting hash:
+
+```bash
+/usr/local/cuda/bin/nvcc -O3 -std=c++17 --shared --cudart shared -Xcompiler=-fPIC \
+  -gencode arch=compute_90,code=sm_90 benches/tent_gpu_oracle.cu \
+  -o /external/rdma-profile/tent_gpu_oracle.so
+python -m benches.rdma_profile \
+  --contract /external/rdma-profile/CONTRACT.json \
+  --output /external/rdma-profile/cohort-001
+```
+
+GPU cells register one 64 MiB device buffer per endpoint and validate its
+physical CUDA UUID and pointer type. The bounded matrix compares a 4 KiB guard,
+one packed 32 MiB descriptor, and 8,192 4 KiB descriptors separated by real 4 KiB
+gaps, across READ/WRITE, both payload directions and one versus four allowed
+NICs. Every sample refills the source with a new deterministic seed, clears the
+destination and checks both entire 64 MiB buffers with GPU and CPU oracles.
+An intentional one-word corruption must produce exactly one mismatch in both
+oracles. Filling, clearing and verification are outside transfer timing.
+
+`binding_to_terminal_ms` includes PyO3 conversion, Rust completion polling and
+lazy native peer setup/transfer. It does not identify pure fabric time or
+separate QP setup causality. The first transfer follows context initialization
+and memory registration; report those separate setup clocks and preserve that
+first sample. Subsequent warm-up and measured samples have explicit labels.
+Four allowed NICs do not imply four NICs were used. Report physical per-NIC
+counter deltas (IB data counters use four-byte units), including their possible
+background traffic, rather than assuming striping from configuration.
+
+Manager cells reuse `shared_cache_bytes` and `shared_cache_profile` to measure
+source DRAM → TENT READ → consumer DRAM → GPU restoration, at 512 KiB, 8 MiB and
+32 MiB. Each restore requires exact remote/H2D counter deltas, complete GPU bytes,
+sentinel gaps and acknowledged source release. Consumer DRAM eviction, inventory
+barriers and oracles are outside the query/restore clock. The worker's existing
+10 ms polling sleep is reported separately; its client time is not pure TENT
+latency or model-serving TTFT.
+
+Use independently restarted cells and opposite run orders. Thirty measured
+samples support descriptive medians/p95/max, not stable p99 or a production
+performance promotion. Stop admission at the first invalid/failed cell and keep
+its samples and logs. GPU requester stop requires native unregister/free followed
+by actual wait/reap; only then may its matching passive peer stop. Manager/fixture
+stops require explicit idle evidence and normal SIGTERM. Children inherit the
+resource leases. Control loss, unresolved native work or failed final inspection
+retains ownership and quarantine; a timeout cannot release those locks. Successful
+postflight requires no descendants, GPU allocations or owned UDS sockets.
+This component profile does not qualify HA, S3 reclamation, native GDS or model
+latency. Use its stage breakdown to choose the next consumed production change.
 
 ### Native TENT first READ diagnostic
 
