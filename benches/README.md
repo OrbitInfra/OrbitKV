@@ -560,6 +560,17 @@ misses, and generated-text differences. A startup/request failure writes
 `failure.json` and is not a latency result. The serial workload measures TTFT;
 it does not establish concurrent goodput or production tail latency.
 
+For SGLang restore diagnosis, add `--sglang-profile` to capture CPU/CUDA traces
+only around each serial `after_pressure` request through the official
+`/start_profile` and `/stop_profile` endpoints. The profiler uses no engine-file
+patch. Every profiled sample records its mode, HTTP start/stop receipts and
+compressed trace hashes under the external output directory. Missing traces or
+traces without GPU kernels invalidate the cell. Stop is attempted even after
+an ambiguous start failure; normal engine/Manager cleanup remains mandatory.
+Keep profiler-enabled cells separate from unprofiled timing controls: profiler
+activity can perturb CUDA submission and TTFT. Compare actual restored tokens,
+output, budgets and native drain before attributing any restore-stage gap.
+
 ## SSD restoration
 
 Choose `--ssd-backend uring`, `auto`, or `cufile` for both engines. This benchmark

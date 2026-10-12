@@ -150,6 +150,11 @@ def main() -> None:
     parser.add_argument("--read-max-batches", type=int, default=0)
     parser.add_argument("--trace-transfers", action="store_true")
     parser.add_argument(
+        "--sglang-profile",
+        action="store_true",
+        help="Diagnostic CPU/CUDA trace of serial post-pressure recovery; perturbs timings",
+    )
+    parser.add_argument(
         "--deterministic-inference",
         action="store_true",
         help="Enable the engine's deterministic kernels for output-parity qualification",
@@ -163,6 +168,8 @@ def main() -> None:
         help="Boundary mode collects snapshots/drain checks without a request-time metrics thread",
     )
     args = parser.parse_args()
+    if args.sglang_profile and (args.engine != "sglang" or args.workload != "serial"):
+        parser.error("--sglang-profile requires the serial SGLang workload")
     if len(set(args.resource_lock_fd)) != len(args.resource_lock_fd):
         parser.error("resource-lock descriptors must be distinct")
     for descriptor in args.resource_lock_fd:
