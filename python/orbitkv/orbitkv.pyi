@@ -174,26 +174,6 @@ class CacheManagerClient:
         self, instance_id: str, namespace: str, tp_size: int, world_size: int
     ) -> bytes: ...
     def unregister_context(self, instance_id: str) -> tuple[bool, str]: ...
-    def observe_prefill_to_decode_completion(
-        self,
-        instance_id: str,
-        destination_device_id: int,
-        source_endpoint: str,
-        transfer_generation: int,
-        logical_bytes: int,
-        wire_bytes: int,
-        fragment_count: int,
-        elapsed_ns: int,
-        decode_page_bytes: int,
-        handoff_queue_depth: int,
-        handoff_queue_parallelism: int,
-        tent_inflight_bytes: int,
-        tent_bandwidth_bytes_per_second: int,
-        *,
-        admitted: bool = True,
-        outcome: str = "completed",
-        representation: str = "raw",
-    ) -> None: ...
     def start_session_watcher(
         self, instance_id: str, namespace: str, tp_size: int, world_size: int
     ) -> None: ...
@@ -219,7 +199,9 @@ class CacheManagerClient:
         layer_attention: list[tuple[int, str, int, int]] | None = None,
         *,
         tensors: list[object],
-    ) -> tuple[bool, str]: ...
+    ) -> tuple[bool, str]:
+        """Register client-local device_id and retain the UUID-resolved Manager route."""
+        ...
     @property
     def transport(self) -> str: ...
     @property

@@ -10,6 +10,32 @@ use prost::Message;
 use std::time::Duration;
 use tokio::sync::Notify;
 
+#[test]
+fn registration_requires_a_complete_stable_gpu_identity() {
+    for (device_uuid, valid) in [
+        ("GPU-c4930667-4d65-aae5-8205-fe785c3654be", true),
+        ("", false),
+        ("7", false),
+        ("GPU-c4930667", false),
+        ("MIG-c4930667-4d65-aae5-8205-fe785c3654be", false),
+    ] {
+        let request = crate::wire::registration(RegisterContextRequest {
+            instance_id: "identity".into(),
+            namespace: "identity".into(),
+            client_version: env!("CARGO_PKG_VERSION").into(),
+            device_uuid: device_uuid.into(),
+            tp_size: 1,
+            world_size: 1,
+            ..Default::default()
+        });
+        assert_eq!(
+            LifecycleService::validate_register_context_request(&request).is_ok(),
+            valid,
+            "UUID {device_uuid:?}"
+        );
+    }
+}
+
 pub(crate) fn test_engine() -> Arc<OrbitKVEngine> {
     Arc::new(OrbitKVEngine::new_with_config(1 << 20, false, EngineConfig::default()).unwrap())
 }

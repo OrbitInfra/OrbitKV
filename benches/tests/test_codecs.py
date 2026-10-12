@@ -1,6 +1,8 @@
 """Codec controls and evidence must stay usable without native/GPU imports."""
 
 import json
+import os
+import subprocess
 import sys
 from argparse import ArgumentTypeError, Namespace
 from pathlib import Path
@@ -44,6 +46,32 @@ def launch_arguments(tmp_path, engine="vllm", codec="none", ssd_gib=4):
         prefill_tokens=8192,
         orbitkv_transfer_backend=None,
     )
+
+
+@pytest.mark.parametrize("engine", ["vllm", "sglang"])
+def test_absolute_engine_python_resolves_its_jit_tools(tmp_path, monkeypatch, engine):
+    engine_bin = tmp_path / "engine/bin"
+    inherited_bin = tmp_path / "inherited-bin"
+    for directory, label in ((engine_bin, "selected"), (inherited_bin, "inherited")):
+        directory.mkdir(parents=True)
+        tool = directory / "ninja"
+        tool.write_text(f"#!{sys.executable}\nprint({label!r})\n")
+        tool.chmod(0o755)
+    python = engine_bin / "python"
+    python.symlink_to(sys.executable)
+    monkeypatch.setenv("PATH", str(inherited_bin))
+    monkeypatch.setenv("TORCH_EXTENSIONS_DIR", "/unrelated/shared-cache")
+    monkeypatch.setattr("benches.launch.sys.executable", str(python))
+    args = launch_arguments(tmp_path, engine, ssd_gib=0)
+    args.backend = "native"
+    launch = configure(args, 147456)
+    result = subprocess.run(
+        ["ninja", "--version"], env=launch.env, capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "selected"
+    assert launch.env["TORCH_EXTENSIONS_DIR"] == str(tmp_path / "torch-extensions")
+    assert os.environ["PATH"] == str(inherited_bin)
+    assert os.environ["TORCH_EXTENSIONS_DIR"] == "/unrelated/shared-cache"
 
 
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])
@@ -332,15 +360,16 @@ def test_cross_backend_reference_requires_the_same_engine_runtime(tmp_path):
         result = compare_outputs(run, reference)
         assert result["compared_requests"] == 1
         assert result["output_mismatches"] == 0
-        changed = {
-            **run,
-            "manifest": {
-                **run["manifest"],
-                "arguments": {**run["manifest"]["arguments"], "deterministic_inference": True},
-            },
-        }
-        with pytest.raises(ValueError, match="different deterministic_inference"):
-            compare_outputs(changed, reference)
+        for setting in ("deterministic_inference", "enforce_eager"):
+            changed = {
+                **run,
+                "manifest": {
+                    **run["manifest"],
+                    "arguments": {**run["manifest"]["arguments"], setting: True},
+                },
+            }
+            with pytest.raises(ValueError, match=f"different {setting}"):
+                compare_outputs(changed, reference)
         for field in ("gpu", "python", "cpu_affinity", "model_revision", "kv_bytes_per_token"):
             changed = {**run, "manifest": {**run["manifest"], field: "different"}}
             with pytest.raises(ValueError, match=f"different {field}"):

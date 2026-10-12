@@ -1,8 +1,8 @@
 """Register inference GPU buffers with the Cache Manager."""
 
-import os
 import pickle
 import threading
+from uuid import UUID
 
 import torch
 
@@ -48,12 +48,13 @@ class CudaIPCWrapper:
         Returns:
             UUID string of the GPU device
         """
-        return str(torch.cuda.get_device_properties(device_index).uuid)
+        value = str(torch.cuda.get_device_properties(device_index).uuid)
+        return f"GPU-{UUID(value.removeprefix('GPU-'))}"
 
     @staticmethod
     def _discover_gpu_devices():
         """Discover all available GPU devices and map their UUIDs to
-        the physical device ordinals (relative to CUDA_VISIBLE_DEVICES).
+        the receiver-local CUDA ordinals.
         """
         if not torch.cuda.is_available():
             return
@@ -69,7 +70,7 @@ class CudaIPCWrapper:
 
     @staticmethod
     def _get_device_index_from_uuid(device_uuid: str) -> int:
-        """Get the physical device ordinal from its UUID.
+        """Get the receiver-local CUDA ordinal from its UUID.
 
         Args:
             device_uuid: UUID string of the GPU device
@@ -182,12 +183,5 @@ def serialize_gpu_buffer(tensor: torch.Tensor) -> bytes:
 
 
 def resolve_device_id() -> int:
-    local_id = torch.cuda.current_device()
-    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
-    if not visible:
-        return local_id
-    slots = [slot.strip() for slot in visible.split(",") if slot.strip()]
-    try:
-        return int(slots[local_id])
-    except (IndexError, ValueError):
-        return local_id
+    """Return the client-local CUDA ordinal; registration resolves the Manager UUID."""
+    return torch.cuda.current_device()

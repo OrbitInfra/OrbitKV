@@ -14,6 +14,9 @@ use std::fs;
 use std::mem;
 use std::process::Command;
 
+use cudarc::driver::result;
+use uuid::Uuid;
+
 /// Represents a NUMA node identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NumaNode(pub u32);
@@ -228,14 +231,9 @@ where
 /// Get the NUMA node for a GPU device via nvidia-smi.
 ///
 /// Returns `NumaNode::UNKNOWN` if nvidia-smi is unavailable or fails.
-fn get_device_numa_node(device_id: u32) -> NumaNode {
+fn get_device_numa_node(device_uuid: &str) -> NumaNode {
     let output = match Command::new("nvidia-smi")
-        .args([
-            "topo",
-            "--get-numa-id-of-nearby-cpu",
-            "-i",
-            &device_id.to_string(),
-        ])
+        .args(["topo", "--get-numa-id-of-nearby-cpu", "-i", device_uuid])
         .output()
     {
         Ok(out) if out.status.success() => out,
@@ -262,38 +260,43 @@ fn parse_closest_cpu_numa_node(output: &str) -> NumaNode {
         .unwrap_or(NumaNode::UNKNOWN)
 }
 
-/// Get NUMA affinity for all available GPUs.
+/// Get NUMA affinity for CUDA-visible ordinals through their stable UUIDs.
 ///
 /// Returns (device_id, numa_node) pairs. Empty if nvidia-smi is unavailable.
-fn get_gpu_numa_affinity() -> Vec<(u32, NumaNode)> {
-    let output = match Command::new("nvidia-smi")
-        .args(["--query-gpu=count", "--format=csv,noheader"])
-        .output()
-    {
-        Ok(out) if out.status.success() => out,
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            log::warn!("nvidia-smi failed: {}", stderr);
-            return Vec::new();
+fn get_gpu_numa_affinity() -> Vec<(i32, NumaNode)> {
+    let visible = (|| {
+        result::init()?;
+        (0..result::device::get_count()?)
+            .map(|ordinal| {
+                let device = result::device::get(ordinal)?;
+                let uuid = result::device::get_uuid(device)?;
+                Ok((
+                    ordinal,
+                    format!("GPU-{}", Uuid::from_bytes(uuid.bytes.map(|b| b as u8))),
+                ))
+            })
+            .collect::<Result<Vec<_>, result::DriverError>>()
+    })();
+    match visible {
+        Ok(devices) => gpu_numa_affinity(&devices, get_device_numa_node),
+        Err(error) => {
+            log::warn!("Cannot enumerate CUDA-visible GPU NUMA affinity: {error}");
+            Vec::new()
         }
-        Err(e) => {
-            log::warn!("nvidia-smi not found or failed to execute: {}", e);
-            return Vec::new();
-        }
-    };
+    }
+}
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let count_str = stdout.lines().next().map(|s| s.trim()).unwrap_or("");
-    let count: u32 = match count_str.parse::<u32>() {
-        Ok(n) => n,
-        Err(e) => {
-            log::warn!("Failed to parse GPU count '{}': {}", count_str, e);
-            return Vec::new();
-        }
-    };
-
-    (0..count)
-        .map(|device_id| (device_id, get_device_numa_node(device_id)))
+fn gpu_numa_affinity(
+    visible_devices: &[(i32, String)],
+    mut lookup: impl FnMut(&str) -> NumaNode,
+) -> Vec<(i32, NumaNode)> {
+    visible_devices
+        .iter()
+        .map(|(ordinal, uuid)| {
+            let node = lookup(uuid);
+            log::info!("CUDA device {ordinal} ({uuid}) -> {node}");
+            (*ordinal, node)
+        })
         .collect()
 }
 
@@ -317,10 +320,7 @@ impl NumaTopology {
     /// Queries nvidia-smi for GPU NUMA affinity and reads system NUMA topology.
     pub(crate) fn detect() -> Self {
         let gpu_affinity = get_gpu_numa_affinity();
-        let gpu_numa_map: HashMap<i32, NumaNode> = gpu_affinity
-            .into_iter()
-            .map(|(dev, node)| (dev as i32, node))
-            .collect();
+        let gpu_numa_map: HashMap<i32, NumaNode> = gpu_affinity.into_iter().collect();
 
         let numa_nodes = match read_cpu_topology_from_sysfs() {
             Ok(node_to_cpus) => {

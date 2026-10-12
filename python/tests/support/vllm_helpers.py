@@ -15,6 +15,7 @@ from pathlib import Path
 import requests
 
 from tests.support.cache_manager import find_available_port
+from tests.support.gpu_identity import identity_group_members, inherited_gpu_lock_fds
 from tests.support.paths import PYTHON_ROOT, REPO_ROOT
 
 DEFAULT_VLLM_SEED = 42
@@ -129,7 +130,7 @@ class VLLMServer:
         python_source = str(PYTHON_ROOT)
         current_pythonpath = env.get("PYTHONPATH")
         env["PYTHONPATH"] = (
-            f"{python_source}:{current_pythonpath}" if current_pythonpath else python_source
+            f"{current_pythonpath}:{python_source}" if current_pythonpath else python_source
         )
         linear_attention = _linear_attention_kind(self.model)
         if linear_attention:
@@ -226,6 +227,7 @@ class VLLMServer:
                 stderr=subprocess.STDOUT,
                 env=env,
                 preexec_fn=os.setsid,
+                pass_fds=inherited_gpu_lock_fds(),
             )
         else:
             self.process = subprocess.Popen(
@@ -234,6 +236,7 @@ class VLLMServer:
                 stderr=subprocess.DEVNULL,
                 env=env,
                 preexec_fn=os.setsid,
+                pass_fds=inherited_gpu_lock_fds(),
             )
 
         self._wait_for_ready(timeout=self.startup_timeout)
@@ -375,12 +378,6 @@ class CacheManager:
         import sysconfig
 
         env = os.environ.copy()
-        # The connector reports global device ids (it un-maps
-        # CUDA_VISIBLE_DEVICES before registering); the server must see every
-        # GPU so those ids and the IPC tensor devices line up. Without this, a
-        # masked pytest run (e.g. CUDA_VISIBLE_DEVICES=1,2 on a shared box)
-        # fails registration with "pinned to device N but got M".
-        env.pop("CUDA_VISIBLE_DEVICES", None)
         env["PYTHONHASHSEED"] = "0"
         env.setdefault("VLLM_USE_V2_MODEL_RUNNER", "0")
         env["PYO3_PYTHON"] = sys.executable
@@ -392,7 +389,12 @@ class CacheManager:
             )
         python_dir = str(PYTHON_ROOT)
         site_packages = sysconfig.get_path("purelib")
-        env["PYTHONPATH"] = f"{python_dir}" + (f":{site_packages}" if site_packages else "")
+        configured_paths = [path for path in env.get("PYTHONPATH", "").split(os.pathsep) if path]
+        env["PYTHONPATH"] = os.pathsep.join(
+            dict.fromkeys(
+                [*configured_paths, python_dir, *([site_packages] if site_packages else [])]
+            )
+        )
 
         if self.server_binary is None:
             launch_label = f"cargo run -r features={','.join(self.cargo_features) or 'default'}"
@@ -412,6 +414,7 @@ class CacheManager:
                 stdout=self.log_handle,
                 stderr=subprocess.STDOUT,
                 preexec_fn=os.setsid,
+                pass_fds=inherited_gpu_lock_fds(),
             )
         else:
             self.process = subprocess.Popen(
@@ -421,6 +424,7 @@ class CacheManager:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 preexec_fn=os.setsid,
+                pass_fds=inherited_gpu_lock_fds(),
             )
 
         self._wait_for_ready()
@@ -447,17 +451,33 @@ class CacheManager:
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.process:
             print("\n[Cache Manager] Stopping...")
+            process = self.process
+            forced_kill = False
             try:
-                os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
-                self.process.wait(timeout=30)
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGTERM)
+                process.wait(timeout=30)
             except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
-                if self.process:
+                if process.poll() is None:
+                    forced_kill = True
                     with suppress(ProcessLookupError, OSError):
-                        os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
+                        os.killpg(process.pid, signal.SIGKILL)
                     try:
-                        self.process.wait(timeout=30)
+                        process.wait(timeout=30)
                     except subprocess.TimeoutExpired:
                         print("Cache Manager did not exit after SIGKILL")
+            members, errors = identity_group_members(process.pid)
+            cleanup = {
+                "pid": process.pid,
+                "exit_code": process.returncode,
+                "forced_kill": forced_kill,
+                "remaining_processes": members,
+                "inspection_errors": errors,
+            }
+            if self.log_file:
+                Path(str(self.log_file) + ".cleanup.json").write_text(
+                    json.dumps(cleanup, indent=2) + "\n"
+                )
             print("Cache Manager stopped.\n")
         if self.log_handle:
             self.log_handle.close()

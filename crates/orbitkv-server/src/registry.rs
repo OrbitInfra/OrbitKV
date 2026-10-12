@@ -70,7 +70,7 @@ impl CudaTensorRegistry {
     fn register_layers(
         &mut self,
         context_key: &str,
-        device_id: i32,
+        device_uuid: &str,
         layers: Vec<(String, Vec<u8>)>,
     ) -> PyResult<Vec<TensorMetadata>> {
         if self.contexts.contains_key(context_key) {
@@ -88,10 +88,16 @@ impl CudaTensorRegistry {
             }
         }
 
+        let device_id = Python::attach(|py| {
+            py.import("orbitkv.client.gpu")?
+                .getattr("CudaIPCWrapper")?
+                .call_method1("_get_device_index_from_uuid", (device_uuid,))?
+                .extract::<i32>()
+        })?;
         let mut context = ContextState::new(device_id);
         let mut metadatas = Vec::with_capacity(layers.len());
         for (layer_name, wrapper_bytes) in layers {
-            let layer_tensor = Self::materialize_tensor(device_id, &wrapper_bytes)?;
+            let layer_tensor = Self::materialize_tensor(device_id, device_uuid, &wrapper_bytes)?;
             let metadata = layer_tensor.metadata.clone();
 
             if context.device_id != metadata.device_id {
@@ -172,16 +178,24 @@ impl CudaTensorRegistry {
         tensor_count
     }
 
-    fn materialize_tensor(device_id: i32, wrapper_bytes: &[u8]) -> PyResult<LayerTensor> {
+    fn materialize_tensor(
+        device_id: i32,
+        device_uuid: &str,
+        wrapper_bytes: &[u8],
+    ) -> PyResult<LayerTensor> {
         Python::attach(|py| {
             let torch = py.import("torch")?;
             let pickle = py.import("pickle")?;
             let cuda = torch.getattr("cuda")?;
 
-            cuda.call_method1("set_device", (device_id,))?;
-
             let py_bytes = PyBytes::new(py, wrapper_bytes);
             let wrapper = pickle.call_method1("loads", (py_bytes,))?;
+            if wrapper.getattr("device_uuid")?.extract::<String>()? != device_uuid {
+                return Err(PyValueError::new_err(
+                    "CUDA IPC tensor UUID differs from the registered device",
+                ));
+            }
+            cuda.call_method1("set_device", (device_id,))?;
             let tensor = wrapper.call_method0("to_tensor")?;
 
             let data_ptr: u64 = tensor.call_method0("data_ptr")?.extract()?;
@@ -229,7 +243,7 @@ impl CudaTensorRegistry {
 enum RegistryCommand {
     RegisterLayers {
         context_key: String,
-        device_id: i32,
+        device_uuid: String,
         /// `(layer_name, wrapper_bytes)` for each layer in the batch.
         layers: Vec<(String, Vec<u8>)>,
         // The `PyErr` is stringified on the actor thread (which holds the GIL),
@@ -287,13 +301,13 @@ impl RegistryHandle {
     pub async fn register_layers(
         &self,
         context_key: String,
-        device_id: i32,
+        device_uuid: String,
         layers: Vec<(String, Vec<u8>)>,
     ) -> Result<Vec<TensorMetadata>, String> {
         let (reply, rx) = oneshot::channel();
         self.dispatch(RegistryCommand::RegisterLayers {
             context_key,
-            device_id,
+            device_uuid,
             layers,
             reply,
         })
@@ -340,12 +354,12 @@ fn registry_actor(mut registry: CudaTensorRegistry, mut rx: mpsc::Receiver<Regis
         match cmd {
             RegistryCommand::RegisterLayers {
                 context_key,
-                device_id,
+                device_uuid,
                 layers,
                 reply,
             } => {
                 let result = registry
-                    .register_layers(&context_key, device_id, layers)
+                    .register_layers(&context_key, &device_uuid, layers)
                     // Stringify here, on the GIL-owning thread, so the gRPC
                     // handler never needs `Python::attach` just to read the message.
                     .map_err(|err| Python::attach(|py| err.value(py).to_string()));

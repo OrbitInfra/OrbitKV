@@ -40,6 +40,8 @@ class Launch:
 
 def configure(args: Namespace, bytes_per_token: int) -> Launch:
     env = dict(os.environ)
+    env["PATH"] = os.pathsep.join([str(Path(sys.executable).parent), env.get("PATH", "")])
+    env["TORCH_EXTENSIONS_DIR"] = str(args.output / "torch-extensions")
     env.update(PYTHONHASHSEED="0", VLLM_LOG_STATS_INTERVAL="1")
     if args.engine == "vllm":
         env.setdefault("VLLM_USE_V2_MODEL_RUNNER", "0")

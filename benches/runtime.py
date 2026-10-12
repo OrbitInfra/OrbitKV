@@ -346,6 +346,7 @@ def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:
         "cost_observations": "1" if launch.env.get("ORBITKV_COST_OBSERVATIONS") == "1" else "0",
         "backend_configuration": launch.backend_configuration,
         "library_path": launch.env.get("LD_LIBRARY_PATH", ""),
+        "tool_path": launch.env.get("PATH", ""),
         "python_path": launch.env["PYTHONPATH"],
         "storage_environment": {
             name: launch.env[name]
@@ -360,7 +361,12 @@ def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:
         },
         "compiler_cache": {
             name: launch.env[name]
-            for name in ("VLLM_CACHE_ROOT", "TORCHINDUCTOR_CACHE_DIR", "TRITON_CACHE_DIR")
+            for name in (
+                "VLLM_CACHE_ROOT",
+                "TORCHINDUCTOR_CACHE_DIR",
+                "TRITON_CACHE_DIR",
+                "TORCH_EXTENSIONS_DIR",
+            )
             if name in launch.env
         },
         "git_commit": subprocess.check_output(

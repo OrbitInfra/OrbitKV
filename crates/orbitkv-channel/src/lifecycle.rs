@@ -14,7 +14,7 @@ pub const LIFECYCLE_HEADER_BYTES: usize = 20;
 pub const MAX_QUERY_TARGET_PAYLOAD: usize = 64 * 1024;
 pub const MAX_LIFECYCLE_PAYLOAD: usize = 64 * 1024 * 1024;
 const MAGIC: u32 = 0x4f52_424c;
-const VERSION: u16 = 6;
+const VERSION: u16 = 7;
 
 /// Payload arenas are attached only to successful GPU registration replies.
 pub const MAX_LIFECYCLE_FDS: usize = 64;

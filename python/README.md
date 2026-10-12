@@ -62,12 +62,17 @@ for the Manager's source-retirement ACK. Repeated registration of the same
 binding is rejected; unregister and close drain accepted operations first.
 
 Build the native client and Manager together: this cutover uses bootstrap 7,
-channel ABI 11, cache schema 9, lifecycle 4 and Restore grant schema 5, with no
+channel ABI 12, cache schema 9, lifecycle 7 and Restore grant schema 5, with no
 old-wire decoder. Fragmented raw Restore plans are partitioned into at most
 1 MiB parts under one final drain fence, with 32 MiB operation and 64 MiB
 session metadata limits. Idle destination streams need no additional GPU event;
 busy streams are fenced with a reusable event. Layer overlap and graph replay
 dependencies remain future work.
+
+CUDA registration identifies the tensor by its full GPU UUID. The native owner
+retains the Manager's resolved CUDA ordinal for Publish/Restore, while the client
+keeps its own ordinal for local execution. Different numeric, UUID, reordered or
+partial `CUDA_VISIBLE_DEVICES` views do not need matching ordinal numbers.
 
 ## Installation
 

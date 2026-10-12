@@ -20,6 +20,7 @@ pub(crate) fn registration(request: RegisterContextRequest) -> Registration {
         tp_size: request.tp_size,
         world_size: request.world_size,
         device_id: request.device_id,
+        device_uuid: request.device_uuid,
         layer_names: request.layer_names,
         wrapper_bytes: request.wrapper_bytes,
         num_blocks: request.num_blocks,

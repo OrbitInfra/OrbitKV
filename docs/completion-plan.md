@@ -1675,6 +1675,93 @@ fork-only factory, callback, default configuration or CI dependency may remain.
 
 ### S5.5 — Deployment matrix and upstream maintenance
 
+**CUDA device identity and NUMA independently accepted (2026-10-11):**
+registration uses the tensor's full GPU UUID independently of client and Manager
+CUDA ordinals. The existing native owner retains the resolved Manager ordinal
+for Publish/Restore; local execution retains the client's ordinal. CUDA-visible
+UUIDs select worker affinity and explicit `mbind` payload placement before
+first-touch, including hosts that inherit interleave policy. Lifecycle version 7
+requires matching installed client and Manager artifacts.
+
+Production `8570f6f9`, installed wheel `04a519a0…` and harness `c8469592` pass
+all fifteen H20 identity cells with independent native-component acceptance.
+Twelve positive cells use real CUDA IPC and compare 32,768 GPU bytes each across
+DRAM and forced io_uring SSD under numeric, UUID, reordered and partial views.
+Three negative cells use unissued metadata-only sentinels for pre-import guards.
+Real issued-ticket rejection and partial-import rollback lifetime remain
+unqualified. All clients and Managers exit zero without forced cleanup, and
+frozen installed inputs are unchanged. Original failed cohorts remain invalid;
+recovered raw archives and the local-file-loss record are retained at
+`/root/orbitkv-artifacts/s5-gpu-numa-identity-20261011/`. The independent report is
+`/root/orbitkv-artifacts/gpu-numa-identity-r8-independent-review-20261011/REVIEW.md`.
+The old detached supervisor exited zero with no FDs but remains an unreaped
+zombie under the platform's PID 1; full launcher wait/reap is not qualified.
+
+The same installed wheel now has independently accepted Qwen3-8B consumer
+components on official vLLM 0.31.0 and SGLang 0.5.21. vLLM passes six checks
+with one dense-model skip per DRAM/SSD tier. SGLang passes both tier assertions;
+its six service leaders and two Managers exit zero after the native request and
+ASGI completion protocol. The frozen consumer cohorts remain invalid: earlier
+launches exposed process inspection and JIT-path failures, and the final SG-only
+guard incorrectly required one child-only cleanup log per leader. Component
+acceptance does not promote any invalid cohort. Six PyTorch producer-lifetime
+warnings and six internally killed adopted children remain recorded; physical
+CUDA IPC lifetime and S3 are unqualified. Reports are retained at
+`/root/orbitkv-artifacts/gpu-numa-engine-consumers-execution-remediation-1-independent-review-20261011/`
+and `/root/orbitkv-artifacts/gpu-numa-sglang-consumer-shutdown-execution-independent-review-20261011/`.
+
+Harness `6934d9ff` selects JIT tools from each official environment and a private
+Torch extension directory. SGLang shutdown signals the service leader, then
+waits for its native worker ownership and records actual group clearance.
+Official engine sources and the accepted wheel are unchanged. A separate
+Qwen3-32B launch freeze validates the native protocol per actual leader PID,
+including ordered zero-request and ASGI completion, rather than counting all
+child-only cleanup messages. Historical failed-log and receipt controls still
+reject. This separate cohort now has independent ordinary-model acceptance:
+vLLM DRAM and io_uring SSD/file each pass six checks with one dense-inapplicable
+HMA skip; SGLang passes both tiers, including four concurrent restart restores
+against the cold fingerprint control. All sixteen service leaders exit zero,
+the foreground executor returns zero and disappears, and known process/GPU/
+listener/UDS postflight and complete input hashes pass. Six vLLM semaphore
+warnings, six SGLang producer warnings and six adopted SG helper exits `-9`
+remain explicit resource-lifetime limits. The thirty-six warning-prefixed
+missing-cubin startup traces are retained with subsequent graph load and
+successful requests. vLLM Graph mode `NONE` retains `torch.compile` and its
+default compile-cache root; SG uses released default graphs. This is ordinary
+correctness evidence, not pressure, timing or physical IPC/S3 qualification.
+This run establishes an io_uring file route without new underlying-device
+provenance. The frozen raw outcome remains unchanged; scoped acceptance is in
+`/root/orbitkv-artifacts/qwen32b-consumer-execution-independent-review-20261011/REVIEW.md`.
+
+The direct SGLang E2E now treats residual workers, inspection errors and forced
+cleanup as failures instead of only recording them. CPU controls exercise real
+leader/worker shutdown and inherited lease release, including preservation of
+the primary output failure. The invalid-NUMA-node unit returns when sysfs
+topology is unavailable. These test-only changes leave production and installed
+wheel bytes unchanged; the strengthened E2E helper requires a fresh consumer
+gate before runtime acceptance. They do not revise the retained Qwen3-32B
+cohort or close S5 pressure, performance or S3 lifetime qualification.
+
+The requested `Qwen/Qwen3.8-27B` and `deepseek-ai/DeepSeek-V4.1-Flash` belong to
+subsequent model/state qualification: inspect immutable configurations and
+released-engine support before any weights/download or serving launch. Qwen3.8
+includes recurrent DeltaNet state; neither weight fit nor native inference
+establishes OrbitKV recovery support. Larger dense models, longer prefixes and
+concurrency can provide pressure within the accepted state contract, while
+physical TP and hybrid-state delivery keep their existing gates. The accepted
+dense checkpoint is `Qwen/Qwen3-32B` at immutable revision
+`9216db5781bf21249d130ec9da846c4624c16137`: its configuration implies 4 GiB
+of raw BF16 attention KV for a 16,384-token prefix before allocator overhead.
+That estimate is not a measured performance result. All 24 model files,
+including 17 BF16 shards and 65,540,268,929 total bytes, are prepared and checked
+against the pinned repository. The launch review independently rechecks complete
+model/runtime/native inputs. Its explicit immutable deployment fingerprint is
+covered by before/after hashes for each cell; automatic per-connect model-content
+hashing is outside this profile. The accepted ordinary-recovery profile does not
+qualify pressure, performance or a broader deployment. Matched native and
+external-cache comparisons must use the same actual tokens, reuse shape,
+precision, HBM/DRAM/SSD budgets and independent run uncertainty.
+
 
 **Physical two-H20 ordinary serving independently accepted (2026-10-10):**
 benchmark `efbe8323` consumes unchanged production `1ab67a58`, its frozen wheel,

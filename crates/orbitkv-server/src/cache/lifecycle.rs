@@ -25,6 +25,7 @@ pub(crate) struct Registration {
     pub(crate) tp_size: u32,
     pub(crate) world_size: u32,
     pub(crate) device_id: i32,
+    pub(crate) device_uuid: String,
     pub(crate) layer_names: Vec<String>,
     pub(crate) wrapper_bytes: Vec<Vec<u8>>,
     pub(crate) num_blocks: Vec<u64>,
@@ -180,7 +181,7 @@ impl LifecycleService {
         self.engine.payload_arenas().map_err(Self::map_engine_error)
     }
 
-    pub(crate) async fn register(&self, req: Registration) -> Result<(), ControlError> {
+    pub(crate) async fn register(&self, req: Registration) -> Result<i32, ControlError> {
         let stopping = self.stopping.read().await;
         if *stopping {
             return Err(ControlError::failed_precondition(
@@ -242,7 +243,7 @@ impl LifecycleService {
 
         // Materialize tensors and collect data_ptr/size_bytes
         let context_key =
-            Self::context_key(&req.instance_id, req.tp_rank, req.pp_rank, req.device_id);
+            Self::context_key(&req.instance_id, req.tp_rank, req.pp_rank, &req.device_uuid);
         // Materialize on the dedicated registry thread (GIL + CUDA IPC) and
         // await the result, so this RPC never blocks an async worker. Move
         // the (large) wrapper bytes over; clone the layer names since the
@@ -255,11 +256,15 @@ impl LifecycleService {
             .collect();
         let metadatas = self
             .registry
-            .register_layers(context_key.clone(), req.device_id, layers)
+            .register_layers(context_key.clone(), req.device_uuid, layers)
             .await
             .map_err(|message| {
                 ControlError::internal(format!("register tensor failed: {message}"))
             })?;
+        let manager_device_id = metadatas
+            .first()
+            .ok_or_else(|| ControlError::internal("GPU registration imported no tensors"))?
+            .device_id;
         let mut data_ptrs = Vec::with_capacity(batch_len);
         let mut size_bytes_list = Vec::with_capacity(batch_len);
         for metadata in &metadatas {
@@ -340,7 +345,7 @@ impl LifecycleService {
         if let Err(err) = self.engine.register_context_layer_batch_strided(
             &req.instance_id,
             &req.namespace,
-            req.device_id,
+            manager_device_id,
             tp_rank,
             pp_rank,
             tp_size,
@@ -369,7 +374,7 @@ impl LifecycleService {
             return Err(status);
         }
 
-        Ok(())
+        Ok(manager_device_id)
     }
 
     fn validate_session_topology(
@@ -393,8 +398,8 @@ impl LifecycleService {
         }
         Ok(())
     }
-    fn context_key(instance_id: &str, tp_rank: u32, pp_rank: u32, device_id: i32) -> String {
-        format!("{instance_id}:tp{tp_rank}:pp{pp_rank}:dev{device_id}")
+    fn context_key(instance_id: &str, tp_rank: u32, pp_rank: u32, device_uuid: &str) -> String {
+        format!("{instance_id}:tp{tp_rank}:pp{pp_rank}:{device_uuid}")
     }
 
     fn map_engine_error(err: EngineError) -> ControlError {
@@ -451,6 +456,16 @@ impl LifecycleService {
             )));
         }
         Self::validate_device_id(req.device_id)?;
+        if req
+            .device_uuid
+            .strip_prefix("GPU-")
+            .and_then(|uuid| uuid::Uuid::parse_str(uuid).ok())
+            .is_none()
+        {
+            return Err(ControlError::invalid_argument(
+                "device_uuid must be a complete CUDA GPU UUID",
+            ));
+        }
         if req.tp_size == 0 {
             return Err(ControlError::invalid_argument("tp_size must be > 0"));
         }

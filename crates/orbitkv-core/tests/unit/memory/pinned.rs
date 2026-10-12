@@ -48,6 +48,87 @@ fn invalid_sizes_fail_before_allocation() {
 }
 
 #[test]
+fn numa_binding_preserves_the_selected_bit_at_kernel_word_boundaries() {
+    let bits = libc::c_ulong::BITS as usize;
+    for node in [0, 1, bits - 1, bits, bits + 1, bits * 2 - 1] {
+        let (mask, maxnode) = numa_binding_mask(NumaNode(node as u32));
+        // Linux get_nodes consumes maxnode - 1 bits, including across words.
+        let selected: Vec<_> = (0..maxnode - 1)
+            .filter(|bit| mask[bit / bits] & (1 << (bit % bits)) != 0)
+            .collect();
+        assert_eq!(selected, [node]);
+    }
+}
+
+#[test]
+#[ignore = "requires a NUMA host allowing mbind and get_mempolicy; CPU-only allocation gate"]
+fn payload_binding_installs_a_real_shared_memory_policy() {
+    const MPOL_F_ADDR: libc::c_int = 1 << 1;
+    let node = NumaNode(0);
+    let (fd, size) = create_backing(4096, PagePolicy::Regular).unwrap();
+    // SAFETY: fd owns a size-sealed file and the mapping result is checked.
+    let ptr = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            size,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_SHARED,
+            fd.as_raw_fd(),
+            0,
+        )
+    };
+    assert_ne!(ptr, libc::MAP_FAILED);
+    let binding = bind_payload_mapping(ptr, size, node);
+    let (mut mask, maxnode) = numa_binding_mask(node);
+    mask.fill(0);
+    let mut mode = 0 as libc::c_int;
+    // SAFETY: ptr is mapped; mode and mask are writable through get_mempolicy.
+    let query = unsafe {
+        libc::syscall(
+            libc::SYS_get_mempolicy,
+            &mut mode,
+            mask.as_mut_ptr(),
+            maxnode,
+            ptr,
+            MPOL_F_ADDR,
+        )
+    };
+    let query_error = io::Error::last_os_error();
+    // SAFETY: ptr was mapped above and no CUDA registration took place.
+    assert_eq!(unsafe { libc::munmap(ptr, size) }, 0);
+    binding.unwrap();
+    assert_eq!(query, 0, "{query_error}");
+    assert_eq!(mode, libc::MPOL_BIND | libc::MPOL_F_STATIC_NODES);
+    assert_eq!(mask, [1]);
+}
+
+#[test]
+fn unavailable_numa_node_fails_before_cuda_registration() {
+    let Ok(nodes) = std::fs::read_dir("/sys/devices/system/node") else {
+        return;
+    };
+    let Some(node) = nodes
+        .filter_map(|entry| {
+            entry
+                .ok()?
+                .file_name()
+                .to_str()?
+                .strip_prefix("node")?
+                .parse::<u32>()
+                .ok()
+        })
+        .max()
+        .and_then(|node| node.checked_add(1))
+    else {
+        return;
+    };
+    assert!(matches!(
+        PinnedMemory::allocate(4096, PagePolicy::Regular, NumaNode(node)),
+        Err(PinnedMemError::NumaBindFailed(NumaNode(actual), _)) if actual == node
+    ));
+}
+
+#[test]
 fn test_read_hugepage_size() {
     let size = read_hugepage_size_from_proc().expect("Hugepagesize missing from /proc/meminfo");
     assert!(size >= 2 * 1024 * 1024);

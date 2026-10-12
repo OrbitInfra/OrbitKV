@@ -2,8 +2,8 @@
 //!
 //! Every pool shard owns a size-sealed memfd mapped with `MAP_SHARED`. Regular
 //! and reserved huge pages use the same backing and registration path. Manager
-//! first-touch threads place the pages on the requested NUMA node before CUDA
-//! registration or export to another process.
+//! allocation binds the mapping to the requested NUMA node before first-touch,
+//! CUDA registration or export to another process.
 //!
 //! Owners must drain GPU access before dropping a mapping. Another process can
 //! keep the backing alive with its own mapping and CUDA registration after the
@@ -50,6 +50,8 @@ pub(crate) enum PinnedMemError {
     BackingFailed(io::Error),
     /// mmap failed
     MmapFailed(io::Error),
+    /// Explicit NUMA placement of a mapped payload failed.
+    NumaBindFailed(NumaNode, io::Error),
     /// The requested or rounded size cannot be represented by mmap/ftruncate.
     SizeOverflow,
     /// cudaHostRegister failed
@@ -66,6 +68,7 @@ impl std::fmt::Display for PinnedMemError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::MmapFailed(e) => write!(f, "mmap failed: {}", e),
+            Self::NumaBindFailed(node, e) => write!(f, "shared payload bind to {node} failed: {e}"),
             Self::BackingFailed(e) => write!(f, "shared payload backing failed: {}", e),
             Self::SizeOverflow => write!(f, "shared payload size exceeds the mapping limit"),
             Self::CudaRegisterFailed(e) => write!(f, "cudaHostRegister failed: {:?}", e),
@@ -145,6 +148,13 @@ impl PinnedMemory {
             return Err(PinnedMemError::MmapFailed(io::Error::last_os_error()));
         }
 
+        if node.is_valid()
+            && let Err(error) = bind_payload_mapping(ptr, size, node)
+        {
+            // SAFETY: ptr was successfully mmap'd above, but never exported.
+            unsafe { libc::munmap(ptr, size) };
+            return Err(PinnedMemError::NumaBindFailed(node, error));
+        }
         parallel_pre_touch(ptr.cast::<u8>(), size, node);
 
         // SAFETY: ptr is a valid mapping of size bytes (checked above).
@@ -196,6 +206,36 @@ impl PinnedMemory {
     pub(crate) fn size(&self) -> usize {
         self.size
     }
+}
+
+fn numa_binding_mask(node: NumaNode) -> (Vec<libc::c_ulong>, usize) {
+    let bits = libc::c_ulong::BITS as usize;
+    let mut mask = vec![0 as libc::c_ulong; (node.0 as usize + 1).div_ceil(bits)];
+    mask[node.0 as usize / bits] |= 1 << (node.0 as usize % bits);
+    let maxnode = mask.len() * bits + 1;
+    (mask, maxnode)
+}
+
+fn bind_payload_mapping(ptr: *mut libc::c_void, size: usize, node: NumaNode) -> io::Result<()> {
+    let (mask, maxnode) = numa_binding_mask(node);
+    // SAFETY: caller owns an unfaulted mapping of size bytes. mask holds the
+    // kernel's maxnode-1 bits and remains live for mbind. Shared policy overrides
+    // inherited interleave before any CUDA registration.
+    let bound = unsafe {
+        libc::syscall(
+            libc::SYS_mbind,
+            ptr,
+            size,
+            libc::MPOL_BIND | libc::MPOL_F_STATIC_NODES,
+            mask.as_ptr(),
+            maxnode,
+            0 as libc::c_uint,
+        )
+    };
+    if bound != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 fn create_backing(size: usize, pages: PagePolicy) -> Result<(OwnedFd, usize), PinnedMemError> {

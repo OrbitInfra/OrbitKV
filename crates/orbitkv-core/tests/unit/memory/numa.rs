@@ -91,3 +91,48 @@ fn closest_cpu_numa_node_uses_first_reported_id() {
         NumaNode(1)
     );
 }
+
+#[test]
+fn visible_cuda_ordinals_join_numa_by_uuid_without_physical_index_fallback() {
+    let physical = HashMap::from([
+        ("GPU-physical-0", NumaNode(0)),
+        ("GPU-physical-6", NumaNode(1)),
+        ("GPU-physical-7", NumaNode(1)),
+    ]);
+    for visible in [
+        vec!["GPU-physical-7"],
+        vec!["GPU-physical-7", "GPU-physical-0"],
+        vec!["GPU-physical-6", "GPU-physical-7"],
+        vec!["GPU-unseen"],
+        vec![],
+    ] {
+        let devices: Vec<_> = visible
+            .iter()
+            .enumerate()
+            .map(|(ordinal, uuid)| (ordinal as i32, uuid.to_string()))
+            .collect();
+        let mut looked_up = Vec::new();
+        let affinity = gpu_numa_affinity(&devices, |uuid| {
+            looked_up.push(uuid.to_string());
+            physical.get(uuid).copied().unwrap_or(NumaNode::UNKNOWN)
+        });
+        assert_eq!(looked_up, visible);
+        let topology = NumaTopology {
+            gpu_numa_map: affinity.into_iter().collect(),
+            numa_nodes: vec![NumaNode(0), NumaNode(1)],
+        };
+        for (ordinal, uuid) in visible.iter().enumerate() {
+            assert_eq!(
+                topology.numa_for_gpu(ordinal as i32),
+                physical.get(uuid).copied().unwrap_or(NumaNode::UNKNOWN)
+            );
+        }
+        assert_eq!(
+            topology.numa_for_gpu(visible.len() as i32),
+            NumaNode::UNKNOWN
+        );
+        if visible == ["GPU-physical-7"] {
+            assert_eq!(topology.gpu_numa_nodes(), [NumaNode(1)]);
+        }
+    }
+}

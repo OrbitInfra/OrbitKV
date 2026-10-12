@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import contextlib
+import importlib.metadata
 import json
 import math
 import os
@@ -18,10 +18,134 @@ import pytest
 import requests
 
 from tests.support.cache_manager import evict_dram_after_ssd_writes, find_available_port
+from tests.support.gpu_identity import identity_group_members, inherited_gpu_lock_fds
 from tests.support.metrics import fetch_orbitkv_codec_bytes, fetch_orbitkv_metrics
 from tests.support.paths import PYTHON_ROOT
 
 pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
+
+
+def _stop_server(process: subprocess.Popen, directory: Path, timeout: float = 30) -> None:
+    primary_error = sys.exc_info()[1]
+    forced_kill = False
+    errors = []
+    inspection_errors = []
+    before_forced_kill = []
+    members, group_known = [], False
+    unexpected_error = None
+
+    def wait_for_workers(wait_seconds):
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            try:
+                members, inspected = identity_group_members(process.pid)
+            except (OSError, ValueError, IndexError) as error:
+                members, inspected = [], [f"{type(error).__name__}: {error}"]
+            inspection_errors.extend(inspected)
+            if inspected:
+                return members, False
+            if not members or time.monotonic() >= deadline:
+                return members, True
+            time.sleep(0.01)
+
+    def force_cleanup():
+        nonlocal forced_kill, before_forced_kill, members, group_known
+        forced_kill = True
+        before_forced_kill = members
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError as error:
+            errors.append(f"Group SIGKILL failed: {type(error).__name__}: {error}")
+        try:
+            process.wait(timeout=min(timeout, 5))
+        except subprocess.TimeoutExpired:
+            errors.append("SGLang leader did not exit after SIGKILL")
+        except OSError as error:
+            errors.append(f"Forced leader wait failed: {type(error).__name__}: {error}")
+        members, group_known = wait_for_workers(min(timeout, 5))
+
+    try:
+        try:
+            process.send_signal(signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError as error:
+            errors.append(f"SIGTERM failed: {type(error).__name__}: {error}")
+        leader_wait_failed = False
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            leader_wait_failed = True
+            errors.append("SGLang normal leader exit timed out")
+        except OSError as error:
+            leader_wait_failed = True
+            errors.append(f"Leader wait failed: {type(error).__name__}: {error}")
+        members, group_known = wait_for_workers(0 if leader_wait_failed else timeout)
+        if leader_wait_failed or members or not group_known:
+            force_cleanup()
+    except BaseException as error:
+        unexpected_error = error
+        group_known = False
+        errors.append(f"Unexpected cleanup error: {type(error).__name__}: {error}")
+        try:
+            force_cleanup()
+        except BaseException as fallback_error:
+            group_known = False
+            errors.append(
+                f"Forced cleanup error: {type(fallback_error).__name__}: {fallback_error}"
+            )
+            if isinstance(fallback_error, (KeyboardInterrupt, SystemExit)) and not isinstance(
+                unexpected_error, (KeyboardInterrupt, SystemExit)
+            ):
+                unexpected_error = fallback_error
+
+    if forced_kill:
+        errors.append("SGLang required forced process-group cleanup")
+    if process.returncode != 0:
+        errors.append(f"SGLang leader exit code {process.returncode}")
+    if members:
+        errors.append("SGLang workers remain after cleanup")
+    if inspection_errors:
+        errors.append("SGLang process-group inspection failed")
+    if not group_known:
+        errors.append("SGLang process-group ownership is unknown")
+    cleanup = {
+        "pid": process.pid,
+        "exit_code": process.returncode,
+        "sigterm_target": process.pid,
+        "forced_kill": forced_kill,
+        "before_forced_kill": before_forced_kill,
+        "remaining_processes": members,
+        "process_group_known": group_known,
+        "reaped": process.returncode is not None,
+        "interrupted": isinstance(unexpected_error, (KeyboardInterrupt, SystemExit)),
+        "inspection_errors": inspection_errors,
+        "errors": errors,
+        "primary_failure": (
+            {"type": type(primary_error).__name__, "message": str(primary_error)}
+            if primary_error is not None
+            else None
+        ),
+    }
+    try:
+        (directory / f"sglang-{process.pid}.cleanup.json").write_text(
+            json.dumps(cleanup, indent=2) + "\n"
+        )
+        if isinstance(unexpected_error, (KeyboardInterrupt, SystemExit)):
+            raise unexpected_error
+        if errors:
+            raise AssertionError(f"SGLang cleanup failed: {cleanup}") from unexpected_error
+    except BaseException as cleanup_error:
+        if primary_error is not None:
+            raise primary_error from cleanup_error
+        if (
+            isinstance(unexpected_error, (KeyboardInterrupt, SystemExit))
+            and cleanup_error is not unexpected_error
+        ):
+            raise unexpected_error from cleanup_error
+        raise
 
 
 @pytest.mark.parametrize(
@@ -38,14 +162,16 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
     if not Path(model).exists():
         pytest.skip("pass --model with a local model path")
 
-    # A source checkout has no installed entry-point metadata. Publish only the
-    # test plugin metadata into PYTHONPATH so every SGLang subprocess discovers it.
-    plugin_dir = tmp_path / "orbitkv_source_plugin-0.0.dist-info"
-    plugin_dir.mkdir()
-    (plugin_dir / "METADATA").write_text("Name: orbitkv-source-plugin\nVersion: 0.0\n")
-    (plugin_dir / "entry_points.txt").write_text(
-        "[sglang.srt.plugins]\norbitkv = orbitkv.sglang.plugin:register\n"
-    )
+    if not any(
+        entry.value == "orbitkv.sglang.plugin:register"
+        for entry in importlib.metadata.entry_points(group="sglang.srt.plugins")
+    ):
+        plugin_dir = tmp_path / "orbitkv_source_plugin-0.0.dist-info"
+        plugin_dir.mkdir()
+        (plugin_dir / "METADATA").write_text("Name: orbitkv-source-plugin\nVersion: 0.0\n")
+        (plugin_dir / "entry_points.txt").write_text(
+            "[sglang.srt.plugins]\norbitkv = orbitkv.sglang.plugin:register\n"
+        )
 
     cmd = [
         sys.executable,
@@ -102,8 +228,10 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             "1",
         ]
     env = dict(os.environ)
+    env["PATH"] = os.pathsep.join([str(Path(sys.executable).parent), env.get("PATH", "")])
+    env["TORCH_EXTENSIONS_DIR"] = str(tmp_path / "torch-extensions")
     env["PYTHONPATH"] = os.pathsep.join(
-        [str(PYTHON_ROOT), str(tmp_path), env.get("PYTHONPATH", "")]
+        [env.get("PYTHONPATH", ""), str(PYTHON_ROOT), str(tmp_path)]
     )
     env["ORBITKV_SGLANG_ENDPOINT"] = f"unix://{channel_server.bootstrap_socket}"
     env["ORBITKV_TRANSFER_BACKEND"] = request.config.getoption("--orbitkv-transfer-backend")
@@ -128,6 +256,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
+                pass_fds=inherited_gpu_lock_fds(),
             )
         try:
             deadline = time.monotonic() + 600
@@ -144,18 +273,8 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                 pytest.fail(f"SGLang startup timed out:\n{log_path.read_text()[-8000:]}")
             return process, base_url
         except BaseException:
-            stop_server(process)
+            _stop_server(process, tmp_path)
             raise
-
-    def stop_server(process: subprocess.Popen) -> None:
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGTERM)
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=5)
 
     from transformers import AutoTokenizer
 
@@ -194,7 +313,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             channel_server.read_logs()[-8000:],
         )
     finally:
-        stop_server(process)
+        _stop_server(process, tmp_path)
 
     # Keep the Cache Manager alive while SGLang's HBM prefix tree disappears.
     if channel_server.ssd_cache_path is not None:
@@ -269,7 +388,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                 sum(recovered.get(key, 0) - before_restart.get(key, 0) for key in read_metrics) > 0
             )
     finally:
-        stop_server(process)
+        _stop_server(process, tmp_path)
 
     # A changed model identity must miss even with identical page hashes and the
     # same model, sampling seed, and Cache Manager process.
@@ -302,4 +421,4 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             f"transfer backend {env['ORBITKV_TRANSFER_BACKEND']}" in line for line in registrations
         )
     finally:
-        stop_server(process)
+        _stop_server(process, tmp_path)

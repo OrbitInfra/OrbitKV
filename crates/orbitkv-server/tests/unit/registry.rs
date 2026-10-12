@@ -24,7 +24,7 @@ fn register_layers_rejects_existing_context_before_materializing() {
         .insert("instance-a:tp0:pp0:dev0".to_string(), ContextState::new(7));
 
     let err = registry
-        .register_layers("instance-a:tp0:pp0:dev0", 0, Vec::new())
+        .register_layers("instance-a:tp0:pp0:dev0", "GPU-existing", Vec::new())
         .expect_err("existing context must be rejected");
 
     let message = Python::attach(|py| err.value(py).to_string());

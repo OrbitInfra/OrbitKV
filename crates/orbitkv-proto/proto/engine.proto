@@ -28,6 +28,7 @@ message RegisterContextRequest {
   uint32 tp_rank = 3;
   uint32 tp_size = 4;
   uint32 world_size = 5;
+  // Sender-local CUDA ordinal; data commands use the resolved Manager ordinal.
   int32 device_id = 6;
   repeated string layer_names = 8;
   repeated bytes wrapper_bytes = 9;
@@ -57,6 +58,8 @@ message RegisterContextRequest {
   // or exact for checkpoints/opaque layouts. Validated against imported tensors.
   repeated string layer_formats = 20;
   repeated AttentionStorageLayout layer_attention = 21;
+  // Stable identity of every tensor, independent of process visibility/order.
+  string device_uuid = 22;
 }
 
 message UnregisterRequest {

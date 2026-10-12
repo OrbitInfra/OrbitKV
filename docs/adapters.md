@@ -303,9 +303,15 @@ path. `orbitkv.timeout_ms` (default 5000) bounds hot requests and health;
 registration and unregister allow at least 120 seconds for CUDA setup/draining.
 `orbitkv.spin_iterations` defaults to 64. Standalone Cache Managers do
 not start gRPC. Client and Cache Manager must use matching
-bootstrap protocol versions (currently bootstrap 7, channel ABI 11, cache schema 9, and lifecycle 4).
+bootstrap protocol versions (currently bootstrap 7, channel ABI 12, cache schema 9, and lifecycle 7).
 Bootstrap transfers five metadata/notification FDs; GPU registration attaches
-the shared payload arena FDs separately. The local executor partitions large
+the shared payload arena FDs separately, with the resolved Manager-local CUDA
+ordinal preceding arena metadata. Python APIs use client-local CUDA ordinals;
+the native registration owner resolves tensor UUIDs once and retains the Manager
+route for Publish/Restore. NUMA detection uses only Manager-visible CUDA devices
+and their stable UUIDs, independently of physical index order. The identity
+repair's hardware qualification is separate from broader multi-GPU deployment.
+The local executor partitions large
 raw plans into at most 1 MiB parts under one whole-operation fence. Operation
 metadata is capped at 32 MiB and per-session prepared metadata at 64 MiB;
 see [execution scope and qualification gates](engine-local-restore.md).

@@ -4,10 +4,8 @@ use std::time::Duration;
 
 use orbitkv_channel::lifecycle::LifecycleCommand;
 use orbitkv_channel::{
-    BlockHashes, CacheClient, CallOptions, ChannelCallObservation, ChannelError,
-    CompletionAdmission, CompletionIntent, CompletionObservationRequest, CompletionOutcome,
-    CompletionRoute, PublishLayer, PublishRequest, QueryIntent, RestoreHandle, RestoreLease,
-    RestoreRequest, RestoreState,
+    BlockHashes, CacheClient, CallOptions, ChannelCallObservation, ChannelError, PublishLayer,
+    PublishRequest, QueryIntent, RestoreHandle, RestoreLease, RestoreRequest, RestoreState,
 };
 use orbitkv_core::transfer::local::{LocalRestoreExecutor, LocalTensor};
 use orbitkv_core::{PayloadArena, TransferMode as LocalTransferMode};
@@ -193,6 +191,17 @@ pub(crate) struct PyCacheManagerClient {
 }
 
 impl PyCacheManagerClient {
+    fn manager_device_id(&self, instance_id: &str, tp_rank: u32, device_id: i32) -> PyResult<i32> {
+        let local = self
+            .local
+            .lock()
+            .map_err(|_| OrbitKVInternal::new_err("local executor lock poisoned"))?;
+        local
+            .get(&(instance_id.to_string(), tp_rank, device_id))
+            .map(|worker| worker.manager_device_id)
+            .ok_or_else(|| PyValueError::new_err("GPU tensors must be registered before Publish"))
+    }
+
     fn lifecycle_call(
         &self,
         py: Python<'_>,
@@ -375,6 +384,16 @@ impl PyCacheManagerClient {
             );
         }
         let device = device.ok_or_else(|| PyValueError::new_err("empty tensor registration"))?;
+        if device_id < 0 || device_id as usize != device {
+            return Err(PyValueError::new_err(
+                "device_id must match the tensors' client-local CUDA ordinal",
+            ));
+        }
+        let device_uuid = py
+            .import("orbitkv.client.gpu")?
+            .getattr("CudaIPCWrapper")?
+            .call_method1("_get_device_uuid", (device,))?
+            .extract::<String>()?;
         let request = RegisterContextRequest {
             instance_id,
             namespace,
@@ -383,6 +402,7 @@ impl PyCacheManagerClient {
             tp_size,
             world_size,
             device_id,
+            device_uuid,
             layer_names,
             wrapper_bytes: wrapper_bytes_list,
             num_blocks: num_blocks_list,
@@ -423,10 +443,17 @@ impl PyCacheManagerClient {
                 .lifecycle(LifecycleCommand::Register, &request.encode_to_vec())
                 .map_err(client_error)?;
             let worker = (|| -> PyResult<LocalRestoreWorker> {
-                if reply.payload.len() != reply.fds.len() * 16 {
+                if reply.payload.len() != 4 + reply.fds.len() * 16 {
                     return Err(OrbitKVInternal::new_err(
                         "invalid payload arena registration reply",
                     ));
+                }
+                let manager_device_id =
+                    i32::from_le_bytes(reply.payload[..4].try_into().map_err(|_| {
+                        OrbitKVInternal::new_err("invalid Manager device identity")
+                    })?);
+                if manager_device_id < 0 {
+                    return Err(OrbitKVInternal::new_err("negative Manager device ordinal"));
                 }
                 if local
                     .values()
@@ -440,7 +467,7 @@ impl PyCacheManagerClient {
                     ));
                 }
                 let mut arenas = Vec::with_capacity(reply.fds.len());
-                for (metadata, fd) in reply.payload.chunks_exact(16).zip(reply.fds) {
+                for (metadata, fd) in reply.payload[4..].chunks_exact(16).zip(reply.fds) {
                     let id = u64::from_le_bytes(
                         metadata[..8]
                             .try_into()
@@ -466,6 +493,7 @@ impl PyCacheManagerClient {
                     tensors,
                     Arc::clone(&self.completions),
                     arena_count,
+                    manager_device_id,
                 )
                 .map_err(OrbitKVInternal::new_err)
             })();
@@ -624,82 +652,6 @@ impl PyCacheManagerClient {
             local.retain(|(instance, _, _), _| instance != &instance_id);
             Ok((true, String::new()))
         })
-    }
-
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "completion evidence fields cross the Python/native boundary once"
-    )]
-    #[pyo3(signature = (instance_id, destination_device_id, source_endpoint, transfer_generation, logical_bytes, wire_bytes, fragment_count, elapsed_ns, decode_page_bytes, handoff_queue_depth, handoff_queue_parallelism, tent_inflight_bytes, tent_bandwidth_bytes_per_second, *, admitted=true, outcome="completed", representation="raw"))]
-    fn observe_prefill_to_decode_completion(
-        &self,
-        py: Python<'_>,
-        instance_id: String,
-        destination_device_id: i32,
-        source_endpoint: String,
-        transfer_generation: u64,
-        logical_bytes: u64,
-        wire_bytes: u64,
-        fragment_count: u32,
-        elapsed_ns: u64,
-        decode_page_bytes: u64,
-        handoff_queue_depth: u32,
-        handoff_queue_parallelism: u32,
-        tent_inflight_bytes: u64,
-        tent_bandwidth_bytes_per_second: u64,
-        admitted: bool,
-        outcome: &str,
-        representation: &str,
-    ) -> PyResult<()> {
-        let outcome = match outcome {
-            "completed" => CompletionOutcome::Completed,
-            "failed" => CompletionOutcome::Failed,
-            "cancelled" => CompletionOutcome::Cancelled,
-            "timed_out" => CompletionOutcome::TimedOut,
-            value => {
-                return Err(PyValueError::new_err(format!(
-                    "unknown completion outcome '{value}'"
-                )));
-            }
-        };
-        let representation = match representation {
-            "raw" => orbitkv_state::ReplicaRepresentation::Raw,
-            "ans" => orbitkv_state::ReplicaRepresentation::Ans,
-            "fp8" => orbitkv_state::ReplicaRepresentation::Fp8,
-            "turbo_quant" => orbitkv_state::ReplicaRepresentation::TurboQuant,
-            "mixed" => orbitkv_state::ReplicaRepresentation::Mixed,
-            value => {
-                return Err(PyValueError::new_err(format!(
-                    "unknown completion representation '{value}'"
-                )));
-            }
-        };
-        let observation = CompletionObservationRequest {
-            instance_id,
-            destination_device_id,
-            source_endpoint,
-            transfer_generation,
-            intent: CompletionIntent::EngineRestore,
-            route: CompletionRoute::PrefillToDecodeHandoff,
-            representation,
-            logical_bytes,
-            wire_bytes,
-            fragment_count,
-            elapsed_ns,
-            decode_page_bytes,
-            handoff_queue_depth,
-            handoff_queue_parallelism,
-            tent_inflight_bytes,
-            tent_bandwidth_bytes_per_second,
-            admission: if admitted {
-                CompletionAdmission::Admitted
-            } else {
-                CompletionAdmission::Rejected
-            },
-            outcome,
-        };
-        py.detach(|| self.inner.observe_completion(&observation))
-            .map_err(client_error)
     }
 
     fn start_session_watcher(
@@ -918,7 +870,9 @@ impl PyCacheManagerClient {
         device_id: i32,
         saves: Vec<(String, Vec<u32>, Vec<Vec<u8>>)>,
     ) -> PyResult<(bool, String)> {
-        let request = publish_request(instance_id, tp_rank, pp_rank, device_id, saves);
+        let manager_device_id =
+            py.detach(|| self.manager_device_id(&instance_id, tp_rank, device_id))?;
+        let request = publish_request(instance_id, tp_rank, pp_rank, manager_device_id, saves);
         py.detach(|| self.inner.publish(&request))
             .map_err(client_error)?;
         Ok((true, String::new()))
@@ -933,7 +887,9 @@ impl PyCacheManagerClient {
         device_id: i32,
         saves: Vec<(String, Vec<u32>, Vec<Vec<u8>>)>,
     ) -> PyResult<(bool, String, PyChannelCallObservation)> {
-        let request = publish_request(instance_id, tp_rank, pp_rank, device_id, saves);
+        let manager_device_id =
+            py.detach(|| self.manager_device_id(&instance_id, tp_rank, device_id))?;
+        let request = publish_request(instance_id, tp_rank, pp_rank, manager_device_id, saves);
         let observation = py
             .detach(|| self.inner.publish_observed(&request))
             .map_err(client_error)?;
@@ -998,7 +954,7 @@ impl PyCacheManagerClient {
             match self.inner.start_restore(&RestoreRequest {
                 instance_id,
                 tp_rank,
-                device_id,
+                device_id: worker.manager_device_id,
                 layer_groups,
                 loads,
             }) {
