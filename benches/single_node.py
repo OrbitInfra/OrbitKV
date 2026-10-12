@@ -283,9 +283,9 @@ def main() -> None:
         (args.output / "manifest.json").write_text(
             json.dumps(manifest(args, launch, bytes_per_token), indent=2, allow_nan=False) + "\n"
         )
-        with contextlib.ExitStack() as stack:
+        with contextlib.ExitStack() as engine_stack, contextlib.ExitStack() as cache_stack:
             if launch.manager_command:
-                manager = stack.enter_context(
+                manager = cache_stack.enter_context(
                     server(
                         launch.manager_command,
                         launch.env,
@@ -300,7 +300,7 @@ def main() -> None:
                     (args.output / "storage.json").write_text(
                         json.dumps(storage_manifest(manager.pid, args.ssd_path), indent=2) + "\n"
                     )
-            stack.enter_context(
+            engine_stack.enter_context(
                 server(
                     launch.command,
                     launch.env,

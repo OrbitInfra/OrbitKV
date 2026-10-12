@@ -16,6 +16,123 @@ import pytest
 from benches import runtime
 
 
+@pytest.mark.parametrize("workload_failed", [False, True], ids=["completed", "failed"])
+def test_single_node_cache_exits_while_export_producer_is_alive(
+    monkeypatch, tmp_path, workload_failed
+):
+    from benches import single_node
+
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "qwen3",
+                "num_hidden_layers": 2,
+                "num_key_value_heads": 1,
+                "head_dim": 32,
+            }
+        )
+    )
+    child = """
+import fcntl, json, os, signal, sys
+from pathlib import Path
+
+root, role = Path(sys.argv[1]), sys.argv[2]
+owned = root / ('lease.lock' if role == 'cache' else 'export.lock')
+other = root / ('export.lock' if role == 'cache' else 'lease.lock')
+handle = owned.open('a')
+fcntl.flock(handle, fcntl.LOCK_EX)
+
+def stop(*_):
+    with other.open('a') as witness:
+        try:
+            fcntl.flock(witness, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            other_alive = False
+        except BlockingIOError:
+            other_alive = True
+    correct_order = other_alive if role == 'cache' else not other_alive
+    (root / (role + '.closed.json')).write_text(json.dumps({
+        'correct_order': correct_order, 'other_alive': other_alive
+    }))
+    handle.close()
+    sys.exit(0 if correct_order else 3)
+
+signal.signal(signal.SIGTERM, stop)
+(root / (role + '.ready')).write_text(str(os.getpid()))
+while True:
+    signal.pause()
+"""
+
+    def command(role):
+        return [sys.executable, "-u", "-c", child, str(tmp_path), role]
+
+    launch = SimpleNamespace(
+        manager_command=command("cache"),
+        command=command("engine"),
+        env=dict(os.environ),
+        manager_url="http://cpu-cache",
+        base_url="http://cpu-engine",
+        manager_health_path="/health",
+    )
+    monkeypatch.setattr(runtime.requests, "get", lambda *a, **kw: SimpleNamespace(ok=True))
+
+    @contextlib.contextmanager
+    def cpu_server(command, env, url, log, health_path="/health", **kwargs):
+        # The fixture exercises real ownership/reap, not a native engine protocol.
+        with runtime.server(command, env, url, log, health_path) as process:
+            ready = tmp_path / ("cache.ready" if log.stem == "manager" else "engine.ready")
+            deadline = time.monotonic() + 5
+            while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert ready.exists(), log.read_text()
+            yield process
+
+    primary = RuntimeError("controlled foreground failure")
+
+    def workload(*_):
+        if workload_failed:
+            raise primary
+        return []
+
+    output = tmp_path / "result"
+    monkeypatch.setattr(single_node, "server", cpu_server)
+    monkeypatch.setattr(single_node, "configure", lambda *_: launch)
+    monkeypatch.setattr(single_node, "manifest", lambda *_: {})
+    monkeypatch.setattr(single_node, "metrics", lambda *_: {})
+    monkeypatch.setattr(single_node, "run_workload", workload)
+    monkeypatch.setattr(single_node, "validate_observation", lambda *a, **kw: None)
+    monkeypatch.setattr(single_node, "summarize", lambda *_: [])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "single_node",
+            "--engine",
+            "sglang",
+            "--backend",
+            "orbitkv",
+            "--model",
+            str(model),
+            "--output",
+            str(output),
+        ],
+    )
+    if workload_failed:
+        with pytest.raises(RuntimeError) as raised:
+            single_node.main()
+        assert raised.value is primary
+    else:
+        single_node.main()
+    for role, log in [("cache", "manager"), ("engine", "engine")]:
+        closed = json.loads((tmp_path / f"{role}.closed.json").read_text())
+        assert closed["correct_order"], (role, closed)
+        receipt = json.loads((output / f"{log}.cleanup.json").read_text())
+        assert receipt["exit_code"] == 0 and receipt["reaped"]
+        assert not receipt["forced_kill"] and not receipt["remaining_group"]
+        assert not Path(f"/proc/{receipt['pid']}").exists()
+
+
 @pytest.mark.parametrize(
     "fault",
     [
