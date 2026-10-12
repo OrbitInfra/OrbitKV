@@ -19,9 +19,10 @@ installed-file hashes and final GPU/process cleanup pass independent review.
 For 8K pressure recovery, the geometric mean of the two run-median client TTFTs
 is 168.5 ms for vLLM OrbitKV, 170.0 ms for official CPU offload and 175.8 ms for
 this released LMCache MP profile. SGLang OrbitKV is 202.6 ms versus 178.2 ms for
-HiCache, with identical aligned host-hit coverage. This SGLang gap needs profiling;
-the collection does not identify a kernel or transport cause. Native HBM-eviction
-recomputation takes about 4.3/4.4 seconds in the respective engine controls.
+HiCache, with identical aligned host-hit coverage. The follow-up below profiles
+this SGLang gap; the original collection does not identify a kernel or transport
+cause. Native HBM-eviction recomputation takes about 4.3/4.4 seconds in the
+respective engine controls.
 
 Client TTFT ends at the first nonempty SSE text, not a CUDA copy event. The vLLM
 resident phase includes a 16 MiB tail restore and is mixed; SGLang recovery
@@ -29,6 +30,35 @@ restores 8,128 host tokens and recomputes the final 64-token page. These serial
 observations are not stable p99, confidence intervals, throughput, pure HBM-hit
 comparisons or performance promotion. Full logs retain native worker termination
 diagnostics. RDMA, contention, broader ranks and S3 reclamation are separate gates.
+
+## SGLang restore diagnosis
+
+The [original-order follow-up](https://github.com/feichai0017/orbitkv/pull/224)
+at harness `5b2089a5` retains the same model, engine, budgets and `37b48c50`
+native build. Six freshly restarted cells contain 180 measured requests and 20
+diagnostic traces. Profiler-off 8K recovery medians are 202.09 ms for direct DMA,
+175.90 ms for released HiCache and 181.53 ms for the existing KernelBackend.
+This reproduces the historical DMA gap and retains the kernel direction: 8K
+TTFT is 10.2% lower than DMA, while 4K is 0.6% higher. Each configuration has
+one cell with 30 measured requests and five pressure samples per length; this
+does not qualify a default, tail performance or serving gains.
+
+Diagnostic 8K DMA traces contain 1,536–2,176 GPU copy activities with exact
+2,130,706,432-byte equality. Their transfer spans are 48–52 ms, compared with
+63–64 ms for 64 released HiCache transfer kernels. GPU EXTEND annotations start
+later and captured kernel overlap is lower. Those intervals include helpers,
+and Python admission markers do not establish GPU first-layer readiness.
+Native memcpy CPU API calls are absent and profiling changes timing.
+This supports investigating fragmented submission and
+the existing kernel configuration; it does not assign a causal fraction of the
+unprofiled gap. Preserve all-enqueued admission, event generations and source drain.
+
+Independent review accepts the bounded diagnosis and KDA candidate evaluation.
+All outputs match the original input/output control, installed artifacts remain
+unchanged and physical resources are empty. Six native child exits `-9` and three
+CUDA IPC producer warnings remain explicit lifetime limits. The initial 8K-only
+collection remains separate; its different preparation order cannot be treated
+as a repair. Full traces and reviews are in [the archive](benchmark-evidence.md).
 
 ## Two-host RDMA component measurements
 

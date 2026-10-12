@@ -17,7 +17,7 @@ from benches import runtime
 
 
 @pytest.mark.parametrize("workload_failed", [False, True], ids=["completed", "failed"])
-def test_single_node_cache_exits_while_export_producer_is_alive(
+def test_single_node_engine_unregisters_while_cache_service_is_alive(
     monkeypatch, tmp_path, workload_failed
 ):
     from benches import single_node
@@ -51,7 +51,7 @@ def stop(*_):
             other_alive = False
         except BlockingIOError:
             other_alive = True
-    correct_order = other_alive if role == 'cache' else not other_alive
+    correct_order = other_alive if role == 'engine' else not other_alive
     (root / (role + '.closed.json')).write_text(json.dumps({
         'correct_order': correct_order, 'other_alive': other_alive
     }))
@@ -134,10 +134,10 @@ while True:
     cache_exit = json.loads((output / "manager.cleanup.json").read_text())
     engine_exit = json.loads((output / "engine.cleanup.json").read_text())
     assert (
-        cache_exit["stop_started_mono_ns"]
-        <= cache_exit["stop_finished_mono_ns"]
-        <= engine_exit["stop_started_mono_ns"]
+        engine_exit["stop_started_mono_ns"]
         <= engine_exit["stop_finished_mono_ns"]
+        <= cache_exit["stop_started_mono_ns"]
+        <= cache_exit["stop_finished_mono_ns"]
     )
 
 

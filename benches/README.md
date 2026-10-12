@@ -8,10 +8,10 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 controller. It forwards those already-open regular-file descriptors to both
 the Manager and engine; the controller still owns admission, quarantine and
 final physical cleanup. Compiler/JIT caches are private to each output cell.
-After a completed workload or foreground failure, `single_node` stops the cache
-service before the GPU engine, retaining the producer while its external
-consumer exits. A failed engine startup still follows that service's own cleanup
-path; this order does not establish arbitrary native-child or crash drain.
+After a completed workload or foreground failure, `single_node` stops the GPU
+engine while the cache service remains available for context unregistration,
+then stops that service. Failed startup follows service-local cleanup.
+This order does not establish CUDA IPC retirement or native-child/crash drain.
 Cleanup receipts retain monotonic stop boundaries for comparing service order;
 those process timestamps are not CUDA completion events.
 LMCache MP's Uvicorn lifespan shutdown may re-emit the requested SIGTERM and
