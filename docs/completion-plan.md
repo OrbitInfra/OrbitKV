@@ -1786,12 +1786,278 @@ The corrected source passes 433 benchmark tests and source-only Python
 (370 passed, one skipped), Ruff/format, experiment-output and diff checks in
 `/root/orbitkv-artifacts/s5-observation-timing-20261011/ownership-remediation-3/`.
 Both earlier test-fixture failures are retained separately; they are not passes.
+Independent rereview accepts exact `73de36f6` for CPU measurement software only,
+including 126 additional live/offline/backend and actual observer controls;
+no P1/P2 remains. It authorizes no hardware launch or performance promotion.
+The sealed review is at
+`/root/orbitkv-artifacts/s5-observation-timing-ownership-rereview-20261011/`.
 Earlier uncommitted source and `/tmp` gate-record loss has unknown cause;
 the missing original source hash/results are not reused to qualify this source.
 
+**KDA native-copy CPU attribution accepted; application qualification open:** the
+maintained `benches/native_kernel_copy.rs` separates CPU backend submission from
+host stream-synchronization waiting while retaining its outer total timer and
+existing full-byte/source/guard controls. Physical drain still precedes propagation
+of partial-submission errors. Production shader, native owners and backend defaults
+are unchanged. These CPU boundaries include additional clock overhead and cannot
+be labelled isolated device execution or request latency. The bounded KDA task
+contract is external at
+`/root/orbitkv-artifacts/s5-kda-attribution-preparation-20261011/`.
+The exact source/binary and bounded H20 collection are independently accepted
+within the native fixture scope below. No new production kernel candidate or
+support qualification is claimed.
+Sequential isolated-target CUDA 13 native-fixture build and targeted Clippy
+(`-D warnings`), Rust format, diff and experiment-output checks exit zero in
+`/root/orbitkv-artifacts/s5-kda-attribution-preparation-20261011/implementation-gates-1/`.
+No CUDA runtime executes in those build/check gates.
+
+The two subsequent attribution launches remain `INVALID_FAIL_STOP`: the first
+stops before CUDA because nested CPU binding lacked `numactl --all`; the second
+enters CUDA but rejects an unobserved numeric native PID in NVML and terminates
+the owned process. Neither partial timing output qualifies performance. The
+original failing NVML snapshot was not serialized, so its namespace/timing cause
+is not established. Both immutable outcomes and normal/forced cleanup distinctions
+are retained in the external task directory. The fixture now records its actual
+CUDA context UUID in a new device-identity sidecar and every row. The observation
+repair passes fresh software and launch review; production shaders, owners and
+defaults remain unchanged.
+
+The new `d001b4e2` H20 SM90 collection is independently accepted for native CPU
+attribution: three processes, 102 case/direction rows and 20,400 timed backend
+submissions. Each backend/direction retains its full-byte/source/guard check
+before warmup; the check does not run on every timed repetition. All native,
+guardian, controller and SSH exits are zero and reaped, with no forced cleanup.
+Actual context UUID and mapped runtime inputs match the freeze; the final GPU
+is empty and the lease is free. Independent type7 statistics and sample-wise CPU
+fractions match all raw data. The three-run observed range is not a confidence
+interval. CPU submission includes upload/driver work, and synchronization waiting
+is not isolated device duration or bandwidth.
+
+The reversed synthetic H2D fixture with 4096 4 KiB fragments spends about 75% of
+DMA time in CPU submission, versus about 6% for its ascending counterpart.
+Production worker and local descriptors already sort by device address; the
+native fixture calls the backends directly with synthetic owner IDs. This is not
+evidence to add duplicate sorting or change the backend default. Next consume
+actual recovery layouts and existing raw-copy cost observations, including
+compiled DMA range counts, before another KDA candidate. Model contention,
+device-event timing, physical pinned NUMA residency, transfer faults and S2/S5/S3
+completion remain open. Original invalid attempts remain unchanged. Exact inputs,
+all raw values, normal cleanup and the independent report are retained at
+`/root/orbitkv-artifacts/s5-kda-native-attribution-r3-outcome-independent-review-20261011/REVIEW.md`.
+
+**Manager raw-copy shapes independently accepted (2026-10-11):** software
+`c0b4ff3f` implements actual Manager worker raw-copy shape diagnostics. It reuses
+the fixed-capacity timeline, records descriptor byte
+histograms and the existing legal DMA compiler's range count, and separates CPU
+backend submission from host stream waiting. The default remains off; there is
+no change to CUDA shaders, backend selection, descriptor ordering or physical
+drain. Successful flush receipts and strict offline record-count validation
+reject partial/overflow/failed evidence. Engine-local asynchronous raw restores
+remain outside this observation scope. Independent CPU review accepts the
+corrected shape parser; code CI `38120248710` passes all thirteen jobs.
+
+One independently accepted H20 official-vLLM 0.31.0/Qwen3-32B dense TP1/PP1 DRAM
+structural pilot passes six correctness checks with one dense-inapplicable HMA
+skip. Complete generated-text assertions and restart loads pass; full responses
+and raw HBM payloads were not serialized for offline replay. All recorded Manager
+save fragments are 64 KiB; see [the actual shape totals](kernel-optimization.md#consumed-manager-raw-copy-shapes).
+The diagnostic Manager consumes the unchanged accepted client wheel, so this
+does not qualify a complete new wheel. All four service leaders and the actual
+foreground executor exit zero, with complete timeline/input hashes and known
+GPU/process/port/UDS/lease cleanup. Official internal child-force and semaphore
+warnings remain recorded; physical IPC/S3 lifetime is unqualified. The task
+definition, rejected parser/launch controls and raw evidence remain outside Git.
+Scoped independent acceptance is at
+`/root/orbitkv-artifacts/s5-kda-real-copy-shapes-outcome-independent-review-20261011/REVIEW.md`.
+
+The new native comparison consumes the captured 64 KiB descriptor/range histogram
+with explicit allocation boundaries; it cannot reconstruct uncaptured model
+addresses or pitch. Engine-local asynchronous H2D geometry, matched
+instrumentation overhead and consumed application comparisons remain open.
+
+**Allocation-aware native comparison independently accepted:** source
+`ec8fe990` consumes the unchanged production DMA compiler with 64 retained device
+allocations, mapped host registrations and complete normalized offsets/extents.
+Three separately launched H20 processes each cover nine representative layouts
+and both directions, with 100 balanced samples per backend/event mode: 21,600
+measured submissions and 75,600 raw timing values. All processes and the
+foreground executor exit zero; source/output/guard controls and known
+process/GPU/lease cleanup pass without forced cleanup. The source CI run
+`38126055714` passes all 13 jobs.
+
+The descriptive event-off D2H comparison has lower kernel wall medians for all
+nine layouts. For 64 descriptors/64 DMA ranges, the median of three process
+medians is 96.210 us for kernel and 237.048 us for DMA; CPU submission medians are
+6.302 us and 75.633 us. Synthetic H2D retains DMA-faster counterexamples, including
+512 descriptors/192 ranges at 1303.933 us for kernel versus 1184.664 us for DMA.
+The frozen 34-batch D2H weighting estimates 7.584–7.608 ms for kernel versus
+15.574–15.635 ms for DMA across processes; this is a representative cost
+estimate, not measured model time. All raw samples and per-process p50/p95/p99
+remain outside Git.
+
+The original rejected launch packet and controls remain immutable. Its three
+guard/controller defects are corrected and independently rereviewed before the
+single hardware cohort. Full output/source/guard checks precede each mode's
+warmups and follow final measurements, not every timed repetition. Guard padding
+and disclosed chosen pitches make this a range-count-matched representative
+family, not model address replay. Stream-event intervals include descriptor
+upload and host-feed/scheduling gaps; event-on/off results are descriptive, not
+an instrumentation-overhead qualification. Physical pinned NUMA residency,
+physical fault drain, inference contention, TTFT/TPOT, LMCache comparison and
+application/backend promotion remain open. No shader, backend default or support
+boundary changes; S2/S5 stay Partial. Definition, frozen inputs, raw cohort and
+analysis are at
+`/root/orbitkv-artifacts/s5-kda-layout-comparison-20261011/`.
+Scoped independent outcome acceptance is at
+`/root/orbitkv-artifacts/s5-kda-layout-comparison-outcome-review-20261011/REVIEW.md`.
+
+**Engine-local H2D capture has scoped H20 structural acceptance (2026-10-12):** the local Rust
+Restore executor now owns an opt-in bounded capture of its actual sorted H2D
+batches, retained registration/owner tags, granted source allocation bounds and registered
+destination spans. It reuses the production DMA compiler. Per-batch CPU submission
+and the single shared part drain remain distinct; no additional synchronization,
+layer callback or source grant is introduced. A schema-2 opening record precedes
+each part's submission; scalar geometry and a cumulative completion checkpoint
+are published after its existing physical stream drain. Publication does not
+depend on executor destruction. JSON/logging contributes opt-in operation latency
+outside the recorded backend-submission and stream-wait intervals; observation
+overhead remains unqualified. The strict offline
+parser rejects incomplete, failed, overflowing or inconsistent geometry and
+requires a native CPU replay of each batch through the production DMA compiler.
+Registrations are immutable across the entire executor trace. Device owner tags
+are existing registered tensor/view addresses, not independently queried complete
+CUDA allocation bases, extents or distinct allocation counts. Every opened part
+requires a completion checkpoint. Publishing does not replenish the executor's
+record budget. A checkpoint establishes coverage through that drained part,
+not whole-operation completion, executor shutdown or physical failure drain.
+
+The requested newer model inputs are pinned separately: official Qwen3.8-27B at
+`1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`, Qwen3.8-27B-FP8 at
+`017b9c7af6b5689d5dd426a76e0bc077eb5ca20a`, and DeepSeek-V4.1-Flash at
+`2cba9e42aa026125f3ed06c6d98c1db82f7ca027`. Official metadata/configs and whole
+weight sizes are frozen; this preparation has not downloaded weights or run a
+model. H20 direct Hugging Face access is unavailable, so preparation must use
+the established relay. Qwen3.8 requires attention and GDN state together; the
+released-vLLM multi-group/recurrent rejection stays active. Native model serving,
+complete OrbitKV recovery and performance comparison remain separate gates.
+An older dense-model regression cannot be reported as newer-model support.
+
+The earlier `9a4c8b4b` Drop-only capture source has independent CPU/software acceptance, and
+its complete CUDA 13 wheel passes isolated import and installed ELF-closure
+checks. The single independently executed H20 installed pilot remains
+`INVALID_FAIL_STOP`: all twelve native-control requests complete, but the
+OrbitKV child imports the source-only package before any H2D or restart restore.
+Python's module launcher inserts the inherited `harness/python` working directory
+ahead of the installed-first PYTHONPATH. Guardian/SSH exit 1 and are waited/reaped;
+final GPU/process ownership is empty. Official internal force-kill diagnostics
+remain retained and do not establish fault or IPC lifetime qualification.
+The failed cohort and complete input/wait receipts are preserved externally at
+`/root/orbitkv-artifacts/s5-h2d-shapes-latest-models-20261011/cohort-1/` and
+`/root/orbitkv-artifacts/s5-h2d-capture-independent-execution-20261011/`.
+
+The test helper now starts both logged and unlogged vLLM children from the
+parent of the Python source directory. It interprets relative PYTHONPATH entries
+against the original caller directory after environment overrides, preserving
+search order, empty-entry meaning and absolute path text. Twelve real CPU
+module-child controls cover these boundaries, source-only use and symlink/parent
+components; the source-only gate is 382 passed/1 skipped. Independent review
+accepted the complete invalid-run evidence and rejected the intermediate helper
+because four relative-path controls lost installed-package precedence; that
+rejection and the consumed negative controls remain archived. The final helper
+correction at `e90248f4` has independent CPU/software acceptance. A separately
+frozen task fails before model admission because its precheck declares a GPU
+lease FD without inheriting it; independent review accepts that invalid evidence.
+The next distinct task fixes only that admission boundary and actually returns
+6 passed/1 skipped in 451.31 s, with four normal outer cleanup receipts and
+positive restart cache loads. Its actual mode is Inductor compilation with CUDA
+Graph disabled, not eager execution. Both engine logs nevertheless contain zero
+capture records, so the strict parser rejects the whole task before native DMA
+compiler replay. Released API shutdown logs abort/kill EngineCore; Drop-only
+publication is not a reliably consumed boundary. These three invalid tasks have
+not been retried or reclassified as structural/performance qualification.
+
+Independent failed-outcome review and the complete third mirror are at
+`/root/orbitkv-artifacts/s5-h2d-capture-lease-admission-outcome-review-20261011/` and
+`/root/orbitkv-artifacts/s5-h2d-shapes-latest-models-20261011/lease-admission-cohort-1/`.
+The separate drained-part publication repair is implemented with a real CPU
+subprocess that calls the actual recorder and exits without running destructors.
+That control fails against the old publication boundary with zero records.
+Five Rust recorder tests and 493 benchmark tests pass, including cumulative
+budget, missing/failed checkpoints, skipped parts and inconsistent registrations;
+targeted Clippy, native DMA-compiler units and formatting also pass. Independent
+source and launch reviews accept repair `37b48c50` and its complete CUDA 13 wheel
+(`96e692bd…`). The first deployment freeze is rejected before launch because
+its consumed model fingerprint still refers to the earlier source/wheel; the
+separate corrected freeze binds the actual inputs and leaves that rejection intact.
+
+Exactly one installed official-vLLM 0.31.0/Qwen3-32B DRAM TP=1/PP=1 gate returns
+6 passed/1 expected hybrid-only skip in 449.48 s. Its actual mode is Inductor
+compilation with CUDA Graph `NONE`. Generated text matches the native control,
+cache metrics and restart loads pass, and all four outer API/Manager cleanup
+receipts return zero. It captures one retained executor, five complete drained
+parts and 320 direct H2D batches: 160 MiB, 2,048 descriptors and 1,984 compiled
+DMA ranges. All 335 schema-2 records agree; the cumulative reservation is
+4,101/65,536. Independent full-mirror review reruns the public parser/native
+compiler and recomputes every shape and descriptive statistic without finding
+a P1/P2. The source CI run `38152700331` passes 13/13 jobs.
+
+The complete cohort retains 1,392 regular files and the original absolute-link
+metadata/TAR; every file hash is checked. Guardian and blocking SSH are actually
+waited/reaped, owned processes are absent, GPU7 is empty and no quarantine is
+needed. Official inner EngineCore abort/force-kill and semaphore warnings remain
+physical IPC/S3 lifetime limits. This gate does not provide a separate full raw
+GPU KV tensor-byte oracle. Diagnostic overhead, source-operation linkage,
+physical failure drain, latest-model state recovery and matched inference
+performance remain open. No shader, backend default or support boundary changes;
+S2/S5 remain Partial. Complete frozen inputs, invalid attempts, cohort and
+descriptive analysis are at
+`/root/orbitkv-artifacts/s5-h2d-shapes-latest-models-20261011/`;
+scoped outcome acceptance is at
+`/root/orbitkv-artifacts/s5-h2d-capture-part-publication-outcome-review-20261012/REVIEW.md`.
+Continue newer-model preparation with native controls and complete state gates;
+changing a production backend still requires consumed application evidence.
+Separate copy-path observations from TTFT/TPOT/throughput and compare native HBM,
+OrbitKV and LMCache only with equal tokens, memory budgets and independent runs.
+
+The separate native-output request gate is implemented with 16 real CPU HTTP
+controls; the complete benchmark suite has 509 passed. It checks generated token
+IDs, exact counts, finite selected-token log probabilities and repeated greedy
+output through each engine's released API. Invalid responses survive as raw
+evidence. It owns no engine process, GPU allocation or external-cache state and
+does not establish native model serving, shutdown safety or performance. See
+[the native output methodology](models.md) and
+`benches/native_model_readiness.py`. Its deployment inputs and launch ownership
+must be independently accepted before it consumes H20 model requests.
+
 The requested `Qwen/Qwen3.8-27B` and `deepseek-ai/DeepSeek-V4.1-Flash` belong to
-subsequent model/state qualification: inspect immutable configurations and
-released-engine support before any weights/download or serving launch. Qwen3.8
+subsequent model/state qualification; their immutable metadata/configuration
+preparation above is complete. Both Qwen3.8 complete-input audits are now
+independently accepted: 32 BF16 files/55,586,114,863 bytes and 81 FP8
+files/30,890,049,597 bytes. Fresh official metadata, full remote hashes and all
+113 source/receiver receipts match, and the relay's actual successful wait is
+retained. These reviews establish input completeness only, at
+`/root/orbitkv-artifacts/s5-qwen38-bf16-complete-input-review-20261012/` and
+`/root/orbitkv-artifacts/s5-qwen38-fp8-complete-input-review-20261012/`.
+The separately frozen FP8 and BF16 native-output definitions now have scoped
+independent acceptance on official vLLM 0.31.0 and SGLang 0.5.21/H20 TP=1/PP=1
+eager: six requests per model/engine cell, 128/1,024/4,096 input tokens, 16 output
+tokens and two repeats. All 24 requests, 384 output token IDs/counts and finite
+log probabilities pass, with exact repeated text/IDs within each cell. Both
+weight variants use BF16 KV cache; no cross-engine or cross-precision equivalence
+is claimed. Complete cohorts retain 493 FP8 and 492 BF16 regular payload files;
+their intact installed/model hashes and actual SSH wait/cleanup receipts are
+accepted separately at
+`/root/orbitkv-artifacts/s5-qwen38-fp8-native-path-outcome-review-20261012/` and
+`/root/orbitkv-artifacts/s5-qwen38-bf16-native-outcome-review-20261012/`.
+Native internal EngineCore force-kill/semaphore diagnostics and a SGLang adopted
+child exit of -9 remain explicit lifetime limits. The first missing-tool PATH
+failure stays immutable; its separately reviewed repair uses each official
+environment's existing tools and changes no installed engine files. Native output
+acceptance does not establish complete-state OrbitKV recovery or matched
+performance; attention and recurrent state must first pass consistent-boundary
+handoff and recovery gates. DeepSeek-V4.1-Flash requires a
+separately declared and leased native topology for its 510 GB checkpoint plus
+released kernel/auxiliary-state checks. Qwen3.8
 includes recurrent DeltaNet state; neither weight fit nor native inference
 establishes OrbitKV recovery support. Larger dense models, longer prefixes and
 concurrency can provide pressure within the accepted state contract, while

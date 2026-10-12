@@ -1,6 +1,7 @@
 """Service teardown must retain caller-owned GPU exports until actual exit."""
 
 import contextlib
+import fcntl
 import json
 import os
 import signal
@@ -13,6 +14,67 @@ from types import SimpleNamespace
 import pytest
 
 from benches import runtime
+
+
+@pytest.mark.parametrize("forwarded", [True, False])
+def test_real_service_inherits_gpu_lease_until_actual_exit(monkeypatch, tmp_path, forwarded):
+    lock_path = tmp_path / "gpu.lock"
+    ready = tmp_path / "ready.json"
+    log = tmp_path / "service.log"
+    lock = lock_path.open("a")
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        """
+import json, os, signal, sys
+from pathlib import Path
+
+signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
+try:
+    inherited = os.fstat(int(sys.argv[1]))
+    expected = Path(sys.argv[2]).stat()
+    received = (inherited.st_dev, inherited.st_ino) == (expected.st_dev, expected.st_ino)
+except OSError:
+    received = False
+Path(sys.argv[3]).write_text(json.dumps({'received': received}))
+while True:
+    signal.pause()
+""",
+        str(lock.fileno()),
+        str(lock_path),
+        str(ready),
+    ]
+    monkeypatch.setattr(runtime.requests, "get", lambda *a, **kw: SimpleNamespace(ok=True))
+    try:
+        with runtime.server(
+            command,
+            dict(os.environ),
+            "http://cpu-control",
+            log,
+            pass_fds=(lock.fileno(),) if forwarded else (),
+        ) as process:
+            deadline = time.monotonic() + 10
+            while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert ready.exists(), log.read_text()
+            assert json.loads(ready.read_text())["received"] is forwarded
+            lock.close()
+            with lock_path.open("a") as contender:
+                if forwarded:
+                    with pytest.raises(BlockingIOError):
+                        fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                else:
+                    fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        lock.close()
+    cleanup = json.loads(log.with_suffix(".cleanup.json").read_text())
+    assert cleanup["reaped"] and cleanup["exit_code"] == 0
+    assert not cleanup["forced_kill"] and cleanup["remaining_group"] == []
+    assert not Path(f"/proc/{process.pid}").exists()
+    with lock_path.open("a") as contender:
+        fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
 def test_server_rejects_a_different_proc_pid_namespace_before_spawning(monkeypatch, tmp_path):

@@ -198,6 +198,31 @@ struct DiagnosticEvent {
     fields: DiagnosticFields,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RawCopyTimelineFields {
+    pub device: u64,
+    pub backend: &'static str,
+    pub direction: &'static str,
+    pub bytes: u64,
+    pub descriptors: u64,
+    pub dma_ranges: u64,
+    pub zero_descriptors: u64,
+    pub min_bytes: u64,
+    pub max_bytes: u64,
+    /// Counts for <=256 B, 4 KiB, 16 KiB, 64 KiB, 256 KiB, 1 MiB, 4 MiB, larger.
+    pub size_histogram: [u64; 8],
+    pub cpu_submit_ns: u64,
+    pub host_drain_ns: u64,
+    pub success: bool,
+}
+
+struct RawCopyEvent {
+    index: u64,
+    pid: u32,
+    monotonic_ns: u64,
+    fields: RawCopyTimelineFields,
+}
+
 const FIXED_TEXT_BYTES: usize = 96;
 
 struct FixedText {
@@ -259,6 +284,7 @@ enum BufferedEvent {
     QueryPath(QueryPathEvent),
     Restore(RestoreEvent),
     QueryControl(QueryControlEvent),
+    RawCopy(RawCopyEvent),
 }
 
 struct BufferedTimeline {
@@ -346,6 +372,20 @@ impl BufferedTimeline {
                     stage,
                     pid: std::process::id(),
                     at_unix_ns: unix_ns(),
+                    monotonic_ns: monotonic_ns(),
+                    fields,
+                }),
+            );
+        }
+    }
+
+    fn record_raw_copy(&self, fields: RawCopyTimelineFields) {
+        if let Some(index) = self.reserve() {
+            self.write(
+                index,
+                BufferedEvent::RawCopy(RawCopyEvent {
+                    index,
+                    pid: std::process::id(),
                     monotonic_ns: monotonic_ns(),
                     fields,
                 }),
@@ -450,10 +490,10 @@ impl BufferedTimeline {
     }
 
     fn flush(&self) {
-        if self
-            .flush_with(|fields| log::info!("cache_timeline {fields}"))
-            .is_some()
-        {
+        if let Some(summary) = self.flush_with(|fields| log::info!("cache_timeline {fields}")) {
+            if !summary.overflow && summary.ready == summary.reserved && summary.late_records == 0 {
+                log::info!("cache_timeline {}", diagnostic_complete_event(&summary));
+            }
             log::logger().flush();
         }
     }
@@ -485,7 +525,41 @@ fn buffered_event_json(event: &BufferedEvent) -> serde_json::Value {
         BufferedEvent::QueryPath(event) => query_path_event_json(event),
         BufferedEvent::Restore(event) => restore_event_json(event),
         BufferedEvent::QueryControl(event) => query_control_event_json(event),
+        BufferedEvent::RawCopy(event) => raw_copy_event_json(event),
     }
+}
+
+fn raw_copy_event_json(event: &RawCopyEvent) -> serde_json::Value {
+    let fields = &event.fields;
+    serde_json::json!({
+        "stage": "manager_raw_copy_complete",
+        "diagnostic_event": event.index,
+        "pid": event.pid,
+        "monotonic_ns": event.monotonic_ns,
+        "device": fields.device,
+        "backend": fields.backend,
+        "direction": fields.direction,
+        "bytes": fields.bytes,
+        "descriptors": fields.descriptors,
+        "dma_ranges": fields.dma_ranges,
+        "zero_descriptors": fields.zero_descriptors,
+        "min_bytes": fields.min_bytes,
+        "max_bytes": fields.max_bytes,
+        "size_histogram": fields.size_histogram,
+        "cpu_submit_ns": fields.cpu_submit_ns,
+        "host_drain_ns": fields.host_drain_ns,
+        "success": fields.success,
+    })
+}
+
+fn diagnostic_complete_event(summary: &FlushSummary) -> serde_json::Value {
+    serde_json::json!({
+        "stage": "diagnostic_timeline_complete",
+        "pid": std::process::id(),
+        "monotonic_ns": monotonic_ns(),
+        "reserved": summary.reserved,
+        "ready": summary.ready,
+    })
 }
 
 fn diagnostic_event_json(event: &DiagnosticEvent) -> serde_json::Value {
@@ -641,6 +715,15 @@ pub fn diagnostic_enabled() -> bool {
     *ENABLED && *DIAGNOSTIC_LIMIT > 0
 }
 
+/// The bounded record budget shared by opt-in native diagnostics.
+pub fn diagnostic_event_limit() -> usize {
+    if *ENABLED {
+        *DIAGNOSTIC_LIMIT as usize
+    } else {
+        0
+    }
+}
+
 pub fn record_restore(stage: &'static str, fields: RestoreTimelineFields) {
     if !*ENABLED {
         return;
@@ -702,6 +785,15 @@ pub fn record_diagnostic(stage: &'static str, fields: DiagnosticFields) {
     }
     if let Some(timeline) = BUFFERED_TIMELINE.as_ref() {
         timeline.record_diagnostic(stage, fields);
+    }
+}
+
+pub fn record_raw_copy(fields: RawCopyTimelineFields) {
+    if !diagnostic_enabled() {
+        return;
+    }
+    if let Some(timeline) = BUFFERED_TIMELINE.as_ref() {
+        timeline.record_raw_copy(fields);
     }
 }
 

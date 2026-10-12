@@ -3,6 +3,57 @@ use cudarc::driver::CudaContext;
 use std::sync::mpsc as std_mpsc;
 
 #[test]
+fn raw_copy_shape_uses_physical_registration_and_actual_dma_compiler() {
+    let mut copies = [0, 4096, 8192].map(|offset| CopyDesc {
+        device: 0x10000 + offset,
+        host: (0x100000 + offset) as *mut u8,
+        host_device: 0x200000 + offset,
+        size: 4096,
+        device_allocation: 1,
+        host_registration: 2,
+    });
+    let shape = raw_copy_shape(&copies, usize::MAX);
+    assert_eq!(shape.bytes, 12288);
+    assert_eq!(shape.descriptors, 3);
+    assert_eq!(shape.dma_ranges, 1);
+    assert_eq!(shape.size_histogram, [0, 3, 0, 0, 0, 0, 0, 0]);
+    assert_eq!((shape.min_bytes, shape.max_bytes), (4096, 4096));
+    copies[1].host_registration = 3;
+    assert_eq!(raw_copy_shape(&copies, usize::MAX).dma_ranges, 3);
+    copies.reverse();
+    assert_eq!(raw_copy_shape(&copies, usize::MAX).dma_ranges, 3);
+}
+
+#[test]
+fn raw_copy_shape_histogram_covers_zero_boundaries_and_large_fragments() {
+    let sizes = [
+        0, 256, 257, 4096, 4097, 16384, 65536, 262144, 1048576, 4194304, 4194305,
+    ];
+    let copies: Vec<_> = sizes
+        .iter()
+        .enumerate()
+        .map(|(index, &size)| CopyDesc {
+            device: 0x10000 + index as u64 * 0x1000000,
+            host: (0x100000 + index * 0x1000000) as *mut u8,
+            host_device: 0,
+            size,
+            device_allocation: index,
+            host_registration: index,
+        })
+        .collect();
+    let shape = raw_copy_shape(&copies, usize::MAX);
+    assert_eq!(shape.bytes, sizes.iter().sum::<usize>() as u64);
+    assert_eq!(shape.descriptors, sizes.len() as u64);
+    assert_eq!(shape.zero_descriptors, 1);
+    assert_eq!(shape.size_histogram, [2, 2, 2, 1, 1, 1, 1, 1]);
+    assert_eq!((shape.min_bytes, shape.max_bytes), (0, 4194305));
+    let empty = raw_copy_shape(&[], usize::MAX);
+    assert_eq!(empty.bytes, 0);
+    assert_eq!(empty.dma_ranges, 0);
+    assert_eq!(empty.size_histogram, [0; 8]);
+}
+
+#[test]
 fn failed_submission_waits_for_already_enqueued_stream_work() {
     struct Gate {
         entered: std_mpsc::Sender<()>,

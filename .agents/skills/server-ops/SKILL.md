@@ -124,3 +124,11 @@ client interval includes publication plus notification. Writer-start failure or
 missing post-drain flush invalidates linkage rather than permitting fallback logs.
 Shutdown must stop channel admission, await all admitted Publish continuations,
 then flush insert/SSD owners before flushing diagnostic output.
+
+Manager worker raw-copy shapes share that bounded timeline. After independently
+checking normal shutdown and owned-resource cleanup, use `benches.raw_copy_shapes`
+to require complete flush/count/shape coverage. Bind raw batches to the actual
+Manager receipt and require one completion process for a one-Manager gate.
+Engine-local asynchronous H2D is outside this trace. CPU submission and host
+stream waiting include instrumentation and scheduling; a structural model pass
+does not replace matched overhead, device-event or application performance gates.

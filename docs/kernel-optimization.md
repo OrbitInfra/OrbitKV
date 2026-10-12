@@ -61,6 +61,255 @@ When comparing worktrees, use isolated Cargo target directories and verify the
 CUDA source embedded in the resulting binary; build-cache reuse alone does not
 prove the intended shader was consumed. Keep GPU measurements sequential.
 
+The maintained native fixture also retains `kernel_cpu_submission_ms` and
+`dma_cpu_submission_ms` beside their `*_stream_wait_ms` arrays. CPU submission
+includes packing, upload and driver calls; waiting measures the host's stream
+synchronization. The existing outer submission-to-drain boundary remains, with
+the added clocks' overhead included. These fields do not measure isolated GPU
+execution, and historical totals must not be relabelled as stage timings.
+Source/destination holds and partial-submission drain are unchanged. The bounded
+H20 CPU-attribution result below is accepted; separately queued production-shader
+event timing and actual model layouts require their own frozen input/review and
+byte gates before selecting another candidate.
+
+The native fixture also creates a new `*.device.json` sidecar from its actual
+CUDA context UUID, ordinal and PID before backend initialization, and repeats
+that UUID in each timing row. Launch validation binds the receipt to the exact
+native executable, process identity and consumed library maps. NVML numeric PID
+visibility is a separate observation; equal PID namespaces are not assumed.
+This fixture targets a non-MIG GPU and does not qualify MIG device identity.
+
+## Consumed Manager raw-copy shapes
+
+Manager worker diagnostics record the actual validated raw-copy descriptors
+after their existing physical stream drain. Enable both
+`ORBITKV_TRACE_TRANSFERS=1` and a positive
+`ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT` (at most 65,536). These observations share the
+existing bounded buffer with other diagnostic stages and serialize at normal
+Manager shutdown. Default execution adds no diagnostic clocks, descriptor scan
+or event allocation. Empty batches still drain but emit no raw-copy sample.
+
+Each `manager_raw_copy_complete` record contains the backend/direction/device,
+bytes, fragment histogram, legal compiled DMA ranges, CPU backend submission
+and host stream waiting. The histogram's upper bounds are 256 B, 4 KiB, 16 KiB,
+64 KiB, 256 KiB, 1 MiB and 4 MiB, followed by larger fragments. DMA range counts
+use the actual compiler and device pitch limit, even for a kernel batch; they
+do not count that kernel's CUDA launches. No addresses or extra source owners
+are recorded. Partial enqueue errors still drain before returning failure.
+
+After independently verifying normal Manager exit and owned-process cleanup,
+parse its finalized log into a new external artifact:
+
+```bash
+python -m benches.raw_copy_shapes \
+  --manager-log /var/tmp/orbitkv-kda/model-001/manager.log \
+  --output /var/tmp/orbitkv-kda/model-001/raw-copy-shapes.json
+```
+
+The parser requires successful flush coverage, exact buffered record counts and
+consistent shapes; missing records, overflow, late records and failed submissions
+invalidate evidence. CPU submission and host waiting are not device-event time,
+bandwidth or request latency. Stream waiting can include earlier queued work.
+The summary includes cold batches and does not infer request linkage or a
+confidence interval. Engine-local asynchronous raw restores are outside this
+Manager-only scope; do not change their layer events or add synchronization to
+obtain these records.
+
+Software `c0b4ff3f` and one H20 official-vLLM 0.31.0/Qwen3-32B dense TP1/PP1 DRAM
+structural pilot are independently accepted. The model gate passes six checks
+with one dense-inapplicable HMA skip. Its complete 34 direct D2H batches contain
+296 MiB, 4,736 descriptors of exactly 64 KiB and 3,648 legal DMA ranges. Existing
+DMA compilation reduces the observed range count by about 23%; this describes
+the consumed layout without establishing a new speedup. All cold batches remain.
+The new diagnostic Manager uses the unchanged accepted client wheel; complete
+new-wheel qualification remains open. Original logs, complete input hashes,
+normal leader exits, known-resource cleanup and independent recomputation are at
+`/root/orbitkv-artifacts/s5-kda-real-copy-shapes-outcome-independent-review-20261011/REVIEW.md`.
+Official internal child-force and semaphore warnings remain physical IPC/S3
+lifetime limits. Matched overhead, engine-local H2D geometry, device-event timing
+and application comparisons remain open before performance promotion. A native
+comparison must preserve allocation/registration boundaries and compiled range
+counts representative of these batches; this scalar log cannot reconstruct
+actual addresses or pitch.
+
+## Allocation-aware native comparison
+
+`benches/native_copy_layout.rs` compares the production copy backends with 64
+separate retained device allocations and either one mapped host registration or
+one per block. Eight layouts match the observed 64 KiB descriptor/range-count
+pairs; a ninth tests host-registration boundaries. Explicit page permutations,
+allocation sizes and normalized offsets are serialized with each row. Guard
+padding and chosen pitches make this a disclosed representative family, not
+replay of captured model addresses. H2D is a synthetic direction control.
+
+The private DMA compiler is shared by source with this fixture; its existing
+algorithm and production submission contract are unchanged. Validate layout
+equations before initializing CUDA, then run against a new external output:
+
+```bash
+cargo bench -p orbitkv-core --bench native_copy_layout \
+  --no-default-features --features cuda-13,mooncake -- \
+  --validate-layout-only --output /var/tmp/orbitkv-kda/layout-001.jsonl
+cargo bench -p orbitkv-core --bench native_copy_layout \
+  --no-default-features --features cuda-13,mooncake -- \
+  --output /var/tmp/orbitkv-kda/layout-native-001.jsonl --samples 100 --seed 2026101111
+```
+
+Each backend/direction/event mode passes full output, source and guard checks
+before five warmups; a final check follows all measured submissions. Four modes
+(kernel/DMA, events off/on) alternate positions within every four samples.
+Event-off wall/submission/drain arrays remain separate from event-on arrays and
+CUDA stream-event intervals. Event intervals include descriptor upload and may
+include host-feed gaps or scheduling; they are not isolated GPU execution or
+bandwidth. All memory owners survive physical drain, including enqueue errors.
+Unknown physical completion aborts the fixture instead of releasing memory.
+Software/launch/outcome acceptance and application performance promotion are
+separate gates; no new shader or backend default is selected by this fixture.
+
+Scoped H20 outcome: three separately launched processes at source `ec8fe990`
+pass all byte/guard controls and normal exit/known cleanup checks. The complete
+cohort contains 21,600 measured submissions and 75,600 raw clock values, with
+all 100 samples retained per backend/event mode. Independent outcome review
+accepts the descriptive comparison only. Source CI run `38126055714` passes
+13/13 jobs.
+
+In event-off D2H, kernel wall medians are lower in all three processes for all
+nine representative layouts. The 64-descriptor/64-range case is 96.210 us versus
+237.048 us (median of three process medians); CPU submission is 6.302 us versus
+75.633 us. Frozen 34-batch shape weights estimate 7.584–7.608 ms for kernel and
+15.574–15.635 ms for DMA. These are representative estimated copy costs,
+not measured model runtime. Synthetic H2D has DMA-faster counterexamples at
+192/64, 448/192 and 512/192 descriptors/ranges, so direction/layout cannot be
+collapsed into a global kernel preference.
+
+Event-on/off observations are separate: the smallest D2H kernel layout has a
+1.078 median wall ratio. Stream-event intervals include descriptor upload and
+host-feed/scheduling gaps. This does not qualify instrumentation overhead or
+isolated GPU execution. Physical pinned NUMA residency, physical fault drain,
+inference contention and TTFT/TPOT/native-HBM/LMCache comparisons remain open.
+The actual production shader and backend defaults are unchanged.
+
+Definition, rejected launch controls, corrected freeze, complete cohort and
+per-process statistics are preserved at
+`/root/orbitkv-artifacts/s5-kda-layout-comparison-20261011/`;
+independent outcome acceptance is at
+`/root/orbitkv-artifacts/s5-kda-layout-comparison-outcome-review-20261011/REVIEW.md`.
+
+## Engine-local raw H2D capture
+
+Manager save observations do not cover raw restoration performed inside the
+engine process. `LocalRestoreExecutor` captures that actual submission path when
+`ORBITKV_TRACE_TRANSFERS=1` and `ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT` is positive.
+The existing 65,536-unit capture ceiling applies to each executor. Its conservative
+reservation charges two geometry units per descriptor plus one per part; this
+bounds retained descriptors/parts rather than claiming an exact memory-byte cap.
+It is default off.
+The chosen backend, existing device-address sorting, layer-ready events, final
+enqueue notification and physical stream drain stay at their existing boundaries.
+
+Each submitted batch records ordered descriptors, the existing CopyDesc device
+owner and host-registration tags, mapped host GPU addresses, granted source
+allocation bounds and registered destination spans. The device owner tag is the
+retained registered tensor/view address; it is not a driver query of the complete
+CUDA allocation base. A registered tensor span can be smaller than its physical
+CUDA allocation, so neither full allocation size nor distinct physical allocation
+count is inferred. Range counts use the same private production DMA compiler and
+actual maximum pitch.
+CPU submission is recorded per batch; stream waiting is recorded once for the
+whole part, including its layer events. Neither isolates GPU execution time.
+
+The executor publishes a schema-2 opening record before each part's submission,
+then serializes its bounded scalar geometry after the existing physical stream
+drain. `local_raw_copy_complete` checkpoints all records through that drained
+part under the same retained executor identity. It does not seal executor
+lifetime or whole-operation completion. Publishing frees that part's buffered
+geometry without replenishing the cumulative record budget. JSON/logging is
+diagnostic overhead outside the backend submission and stream-wait intervals;
+it can affect opt-in operation latency.
+Normal engine/Manager exit, byte correctness and owned-resource postflight must
+be checked independently. Capacity/allocation failure or unfinished/failed parts
+invalidate the capture rather than supplying truncated successful evidence.
+This diagnostic has no instrumentation-overhead or application qualification yet.
+
+The first installed H20 dense structural pilot is `INVALID_FAIL_STOP`. Native
+control requests finish, but the OrbitKV child starts from the source package
+directory and shadows the installed wheel before any H2D submission. The test
+helper correction uses a neutral parent working directory on both launch paths;
+relative PYTHONPATH entries are interpreted against the caller directory after
+environment overrides, without changing explicit search order or absolute path
+text. Real CPU module-child controls cover installed/source precedence, relative
+entries, overrides, empty entries and symlink/parent components. Independent
+review accepted the failure evidence and rejected an intermediate correction
+that changed relative-path meaning; its controls and rejection remain retained.
+The final import helper is independently accepted. A separate lease-precheck
+task stops before model admission, and its successor returns 6 passed/1 skipped
+on Qwen3-32B with compilation enabled and CUDA Graph disabled. The successor
+still fails collection: both engine logs contain zero records because the
+Drop-only recorder has no reliably consumed publication boundary before the
+released API owner's immediate EngineCore abort. All three whole failed runs,
+warnings and final postflight evidence remain immutable. The separate
+drained-part publication repair includes a real CPU child that exits without
+destructors: the old recorder produces zero records and fails that regression.
+Missing/failed checkpoints and cumulative budget/registration controls remain
+strict. The separate repair at `37b48c50` now has scoped installed H20 acceptance:
+one official-vLLM 0.31.0/Qwen3-32B DRAM TP1/PP1 structural task returns six passes
+and one expected hybrid-only skip in 449.48 s. Actual execution uses Inductor
+compilation and CUDA Graph `NONE`. Generated text matches the native control;
+restart cache loads and four normal outer API/Manager cleanup receipts pass.
+Independent outcome review accepts the complete capture after verifying the
+full archive and rerunning the public parser with the frozen native compiler.
+
+Five drained parts from one retained executor contain 320 direct H2D batches,
+2,048 descriptors, 1,984 compiled DMA ranges and 160 MiB. The five actual shape
+families each have 64 batches, with descriptor/range pairs 3/3, 5/5, 7/7, 8/8
+and 9/8. The histogram includes 64 KiB, 256 KiB and 384 KiB descriptors. These
+small H2D batches differ from the representative D2H layouts above; the earlier
+native comparison cannot select a backend for this path.
+Recorded CPU submission totals 3.690573 ms; the five shared whole-part host
+waits total 6.128049 ms. They are descriptive instrumented intervals, without an
+independent-run confidence interval, overhead qualification, isolated GPU time
+or inference-performance claim. Registered tensor/view tags remain registration
+bounds, not queried complete CUDA allocation bases/counts.
+
+All 335 opening/batch/part/checkpoint records and the cumulative 4,101/65,536
+reservation validate. The complete mirror retains all 1,392 regular files plus
+original symlink metadata/TAR. Guardian/SSH wait and final known-process/GPU
+cleanup pass; official inner abort/force-kill/semaphore warnings remain S3/IPC
+lifetime limits. No separate full raw GPU KV tensor-byte oracle is provided.
+The production shader/backend defaults and support boundaries remain unchanged.
+Definitions, earlier failures, frozen inputs, complete cohort and descriptive
+analysis are at
+`/root/orbitkv-artifacts/s5-h2d-shapes-latest-models-20261011/`;
+independent outcome acceptance is at
+`/root/orbitkv-artifacts/s5-h2d-capture-part-publication-outcome-review-20261012/REVIEW.md`.
+See the
+[S5.5 execution record](completion-plan.md#s55--deployment-matrix-and-upstream-maintenance).
+
+After an independently reviewed installed model gate and normal shutdown, parse
+the retained engine log into a new external output:
+
+```bash
+python -m benches.local_restore_shapes \
+  --engine-log /var/tmp/orbitkv-kda/h2d-001/engine.log \
+  --native-fixture /var/tmp/orbitkv-kda/frozen/native-copy-layout \
+  --output /var/tmp/orbitkv-kda/h2d-001/local-h2d.json
+```
+
+The parser requires every opened part to have a matching complete checkpoint,
+contiguous batch/part coverage, source and destination bounds, nonoverlapping
+destinations, exact byte histograms and the cumulative bounded reservation.
+Part sequences must be contiguous; executor device, maximum pitch, budget and
+source/destination registrations must remain stable across checkpoints. Schema-1
+Drop-only output is not accepted as an alternative input.
+The frozen native fixture then recomputes every batch's DMA ranges using captured
+addresses, owners and maximum pitch through the production compiler, before any
+CUDA initialization. Scalar-only parsing is explicitly unqualified; the final
+output requires a matching compiler receipt and records the fixture/input hashes.
+Arena/tensor registration spans stay consistent across the entire executor trace.
+Empty managed/codec parts remain visible but do not count as raw H2D geometry. Request
+or source-operation linkage, physical failure drain, pinned NUMA residency and
+native-HBM/OrbitKV/LMCache model performance remain separate qualifications.
+
 ## Current qualification
 
 **Implemented; A100 SM80 local gates pass; independent acceptance open.** The
@@ -145,6 +394,34 @@ values remain at `/root/orbitkv-artifacts/s4-readv-kda-20261008/`, mirrored at
 [SSD performance](ssd-performance.md) points the next investigation at existing
 SSD preparation and waiting. Rejected attempts do not change kernel defaults
 or establish an inference speedup.
+
+## H20 native CPU attribution (2026-10-11)
+
+**Independently accepted within the native fixture; no candidate promoted.**
+Exact `d001b4e2` consumes the production Rust backends and shader on H20 SM90.
+Three independent processes retain 102 case/direction rows and 20,400 backend
+submissions, with full byte/source/guard checks before each backend's warmup.
+All native, guardian, controller and SSH exits are zero and reaped without forced
+cleanup. Actual context UUID, executable and mapped runtime inputs match the
+freeze; final GPU memory/processes are empty and the lease is free. Numeric
+NVML PID visibility is recorded separately and does not prove PID namespace
+mapping. Earlier invalid attempts and the rejected observation guard are retained.
+
+The reversed synthetic H2D fixture with 4096 4 KiB fragments spends about 75% of
+DMA time in CPU submission; its ascending counterpart spends about 6%. These
+fixtures call the backends directly with synthetic owner IDs. Production worker
+and local descriptors already sort by device address. Capture actual recovery
+layouts and consume existing raw-copy cost observations, including compiled DMA
+range counts, before selecting a candidate; do not add duplicate sorting.
+
+Statistics use every sample and type7 per-run quantiles. Three-run observed
+min/max ranges are descriptive, not confidence intervals. CPU submission includes
+packing, upload and driver work; host synchronization is not device-only time or
+bandwidth. Byte controls do not run on every timed repetition. Physical pinned
+NUMA residency, transfer faults, compute contention, model benefit and S2/S5/S3
+completion remain unqualified. The full independent result and verified raw-data
+references are external at
+`/root/orbitkv-artifacts/s5-kda-native-attribution-r3-outcome-independent-review-20261011/REVIEW.md`.
 
 ## Consumed follow-up requirements
 

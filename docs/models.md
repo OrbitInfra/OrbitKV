@@ -50,6 +50,100 @@ state require their own released-engine and complete recovery gates. Eight
 available GPUs do not establish physical TP=8 recovery support, and historical
 Qwen3.8-FP8 or DeepSeek-V2 results do not qualify those targets.
 
+The 2026-10-11 preparation freezes the requested current official artifacts:
+
+| Checkpoint | Official revision | Weight files / total bytes | Current scope |
+| --- | --- | --- | --- |
+| [Qwen3.8-27B BF16](https://huggingface.co/Qwen/Qwen3.8-27B/tree/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0) | `1d4bf0f2…` | 18 / 55,563,006,776 | Official-engine native output controls accepted; external recovery unqualified |
+| [Qwen3.8-27B FP8](https://huggingface.co/Qwen/Qwen3.8-27B-FP8/tree/017b9c7af6b5689d5dd426a76e0bc077eb5ca20a) | `017b9c7a…` | 66 / 30,866,866,928 | Official-engine native output controls accepted; external recovery unqualified |
+| [DeepSeek-V4.1-Flash](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/2cba9e42aa026125f3ed06c6d98c1db82f7ca027) | `2cba9e42…` | 48 / 510,296,708,312 | Metadata/config checked; native topology and complete compressed/auxiliary-state recovery unqualified |
+
+These are whole checkpoint weight-file sizes from the official Hub metadata,
+not runtime GPU-memory estimates. The metadata snapshot alone does not establish
+weight completeness or model execution; their separate gates are recorded below.
+Qwen3.8 has 16 full-attention and 48 GDN layers;
+its parameter count alone does not determine its cache traffic. The current
+vLLM multi-group/recurrent safety guard remains active. DeepSeek's selected
+checkpoint combines FP8 configuration with FP4 experts and requires its own
+engine/kernel/topology checks. Native serving, complete external state recovery
+and a matched native/OrbitKV/LMCache performance comparison need separate results.
+Retained official metadata, exact configs and retrieval hashes are at
+`/root/orbitkv-artifacts/s5-h2d-shapes-latest-models-20261011/model-metadata-1/`.
+
+Complete inputs for both Qwen3.8 variants have independent input-only acceptance:
+32 BF16 files (55,586,114,863 bytes) and 81 FP8 files (30,890,049,597 bytes),
+including tokenizer/template, configuration and license files. Independent fresh
+official metadata and full remote inventories match every LFS SHA256 or Git-blob
+SHA1 and sender/receiver SHA256. All 113 file receipts have matching sizes and
+actual successful SSH waits; the relay itself exited zero and was reaped. The
+official empty FP8 checksum file remains in the input set. The complete-input
+reviews are at
+`/root/orbitkv-artifacts/s5-qwen38-bf16-complete-input-review-20261012/` and
+`/root/orbitkv-artifacts/s5-qwen38-fp8-complete-input-review-20261012/`.
+Input acceptance does not establish model output or external recovery.
+Official-engine native controls and complete-state recovery remain separate
+gates before a matched performance comparison.
+
+Official vLLM 0.31.0 and SGLang 0.5.21 have independently accepted native output
+controls for both Qwen3.8 BF16 and FP8 on H20. Each separately frozen model/engine
+cell completes six serial greedy requests at input lengths 128, 1,024 and 4,096,
+with 16 generated tokens and two repeats per input. All 24 requests, 384 output
+token IDs/counts and finite selected-token log probabilities pass; repeated text
+and token IDs match within each cell. This is TP=1/PP=1, text-only eager inference
+with BF16 KV cache for both weight variants. It does not establish cross-engine
+or cross-precision output equivalence, semantic quality, external state recovery
+or performance.
+The official installations and complete model inventories retain their frozen
+hashes. All four API processes exit zero and final owned processes, ports and GPU
+usage are empty. Native vLLM EngineCore force-kill/semaphore diagnostics and
+SGLang adopted-child exits of -9 remain shutdown/lifetime limits; these results
+do not prove normal exit or physical drain for every child.
+The original missing-`ninja` startup failure is preserved separately. A distinct
+reviewed PATH definition resolves the active official environment's tools before
+launch. Full raw responses, JIT output and cleanup evidence are at
+`/root/orbitkv-artifacts/s5-qwen38-fp8-native-path-cohort-1-20261012/` and
+`/root/orbitkv-artifacts/s5-qwen38-bf16-native-cohort-1-20261012/`. Independent
+acceptance is recorded separately at
+`/root/orbitkv-artifacts/s5-qwen38-fp8-native-path-outcome-review-20261012/REVIEW.md`
+and
+`/root/orbitkv-artifacts/s5-qwen38-bf16-native-outcome-review-20261012/REVIEW.md`.
+
+The native output gate accepts separately owned official engine services and a
+frozen JSON array of token-ID arrays. It makes repeated serial greedy requests,
+requires exact prompt/completion counts and generated token coverage, and checks
+finite selected-token log probabilities and identical repeated output. Raw
+requests and responses survive a failure, including HTTP errors and nonfinite
+numbers. It does not start an engine or establish external-state recovery,
+shutdown safety, HBM hit rates or a performance advantage; the deployment gate
+owns installed-artifact checks, GPU leases and actual process drain.
+Directly invoking an official environment's `bin/python` does not activate its
+tool search path. Set each service's `PATH` to its own official `bin` directory,
+the selected CUDA `bin` directory and the declared system directories. Record
+the resolved JIT tools and check their frozen identities before engine admission;
+do not borrow another engine's environment or modify installed release files.
+
+```bash
+uv run --isolated --no-project --with requests python -m benches.native_model_readiness \
+  --engine vllm --url http://127.0.0.1:8000 --model /path/to/immutable-model \
+  --prompts /path/to/frozen-token-ids.json --output-tokens 16 --repeats 2 \
+  --output /var/tmp/orbitkv-native-readiness/vllm-001
+# Use --engine sglang against its independently owned native /generate service.
+```
+
+Input preparation and native serving remain separate. The earlier two Qwen3.8
+range-relay copies failed with HTTP 429 and were stopped and actually reaped;
+their partials and per-file records remain intact. A separate official-SDK
+full-file copy was superseded after observing a few MB/s, with its SIGTERM/-15
+wait receipt and partials retained. The completed input-only definition resolves each
+nonempty file through the official SDK once and sends exact ranges from the
+resolved CDN address, retaining both official and sender/receiver hashes. The
+113-file transfer and independent full-input audits are complete; transient range
+errors remain recorded with their bounded retries. The rejected first source's
+cancellation/admission and failed-child
+receipt gaps are preserved separately; no GPU serving is admitted by that review.
+Input definitions and controls are at
+`/root/orbitkv-artifacts/s5-model-input-resolved-cdn-20261012/`.
+
 ## Pretrained checkpoints
 
 The larger-model qualification uses one H20 with approximately 96 GiB of
