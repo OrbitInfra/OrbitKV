@@ -15,8 +15,9 @@ The [completion plan](completion-plan.md) owns remaining delivery work.
 Set `VLLM_USE_V2_MODEL_RUNNER=0` before starting vLLM. V2, multiple cache groups
 and recurrent external-cache profiles are rejected until released lifecycle
 contracts can protect their pages. SGLang's public lifecycle migration remains
-open: the current adapter still consumes bounded private preparation/completion
-hooks. See [adapter contracts](adapters.md) and the [interface audit](engine-release-audit.md).
+open: the current adapter still consumes bounded private graph-initialization
+and pending-query admission hooks. See [adapter contracts](adapters.md) and the
+[interface audit](engine-release-audit.md).
 
 These are OrbitKV's selected release pins, not a promise that upstream has no
 newer release. Historical results retain their original engine versions.

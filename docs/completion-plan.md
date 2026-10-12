@@ -321,8 +321,8 @@ immutable local static PEFT identity at `47fea821`; the official dense query-con
 handshake at `1ab67a58`. These do not qualify live weight changes, dynamic adapter
 mutation or physical multi-rank recovery.
 
-- Replace remaining SGLang private preparation/completion hooks with consumed
-  public lifecycle interfaces. Document their protected behavior and released
+- Replace SGLang's private graph-initialization and pending-query admission hooks
+  with consumed public lifecycle interfaces. Document their behavior and released
   alternatives; never remove cancellation/page-reuse protection merely for cleanup.
 - Preserve model/tokenizer/computation/layout identity and generation fencing.
   Dynamic mutations require a consumed invalidation contract; stop/restart until
