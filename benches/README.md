@@ -413,6 +413,32 @@ run at least three pairs in direct/kernel, kernel/direct, direct/kernel order.
 An observation-overhead comparison requires one matched transfer mode in each
 off/on pair.
 
+Use `--observation-mode boundary` for request-timing controls without an
+in-process metrics sampler during requests. Engine/Manager snapshots before and
+after the interval, quiet/drain checks and service cleanup still run. The default
+`sampled` mode retains the 25 ms Manager observer for memory diagnostics; its
+Python and Manager work can affect request timing. Sampling does not occur when
+there is no Manager. Each manifest and measured interval records the mode,
+Manager presence, backend and sample count. OrbitKV snapshots and every drain
+poll require its eight always-exported query/transfer/SSD ownership gauges to be
+finite and nonnegative; all required and present optional owners must end at zero.
+Sampled OrbitKV intervals also require real query/inflight peak observations.
+Live measurements and offline reports reject missing or invalid ownership
+evidence. LMCache and no-Manager profiles retain snapshots and service cleanup
+without claiming validation of OrbitKV's resource owners.
+JSON sampled peaks are `null` when unavailable;
+boundary snapshots cannot be labeled as sampled peaks or prove transient memory
+capacity. Codec boundary maxima and Manager-owned reservation peaks retain their
+separate scopes.
+
+Reports reject missing or inconsistent mode metadata, and output references
+reject different modes. Keep historical cells unchanged and reproduce their
+reports with their frozen source; do not backfill observation metadata. Run
+capacity diagnostics separately from timing controls, and predeclare a matched
+observation-overhead pilot before formal tail or performance-advantage claims.
+Selecting boundary mode alone does not qualify observation overhead or a faster
+cache backend.
+
 All outputs and cache-source evidence are retained, including mixed hits,
 misses, and generated-text differences. A startup/request failure writes
 `failure.json` and is not a latency result. The serial workload measures TTFT;

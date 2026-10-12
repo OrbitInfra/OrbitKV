@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from benches import cost_observations as costs
-from benches.metrics import delta, engine_itl_summary, metrics
+from benches.metrics import REQUIRED_OWNERSHIP_GAUGES, delta, engine_itl_summary, metrics
 
 SLO = {"ttft_ms": 2000, "average_decode_ms_per_token": 100, "itl_ms": 100}
 
@@ -19,6 +19,9 @@ def run_files(directory, mode="on", tier="ssd", job=None):
     directory.mkdir(parents=True)
     manifest = {
         "cost_observations": "1" if mode == "on" else "0",
+        "observation_mode": "sampled",
+        "manager_present": True,
+        "manager_backend": "orbitkv",
         "manager_binary_sha256": "one-prebuilt-manager",
         "model_revision": "immutable-model",
         "packages": {"vllm": "0.29.0"},
@@ -28,6 +31,7 @@ def run_files(directory, mode="on", tier="ssd", job=None):
             "engine": "vllm",
             "backend": "orbitkv",
             "workload": "sustained",
+            "observation_mode": "sampled",
             "concurrencies": [4],
             "max_requests": 4,
             "duration_seconds": 3600,
@@ -38,6 +42,7 @@ def run_files(directory, mode="on", tier="ssd", job=None):
     if job:
         manifest["arguments"] = copy.deepcopy(job["arguments"])
         manifest["manager_command"] = [job["manager"]]
+    manifest["observation_mode"] = manifest["arguments"]["observation_mode"]
     if mode in ("direct", "kernel"):
         manifest["arguments"]["orbitkv_transfer_backend"] = mode
         (directory / "manager.log").write_text(
@@ -69,9 +74,13 @@ def run_files(directory, mode="on", tier="ssd", job=None):
         "drain_seconds": 0.1,
         "working_set_tokens": 8192,
         "manager_delta": counters,
-        "manager_before": {},
-        "manager_after": {"orbitkv_query_reserved_bytes": 0},
-        "sampled_peak_bytes": {},
+        "manager_before": dict.fromkeys(REQUIRED_OWNERSHIP_GAUGES, 0),
+        "manager_after": dict.fromkeys(REQUIRED_OWNERSHIP_GAUGES, 0),
+        "sampled_peak_bytes": {"orbitkv_query_reserved_bytes": 0, "orbitkv_inflight_bytes": 0},
+        "observation_mode": manifest["arguments"]["observation_mode"],
+        "manager_present": True,
+        "manager_backend": "orbitkv",
+        "memory_samples": 1,
         "metrics_delta": {
             "vllm:inter_token_latency_seconds_count": 100,
             "vllm:inter_token_latency_seconds_sum": 1,
@@ -128,6 +137,7 @@ def arguments(tmp_path):
         ssd_dir=tmp_path / "ssd",
         requests=64,
         seed=42,
+        observation_mode="sampled",
     )
 
 

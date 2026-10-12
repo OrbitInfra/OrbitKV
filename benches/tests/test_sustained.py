@@ -37,8 +37,8 @@ def test_window_bounds_inflight_and_drains_admitted_requests(monkeypatch, reques
         }
 
     @contextmanager
-    def measure(*args):
-        result = {}
+    def measure(*args, backend, observation_mode):
+        result = {"observation_mode": observation_mode}
         started = time.perf_counter()
         yield result
         result.update(
@@ -53,10 +53,12 @@ def test_window_bounds_inflight_and_drains_admitted_requests(monkeypatch, reques
     monkeypatch.setattr(sustained, "measure", measure)
     args = SimpleNamespace(
         engine="vllm",
+        backend="native",
         model="model",
         duration_seconds=1 if request_limit == 5 else 0.045,
         max_requests=request_limit,
         settle_seconds=0,
+        observation_mode="sampled",
         seed=42,
         reuse_ratio=0.75,
         lengths=[64],
@@ -86,6 +88,8 @@ def test_window_bounds_inflight_and_drains_admitted_requests(monkeypatch, reques
 def evidence():
     args = {
         "engine": "vllm",
+        "backend": "native",
+        "observation_mode": "boundary",
         "workload": "sustained",
         "concurrencies": [2],
         "max_requests": 100,
@@ -119,7 +123,12 @@ def evidence():
             "drain_seconds": 0.2,
             "working_set_tokens": 64,
             "manager_after": {},
-            "sampled_peak_bytes": {},
+            "manager_before": {},
+            "sampled_peak_bytes": None,
+            "observation_mode": "boundary",
+            "manager_present": False,
+            "manager_backend": None,
+            "memory_samples": 0,
             "manager_delta": {"orbitkv_ssd_prefetch_bytes_total": 4096},
         }
     ]
@@ -128,7 +137,16 @@ def evidence():
 
 def test_report_counts_window_bytes_once_and_preserves_output_differences(tmp_path):
     args, samples, windows = evidence()
-    (tmp_path / "manifest.json").write_text(json.dumps({"arguments": args}))
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "arguments": args,
+                "observation_mode": "boundary",
+                "manager_present": False,
+                "manager_backend": None,
+            }
+        )
+    )
     (tmp_path / "samples.jsonl").write_text("\n".join(map(json.dumps, samples)))
     (tmp_path / "windows.jsonl").write_text("\n".join(map(json.dumps, windows)))
     (row,) = collect_run(tmp_path)["summary"]
@@ -189,12 +207,14 @@ def test_incomplete_or_invalid_windows_cannot_be_reported(corruption):
     elif corruption == "leak":
         windows[0]["manager_after"]["orbitkv_query_reserved_bytes"] = 4096
     elif corruption == "protected_budget":
+        windows[0]["sampled_peak_bytes"] = {}
         args.update(host_gib=4, cache_protected_percent=80)
         limit = 4 * 1024**3 * 80 // 100
         windows[0]["sampled_peak_bytes"]["orbitkv_cache_protected_bytes"] = limit
         sustained.validate(args, samples, windows)
         windows[0]["sampled_peak_bytes"]["orbitkv_cache_protected_bytes"] += 1
     elif corruption in ("budget", "speculative_budget"):
+        windows[0]["sampled_peak_bytes"] = {}
         args["query_budget_gib"] = 3
         name, limit = (
             ("orbitkv_query_reserved_bytes", 3 * 1024**3)

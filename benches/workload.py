@@ -163,7 +163,13 @@ def run_workload(args: Namespace, base_url: str, manager_url: str | None) -> lis
                     time.sleep(args.settle_seconds)
                     if phase == "after_host_eviction":
                         preparation = evict_host_cache(manager_url)
-                    with measure(base_url, manager_url, args.settle_seconds) as measurement:
+                    with measure(
+                        base_url,
+                        manager_url,
+                        args.settle_seconds,
+                        backend=args.backend,
+                        observation_mode=args.observation_mode,
+                    ) as measurement:
                         result = generate(
                             base_url,
                             args.engine,

@@ -10,7 +10,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from .metrics import cached_tokens, codec_summary, measure, percentile
+from .metrics import cached_tokens, codec_summary, measure, percentile, sampled_peak
 from .workload import evict_host_cache, generate
 
 PATTERNS = ("shared", "mixed")
@@ -30,7 +30,13 @@ def burst(
         return generate(base_url, args.engine, str(args.model), tokens, args.output_tokens)
 
     with (
-        measure(base_url, manager_url, args.settle_seconds) as measurement,
+        measure(
+            base_url,
+            manager_url,
+            args.settle_seconds,
+            backend=args.backend,
+            observation_mode=args.observation_mode,
+        ) as measurement,
         ThreadPoolExecutor(max_workers=len(prompts)) as executor,
     ):
         results = list(executor.map(request, prompts))
@@ -151,6 +157,7 @@ def summarize(samples: list[dict], batches: list[dict]) -> list[dict]:
                 "concurrency": concurrency,
                 "pattern": pattern,
                 "phase": phase,
+                "observation_mode": measurements[0].get("observation_mode"),
                 "n": len(rows),
                 "ttft_p50_ms": statistics.median(ttft),
                 "ttft_p95_ms": percentile(ttft, 0.95),
@@ -170,16 +177,12 @@ def summarize(samples: list[dict], batches: list[dict]) -> list[dict]:
                     "cached_tier_unknown": sum(s["cached_tokens"] > 0 for s in rows),
                     "miss": sum(s["cached_tokens"] == 0 for s in rows),
                 },
-                "sampled_peak_pool_bytes": max(
-                    b["sampled_peak_bytes"].get("orbitkv_pool_used_bytes", 0) for b in measurements
+                "sampled_peak_pool_bytes": sampled_peak(measurements, "orbitkv_pool_used_bytes"),
+                "sampled_peak_query_bytes": sampled_peak(
+                    measurements, "orbitkv_query_reserved_bytes"
                 ),
-                "sampled_peak_query_bytes": max(
-                    b["sampled_peak_bytes"].get("orbitkv_query_reserved_bytes", 0)
-                    for b in measurements
-                ),
-                "sampled_peak_speculative_bytes": max(
-                    b["sampled_peak_bytes"].get("orbitkv_query_speculative_reserved_bytes", 0)
-                    for b in measurements
+                "sampled_peak_speculative_bytes": sampled_peak(
+                    measurements, "orbitkv_query_speculative_reserved_bytes"
                 ),
                 **manager,
                 **codec_summary(measurements),

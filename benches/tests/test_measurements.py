@@ -34,15 +34,18 @@ def test_manifest_records_effective_cost_observations_switch(
         host_gib=1,
         ssd_gib=0,
         storage_codec_budget=64 * 1024**2,
+        observation_mode="sampled",
     )
     launch = SimpleNamespace(
         command=["vllm"],
         manager_command=[str(manager)],
+        manager_url="http://manager",
         env=env,
         backend_configuration={},
     )
     for backend in ("native", "cpu", "orbitkv", "lmcache"):
         args.backend = backend
+        launch.manager_url = "http://manager" if backend in ("orbitkv", "lmcache") else None
         recorded = manifest(args, launch, 147456)
         assert recorded["cost_observations"] == expected
         assert recorded["capacity"]["host_pool_bytes"] == (0 if backend == "native" else 1024**3)
@@ -207,6 +210,7 @@ def test_report_preserves_requested_transfer_backend(tmp_path, monkeypatch, back
         "gpu_tokens": 8192,
         "host_gib": 1,
         "orbitkv_transfer_backend": backend,
+        "observation_mode": "sampled",
     }
     run = {
         "directory": "fixture",
@@ -332,7 +336,16 @@ def test_report_keeps_output_mismatches_and_rejects_partial_runs(tmp_path):
     (tmp_path / "manifest.json").write_text(
         json.dumps(
             {
-                "arguments": {"engine": "vllm", "lengths": [64], "repeats": 1},
+                "arguments": {
+                    "engine": "vllm",
+                    "backend": "native",
+                    "lengths": [64],
+                    "repeats": 1,
+                    "observation_mode": "boundary",
+                },
+                "observation_mode": "boundary",
+                "manager_present": False,
+                "manager_backend": None,
             }
         )
     )
@@ -347,6 +360,13 @@ def test_report_keeps_output_mismatches_and_rejects_partial_runs(tmp_path):
             "usage": {},
             "metrics_delta": {},
             "manager_delta": {},
+            "observation_mode": "boundary",
+            "manager_present": False,
+            "manager_backend": None,
+            "manager_before": {},
+            "manager_after": {},
+            "memory_samples": 0,
+            "sampled_peak_bytes": None,
         }
         for phase in ("cold", "hbm_hit", "after_pressure")
     ]

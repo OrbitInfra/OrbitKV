@@ -1742,6 +1742,53 @@ wheel bytes unchanged; the strengthened E2E helper requires a fresh consumer
 gate before runtime acceptance. They do not revise the retained Qwen3-32B
 cohort or close S5 pressure, performance or S3 lifetime qualification.
 
+The fresh exact-harness `09849c91` consumer gate is independently accepted for
+official SGLang 0.5.21/Qwen3-32B ordinary DRAM/io_uring file-cache recovery and
+positive shutdown: two tests pass, six engine leaders and two Managers exit
+zero, and all six per-PID native shutdown protocols pass. Six CUDA IPC producer
+warnings and six internally terminated adopted processes (`-9`) remain limits;
+this is not physical IPC lifetime, pressure, performance or S3 qualification.
+The exact executed assertions and raw native logs are retained; complete response
+bodies and numeric metric snapshots were not serialized for offline re-comparison.
+After local `/tmp` loss of unknown cause, 322 original remote files and one link
+are recovered and hash-verified in a new durable packet. Missing original local
+foreground records are not fabricated; a separate fresh postflight checks known
+PIDs, ports, UDS, GPU and lease release. The original raw result stays unchanged.
+See `/root/orbitkv-artifacts/pr217-sglang-shutdown-consumer-execution-review-20261011/REVIEW.md`.
+
+**Request-timing observation mode implemented; qualification open (2026-10-11):**
+the maintained serial, concurrent and sustained benchmark supports explicit
+`boundary` mode without a request-time metrics thread. The default `sampled`
+mode retains the 25 ms Manager observer. Both modes preserve before/after
+snapshots, quiet/drain checks and normal service cleanup. Missing memory peaks
+remain unknown; codec boundary maxima and native lifetime reservation peaks are
+reported separately. Reports reject missing/mixed mode metadata and references
+with different modes. This is measurement infrastructure: matched overhead,
+native/CPU/OrbitKV/LMCache comparisons, pressure and KDA application attribution
+still require separate frozen hardware gates. No production cache policy,
+kernel, engine installation or support boundary changes.
+The recovered durable source passes 379 benchmark tests and the source-only
+Python gate (370 passed, one skipped), plus Ruff and experiment-output checks.
+Its new source snapshots and CPU gates are retained in
+`/root/orbitkv-artifacts/s5-observation-timing-recovery-20261011/`.
+Independent CPU review of candidate `3d6853ff` requires correction of one P2:
+missing/nonfinite owner snapshots could be accepted as drained. Its rejection
+and actual live/offline controls remain immutable in
+`/root/orbitkv-artifacts/s5-observation-timing-independent-review-20261011/`.
+The corrective source declares the actual Manager backend and requires eight
+always-exported OrbitKV query/transfer/SSD owner gauges, plus validation of
+present optional owners. Every applicable snapshot and poll must be finite and
+nonnegative, and final owners must be zero. Offline validation applies the same
+contract to serial, concurrent and sustained runs. LMCache/no-Manager records
+retain their separate ownership scope. This correction requires fresh CPU gates
+and independent acceptance before a dependent hardware run.
+The corrected source passes 433 benchmark tests and source-only Python
+(370 passed, one skipped), Ruff/format, experiment-output and diff checks in
+`/root/orbitkv-artifacts/s5-observation-timing-20261011/ownership-remediation-3/`.
+Both earlier test-fixture failures are retained separately; they are not passes.
+Earlier uncommitted source and `/tmp` gate-record loss has unknown cause;
+the missing original source hash/results are not reused to qualify this source.
+
 The requested `Qwen/Qwen3.8-27B` and `deepseek-ai/DeepSeek-V4.1-Flash` belong to
 subsequent model/state qualification: inspect immutable configurations and
 released-engine support before any weights/download or serving launch. Qwen3.8

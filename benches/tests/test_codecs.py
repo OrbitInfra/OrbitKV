@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from benches.launch import STORAGE_CODECS, configure, storage_codec_budget
-from benches.metrics import codec_summary, delta, measure, metrics
+from benches.metrics import REQUIRED_OWNERSHIP_GAUGES, codec_summary, delta, measure, metrics
 from benches.report import compare_outputs
 
 
@@ -297,7 +297,13 @@ def test_codec_labels_batch_histograms_and_retained_workspace_are_not_combined(m
 
 
 def test_none_reference_retains_output_drift_and_requires_verified_inputs(tmp_path):
-    args = {"engine": "vllm", "workload": "sustained", "seed": 42, "storage_codec": "none"}
+    args = {
+        "engine": "vllm",
+        "workload": "sustained",
+        "seed": 42,
+        "storage_codec": "none",
+        "observation_mode": "sampled",
+    }
     control = tmp_path / "none"
     control.mkdir()
     samples = [
@@ -338,7 +344,13 @@ def test_none_reference_retains_output_drift_and_requires_verified_inputs(tmp_pa
 
 
 def test_cross_backend_reference_requires_the_same_engine_runtime(tmp_path):
-    args = {"engine": "vllm", "backend": "native", "storage_codec": "none", "seed": 42}
+    args = {
+        "engine": "vllm",
+        "backend": "native",
+        "storage_codec": "none",
+        "seed": 42,
+        "observation_mode": "sampled",
+    }
     sample = {"length": 1024, "phase": "after_pressure", "prompt_sha256": "same", "text": "ok"}
     (tmp_path / "samples.jsonl").write_text(json.dumps(sample) + "\n")
     manifest = {
@@ -360,12 +372,16 @@ def test_cross_backend_reference_requires_the_same_engine_runtime(tmp_path):
         result = compare_outputs(run, reference)
         assert result["compared_requests"] == 1
         assert result["output_mismatches"] == 0
-        for setting in ("deterministic_inference", "enforce_eager"):
+        for setting, value in (
+            ("deterministic_inference", True),
+            ("enforce_eager", True),
+            ("observation_mode", "boundary"),
+        ):
             changed = {
                 **run,
                 "manifest": {
                     **run["manifest"],
-                    "arguments": {**run["manifest"]["arguments"], setting: True},
+                    "arguments": {**run["manifest"]["arguments"], setting: value},
                 },
             }
             with pytest.raises(ValueError, match=f"different {setting}"):
@@ -388,6 +404,7 @@ def test_cross_backend_reference_requires_the_same_engine_runtime(tmp_path):
 
 def test_idle_retained_codec_workspace_does_not_prevent_measurement_drain(monkeypatch):
     observed = {
+        **dict.fromkeys(REQUIRED_OWNERSHIP_GAUGES, 0),
         "orbitkv_storage_codec_workspace_bytes": 67108864,
         "orbitkv_storage_codec_reserved_bytes": 0,
     }
@@ -395,7 +412,7 @@ def test_idle_retained_codec_workspace_does_not_prevent_measurement_drain(monkey
     monkeypatch.setattr("benches.metrics.time.sleep", lambda seconds: None)
     ticks = iter(range(0, 1000, 10))
     monkeypatch.setattr("benches.metrics.time.monotonic", lambda: next(ticks))
-    with measure("engine", "manager", 0) as measurement:
+    with measure("engine", "manager", 0, backend="orbitkv") as measurement:
         pass
     assert measurement["manager_after"] == observed
     summary = codec_summary([measurement])
