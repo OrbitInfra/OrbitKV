@@ -74,7 +74,9 @@ hosts. Verify ELF closure, actual TENT loading and native import before launch;
 never overwrite a mapped library. Keep `harness/benches` separate from the Python
 package so source-only imports cannot shadow the installed extension.
 
-Compile the byte oracle on each test host before freezing its resulting hash:
+For GPU-pointer cells, compile the byte oracle on each test host before freezing
+its resulting hash. A Manager-only contract uses the existing tensor byte and
+sentinel checks in `shared_cache_bytes`; it does not need this oracle library:
 
 ```bash
 /usr/local/cuda/bin/nvcc -O3 -std=c++17 --shared --cudart shared -Xcompiler=-fPIC \
@@ -111,6 +113,13 @@ barriers and oracles are outside the query/restore clock. The worker's existing
 10 ms polling sleep is reported separately; its client time is not pure TENT
 latency or model-serving TTFT.
 
+A complete Manager-only matrix contains 36 cells: three independently restarted
+runs, both physical directions, all three payload sizes and near-NIC versus
+four-NIC allowlists. Reverse the second run's cell order. Retain one cold, three
+warmup and thirty measured restores per cell, and analyze each run separately
+before comparing run medians. Use a fresh cohort after an invalid campaign;
+completed cells from that campaign cannot fill the new matrix.
+
 Select unused service ports outside each host's actual
 `/proc/sys/net/ipv4/ip_local_port_range`, using distinct ports for restarted
 cells. Readiness requires both successful HTTP health and the HTTP/gRPC listening
@@ -120,6 +129,11 @@ error before cleanup, and record cleanup failures separately. A fresh cell that
 has not launched a payload fixture can normally stop and reap its own Managers
 without trying to drain a dead HTTP endpoint; after payload admission, the
 complete idle proof remains mandatory.
+
+The outer launcher must persist its admission plan and open logs before starting
+the controller. After admission, keep its process handle and logs through actual
+wait, including receipt-write failures and pending termination signals. A failed
+receipt remains an experiment failure even when native drain completes.
 
 Use independently restarted cells and opposite run orders. Thirty measured
 samples support descriptive medians/p95/max, not stable p99 or a production
@@ -135,6 +149,12 @@ normal native shutdown from forced CPU-only owner termination. An orphaned
 zombie with no native resources is not an actual wait/reap receipt. Preserve
 quarantine if the platform init does not reap it; do not modify a platform
 process to turn incomplete cleanup into a passing gate.
+An independent resource-readmission review may authorize a new normal-path
+cohort after proving the exact historical processes have no GPU, mapping,
+device-FD, socket or listener ownership. Hold the real resource locks while
+archiving and verifying every known marker before removing it. Unknown or live
+ownership stays quarantined. This separate admission never accepts the old
+campaign or supplies its missing actual wait/reap receipts.
 This component profile does not qualify HA, S3 reclamation, native GDS or model
 latency. Use its stage breakdown to choose the next consumed production change.
 

@@ -47,15 +47,49 @@ TENT defect or establish four-NIC striping. Packed first-transfer samples are
 NICs, after context initialization and registration. Descriptor overhead and
 lazy setup require separate attribution before changing a production path.
 
-Thirteen Manager cells completed the remote DRAM → RDMA → consumer DRAM → HBM
-path. The first complete run's 32 MiB READ medians are 28.9–41.8 GB/s; restoration
-medians are 1.25–1.32 ms. The fixture's separate 10 ms query polling sleep is
-not transport latency or serving TTFT. The full 108-cell campaign stopped after
-85 cells because the next Manager failed a gRPC bind before payload admission.
-Its Manager comparison is incomplete, and platform zombie reap remains blocked
-after native resources were released. This stage has no LMCache/model comparison
-or support expansion. Full failures, per-cell clocks and provenance are retained
-in [the evidence archive](benchmark-evidence.md).
+The earlier 108-cell campaign stopped after 85 cells because the next Manager
+failed a gRPC bind before payload admission. Thirteen Manager byte-path cells
+completed, but that campaign's planned Manager comparison and historical platform
+zombie wait/reap remain incomplete; the original cohort stays invalid.
+An independently reviewed physical-resource readmission enabled a new full
+Manager-only cohort, without replacing any old sample or accepting old cleanup.
+
+The new `00c4a041` harness uses the unchanged `37b48c50` runtime for 36 cells:
+three separately restarted runs, both directions, three payload sizes and near-NIC
+versus four-NIC allowlists. It completes 1,080 measured restores and 1,224 restores
+including cold/warmup samples. Remote DRAM → RDMA → consumer DRAM → HBM bytes total
+17,326,669,824 for both READ and H2D; full tensors and sentinel gaps match an
+independent CPU reconstruction. Independent review accepts this descriptive
+outcome and normal post-drain cleanup.
+
+Warm values below are medians of six cell medians, representing three independent
+runs in both directions. They are descriptive component measurements:
+
+| Payload | NIC allowlist | TENT READ GB/s | Manager fetch ms | GPU restore ms |
+| --- | --- | --- | --- | --- |
+| 512 KiB | Near NIC | 1.42 | 1.05 | 0.61 |
+| 512 KiB | Four NICs allowed | 1.45 | 1.02 | 0.60 |
+| 8 MiB | Near NIC | 16.48 | 1.19 | 0.81 |
+| 8 MiB | Four NICs allowed | 19.13 | 1.12 | 0.80 |
+| 32 MiB | Near NIC | 29.13 | 1.84 | 1.28 |
+| 32 MiB | Four NICs allowed | 41.12 | 1.51 | 1.29 |
+
+The six independent 32 MiB cell medians span 28.95–29.23 GB/s for the near NIC
+and 38.60–41.82 GB/s with four allowed NICs. In those 32 MiB four-NIC cells,
+observed source-TX counter deltas are approximately equal on `mlx5_3` and `mlx5_4`.
+These physical counters include background traffic; they do not establish
+process-exclusive accounting or four-way striping. First READs span 63.7–71.0 ms
+for the near NIC and
+158.2–199.5 ms with four allowed NICs across all payload sizes. Setup and warm
+throughput therefore need separate comparisons. Local restoration changes little.
+
+The fixture's separate 10 ms query polling sleep is not transport latency or
+serving TTFT. Current-stage processes are actually waited and native resources
+drain, but 72 raw CUDA IPC shutdown warnings remain a lifecycle limit; this does
+not qualify cancellation, page reuse or crash reclamation. There is no stable
+p99, inference contention, LMCache/model comparison or support expansion in this
+cohort. Full failures, per-cell clocks and provenance remain in
+[the evidence archive](benchmark-evidence.md).
 
 ## Read results by scope
 

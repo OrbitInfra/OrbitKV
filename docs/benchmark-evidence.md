@@ -9,6 +9,24 @@ versioned evidence; passing a correctness gate does not establish a speedup.
 
 ## Current RDMA component archive
 
+The complete new Manager-only collection is retained at
+`/root/orbitkv-artifacts/s5-manager-rdma-profile-20261012-r2/`.
+`05-freeze/` binds the exact `00c4a041` harness, unchanged `37b48c50` runtime and
+36-cell input contract. `07-cohort-1/` retains all cold, warmup and measured rows;
+`08-postflight-and-archive/` retains both hosts' actual wait events, logs,
+unchanged runtime hashes/stamps and the private etcd DB/WAL. Full run/direction
+statistics and independently reconstructed tensor hashes are in
+`09-descriptive-analysis/`; the accepted independent outcome review is sealed in
+`10-independent-outcome-review/`. Its `REVIEW.md` SHA-256 is
+`3face0a4da6d8cec6181257a1a07b09f487f9eab39689e7f5218201cde20214b`.
+
+The resource-readmission proof and rejected preparation controls remain beside
+the collection. They authorize only new work on physically idle resources:
+the earlier invalid campaign and its missing platform wait/reap receipts stay
+unchanged. All 72 CUDA IPC shutdown warnings and failed controls remain in the raw
+logs. This is a private measurement-host archive, not a public download or HA,
+S3 lifetime, serving-performance or support qualification.
+
 The measurement-host archive is
 `/root/orbitkv-artifacts/s4-s5-tent-rdma-profile-20261012/`.
 It retains source/launch reviews, the unchanged native runtime manifests,
