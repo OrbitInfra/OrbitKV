@@ -247,3 +247,37 @@ def test_optional_transitive_import_is_blocked_before_execution(frozen):
     assert rejected.returncode != 0
     assert "unfrozen runtime import: simplejson" in rejected.stderr
     assert not marker.exists()
+
+
+def test_actual_bootstrap_rejects_extra_stdlib_shadow_before_its_execution(frozen):
+    inputs = frozen / "inputs"
+    for name in (
+        "campaign.py",
+        "consumer_agent.py",
+        "environment.py",
+        "integrity.py",
+        "launch_agent.py",
+        "network_probe_agent.py",
+        "node_agent.py",
+        "proxy_readiness.py",
+        "resource_lock_agent.py",
+        "validate_inputs.py",
+    ):
+        (inputs / name).write_bytes((Path(integrity.__file__).parent / name).read_bytes())
+    (inputs / "settings.json").write_text(json.dumps({"nodes": [{"name": "node"}]}))
+    manifest = inputs / "SHA256SUMS"
+    manifest.write_text(
+        "".join(f"{integrity.sha256(p)}  {p.name}\n" for p in sorted(inputs.iterdir()))
+    )
+    marker = frozen / "stdlib-shadow-executed"
+    (inputs / "hashlib.py").write_text(f"open({str(marker)!r},'w').write('executed')\n")
+    result = subprocess.run(
+        [*integrity.process_python(frozen, "node"), "-c", "print('unexpected')"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "input manifest file inventory differs" in result.stderr
+    assert not marker.exists()
