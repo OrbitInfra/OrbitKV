@@ -410,10 +410,17 @@ def main() -> None:
     try:
         result = run(args)
     except BaseException as error:
-        _write(
-            args.output / "FAILURE.json",
-            {"error": repr(error), "traceback": traceback.format_exc()},
-        )
+        try:
+            _write(
+                args.output / "FAILURE.json",
+                {"error": repr(error), "traceback": traceback.format_exc()},
+            )
+        except OSError as report_error:
+            with contextlib.suppress(OSError):
+                print(
+                    f"Failure report also failed: {report_error!r}; original error: {error!r}",
+                    file=sys.stderr,
+                )
         raise
     _write(args.output / "RESULT.json", result)
     print(json.dumps({"status": result["status"], "backend": args.backend, "length": args.length}))

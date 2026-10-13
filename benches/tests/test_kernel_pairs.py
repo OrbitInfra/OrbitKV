@@ -48,6 +48,15 @@ def cohort(root: Path) -> dict:
     contract = {
         "cells": cells,
         "source_commit": "reviewed-source",
+        "model": "frozen-qwen",
+        "model_packages": {
+            "sglang": "0.5.21",
+            "torch": "2.13.0",
+            "transformers": "5.12.1",
+            "numpy": "2.2.6",
+            "prometheus_client": "0.24.1",
+        },
+        "manager_sha256": "b" * 64,
         "model_config_sha256": "a" * 64,
         "paired_design": {
             "pairs": pairs,
@@ -157,12 +166,13 @@ def cohort(root: Path) -> dict:
                 "observation_mode": "boundary",
                 "manager_present": not native,
                 "manager_backend": None if native else "orbitkv",
+                "manager_binary_sha256": None if native else "b" * 64,
                 "model_revision": None,
                 "kv_bytes_per_token": 262144,
                 "gpu": "CPU fixture",
                 "python": "same",
                 "cpu_affinity": [1],
-                "packages": {"sglang": "0.5.21", "torch": "same", "transformers": "same"},
+                "packages": contract["model_packages"],
             },
         )
         rows = []
@@ -195,6 +205,8 @@ def cohort(root: Path) -> dict:
                             "memory_samples": 0,
                             "sampled_peak_bytes": None,
                             "usage": {
+                                "prompt_tokens": length,
+                                "completion_tokens": 16,
                                 "cached_tokens": host + device,
                                 "cached_tokens_details": {"host": host, "device": device},
                             },
@@ -262,6 +274,15 @@ def test_pairs_use_four_independent_units_and_preserve_native_limits(tmp_path):
         "profile",
         "trace",
         "changed_model",
+        "all_models_changed",
+        "packages_changed",
+        "manager_changed",
+        "short_prompts",
+        "short_completions",
+        "late_traceback",
+        "boolean_log_boundary",
+        "negative_log_boundary",
+        "oversized_log_boundary",
         "unmatched_prompt",
         "output",
         "failed_run",
@@ -283,6 +304,44 @@ def test_invalid_cells_or_pairing_cannot_establish_performance(tmp_path, change)
         contract["cells"].append(copy.deepcopy(contract["cells"][-1]))
     elif change == "wrong_order":
         contract["paired_design"]["pairs"][0]["order"].reverse()
+    elif change in {"all_models_changed", "packages_changed", "manager_changed"}:
+        for entry in contract["cells"]:
+            if entry["kind"] != "model":
+                continue
+            manifest = tmp_path / "cells" / entry["name"] / "manifest.json"
+            data = json.loads(manifest.read_text())
+            if change == "all_models_changed":
+                data["arguments"]["model"] = "other"
+            elif change == "packages_changed":
+                data["packages"]["torch"] = "other"
+            else:
+                data["manager_binary_sha256"] = "c" * 64
+            write(manifest, data)
+    elif change in {"short_prompts", "short_completions"}:
+        for entry in contract["cells"]:
+            if entry["kind"] != "model":
+                continue
+            path = tmp_path / "cells" / entry["name"] / "samples.jsonl"
+            rows = [json.loads(line) for line in path.read_text().splitlines()]
+            for row in rows:
+                row["usage"][
+                    "prompt_tokens" if change == "short_prompts" else "completion_tokens"
+                ] = 1
+            path.write_text("\n".join(map(json.dumps, rows)) + "\n")
+    elif change == "late_traceback":
+        with (cell / "engine.log").open("a") as stream:
+            stream.write("Traceback (most recent call last):\nRuntimeError: late failure\n")
+    elif change in {"boolean_log_boundary", "negative_log_boundary", "oversized_log_boundary"}:
+        path = cell / "engine.cleanup.json"
+        record = json.loads(path.read_text())
+        if change == "boolean_log_boundary":
+            record["shutdown_log_start_bytes"] = False
+        elif change == "negative_log_boundary":
+            record["shutdown_log_start_bytes"] = -1
+        else:
+            (cell / "engine.log").write_bytes(b" " * 65537)
+            record["shutdown_log_end_bytes"] = 65537
+        write(path, record)
     elif change in {"profile", "trace", "changed_model"}:
         data = json.loads((cell / "manifest.json").read_text())
         key = {"profile": "sglang_profile", "trace": "trace_transfers", "changed_model": "model"}[

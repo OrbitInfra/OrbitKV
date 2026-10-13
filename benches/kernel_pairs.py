@@ -91,11 +91,22 @@ def _service(directory: Path, name: str) -> dict:
     ):
         raise ValueError(f"Incomplete outer-service shutdown receipt: {directory}/{name}")
     if name == "engine":
-        start, end = record["shutdown_log_start_bytes"], record["shutdown_log_end_bytes"]
-        with (directory / "engine.log").open("rb") as source:
+        start = record.get("shutdown_log_start_bytes")
+        end = record.get("shutdown_log_end_bytes")
+        log = directory / "engine.log"
+        if (
+            type(start) is not int
+            or type(end) is not int
+            or not 0 <= start <= end
+            or end - start > 65536
+            or end != log.stat().st_size
+            or record.get("shutdown_log_truncated") is not False
+        ):
+            raise ValueError("Missing exact bounded native shutdown log through EOF")
+        with log.open("rb") as source:
             source.seek(start)
             text = source.read(end - start)
-        if len(text) != end - start or record.get("shutdown_log_truncated") is not False:
+        if len(text) != end - start:
             raise ValueError("Missing exact native shutdown log slice")
         validate_engine_shutdown(text.decode(errors="replace"), "sglang", pid=record["pid"])
     return record
@@ -116,6 +127,88 @@ def _ratio_summary(ratios: list[float], seed: int, draws: int) -> dict:
         "ratios": ratios,
         "bootstrap_unit": "One freshly restarted DMA/kernel process pair; requests are not replicates",
     }
+
+
+def collect_model_cell(directory: Path, contract: dict, variant: str) -> tuple[dict, dict]:
+    """Read and validate one frozen model cell before admitting its successor."""
+    design = contract["paired_design"]
+    name = directory.name
+    data = collect_run(directory)
+    args = data["manifest"]["arguments"]
+    if (
+        args.get("engine") != "sglang"
+        or args.get("model") != contract["model"]
+        or args.get("workload") != "serial"
+        or args.get("lengths") != design["lengths"]
+        or args.get("repeats") != 5
+        or args.get("sglang_profile") is not False
+        or args.get("trace_transfers") is not False
+        or args.get("observation_mode") != "boundary"
+        or args.get("installed_artifact") is not True
+        or args.get("enforce_eager") is not True
+        or args.get("deterministic_inference") is not True
+        or data["manifest"]["git_commit"] != contract["source_commit"]
+        or data["manifest"]["git_diff"]
+        or data["manifest"]["kv_bytes_per_token"] != 262144
+        or data["manifest"]["packages"] != contract["model_packages"]
+        or data["manifest"].get("manager_binary_sha256")
+        != (None if variant == "native" else contract["manager_sha256"])
+        or args.get("gpu_tokens") != 16384
+        or args.get("prefill_tokens") != 8192
+        or args.get("host_gib") != 16
+        or args.get("output_tokens") != 16
+        or args.get("seed") != 20260920
+        or any(
+            row["profiling_mode"] != "off" or row["n"] != 5 or row["output_mismatches"]
+            for row in data["summary"]
+        )
+    ):
+        raise ValueError(f"Mismatched model/profiling contract: {name}")
+    samples = [json.loads(line) for line in (directory / "samples.jsonl").read_text().splitlines()]
+    for row in samples:
+        usage = row.get("usage", {})
+        if (
+            type(usage.get("prompt_tokens")) is not int
+            or usage["prompt_tokens"] != row["length"]
+            or type(usage.get("completion_tokens")) is not int
+            or usage["completion_tokens"] != args["output_tokens"]
+        ):
+            raise ValueError(f"Actual prompt/completion consumption differs: {name}")
+    engine = _service(directory, "engine")
+    if variant == "native":
+        if args.get("backend") != "native":
+            raise ValueError("Fresh output reference must be the native engine")
+    else:
+        backend = variant
+        if args.get("backend") != "orbitkv" or args.get("orbitkv_transfer_backend") != backend:
+            raise ValueError(f"Unconsumed kernel/DMA configuration: {name}")
+        manager = _service(directory, "manager")
+        if engine["stop_finished_mono_ns"] > manager["stop_started_mono_ns"]:
+            raise ValueError(f"Manager unavailable for engine unregistration: {name}")
+        for row in samples:
+            if row.get("profiling", {}).get("mode") != "off":
+                raise ValueError("Missing explicit unprofiled sample label")
+            if row["phase"] == "after_pressure":
+                tokens = row["length"] - 64
+                if (
+                    row["usage"].get("cached_tokens_details") != {"device": 0, "host": tokens}
+                    or row["manager_delta"].get("orbitkv_load_bytes_total") != tokens * 262144
+                ):
+                    raise ValueError(f"Actual restore coverage differs: {name}")
+            elif row["phase"] == "hbm_hit":
+                if row["usage"].get("cached_tokens_details") != {
+                    "device": row["length"] - 64,
+                    "host": 0,
+                } or row["manager_delta"].get("orbitkv_load_bytes_total", 0):
+                    raise ValueError(f"Resident phase is not pure native HBM: {name}")
+            elif row["phase"] == "cold":
+                if row["usage"].get("cached_tokens", 0) or row["manager_delta"].get(
+                    "orbitkv_load_bytes_total", 0
+                ):
+                    raise ValueError(
+                        f"Cold phase unexpectedly reused external/native state: {name}"
+                    )
+    return data, engine
 
 
 def analyze(root: Path, contract: dict) -> dict:
@@ -164,79 +257,17 @@ def analyze(root: Path, contract: dict) -> dict:
     runs = {}
     engines = {}
     for name in model_names:
-        directory = root / "cells" / name
-        data = collect_run(directory)
-        args = data["manifest"]["arguments"]
-        if (
-            args.get("engine") != "sglang"
-            or args.get("workload") != "serial"
-            or args.get("lengths") != design["lengths"]
-            or args.get("repeats") != 5
-            or args.get("sglang_profile") is not False
-            or args.get("trace_transfers") is not False
-            or args.get("observation_mode") != "boundary"
-            or args.get("installed_artifact") is not True
-            or args.get("enforce_eager") is not True
-            or args.get("deterministic_inference") is not True
-            or data["manifest"]["git_commit"] != contract["source_commit"]
-            or data["manifest"]["git_diff"]
-            or data["manifest"]["kv_bytes_per_token"] != 262144
-            or data["manifest"]["packages"].get("sglang") != "0.5.21"
-            or args.get("gpu_tokens") != 16384
-            or args.get("prefill_tokens") != 8192
-            or args.get("host_gib") != 16
-            or args.get("output_tokens") != 16
-            or args.get("seed") != 20260920
-            or any(
-                row["profiling_mode"] != "off" or row["n"] != 5 or row["output_mismatches"]
-                for row in data["summary"]
-            )
-        ):
-            raise ValueError(f"Mismatched model/profiling contract: {name}")
-        engine = _service(directory, "engine")
-        engines[name] = engine
-        if name == design["native_control"]:
-            if args.get("backend") != "native":
-                raise ValueError("Fresh output reference must be the native engine")
-        else:
-            backend = next(
+        variant = (
+            "native"
+            if name == design["native_control"]
+            else next(
                 variant
                 for pair in pairs
                 for variant in ("direct", "kernel")
                 if pair[variant] == name
             )
-            if args.get("backend") != "orbitkv" or args.get("orbitkv_transfer_backend") != backend:
-                raise ValueError(f"Unconsumed kernel/DMA configuration: {name}")
-            manager = _service(directory, "manager")
-            if engine["stop_finished_mono_ns"] > manager["stop_started_mono_ns"]:
-                raise ValueError(f"Manager unavailable for engine unregistration: {name}")
-            samples = [
-                json.loads(line) for line in (directory / "samples.jsonl").read_text().splitlines()
-            ]
-            for row in samples:
-                if row.get("profiling", {}).get("mode") != "off":
-                    raise ValueError("Missing explicit unprofiled sample label")
-                if row["phase"] == "after_pressure":
-                    tokens = row["length"] - 64
-                    if (
-                        row["usage"].get("cached_tokens_details") != {"device": 0, "host": tokens}
-                        or row["manager_delta"].get("orbitkv_load_bytes_total") != tokens * 262144
-                    ):
-                        raise ValueError(f"Actual restore coverage differs: {name}")
-                elif row["phase"] == "hbm_hit":
-                    if row["usage"].get("cached_tokens_details") != {
-                        "device": row["length"] - 64,
-                        "host": 0,
-                    } or row["manager_delta"].get("orbitkv_load_bytes_total", 0):
-                        raise ValueError(f"Resident phase is not pure native HBM: {name}")
-                elif row["phase"] == "cold":
-                    if row["usage"].get("cached_tokens", 0) or row["manager_delta"].get(
-                        "orbitkv_load_bytes_total", 0
-                    ):
-                        raise ValueError(
-                            f"Cold phase unexpectedly reused external/native state: {name}"
-                        )
-        runs[name] = data
+        )
+        runs[name], engines[name] = collect_model_cell(root / "cells" / name, contract, variant)
     if len({record["pid"] for record in engines.values()}) != 9:
         raise ValueError("Independent cells must restart their engine process")
     for name, data in runs.items():

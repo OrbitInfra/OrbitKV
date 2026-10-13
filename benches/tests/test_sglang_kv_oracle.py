@@ -1,5 +1,6 @@
 """CPU controls for byte coverage and retaining uncertain native ownership."""
 
+import errno
 import fcntl
 import hashlib
 import select
@@ -19,6 +20,50 @@ from benches.sglang_kv_oracle import (
     validate_model,
     verify_plane,
 )
+
+
+def test_failure_report_enospc_preserves_original_foreground_error(tmp_path, monkeypatch):
+    import benches.sglang_kv_oracle as oracle
+
+    config = tmp_path / "model.json"
+    config.write_text(
+        '{"architectures":["Qwen3ForCausalLM"],"num_hidden_layers":64,'
+        '"num_key_value_heads":8,"head_dim":128}'
+    )
+    original = RuntimeError("CPU-only foreground failure")
+
+    def fail_run(args):
+        raise original
+
+    def fail_report(path, value):
+        raise OSError(errno.ENOSPC, "CPU-only report failure")
+
+    monkeypatch.setattr(oracle, "run", fail_run)
+    monkeypatch.setattr(oracle, "_write", fail_report)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "sglang_kv_oracle",
+            "--model-config",
+            str(config),
+            "--length",
+            "4096",
+            "--backend",
+            "kernel",
+            "--manager-socket",
+            "unused",
+            "--manager-url",
+            "unused",
+            "--gpu-uuid",
+            "unused",
+            "--output",
+            str(tmp_path / "result"),
+        ],
+    )
+    with pytest.raises(RuntimeError) as caught:
+        oracle.main()
+    assert caught.value is original
 
 
 def test_actual_geometry_and_partial_generations_have_disjoint_destinations():
