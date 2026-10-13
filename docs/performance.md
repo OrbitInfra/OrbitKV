@@ -30,6 +30,33 @@ observations are not stable p99, confidence intervals, throughput, pure HBM-hit
 comparisons or performance promotion. Full logs retain native worker termination
 diagnostics. RDMA, contention, broader ranks and S3 reclamation are separate gates.
 
+## Two-host RDMA component measurements
+
+The separate two-H20 profile used the unchanged `37b48c50` runtime and pinned
+Mooncake `71973589`. Its complete 72-cell GPU-pointer matrix measured READ/WRITE,
+both payload directions, three restarted runs and one versus four allowed NICs.
+For a packed 32 MiB descriptor, the median of the six cell medians is
+41.3–44.9 GB/s. Splitting the same payload into 8,192 4 KiB descriptors with real
+4 KiB gaps gives 2.38–2.42 GB/s. Every transfer verifies the full registered
+64 MiB source and target with CPU/GPU byte oracles and sentinel gaps.
+
+These are warm binding-to-terminal measurements, including Python conversion,
+Rust polling and native work. They do not isolate fabric bandwidth, identify a
+TENT defect or establish four-NIC striping. Packed first-transfer samples are
+64.8–70.3 ms with the near-NIC allowlist and 157.8–194.8 ms with four allowed
+NICs, after context initialization and registration. Descriptor overhead and
+lazy setup require separate attribution before changing a production path.
+
+Thirteen Manager cells completed the remote DRAM → RDMA → consumer DRAM → HBM
+path. The first complete run's 32 MiB READ medians are 28.9–41.8 GB/s; restoration
+medians are 1.25–1.32 ms. The fixture's separate 10 ms query polling sleep is
+not transport latency or serving TTFT. The full 108-cell campaign stopped after
+85 cells because the next Manager failed a gRPC bind before payload admission.
+Its Manager comparison is incomplete, and platform zombie reap remains blocked
+after native resources were released. This stage has no LMCache/model comparison
+or support expansion. Full failures, per-cell clocks and provenance are retained
+in [the evidence archive](benchmark-evidence.md).
+
 ## Read results by scope
 
 | Question | Evidence and limits |

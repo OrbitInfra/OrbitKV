@@ -7,6 +7,20 @@ external directory or CI artifacts. Preserve unsuccessful runs and controls.
 Public documentation contains reviewed conclusions, their limits and links to
 versioned evidence; passing a correctness gate does not establish a speedup.
 
+## Current RDMA component archive
+
+The measurement-host archive is
+`/root/orbitkv-artifacts/s4-s5-tent-rdma-profile-20261012/`.
+It retains source/launch reviews, the unchanged native runtime manifests,
+all 72 GPU cells, 13 Manager cells, the failed next startup and all preparation
+controls. `14-descriptive-analysis/REPORT.md` records completed-prefix results
+and the invalid whole-campaign status; its SHA-256 is
+`c4fb29407f9f8d6243414dc4f0e522c18da564bb1745072cfe8360e8d40232c5`.
+`13-final-postflight-and-archive/` contains complete per-host owner logs, failed
+startup, quarantine, h0 etcd DB/WAL and before/after runtime checks. No original
+failed cell or frozen input has been replaced. This is a private local archive,
+not a public download or an independently complete Manager qualification.
+
 ## Run and retain an experiment
 
 Choose a new directory outside the source checkout for each run. Python harnesses

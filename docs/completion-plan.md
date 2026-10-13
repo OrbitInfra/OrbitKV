@@ -377,16 +377,36 @@ Actual signal statuses and native worker diagnostics are retained; normal parent
 completion does not establish S3 fault reclamation. See [performance](performance.md)
 and the external cohort/reviews linked from [PR #221](https://github.com/feichai0017/orbitkv/pull/221).
 
-**Next bounded delivery:** freeze separate two-H20 TENT RDMA measurements for
-remote-DRAM restoration and standalone GPU-pointer READ/WRITE. Separate cold
-setup, warm transfer, source control and final GPU readiness; match payloads,
-fragmentation, NIC selection and NUMA placement. Require source ownership,
-inherited resource leases, physical NIC counters, exact GPU bytes and actual
-terminal drain, with independent launch/outcome review. Then profile the SGLang
-8K restore/first-layer readiness boundary and contention before choosing a CUDA
-or scheduling change. Existing RDMA hardware is available; native GDS and
-physical failure-domain qualification remain separate. These measurements do
-not change any S2/S5 support claim or promote a kernel from component results.
+**RDMA component delivery, full campaign incomplete:** the independently
+launch-reviewed two-H20 `404b6b84` harness used unchanged `37b48c50` runtime bytes.
+All 72 GPU-pointer READ/WRITE cells completed across three restarted runs,
+both directions, packed/gapped payloads and NIC allowlists. The 13 completed
+Manager cells retain remote/H2D bytes, payload/sentinel oracles and source release.
+The 108-cell campaign stopped at cell 86 when the target Manager's gRPC bind
+failed with `AddrInUse`, before fixture or payload admission; no later cells
+were launched or substituted. The complete Manager comparison remains open.
+See [performance](performance.md) and [external evidence](benchmark-evidence.md).
+
+The failed harness also masked the startup error with a dead-endpoint drain
+error. Repair `c89ad887` preserves both errors, checks PID-owned HTTP/gRPC
+listeners and normally reaps pre-payload failed services. It is CPU-tested;
+the repair was not inserted into the frozen GPU campaign. Normal SIGTERM of
+the remaining idle Manager/private etcd released all native resources. The
+two CPU-only orphaned owners required forced termination, and platform PID 1
+did not reap five zombie records. All sixteen GPUs, owned UDS/listeners and
+resource FDs are empty, but all 32 quarantine markers remain. This does not
+satisfy complete actual-wait cleanup or close S2/S3/S5.
+
+**Next bounded delivery:** independently review the failed outcome and harness
+repair, resolve the platform process-reap quarantine or use a fresh authorized
+environment, then freeze a new full Manager-only profile. Select distinct
+service ports outside the actual ephemeral range and consume the owned-listener
+readiness gate. Retain cold/warm stages, exact bytes, source ownership and
+physical NIC counters. A new cohort cannot fill the missing cells of the old
+one. Then profile the SGLang 8K restore/first-layer boundary before choosing a
+CUDA or scheduling change. Native GDS and physical failure-domain qualification
+remain separate; component throughput does not promote a kernel or establish
+model-serving advantage.
 
 The initial 14-cell exploratory cohort stopped after three valid local vLLM
 cells: the released LMCache MP server completed its lifespan shutdown and
