@@ -31,7 +31,7 @@ branches at cutover. See [interface audit](engine-release-audit.md).
 | S0 | Complete | Handoff/skill migration merged in PR #190 |
 | S1 | Accepted at `ec3add9b` | Preserve external evidence and one queue |
 | S2 | Partial | DRAM/SSD isolation FAIL; sixteen owners UNQUALIFIED; support stays four owners. Cross-host cache HA and independent etcd failure domains remain unqualified |
-| S3 | Open | Physical termination proof, page generations, explicit registration and crash reclamation |
+| S3 | Implementation partial; qualification open | Conservative native failure retention has limited code/CPU acceptance at `27f1cb1b`; physical termination proof, installed GPU/adapter gates, page generations, explicit registration and crash reclamation remain open |
 | S4 | Partial | Measured copy/SSD/control improvements exist; mixed contention, complete serving gains and S3-dependent faults remain open |
 | S5 | Partial | Official dense cache/restart and scoped deployment profiles accepted; public lifecycle, complete hybrid recovery, native P/D faults and broader topology remain open |
 | S6 | Partial | Observations and guarded limited choices exist; one consumed route/admission planner remains open |
@@ -213,7 +213,8 @@ transfer/sys C ABI, process channel and the consumed adapter registrations.
 
 S3 may consume the independently accepted metadata correctness contracts while
 the S2 isolation and sixteen-owner gates remain failed/unqualified. The first
-native-lifetime candidate is a conservative retention boundary, pending review:
+native-lifetime substage has independent acceptance at `27f1cb1b` for its
+conservative code/CPU retention boundary only:
 native failed/canceled/timeout/invalid/unknown statuses cannot return caller
 buffers or release the source completion owner. A wrapper deadline may return
 its original error only after every task subsequently completes. Poll-time
@@ -221,12 +222,20 @@ transport failover is disabled because a successful replacement attempt does
 not establish termination of the preceding attempt. Retained work keeps its
 batch slot and shares a 32 MiB per-engine native-request descriptor budget;
 existing pool/query/export budgets continue to own physical allocations.
+Post-submit Rust unwinds are caught without dropping the outer request,
+admission, caller-buffer or source-completion owners. The prior `9b5825d4`
+candidate remains rejected for its unwind hole; its built wheel is archived.
 
 The fixed TENT C ABI accepts deferred batch free and exposes no independently
 qualified physical-failure fence. Physical RDMA/CUDA failure reclamation,
 permanent requester-loss recovery and final installed-GPU/adapter gates remain
 open. Latest upstream inspection and all native controls are archived under
-`/root/orbitkv-artifacts/s3-termination-20261013/substage-001-audit/`.
+`/root/orbitkv-artifacts/s3-termination-20261013/`. The corrected CUDA-13 wheel
+build/isolated import passes, but the old H20 installed host-buffer payload
+control fails: native COMPLETED is reported while the sentinel is unchanged
+when CUDAPlatform::copy cannot use a device. This is not payload or hardware
+acceptance. Preserve that failed gate; promotion needs a working CUDA allocation
+and independently accepted installed payload and adapter/fault gates.
 
 The old three-host readiness quarantine is a separate, scoped audit case. Its
 query-source unregister succeeded; the client was deliberately closed before
