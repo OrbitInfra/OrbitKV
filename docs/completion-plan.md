@@ -204,6 +204,12 @@ acceptance and installed-Manager readiness remain open. The old missing-metric
 readiness/quarantine evidence is preserved. Harness drain gates must reject
 missing applicable ownership/SSD metrics rather than defaulting them to zero.
 
+The three-host harness integration requires complete finite ownership/SSD drain
+series and explicitly validated frozen configuration, with real subprocess
+PID/start-tick and non-killing cleanup controls. This implementation remains
+unqualified for launch until exact runtime inputs, current resources and
+independent launch review are accepted. Preserve legacy cohort failures.
+
 **Next S2 delivery:** inspect the actual current handoff, finish the authorized
 runtime/proxy/harness remediation, freeze inputs and obtain launch review. Check
 direct etcd reachability without inherited proxy interference and complete native
