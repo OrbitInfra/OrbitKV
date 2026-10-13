@@ -13,22 +13,26 @@ import pytest
 from benches.three_host_etcd import integrity
 
 
-def execute(root, source, *, prefix=""):
+def execute(root, source, *, prefix="", executable=sys.executable):
     # Runtime inventory controls need a small deterministic stdlib root;
     # real three-host readiness separately checks each complete host runtime.
     stdlib = root / "control-stdlib"
     stdlib.mkdir(exist_ok=True)
     (stdlib / "control.py").write_text("VALUE = 1\n")
+    site_root = Path(__import__("requests").__file__).parent.parent
     setup = (
+        f"import sys; sys.path[:0]=[{str(Path.cwd())!r},{str(site_root)!r}]; "
         "import sysconfig; original_path=sysconfig.get_path; "
         f"sysconfig.get_path=lambda name,*a,**k: {str(stdlib)!r} if name=='stdlib' else original_path(name,*a,**k); "
     )
     return subprocess.run(
         [
-            sys.executable,
+            executable,
             "-B",
             "-E",
             "-s",
+            "-S",
+            "-P",
             "-X",
             f"pycache_prefix={root / '.runtime-bytecode'}",
             "-c",
@@ -148,8 +152,12 @@ def test_launcher_runtime_mismatch_creates_no_child_or_ownership(frozen):
             "-B",
             "-E",
             "-s",
+            "-S",
+            "-P",
             "-X",
             f"pycache_prefix={frozen / '.runtime-bytecode'}",
+            "-c",
+            f"import sys,runpy; sys.path[:0]=[{str(Path(__import__('requests').__file__).parent.parent)!r},{str(inputs)!r}]; runpy.run_path(sys.argv.pop(1),run_name='__main__')",
             str(inputs / "launch_agent.py"),
             "--root",
             str(frozen),
@@ -195,3 +203,47 @@ def test_inherited_bytecode_is_bypassed_and_task_cache_is_rejected(frozen):
     rejected = execute(frozen, VERIFY)
     assert rejected.returncode != 0
     assert "bytecode/environment isolation differs" in rejected.stderr
+
+
+def test_unreviewed_site_startup_is_disabled_before_verification(frozen):
+    virtual = frozen / "unreviewed-venv"
+    made = subprocess.run(
+        [sys.executable, "-m", "venv", "--system-site-packages", "--without-pip", str(virtual)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert made.returncode == 0, made.stderr
+    site = next((virtual / "lib").glob("python*/site-packages"))
+    marker = frozen / "unreviewed-startup"
+    (site / "unreviewed.pth").write_text(
+        f"import pathlib; pathlib.Path({str(marker)!r}).write_text('unfrozen code ran')\n"
+    )
+    command = [str(virtual / "bin/python"), "-B", "-E", "-s", "-c", "print('started')"]
+    inherited = subprocess.run(command, capture_output=True, text=True, timeout=5, check=False)
+    assert inherited.returncode == 0 and marker.exists()
+    marker.unlink()
+    isolated = execute(frozen, VERIFY, executable=str(virtual / "bin/python"))
+    assert isolated.returncode == 0, isolated.stderr
+    assert not marker.exists()
+
+
+def test_optional_transitive_import_is_blocked_before_execution(frozen):
+    optional = frozen / "optional"
+    optional.mkdir()
+    marker = frozen / "unfrozen-import"
+    (optional / "simplejson.py").write_text(
+        f"from json import *\nopen({str(marker)!r},'w').write('executed')\n"
+    )
+    (frozen / "inputs/SHA256SUMS").write_text("")
+    script = (
+        "import sys,json,pathlib; from benches.three_host_etcd.integrity import install_import_guard; "
+        "r=pathlib.Path(sys.argv[1]); s=json.loads((r/'inputs/node.runtime.json').read_text()); "
+        "install_import_guard(r,s); sys.path.insert(0,str(r/'optional')); "
+        "import simplejson"
+    )
+    rejected = execute(frozen, script)
+    assert rejected.returncode != 0
+    assert "unfrozen runtime import: simplejson" in rejected.stderr
+    assert not marker.exists()

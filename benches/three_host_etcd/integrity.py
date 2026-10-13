@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import importlib.abc
+import importlib.machinery
 import json
 import os
 import sys
@@ -70,6 +72,13 @@ def verify_inputs(root: Path, approved_manifest_sha256: str) -> dict[str, str]:
     missing = required - entries.keys()
     if missing:
         raise RuntimeError(f"input manifest omits imported helpers: {sorted(missing)}")
+    observed = {
+        path.relative_to(root / "inputs").as_posix()
+        for path in (root / "inputs").rglob("*")
+        if path.is_file() and path.name != "SHA256SUMS" and "__pycache__" not in path.parts
+    }
+    if observed != set(entries):
+        raise RuntimeError("input manifest file inventory differs")
     return entries
 
 
@@ -83,13 +92,27 @@ def process_runtime_snapshot() -> dict:
     files = {str(executable): sha256(executable)}
     links = {}
     origins = {}
+    imports = {}
     roots = [stdlib]
     for name in PROCESS_MODULES:
         module = importlib.import_module(name)
         origin = Path(module.__file__).resolve(strict=True)
         origins[name] = str(origin)
         roots.append(origin.parent)
+    for name, module in list(sys.modules.items()):
+        origin = getattr(module, "__file__", None)
+        if origin is None:
+            continue
+        path = Path(origin).resolve(strict=True)
+        imports[name] = str(path)
+        if "site-packages" in path.parts or "dist-packages" in path.parts:
+            top = importlib.import_module(name.split(".")[0])
+            top_path = Path(top.__file__).resolve(strict=True)
+            roots.append(top_path.parent if top_path.name == "__init__.py" else top_path)
     for root in roots:
+        if root.is_file():
+            files[str(root)] = sha256(root)
+            continue
         for directory, children, names in os.walk(root):
             children[:] = [
                 name
@@ -117,6 +140,7 @@ def process_runtime_snapshot() -> dict:
         "version": sys.version,
         "stdlib": str(stdlib),
         "origins": origins,
+        "imports": imports,
         "files": files,
         "links": links,
         "mapped_files": sorted(mappings),
@@ -130,8 +154,22 @@ def process_python(root: Path, node_name: str) -> list[str]:
         "-B",
         "-E",
         "-s",
+        "-S",
+        "-P",
         "-X",
         f"pycache_prefix={root / '.runtime-bytecode'}",
+        "-c",
+        (
+            "import sys,json,pathlib,runpy; root=pathlib.Path(sys.argv.pop(1)); "
+            "name=sys.argv.pop(1); snapshot=json.loads((root/'inputs'/(name+'.runtime.json')).read_text()); "
+            "sys.path[:0]=[str(root/'inputs'),*sorted({str(pathlib.Path(p).parent.parent) for p in snapshot['origins'].values()})]; "
+            "import integrity; integrity.install_import_guard(root,snapshot); "
+            "target=sys.argv.pop(1); "
+            "code=sys.argv.pop(1) if target=='-c' else None; "
+            "exec(code) if code is not None else runpy.run_path(target,run_name='__main__')"
+        ),
+        str(root),
+        node_name,
     ]
 
 
@@ -145,6 +183,8 @@ def verify_process_runtime(root: Path, settings: dict, node_name: str | None = N
         or not sys.flags.dont_write_bytecode
         or not sys.flags.ignore_environment
         or not sys.flags.no_user_site
+        or not sys.flags.no_site
+        or not sys.flags.safe_path
         or bytecode.exists()
         or bytecode.is_symlink()
     ):
@@ -159,7 +199,7 @@ def verify_process_runtime(root: Path, settings: dict, node_name: str | None = N
     snapshot = json.loads((root / "inputs" / f"{node_name}.runtime.json").read_text())
     if (
         set(snapshot)
-        != {"python", "version", "stdlib", "origins", "files", "links", "mapped_files"}
+        != {"python", "version", "stdlib", "origins", "imports", "files", "links", "mapped_files"}
         or set(snapshot["origins"]) != set(PROCESS_MODULES)
         or not snapshot["files"]
         or not snapshot["mapped_files"]
@@ -173,6 +213,20 @@ def verify_process_runtime(root: Path, settings: dict, node_name: str | None = N
         if str(Path(module.__file__).resolve(strict=True)) != origin:
             raise RuntimeError(f"process runtime import origin differs: {name}")
     current = process_runtime_snapshot()
+    input_manifest = root / "inputs/SHA256SUMS"
+    input_origins = (
+        {
+            str((root / "inputs" / line.partition("  ")[2]).resolve(strict=True))
+            for line in input_manifest.read_text().splitlines()
+        }
+        if input_manifest.exists()
+        else set()
+    )
+    for name, origin in current["imports"].items():
+        if origin not in input_origins and (
+            name not in snapshot["imports"] or snapshot["imports"][name] != origin
+        ):
+            raise RuntimeError(f"process transitive import differs: {name}: {origin}")
     expected_files = set(snapshot["files"]) - set(snapshot["mapped_files"])
     current_files = set(current["files"]) - set(snapshot["mapped_files"])
     if current_files != expected_files:
@@ -194,3 +248,25 @@ def verify_process_runtime(root: Path, settings: dict, node_name: str | None = N
         "origins": snapshot["origins"],
         "mapped_files": sorted(observed),
     }
+
+
+def install_import_guard(root: Path, snapshot: dict) -> None:
+    """Fence optional imports before any HTTP/helper code executes."""
+    approved = dict(snapshot["files"])
+    for line in (root / "inputs/SHA256SUMS").read_text().splitlines():
+        digest, _, name = line.partition("  ")
+        approved[str((root / "inputs" / name).resolve(strict=True))] = digest
+
+    class FrozenImports(importlib.abc.MetaPathFinder):
+        def find_spec(self, fullname, path=None, target=None):
+            spec = importlib.machinery.PathFinder.find_spec(fullname, path, target)
+            if spec is None or spec.origin in (None, "built-in", "frozen"):
+                return spec
+            origin = str(Path(spec.origin).resolve(strict=True))
+            if origin not in approved:
+                raise ModuleNotFoundError(f"unfrozen runtime import: {fullname}: {origin}")
+            if sha256(Path(origin)) != approved[origin]:
+                raise RuntimeError(f"runtime import bytes differ: {fullname}")
+            return spec
+
+    sys.meta_path.insert(0, FrozenImports())

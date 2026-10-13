@@ -115,7 +115,8 @@ the actual interpreter after importing the node/network/lock/controller modules.
 This includes the executable, standard library, complete HTTP dependency files,
 actual import origins, links and mapped native files. All resource-owning helpers
 consume it before launch; missing snapshots, changed files and shadow imports
-fail closed. Start the controller with the frozen executable, `-B -E -s` and
+fail closed. Start the controller with `integrity.process_python(stage, node)`:
+the frozen executable, `-B -E -s -S -P` and
 `-X pycache_prefix=<stage>/.runtime-bytecode`;
 remote Python commands use those same flags. These flags disable Python environment
 and user-site import injection while retaining frozen script imports. The task
@@ -132,3 +133,12 @@ are inherited by embedded Manager Python and checked against `/proc/<pid>/enviro
 before admitting GPU operations. Keep the prefix nonexistent throughout the run.
 Run `test_three_host_consumer_bytecode.py` to reproduce the stale-cache rejection.
 Actual embedded interpreter and installed GPU readiness remain hardware gates.
+The bootstrap inserts only the frozen HTTP dependency roots and stage inputs;
+automatic `site`, `.pth` and cwd imports are disabled. A private system-site venv
+control proves that unfrozen `.pth` code runs under the old flags, while the
+reviewed bootstrap bypasses it and validates the runtime before resources.
+
+Snapshot transitive imports after loading the actual controller and helpers.
+An import guard checks origins and bytes against runtime/input manifests before
+optional Python modules execute. Extra input files are rejected as inventory
+mismatches; an unlisted `simplejson` cannot become the HTTP JSON backend.
