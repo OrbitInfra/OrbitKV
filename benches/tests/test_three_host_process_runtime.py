@@ -269,15 +269,19 @@ def test_actual_bootstrap_rejects_extra_stdlib_shadow_before_its_execution(froze
     manifest.write_text(
         "".join(f"{integrity.sha256(p)}  {p.name}\n" for p in sorted(inputs.iterdir()))
     )
+    approved = integrity.sha256(manifest)
     marker = frozen / "stdlib-shadow-executed"
     (inputs / "hashlib.py").write_text(f"open({str(marker)!r},'w').write('executed')\n")
-    result = subprocess.run(
-        [*integrity.process_python(frozen, "node"), "-c", "print('unexpected')"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    assert result.returncode != 0
-    assert "input manifest file inventory differs" in result.stderr
+    with pytest.raises(RuntimeError, match="file inventory differs"):
+        integrity.process_python(frozen, "node", approved)
     assert not marker.exists()
+    (inputs / "hashlib.py").unlink()
+    helper = inputs / "integrity.py"
+    helper.write_text(helper.read_text() + "\n# unreviewed modified helper\n")
+    manifest.write_text(
+        "".join(
+            f"{integrity.sha256(p)}  {p.name}\n" for p in sorted(inputs.iterdir()) if p != manifest
+        )
+    )
+    with pytest.raises(RuntimeError, match="independently approved digest"):
+        integrity.process_python(frozen, "node", approved)

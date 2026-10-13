@@ -147,7 +147,8 @@ def process_runtime_snapshot() -> dict:
     }
 
 
-def process_python(root: Path, node_name: str) -> list[str]:
+def process_python(root: Path, node_name: str, approved_manifest_sha256: str) -> list[str]:
+    verify_inputs(root, approved_manifest_sha256)
     snapshot = json.loads((root / "inputs" / f"{node_name}.runtime.json").read_text())
     return [
         snapshot["python"],
@@ -180,7 +181,7 @@ def process_python(root: Path, node_name: str) -> list[str]:
         ),
         str(root),
         node_name,
-        sha256(root / "inputs/SHA256SUMS"),
+        approved_manifest_sha256,
     ]
 
 

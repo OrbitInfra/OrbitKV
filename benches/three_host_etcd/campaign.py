@@ -261,7 +261,10 @@ class Campaign:
         cleanup: bool = False,
     ) -> subprocess.CompletedProcess:
         if "process_qualification" in self.settings and command[0] == "python3":
-            command = [*process_python(self.root, node["name"]), *command[1:]]
+            command = [
+                *process_python(self.root, node["name"], self.approved_input_manifest_sha256),
+                *command[1:],
+            ]
         if node["ssh"]:
             argv = [
                 "ssh",

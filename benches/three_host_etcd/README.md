@@ -115,7 +115,8 @@ the actual interpreter after importing the node/network/lock/controller modules.
 This includes the executable, standard library, complete HTTP dependency files,
 actual import origins, links and mapped native files. All resource-owning helpers
 consume it before launch; missing snapshots, changed files and shadow imports
-fail closed. Start the controller with `integrity.process_python(stage, node)`:
+fail closed. Start the controller with
+`integrity.process_python(stage, node, independently_approved_manifest_sha256)`:
 the frozen executable, `-B -E -s -S -P` and
 `-X pycache_prefix=<stage>/.runtime-bytecode`;
 remote Python commands use those same flags. These flags disable Python environment
@@ -134,3 +135,6 @@ Snapshot transitive imports after loading the actual controller and helpers.
 An import guard checks origins and bytes against runtime/input manifests before
 optional Python modules execute. Extra input files are rejected as inventory
 mismatches; an unlisted `simplejson` cannot become the HTTP JSON backend.
+The approved digest is passed through controller and launch owners; the command
+builder validates it before reading the interpreter snapshot and never approves
+a manifest by recalculating its current hash.
