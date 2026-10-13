@@ -254,6 +254,13 @@ connections. Its historical healthy CUDA gates remain distinct from the old
 unusable H20. No new formal cells or hardware qualification have started, and
 old resource locks/quarantines are not released.
 
+A subsequent TCP worker candidate consumes only merged upstream #4001's
+callback ownership and exception-to-FAILED subset. Real CPU worker controls
+pause callback execution across batch free and inject a real staging exception;
+old-library failures are preserved. Independent acceptance, installed package
+and hardware qualification remain separate. Delayed batch/address reuse and
+physical termination are not established by this candidate.
+
 The old three-host readiness quarantine is a separate, scoped audit case. Its
 query-source unregister succeeded; the client was deliberately closed before
 the missing metric exception, and partial cleanup then retried that closed

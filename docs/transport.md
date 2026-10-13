@@ -445,3 +445,9 @@ and has no foreground discovery RPC. Source grants/completions retain gRPC;
 TENT retains payload READ/WRITE. The custom native metadata bus is outside the
 delivery plan. See the [communication plan](completion-plan.md#s4--finish-communication-execution-and-demonstrate-gains) and
 [peer-control boundary](peer-control.md).
+
+The next TCP worker candidate owns its callback and batch ID before terminal
+publication, then avoids task access after the state becomes visible. A staging
+exception is converted to FAILED and remains subject to OrbitKV's permanent
+failure retention. CPU callback/exception controls are separate from delayed
+batch notification, address reuse and physical transport termination gates.

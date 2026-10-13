@@ -71,3 +71,14 @@ completed copy retains the worker; the completed stream may have been returned
 only after successful synchronization. Copy/synchronization failures keep both
 stream and scratch. Focused controls cover aggregate bytes, exact context,
 registered host/managed classification and repeated admission release.
+
+`tcp-worker-terminal-owner.patch` consumes only the TCP worker subset of merged
+upstream [#4001](https://github.com/kvcache-ai/Mooncake/pull/4001), merge
+`2ccf4cb6c23609aa3cb84176c09da8da9e0417f0`. The worker owns its callback and
+batch ID before publishing terminal status and never accesses its task after
+publication. Exceptions from actual worker copy staging become FAILED instead
+of remaining PENDING. The existing failed-state retention remains mandatory.
+Permission, merge-accounting and notification-interval changes from that PR
+are not imported by this subset. Use `run_tcp_worker_owner.py` for the real CPU
+worker/callback control and old-library negative. This does not establish
+RDMA/CUDA quiescence or delayed-notification/page reuse safety.
