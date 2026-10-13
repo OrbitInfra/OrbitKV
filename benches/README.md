@@ -8,6 +8,12 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 controller. It forwards those already-open regular-file descriptors to both
 the Manager and engine; the controller still owns admission, quarantine and
 final physical cleanup. Compiler/JIT caches are private to each output cell.
+After a completed workload or foreground failure, `single_node` stops the GPU
+engine while the cache service remains available for context unregistration,
+then stops that service. Failed startup follows service-local cleanup.
+This order does not establish CUDA IPC retirement or native-child/crash drain.
+Cleanup receipts retain monotonic stop boundaries for comparing service order;
+those process timestamps are not CUDA completion events.
 LMCache MP's Uvicorn lifespan shutdown may re-emit the requested SIGTERM and
 return `-15`. Only this explicit protocol accepts that literal status, after
 checking fresh, ordered cache/HTTP shutdown logs, the exact service PID, actual
@@ -559,6 +565,19 @@ All outputs and cache-source evidence are retained, including mixed hits,
 misses, and generated-text differences. A startup/request failure writes
 `failure.json` and is not a latency result. The serial workload measures TTFT;
 it does not establish concurrent goodput or production tail latency.
+
+For SGLang restore diagnosis, add `--sglang-profile` to capture CPU/CUDA traces
+only around each serial `after_pressure` request through the official
+`/start_profile` and `/stop_profile` endpoints. The profiler uses no engine-file
+patch. Every profiled sample records its mode, HTTP start/stop receipts and
+compressed trace hashes under the external output directory. Missing traces or
+traces without GPU kernels invalidate the cell. Stop is attempted even after
+an ambiguous start failure; normal engine/Manager cleanup remains mandatory.
+Keep profiler-enabled cells separate from unprofiled timing controls: profiler
+activity can perturb CUDA submission and TTFT. JSON/CSV summaries and stdout
+retain the profiling mode; mixed modes within a phase and inconsistent sample/
+manifest declarations are rejected. Compare actual restored tokens,
+output, budgets and native drain before attributing any restore-stage gap.
 
 ## SSD restoration
 

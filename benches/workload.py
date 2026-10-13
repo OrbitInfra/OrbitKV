@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import random
@@ -11,6 +12,7 @@ from argparse import Namespace
 import requests
 
 from .metrics import cache_source, measure, metrics, workload_phases
+from .sglang_profile import sglang_profile
 
 
 def generate(url: str, engine: str, model: str, tokens: list[int], output_len: int) -> dict:
@@ -170,18 +172,29 @@ def run_workload(args: Namespace, base_url: str, manager_url: str | None) -> lis
                         backend=args.backend,
                         observation_mode=args.observation_mode,
                     ) as measurement:
-                        result = generate(
-                            base_url,
-                            args.engine,
-                            str(args.model),
-                            tokens,
-                            args.output_tokens,
+                        profiling = {"mode": "off"}
+                        profile = (
+                            sglang_profile(
+                                base_url,
+                                args.output / "profiles" / f"{length}-{repeat}-{phase}",
+                            )
+                            if args.sglang_profile and phase == "after_pressure"
+                            else contextlib.nullcontext(profiling)
                         )
+                        with profile as profiling:
+                            result = generate(
+                                base_url,
+                                args.engine,
+                                str(args.model),
+                                tokens,
+                                args.output_tokens,
+                            )
                     result.update(
                         length=length,
                         repeat=repeat,
                         phase=phase,
                         preparation=preparation,
+                        profiling=profiling,
                         **measurement,
                     )
                     texts.append(result["text"])
@@ -191,7 +204,9 @@ def run_workload(args: Namespace, base_url: str, manager_url: str | None) -> lis
                     output.write(json.dumps(result, allow_nan=False) + "\n")
                     output.flush()
                     print(
-                        f"{args.engine}/{args.backend} len={length} repeat={repeat} {phase}: TTFT={result['ttft_ms']:.2f}ms usage={result['usage']}",
+                        f"{args.engine}/{args.backend} len={length} repeat={repeat} {phase} "
+                        f"profiling={profiling['mode']}: TTFT={result['ttft_ms']:.2f}ms "
+                        f"usage={result['usage']}",
                         flush=True,
                     )
     return samples

@@ -7,6 +7,29 @@ external directory or CI artifacts. Preserve unsuccessful runs and controls.
 Public documentation contains reviewed conclusions, their limits and links to
 versioned evidence; passing a correctness gate does not establish a speedup.
 
+## Current SGLang restore diagnosis archive
+
+The measurement-host archive is
+`/root/orbitkv-artifacts/s5-sglang-restore-profile-20261012/`.
+`09-oldorder-freeze/` binds the `5b2089a5` harness and unchanged `37b48c50`
+installed runtime; `11-oldorder-cohort/` retains all 180 requests, 20 traces,
+control receipts, literal waits and raw IPC/native-child diagnostics. Its complete
+804-file archive SHA-256 is
+`ab663366a88edcd6b1a10ec454277a76b843583040eafb1433c3bb2f9467105d`.
+`12-oldorder-trace-analysis/` retains descriptive reconstruction and clock limits;
+`13-oldorder-independent-outcome-review/` seals independent acceptance.
+
+The earlier 8K-only collection and invalid CPU preparations remain immutable in
+the same archive. The original-order follow-up preserves historical prompt/output
+identity without pooling historical timing. Source-only reviews and CPU controls
+for the rejected cache-first shutdown proposal remain in `14-cleanup-order-gates/`
+through `16-cleanup-boundary-source-review/`. The independently launch-reviewed
+`17-cleanup-smoke-freeze/` fails at its second cell because SGLang still needs the
+stopped Manager for unregistration; its complete failed archive remains in
+`19-cleanup-smoke-cohort/`. No later cell ran or replaced that failure.
+This is a private host archive; one candidate collection does not promote a
+production default, establish a serving advantage or close S3 lifetime gates.
+
 ## Current RDMA component archive
 
 The complete new Manager-only collection is retained at

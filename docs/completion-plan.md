@@ -413,13 +413,35 @@ lifetime limit. This collection does not repair the old cohort, expand support,
 qualify p99 or establish serving gains. See
 [performance](performance.md) and [external evidence](benchmark-evidence.md).
 
-**Next bounded delivery:** profile the SGLang 8K restore/first-layer boundary
-against the released HiCache control before
-choosing a CUDA or scheduling change. Preserve model/output, equal host-hit
-coverage, layout, memory budgets, engine pins and normal/fault lifetime limits.
-Use KDA for a demonstrated GPU copy bottleneck with the actual consumed layout;
-representative copy wins cannot select a production default. Native GDS and
-physical failure-domain qualification remain separate. S2/S4/S5 stay Partial.
+**Accepted bounded delivery:** the `5b2089a5` SGLang original-order restore
+diagnosis completes 180 requests and 20 public CPU/CUDA traces with unchanged
+`37b48c50` native bytes. Independent review reproduces the 8K DMA gap and retains
+the existing KernelBackend for further KDA validation: its TTFT is 10.2% lower
+at 8K and 0.6% higher at 4K in this single collection. Fragmented DMA activity
+and later forward admission support submission-path investigation; profiler
+clocks and missing native CPU API events do not prove the unprofiled cause.
+Exact outputs, restore-byte accounting, immutable artifacts and physical
+postflight pass; full KV byte controls remain a candidate promotion gate.
+Six native child `-9` exits, three IPC warnings and historical missing waits remain limits.
+See [performance](performance.md) and [external evidence](benchmark-evidence.md).
+
+The separate `6819edb0` cache-first shutdown smoke stops at its second cell:
+SGLang context unregistration requires a live Manager and logs `Broken pipe`
+after that Manager exits. The source-only ordering proposal is rejected;
+the benchmark retains engine-before-cache shutdown and neutral host monotonic
+stop boundaries. Native IPC retirement needs its own consumed protocol proof,
+not reordered processes or relaxed error guards. The failed freeze and all
+unlaunched cells are retained separately; no lifetime/support gate is promoted.
+
+**Next bounded delivery:** validate the retained kernel direction in at least
+three fresh opposite-order independent direct/kernel pairs, retaining 4K and 8K,
+full GPU byte/sentinel controls, exact outputs and cleanup. Keep profiling and
+diagnostic tracing off for matched performance clocks. Select new CUDA/copy or
+scheduling code only after its demonstrated cost and correctness contract are
+accepted through KDA. Preserve all-enqueued admission, event generations, source
+ownership and physical drain; keep CUDA in standalone files. Representative
+copy wins cannot select a production default. Native GDS and physical failure-domain
+qualification remain separate. S2/S4/S5 stay Partial.
 
 The initial 14-cell exploratory cohort stopped after three valid local vLLM
 cells: the released LMCache MP server completed its lifespan shutdown and
