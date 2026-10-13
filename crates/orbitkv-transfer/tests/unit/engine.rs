@@ -355,6 +355,12 @@ fn native_failures_hold_caller_buffers_and_never_call_free() {
         "1".into(),
         "retained_native_tcp_rejection".into(),
     ));
+    cases.push((
+        "engine::tests::native_panic_child",
+        "ORBITKV_TEST_NATIVE_PANIC",
+        "1".into(),
+        "panic_injected_after_submit".into(),
+    ));
     for (test, environment, value, expected) in cases {
         let mut child = Command::new(std::env::current_exe().expect("test binary"))
             .args(["--exact", test, "--nocapture"])
@@ -382,6 +388,7 @@ fn native_failures_hold_caller_buffers_and_never_call_free() {
                 if line.contains("native_free_called")
                     || line.contains("caller_buffers_dropped")
                     || line.contains("native_call_returned")
+                    || line.contains("source_release_sent")
                 {
                     return Err(format!("premature release: {line}"));
                 }
@@ -397,6 +404,7 @@ fn native_failures_hold_caller_buffers_and_never_call_free() {
                 line.contains("native_free_called")
                     || line.contains("caller_buffers_dropped")
                     || line.contains("native_call_returned")
+                    || line.contains("source_release_sent")
             }) {
                 return Err("released while native termination unproven".to_string());
             }
@@ -409,6 +417,58 @@ fn native_failures_hold_caller_buffers_and_never_call_free() {
         reader.join().expect("join control stdout reader");
         assert!(evidence.is_ok(), "case={test}/{value}: {evidence:?}");
     }
+}
+
+#[test]
+fn native_panic_child() {
+    if std::env::var_os("ORBITKV_TEST_NATIVE_PANIC").is_none() {
+        return;
+    }
+    struct CallerBuffers;
+    impl Drop for CallerBuffers {
+        fn drop(&mut self) {
+            println!("caller_buffers_dropped");
+        }
+    }
+    struct SourceCompletion;
+    impl Drop for SourceCompletion {
+        fn drop(&mut self) {
+            println!("source_release_sent");
+        }
+    }
+    let _buffers = CallerBuffers;
+    let _source = SourceCompletion;
+    let admission = Mutex::new(BatchAdmission::default());
+    let mut permit = BatchAdmission::acquire(&admission, 1, 4096).unwrap();
+    let requests = [native::TransferStatus {
+        status: STATUS_FAILED,
+        transferred_bytes: 0,
+    }];
+    contain_native_unwind(|| {
+        println!("panic_injected_after_submit");
+        let _ = drain_batch(
+            1,
+            Duration::ZERO,
+            Ok(()),
+            |_| {
+                Ok(native::TransferStatus {
+                    status: requests[0].status,
+                    transferred_bytes: 0,
+                })
+            },
+            |_| Ok(()),
+            || panic!("no failed batch bytes"),
+            || {
+                println!("native_free_called");
+                true
+            },
+            |_, _, _| {
+                permit.retain();
+                panic!("injected logging/retention panic");
+            },
+        );
+    });
+    println!("native_call_returned");
 }
 
 #[test]

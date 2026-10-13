@@ -354,10 +354,6 @@ impl TransferEngine {
             })
             .transpose()?;
         let segment = self.open_segment(remote_segment)?;
-        let batch = unsafe { native::allocate_batch(self.native, slices.len()) };
-        if batch == INVALID_BATCH {
-            return Err(MooncakeError::InvalidBatch);
-        }
         let mut requests = slices
             .iter()
             .map(|slice| native::TransferRequest {
@@ -370,64 +366,70 @@ impl TransferEngine {
                 transport_hint: 0,
             })
             .collect::<Vec<_>>();
-        let submitted = match notification.as_ref() {
-            Some((name, message)) => check("tent_submit_notif", unsafe {
-                native::submit_with_notify(
-                    self.native,
-                    batch,
-                    &mut requests,
-                    name.as_ptr(),
-                    message.as_ptr(),
-                )
-            }),
-            None => check("tent_submit", unsafe {
-                native::submit(self.native, batch, &mut requests)
-            }),
-        };
-        drain_batch(
-            slices.len(),
-            timeout,
-            submitted,
-            |task| {
-                let mut status = native::TransferStatus {
-                    status: STATUS_WAITING,
-                    transferred_bytes: 0,
-                };
-                check("getTransferStatus", unsafe {
-                    native::transfer_status(self.native, batch, task, &mut status)
-                })?;
-                Ok(status)
-            },
-            |task| {
-                check("tent_cancel_task", unsafe {
-                    native::cancel_task(self.native, batch, task)
-                })
-            },
-            || {
-                let mut status = native::TransferStatus {
-                    status: STATUS_WAITING,
-                    transferred_bytes: 0,
-                };
-                check("tent_overall_status", unsafe {
-                    native::batch_status(self.native, batch, &mut status)
-                })?;
-                if status.status != STATUS_COMPLETED {
-                    return Err(MooncakeError::TransferFailed {
-                        task: 0,
-                        state: status.status,
-                    });
-                }
-                Ok(status.transferred_bytes as usize)
-            },
-            || unsafe { native::free_batch(self.native, batch) == 0 },
-            |task, state, cause| {
-                admission.retain();
-                log::error!(
-                    "TENT termination unproven; retaining native batch and caller buffers: batch={batch} task={task} state={} first_failure={cause:?} descriptor_bytes={descriptor_bytes}",
-                    native_status_name(state),
-                );
-            },
-        )
+        let batch = unsafe { native::allocate_batch(self.native, slices.len()) };
+        if batch == INVALID_BATCH {
+            return Err(MooncakeError::InvalidBatch);
+        }
+        contain_native_unwind(|| {
+            let submitted = match notification.as_ref() {
+                Some((name, message)) => check("tent_submit_notif", unsafe {
+                    native::submit_with_notify(
+                        self.native,
+                        batch,
+                        &mut requests,
+                        name.as_ptr(),
+                        message.as_ptr(),
+                    )
+                }),
+                None => check("tent_submit", unsafe {
+                    native::submit(self.native, batch, &mut requests)
+                }),
+            };
+            drain_batch(
+                slices.len(),
+                timeout,
+                submitted,
+                |task| {
+                    let mut status = native::TransferStatus {
+                        status: STATUS_WAITING,
+                        transferred_bytes: 0,
+                    };
+                    check("getTransferStatus", unsafe {
+                        native::transfer_status(self.native, batch, task, &mut status)
+                    })?;
+                    Ok(status)
+                },
+                |task| {
+                    check("tent_cancel_task", unsafe {
+                        native::cancel_task(self.native, batch, task)
+                    })
+                },
+                || {
+                    let mut status = native::TransferStatus {
+                        status: STATUS_WAITING,
+                        transferred_bytes: 0,
+                    };
+                    check("tent_overall_status", unsafe {
+                        native::batch_status(self.native, batch, &mut status)
+                    })?;
+                    if status.status != STATUS_COMPLETED {
+                        return Err(MooncakeError::TransferFailed {
+                            task: 0,
+                            state: status.status,
+                        });
+                    }
+                    Ok(status.transferred_bytes as usize)
+                },
+                || unsafe { native::free_batch(self.native, batch) == 0 },
+                |task, state, cause| {
+                    admission.retain();
+                    log::error!(
+                        "TENT termination unproven; retaining native batch and caller buffers: batch={batch} task={task} state={} first_failure={cause:?} descriptor_bytes={descriptor_bytes}",
+                        native_status_name(state),
+                    );
+                },
+            )
+        })
     }
 
     fn take_notifications_unlocked(&self) -> Result<Vec<Notification>> {
@@ -703,6 +705,30 @@ impl Drop for TransferEngine {
     }
 }
 
+// Callers keep all allocation, registration, descriptor and completion owners
+// outside this unwind boundary; the closure borrows them until native drain.
+fn contain_native_unwind<R>(operation: impl FnOnce() -> R) -> R {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)) {
+        Ok(result) => result,
+        Err(_panic) => {
+            let message =
+                b"OrbitKV: panic after native allocation; retaining all transfer owners\n";
+            unsafe {
+                libc::write(libc::STDERR_FILENO, message.as_ptr().cast(), message.len());
+            }
+            hold_without_termination();
+        }
+    }
+}
+
+fn hold_without_termination() -> ! {
+    loop {
+        unsafe {
+            libc::poll(std::ptr::null_mut(), 0, 60_000);
+        }
+    }
+}
+
 fn native_status_name(state: i32) -> &'static str {
     match state {
         STATUS_WAITING => "waiting",
@@ -781,9 +807,7 @@ fn drain_batch(
             // This callback only observes retention. It cannot authorize
             // reclamation; the stack owns native descriptors and caller buffers.
             retain(task, state, failure.as_ref());
-            loop {
-                std::thread::park_timeout(Duration::from_secs(60));
-            }
+            hold_without_termination();
         }
         if !retention_reported && (timed_out || failure.is_some()) {
             retention_reported = true;
