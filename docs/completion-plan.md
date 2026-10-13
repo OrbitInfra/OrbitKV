@@ -217,6 +217,19 @@ not close Manager source authorization, Watch/cache rebootstrap or independent
 physical failure domains. Formal launch remains subject to exact independent
 review and fail-stop evidence retention.
 
+The single stage021 process-only cohort at `82c07bd9` is independently
+**ACCEPTED_RESULT**. Three hosts pass bootstrap, normal leader SIGTERM/rejoin,
+quorum stop/recovery and complete final puts/deletes: 65 acknowledged mutations,
+nine complete range oracles and identical 17-key final sets at revision 66.
+Six etcd runs have actual SIGTERM/reap records; final owned processes/ports are
+absent and three locks release within the cumulative cleanup budget. The leader
+shutdown includes etcd's graceful leadership transfer, so abrupt crash detection
+is unqualified. Raw evidence and independent replay remain under
+`/root/orbitkv-artifacts/s2-three-host-runtime-gates-20261013/` in
+`process-stage-021-formal-freeze-approved-bootstrap` and its independent result
+review directory. This closes only the frozen process-only contract; Manager
+Watch/source authorization/cache HA and independent physical domains remain open.
+
 The process-only launcher binds each host's actual Python executable, standard
 library, HTTP dependency file inventory, import origins, symlink targets and
 mapped native files to the reviewed input manifest. Controller, launcher, node,

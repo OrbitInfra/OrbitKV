@@ -102,6 +102,13 @@ Endpoint/member/cluster identities and raw HTTP responses are preserved.
 Each cohort requires a new exact freeze and independent launch acceptance; its
 result does not qualify Manager watch/cache recovery or physical fault domains.
 
+The single stage021 process-only result at `82c07bd9` has independent acceptance
+for its four phases. It uses normal SIGTERM, including etcd leadership transfer,
+and does not qualify abrupt crash detection. Its 17 final keys, 65 acknowledged
+mutations, raw HTTP/DB/WAL and normal process/port/lock postflight are archived
+under `/root/orbitkv-artifacts/s2-three-host-runtime-gates-20261013/` with the
+separate independent result replay. Controller raw pending status is preserved.
+
 Missing or unreadable lock paths quarantine the owner while preserving its
 already-open locked descriptor, even if evidence persistence fails. Complete
 Manager drain checks parse raw samples, require all six phase labels and reject
