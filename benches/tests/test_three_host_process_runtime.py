@@ -14,6 +14,15 @@ from benches.three_host_etcd import integrity
 
 
 def execute(root, source, *, prefix=""):
+    # Runtime inventory controls need a small deterministic stdlib root;
+    # real three-host readiness separately checks each complete host runtime.
+    stdlib = root / "control-stdlib"
+    stdlib.mkdir(exist_ok=True)
+    (stdlib / "control.py").write_text("VALUE = 1\n")
+    setup = (
+        "import sysconfig; original_path=sysconfig.get_path; "
+        f"sysconfig.get_path=lambda name,*a,**k: {str(stdlib)!r} if name=='stdlib' else original_path(name,*a,**k); "
+    )
     return subprocess.run(
         [
             sys.executable,
@@ -23,7 +32,7 @@ def execute(root, source, *, prefix=""):
             "-X",
             f"pycache_prefix={root / '.runtime-bytecode'}",
             "-c",
-            prefix + source,
+            setup + prefix + source,
             str(root),
         ],
         env=os.environ.copy(),
@@ -124,7 +133,7 @@ def test_launcher_runtime_mismatch_creates_no_child_or_ownership(frozen):
         (inputs / name).write_bytes((Path(integrity.__file__).parent / name).read_bytes())
     snapshot_path = inputs / "node.runtime.json"
     snapshot = json.loads(snapshot_path.read_text())
-    snapshot["version"] = "wrong-interpreter"
+    snapshot["python"] = "/unavailable/frozen-python"
     snapshot_path.write_text(json.dumps(snapshot))
     (inputs / "settings.json").write_text(
         json.dumps({"process_qualification": {}, "nodes": [{"name": "node"}]})
@@ -135,7 +144,12 @@ def test_launcher_runtime_mismatch_creates_no_child_or_ownership(frozen):
     )
     result = subprocess.run(
         [
-            *integrity.process_python(frozen, "node"),
+            sys.executable,
+            "-B",
+            "-E",
+            "-s",
+            "-X",
+            f"pycache_prefix={frozen / '.runtime-bytecode'}",
             str(inputs / "launch_agent.py"),
             "--root",
             str(frozen),
