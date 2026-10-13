@@ -24,6 +24,37 @@ authenticated bootstrap UDS for both adapters.
 
 ## Process channel
 
+### Native TENT failure retention
+
+The pinned TENT C ABI's `tent_free_batch()` accepts a deferred free request; its
+zero return is not an independent physical-termination acknowledgement. Native
+`FAILED`, `CANCELED`, `TIMEOUT`, `INVALID` or unknown task states do not authorize
+source release or destination reuse. OrbitKV retains the synchronous native
+call, batch descriptors and caller-owned buffers after observing one. It does
+not send source release from that call or recycle its admission slot. A wrapper
+deadline initiates best-effort cancellation and retains ownership while tasks
+remain pending; only later successful completion of every task permits return
+of the original logical failure. A native failure is not converted into success
+by a later poll or replacement transport.
+
+Each TENT engine admits at most 1,024 batches and 32 MiB of C request descriptors
+across live and retained calls, rejecting excess before native allocation or
+submission. These limits bound descriptor memory, not the retained payload;
+physical memory remains owned by the existing pool/query/source budgets. Native
+transport failover on polling is disabled until the preceding attempt's
+termination can be established. Successful normal TCP/RDMA/CUDA transfers keep
+the existing completion path; physical-failure recovery remains unqualified.
+
+Retention is visible through `orbitkv_native_transfer_batches`,
+`orbitkv_native_transfer_request_bytes`,
+`orbitkv_native_transfer_retained_batches`,
+`orbitkv_native_transfer_retained_descriptor_bytes` and admission rejections.
+The retained descriptor-byte sum counts requested payload lengths, including
+overlapping slices; it is not a physical allocation-size gauge. Uncertain calls
+keep the owning process isolated and can prevent graceful shutdown. Retention
+does not authorize killing that process or reclaiming remote buffers. See S3 in
+the completion plan for the remaining native termination and installed gates.
+
 `orbitkv-channel` uses iceoryx2 `0.10.0` and a fixed 64-byte command carrying
 protocol version, opcode, request identity, Manager epoch, descriptor offset,
 length/generation, and two opcode-specific scalar fields. Variable-length

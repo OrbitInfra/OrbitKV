@@ -211,6 +211,33 @@ task-specific fail-stop contracts; current external handoffs need their own revi
 **Depends on:** S2's metadata contracts. **Owners:** core peer/query/storage owners,
 transfer/sys C ABI, process channel and the consumed adapter registrations.
 
+S3 may consume the independently accepted metadata correctness contracts while
+the S2 isolation and sixteen-owner gates remain failed/unqualified. The first
+native-lifetime candidate is a conservative retention boundary, pending review:
+native failed/canceled/timeout/invalid/unknown statuses cannot return caller
+buffers or release the source completion owner. A wrapper deadline may return
+its original error only after every task subsequently completes. Poll-time
+transport failover is disabled because a successful replacement attempt does
+not establish termination of the preceding attempt. Retained work keeps its
+batch slot and shares a 32 MiB per-engine native-request descriptor budget;
+existing pool/query/export budgets continue to own physical allocations.
+
+The fixed TENT C ABI accepts deferred batch free and exposes no independently
+qualified physical-failure fence. Physical RDMA/CUDA failure reclamation,
+permanent requester-loss recovery and final installed-GPU/adapter gates remain
+open. Latest upstream inspection and all native controls are archived under
+`/root/orbitkv-artifacts/s3-termination-20261013/substage-001-audit/`.
+
+The old three-host readiness quarantine is a separate, scoped audit case. Its
+query-source unregister succeeded; the client was deliberately closed before
+the missing metric exception, and partial cleanup then retried that closed
+client. No TENT payload READ or remote grant was submitted in that case. The
+reconnect error is not residual-DMA evidence. This finding does not authorize
+release of the old process/tensors/locks: a separately accepted owner-specific
+procedure and concrete completion evidence are still required. Preserve its
+immutable `BLOCKED_READINESS_CONSUMER_CLEANUP_QUARANTINE` result and archive
+manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
+
 - Establish transport termination evidence before reclaiming exports belonging
   to a permanently lost requester. Inspect the current pinned TENT and latest
   upstream main/issues before changing the ABI; reuse or submit a focused

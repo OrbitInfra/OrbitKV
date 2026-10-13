@@ -8,9 +8,10 @@ use std::collections::HashMap;
 use std::ffi::{CString, OsString, c_char, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::ptr::NonNull;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
+use opentelemetry::metrics::{Counter, UpDownCounter};
 use orbitkv_mooncake_sys as native;
 
 use crate::error::{MooncakeError, Result};
@@ -21,12 +22,135 @@ use crate::types::{
 };
 
 static ENGINE_CREATE_LOCK: Mutex<()> = Mutex::new(());
+const MAX_NATIVE_BATCHES: usize = 1024;
+const MAX_NATIVE_REQUEST_BYTES: usize = 32 * 1024 * 1024;
+
+struct TransferMetrics {
+    active: UpDownCounter<i64>,
+    request_bytes: UpDownCounter<i64>,
+    retained: UpDownCounter<i64>,
+    retained_bytes: UpDownCounter<i64>,
+    rejections: Counter<u64>,
+}
+
+static TRANSFER_METRICS: LazyLock<TransferMetrics> = LazyLock::new(|| {
+    let meter = opentelemetry::global::meter("orbitkv-transfer");
+    TransferMetrics {
+        active: meter
+            .i64_up_down_counter("orbitkv_native_transfer_batches")
+            .build(),
+        request_bytes: meter
+            .i64_up_down_counter("orbitkv_native_transfer_request_bytes")
+            .build(),
+        retained: meter
+            .i64_up_down_counter("orbitkv_native_transfer_retained_batches")
+            .build(),
+        retained_bytes: meter
+            .i64_up_down_counter("orbitkv_native_transfer_retained_descriptor_bytes")
+            .build(),
+        rejections: meter
+            .u64_counter("orbitkv_native_transfer_admission_rejections")
+            .build(),
+    }
+});
+
+#[derive(Default)]
+struct BatchAdmission {
+    active: usize,
+    retained: usize,
+    request_bytes: usize,
+    logical_bytes: i64,
+}
+
+struct AdmittedBatch<'a> {
+    admission: &'a Mutex<BatchAdmission>,
+    descriptor_bytes: i64,
+    request_bytes: usize,
+    retained: bool,
+}
+
+impl BatchAdmission {
+    fn acquire(
+        admission: &Mutex<Self>,
+        tasks: usize,
+        descriptor_bytes: u64,
+    ) -> Result<AdmittedBatch<'_>> {
+        let bytes =
+            i64::try_from(descriptor_bytes).map_err(|_| MooncakeError::BatchAdmissionExhausted)?;
+        let request_bytes = tasks
+            .checked_mul(std::mem::size_of::<native::TransferRequest>())
+            .ok_or(MooncakeError::BatchAdmissionExhausted)?;
+        let mut state = admission.lock().unwrap_or_else(|error| error.into_inner());
+        let logical_bytes = state.logical_bytes.checked_add(bytes);
+        let total_request_bytes = state.request_bytes.checked_add(request_bytes);
+        if state.active >= MAX_NATIVE_BATCHES
+            || logical_bytes.is_none()
+            || total_request_bytes.is_none_or(|total| total > MAX_NATIVE_REQUEST_BYTES)
+        {
+            TRANSFER_METRICS.rejections.add(1, &[]);
+            return Err(MooncakeError::BatchAdmissionExhausted);
+        }
+        state.active += 1;
+        state.request_bytes = total_request_bytes.ok_or(MooncakeError::BatchAdmissionExhausted)?;
+        state.logical_bytes = logical_bytes.ok_or(MooncakeError::BatchAdmissionExhausted)?;
+        TRANSFER_METRICS.active.add(1, &[]);
+        TRANSFER_METRICS
+            .request_bytes
+            .add(request_bytes as i64, &[]);
+        Ok(AdmittedBatch {
+            admission,
+            descriptor_bytes: bytes,
+            request_bytes,
+            retained: false,
+        })
+    }
+}
+
+impl AdmittedBatch<'_> {
+    fn retain(&mut self) {
+        if !self.retained {
+            self.retained = true;
+            self.admission
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .retained += 1;
+            TRANSFER_METRICS.retained.add(1, &[]);
+            TRANSFER_METRICS
+                .retained_bytes
+                .add(self.descriptor_bytes, &[]);
+        }
+    }
+}
+
+impl Drop for AdmittedBatch<'_> {
+    fn drop(&mut self) {
+        let mut state = self
+            .admission
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.active -= 1;
+        state.request_bytes -= self.request_bytes;
+        state.logical_bytes -= self.descriptor_bytes;
+        TRANSFER_METRICS.active.add(-1, &[]);
+        TRANSFER_METRICS
+            .request_bytes
+            .add(-(self.request_bytes as i64), &[]);
+        if self.retained {
+            state.retained -= 1;
+            TRANSFER_METRICS.retained.add(-1, &[]);
+            TRANSFER_METRICS
+                .retained_bytes
+                .add(-self.descriptor_bytes, &[]);
+        }
+    }
+}
 
 pub struct TransferEngine {
     native: native::NativeEngine,
     segments: Mutex<HashMap<String, native::SegmentId>>,
     notification_poll: Mutex<()>,
     notification_mailbox: Mutex<NotificationMailbox>,
+    admission: Mutex<BatchAdmission>,
 }
 
 /// Owns one Mooncake memory registration. The caller must retain the actual
@@ -111,6 +235,7 @@ impl TransferEngine {
             segments: Mutex::new(HashMap::new()),
             notification_poll: Mutex::new(()),
             notification_mailbox: Mutex::new(NotificationMailbox::default()),
+            admission: Mutex::new(BatchAdmission::default()),
         })
     }
 
@@ -213,6 +338,13 @@ impl TransferEngine {
         if slices.is_empty() {
             return Ok(0);
         }
+        let descriptor_bytes = slices.iter().try_fold(0u64, |total, slice| {
+            total
+                .checked_add(slice.length as u64)
+                .ok_or(MooncakeError::BatchAdmissionExhausted)
+        })?;
+        let mut admission =
+            BatchAdmission::acquire(&self.admission, slices.len(), descriptor_bytes)?;
         let notification = notification
             .map(|notification| {
                 Ok::<_, MooncakeError>((
@@ -288,6 +420,13 @@ impl TransferEngine {
                 Ok(status.transferred_bytes as usize)
             },
             || unsafe { native::free_batch(self.native, batch) == 0 },
+            |task, state, cause| {
+                admission.retain();
+                log::error!(
+                    "TENT termination unproven; retaining native batch and caller buffers: batch={batch} task={task} state={} first_failure={cause:?} descriptor_bytes={descriptor_bytes}",
+                    native_status_name(state),
+                );
+            },
         )
     }
 
@@ -564,9 +703,27 @@ impl Drop for TransferEngine {
     }
 }
 
+fn native_status_name(state: i32) -> &'static str {
+    match state {
+        STATUS_WAITING => "waiting",
+        STATUS_PENDING => "pending",
+        STATUS_COMPLETED => "completed",
+        STATUS_INVALID => "invalid",
+        STATUS_CANCELED => "canceled",
+        STATUS_TIMEOUT => "timeout",
+        STATUS_FAILED => "failed",
+        _ => "unknown",
+    }
+}
+
 /// TENT submission can partially succeed. Cancellation is best effort, so keep
-/// descriptors and caller-owned memory alive until every task reports a terminal
-/// state, then request batch reclamation.
+/// descriptors and caller-owned memory alive until every task completes.
+/// Native failure/cancellation/invalid/unknown statuses are not physical drain
+/// evidence in the pinned C ABI. Retain the calling owner after observing one.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "native batch callbacks stay with their resource owner"
+)]
 fn drain_batch(
     tasks: usize,
     timeout: Duration,
@@ -575,6 +732,7 @@ fn drain_batch(
     mut cancel: impl FnMut(usize) -> Result<()>,
     mut completed_bytes: impl FnMut() -> Result<usize>,
     mut free: impl FnMut() -> bool,
+    mut retain: impl FnMut(usize, i32, Option<&MooncakeError>),
 ) -> Result<usize> {
     let started = Instant::now();
     let mut completed = vec![false; tasks];
@@ -582,11 +740,12 @@ fn drain_batch(
     let mut failure = submitted.err();
     let mut timed_out = false;
     let mut cancel_sent = vec![false; tasks];
+    let mut retention_reported = false;
     loop {
         if !timed_out && started.elapsed() >= timeout {
             timed_out = true;
         }
-        let cancelling = timed_out || failure.is_some();
+        let mut unproven = None;
         for (task, done) in completed.iter_mut().enumerate() {
             if *done {
                 continue;
@@ -598,45 +757,38 @@ fn drain_batch(
                 Ok(status) if matches!(status.status, STATUS_WAITING | STATUS_PENDING) => {}
                 Ok(status) if status.status == STATUS_TIMEOUT => {
                     timed_out = true;
-                    *done = true;
-                }
-                Ok(status)
-                    if status.status == STATUS_CANCELED && timed_out && cancel_sent[task] =>
-                {
-                    // Acknowledging our timeout-driven cancellation must not
-                    // replace Timeout with TransferFailed. Earlier submission,
-                    // polling or cancellation errors still take precedence.
-                    *done = true;
-                }
-                Ok(status)
-                    if matches!(
-                        status.status,
-                        STATUS_CANCELED | STATUS_FAILED | STATUS_INVALID
-                    ) =>
-                {
-                    failure.get_or_insert(MooncakeError::TransferFailed {
-                        task,
-                        state: status.status,
-                    });
-                    *done = true;
+                    unproven.get_or_insert((task, status.status));
                 }
                 Ok(status) => {
                     failure.get_or_insert(MooncakeError::TransferFailed {
                         task,
                         state: status.status,
                     });
-                    *done = true;
+                    unproven.get_or_insert((task, status.status));
                 }
                 Err(error) => {
                     failure.get_or_insert(error);
                 }
             }
-            if !*done && cancelling && !cancel_sent[task] {
+            if !*done && (timed_out || failure.is_some()) && !cancel_sent[task] {
                 if let Err(error) = cancel(task) {
                     failure.get_or_insert(error);
                 }
                 cancel_sent[task] = true;
             }
+        }
+        if let Some((task, state)) = unproven {
+            // This callback only observes retention. It cannot authorize
+            // reclamation; the stack owns native descriptors and caller buffers.
+            retain(task, state, failure.as_ref());
+            loop {
+                std::thread::park_timeout(Duration::from_secs(60));
+            }
+        }
+        if !retention_reported && (timed_out || failure.is_some()) {
+            retention_reported = true;
+            let task = completed.iter().position(|done| !done).unwrap_or(0);
+            retain(task, STATUS_PENDING, failure.as_ref());
         }
         if completed.iter().all(|done| *done) {
             // TENT can merge public descriptors into one physical task. Its
