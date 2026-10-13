@@ -1,9 +1,34 @@
 # Performance and benchmarks
 
 OrbitKV has reviewed recovery, copy and peer-transfer measurements. A component
-speedup is not an end-to-end serving advantage. The current official-release
-native/OrbitKV/LMCache comparison on larger models remains a separate gate;
-Qwen3.8 native output acceptance does not supply that comparison.
+speedup is not an end-to-end serving advantage. The official-release Qwen3-32B
+local comparison below is a reviewed descriptive collection; sustained matched
+gains and tail qualification remain separate gates. Qwen3.8 native output
+acceptance does not supply an external-cache comparison.
+
+## Current dense local comparison
+
+The [Qwen3-32B cohort](https://github.com/feichai0017/orbitkv/pull/221) contains
+14 cells and 420 measured requests on one H20, using official vLLM 0.31.0,
+SGLang 0.5.21 and LMCache 0.5.5. Model revision `9216db57`, harness `e28fe829`,
+accepted native build `37b48c50`, BF16/raw, TP=1/PP=1, eager execution, 4 GiB
+GPU KV and 16 GiB host offload are frozen. Each length/phase has five samples in
+each of two independently started, opposite-order runs; outputs, restored bytes,
+installed-file hashes and final GPU/process cleanup pass independent review.
+
+For 8K pressure recovery, the geometric mean of the two run-median client TTFTs
+is 168.5 ms for vLLM OrbitKV, 170.0 ms for official CPU offload and 175.8 ms for
+this released LMCache MP profile. SGLang OrbitKV is 202.6 ms versus 178.2 ms for
+HiCache, with identical aligned host-hit coverage. This SGLang gap needs profiling;
+the collection does not identify a kernel or transport cause. Native HBM-eviction
+recomputation takes about 4.3/4.4 seconds in the respective engine controls.
+
+Client TTFT ends at the first nonempty SSE text, not a CUDA copy event. The vLLM
+resident phase includes a 16 MiB tail restore and is mixed; SGLang recovery
+restores 8,128 host tokens and recomputes the final 64-token page. These serial
+observations are not stable p99, confidence intervals, throughput, pure HBM-hit
+comparisons or performance promotion. Full logs retain native worker termination
+diagnostics. RDMA, contention, broader ranks and S3 reclamation are separate gates.
 
 ## Read results by scope
 

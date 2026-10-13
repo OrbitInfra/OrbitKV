@@ -16,6 +16,147 @@ import pytest
 from benches import runtime
 
 
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "zero",
+        "generic",
+        "stale",
+        "wrong_pid",
+        "missing_close",
+        "native_error",
+        "logged_error",
+        "colored_error",
+        "nonzero",
+    ],
+)
+def test_real_lmcache_signal_exit_requires_fresh_owned_shutdown(monkeypatch, tmp_path, fault):
+    ready = tmp_path / "ready"
+    log = tmp_path / "manager.log"
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        """
+import os, signal, sys
+from pathlib import Path
+
+fault = sys.argv[2]
+def closed():
+    print('Shutting down LMCache HTTP server...', flush=True)
+    if fault == 'logged_error':
+        print('ERROR: controlled LMCache close failure', flush=True)
+    if fault == 'colored_error':
+        print('[time] LMCache \\x1b[31mERROR\\x1b[0m: controlled close failure', flush=True)
+    if fault != 'missing_close':
+        print('MPCacheServer closed', flush=True)
+    print('LMCache HTTP server stopped', flush=True)
+    print('Application shutdown complete.', flush=True)
+    pid = os.getpid() + (fault == 'wrong_pid')
+    print(f'Finished server process [{pid}]', flush=True)
+
+def stop(*_):
+    if fault != 'stale':
+        closed()
+    if fault == 'native_error':
+        raise RuntimeError('controlled lifespan error')
+    if fault in {'zero', 'nonzero'}:
+        sys.exit(0 if fault == 'zero' else 7)
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    signal.raise_signal(signal.SIGTERM)
+
+signal.signal(signal.SIGTERM, stop)
+if fault == 'stale':
+    closed()
+Path(sys.argv[1]).write_text('ready')
+while True:
+    signal.pause()
+""",
+        str(ready),
+        str(fault),
+    ]
+    monkeypatch.setattr(runtime.requests, "get", lambda *a, **kw: SimpleNamespace(ok=True))
+    error = (
+        RuntimeError
+        if fault in {"generic", "nonzero"}
+        else ValueError
+        if fault
+        in {"stale", "wrong_pid", "missing_close", "native_error", "logged_error", "colored_error"}
+        else None
+    )
+    expectation = pytest.raises(error) if error else contextlib.nullcontext()
+    with (
+        expectation,
+        runtime.server(
+            command,
+            dict(os.environ),
+            "http://cpu-control",
+            log,
+            engine=None if fault == "generic" else "lmcache",
+        ) as process,
+    ):
+        deadline = time.monotonic() + 10
+        while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists(), log.read_text()
+    receipt = json.loads(log.with_suffix(".cleanup.json").read_text())
+    expected_code = (
+        0
+        if fault == "zero"
+        else 7
+        if fault == "nonzero"
+        else 1
+        if fault == "native_error"
+        else -signal.SIGTERM
+    )
+    assert receipt["exit_code"] == expected_code
+    assert receipt["termination_signal"] == signal.SIGTERM
+    assert receipt["reaped"] and not receipt["forced_kill"] and not receipt["remaining_group"]
+    assert not Path(f"/proc/{process.pid}").exists()
+    assert receipt.get("signal_exit_accepted", False) is (fault is None)
+
+
+def test_real_uvicorn_reemits_sigterm_only_after_lifespan_shutdown(tmp_path):
+    pytest.importorskip("uvicorn", minversion="0.30")
+    port = runtime.free_port()
+    log = tmp_path / "manager.log"
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        """
+import sys
+import uvicorn
+
+async def app(scope, receive, send):
+    if scope['type'] == 'lifespan':
+        assert (await receive())['type'] == 'lifespan.startup'
+        await send({'type': 'lifespan.startup.complete'})
+        assert (await receive())['type'] == 'lifespan.shutdown'
+        print('Shutting down LMCache HTTP server...', flush=True)
+        print('MPCacheServer closed', flush=True)
+        print('LMCache HTTP server stopped', flush=True)
+        await send({'type': 'lifespan.shutdown.complete'})
+    elif scope['type'] == 'http':
+        await send({'type': 'http.response.start', 'status': 200, 'headers': []})
+        await send({'type': 'http.response.body', 'body': b'ready'})
+
+uvicorn.run(app, host='127.0.0.1', port=int(sys.argv[1]), lifespan='on')
+""",
+        str(port),
+    ]
+    with runtime.server(
+        command, dict(os.environ), f"http://127.0.0.1:{port}", log, engine="lmcache"
+    ) as process:
+        assert process.poll() is None
+    receipt = json.loads(log.with_suffix(".cleanup.json").read_text())
+    assert receipt["exit_code"] == -signal.SIGTERM
+    assert receipt["signal_exit_accepted"] and receipt["termination_signal"] == signal.SIGTERM
+    assert receipt["reaped"] and not receipt["forced_kill"] and not receipt["remaining_group"]
+    assert not Path(f"/proc/{process.pid}").exists()
+
+
 @pytest.mark.parametrize("forwarded", [True, False])
 def test_real_service_inherits_gpu_lease_until_actual_exit(monkeypatch, tmp_path, forwarded):
     lock_path = tmp_path / "gpu.lock"
@@ -38,7 +179,10 @@ try:
     received = (inherited.st_dev, inherited.st_ino) == (expected.st_dev, expected.st_ino)
 except OSError:
     received = False
-Path(sys.argv[3]).write_text(json.dumps({'received': received}))
+ready = Path(sys.argv[3])
+temporary = ready.with_name(ready.name + '.tmp')
+temporary.write_text(json.dumps({'received': received}))
+temporary.replace(ready)
 while True:
     signal.pause()
 """,
@@ -91,6 +235,114 @@ def test_server_rejects_a_different_proc_pid_namespace_before_spawning(monkeypat
     ):
         pass
     assert not (tmp_path / "manager.log").exists()
+
+
+@pytest.mark.parametrize("forwarded", [True, False])
+def test_single_node_services_keep_controller_lease_through_request_failure(
+    monkeypatch, tmp_path, forwarded
+):
+    from benches import single_node
+
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text(
+        json.dumps(
+            {"model_type": "qwen3", "num_hidden_layers": 1, "num_key_value_heads": 1, "head_dim": 1}
+        )
+    )
+    lease_path = tmp_path / "gpu.lock"
+    lease = lease_path.open("a")
+    fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    descriptor = lease.fileno()
+    output = tmp_path / "run"
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        """
+import json, os, signal, sys
+from pathlib import Path
+
+def stop(*_):
+    print('API server: engine client stopped', flush=True)
+    print('Application shutdown complete.', flush=True)
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, stop)
+try:
+    info = os.fstat(int(sys.argv[1]))
+    expected = Path(sys.argv[2]).stat()
+    received = (info.st_dev, info.st_ino) == (expected.st_dev, expected.st_ino)
+except OSError:
+    received = False
+ready = Path(sys.argv[3])
+temporary = ready.with_name(ready.name + '.tmp')
+temporary.write_text(json.dumps({'received': received, 'pid': os.getpid()}))
+temporary.replace(ready)
+while True:
+    signal.pause()
+""",
+        str(descriptor),
+        str(lease_path),
+    ]
+    launch = SimpleNamespace(
+        manager_command=[*command, str(output / "manager-ready.json")],
+        command=[*command, str(output / "engine-ready.json")],
+        manager_url="http://cpu-manager",
+        manager_health_path="/health",
+        base_url="http://cpu-engine",
+        env=dict(os.environ),
+    )
+    monkeypatch.setattr(single_node, "configure", lambda *_: launch)
+    monkeypatch.setattr(single_node, "manifest", lambda *_: {})
+    monkeypatch.setattr(single_node, "process_usage", lambda *_: {})
+    monkeypatch.setattr(single_node, "metrics", lambda *_: {})
+    monkeypatch.setattr(runtime.requests, "get", lambda *a, **kw: SimpleNamespace(ok=True))
+
+    def fail_request(*_):
+        for name in ("manager", "engine"):
+            ready = output / f"{name}-ready.json"
+            deadline = time.monotonic() + 10
+            while not ready.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert ready.exists()
+            assert json.loads(ready.read_text())["received"] is forwarded
+        lease.close()
+        with lease_path.open("a") as contender:
+            if forwarded:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            else:
+                fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        raise RuntimeError("request failed with both services alive")
+
+    monkeypatch.setattr(single_node, "run_workload", fail_request)
+    argv = [
+        "bench",
+        "--engine",
+        "vllm",
+        "--backend",
+        "orbitkv",
+        "--model",
+        str(model),
+        "--output",
+        str(output),
+    ]
+    if forwarded:
+        argv += ["--resource-lock-fd", str(descriptor)]
+    monkeypatch.setattr(sys, "argv", argv)
+    try:
+        with pytest.raises(RuntimeError, match="request failed"):
+            single_node.main()
+    finally:
+        lease.close()
+    for name in ("manager", "engine"):
+        receipt = json.loads((output / f"{name}.cleanup.json").read_text())
+        assert receipt["exit_code"] == 0 and receipt["reaped"]
+        assert not receipt["forced_kill"] and not receipt["remaining_group"]
+        assert not Path(f"/proc/{receipt['pid']}").exists()
+    with lease_path.open("a") as contender:
+        fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
 @pytest.mark.parametrize(

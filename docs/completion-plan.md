@@ -363,6 +363,40 @@ Current commands and limits are in [P/D](pd.md).
 listed in [compatibility](compatibility.md); precise peer cohorts remain in
 [shared-cache qualification](shared-cache-qualification.md).
 
+**Completed bounded delivery:** the fresh Qwen3-32B BF16 TP=1/PP=1 local
+comparison at harness `e28fe829` is independently accepted as a descriptive
+collection: 14 cells, 420 measured requests, two opposite-order independent
+runs, official vLLM 0.31.0/SGLang 0.5.21 and available LMCache 0.5.5 controls.
+All outputs match their same-engine native controls; model, engine and installed
+runtime hashes are unchanged. Native bytes remain the accepted `37b48c50` build.
+vLLM OrbitKV pressure recovery is close to official CPU offload; SGLang 8K is
+about 14% slower than HiCache with the same aligned host-hit coverage. Five
+samples per length/phase/run do not qualify p99, throughput or a serving win.
+The vLLM resident label includes a 16 MiB tail restore and remains mixed.
+Actual signal statuses and native worker diagnostics are retained; normal parent
+completion does not establish S3 fault reclamation. See [performance](performance.md)
+and the external cohort/reviews linked from [PR #221](https://github.com/feichai0017/orbitkv/pull/221).
+
+**Next bounded delivery:** freeze separate two-H20 TENT RDMA measurements for
+remote-DRAM restoration and standalone GPU-pointer READ/WRITE. Separate cold
+setup, warm transfer, source control and final GPU readiness; match payloads,
+fragmentation, NIC selection and NUMA placement. Require source ownership,
+inherited resource leases, physical NIC counters, exact GPU bytes and actual
+terminal drain, with independent launch/outcome review. Then profile the SGLang
+8K restore/first-layer readiness boundary and contention before choosing a CUDA
+or scheduling change. Existing RDMA hardware is available; native GDS and
+physical failure-domain qualification remain separate. These measurements do
+not change any S2/S5 support claim or promote a kernel from component results.
+
+The initial 14-cell exploratory cohort stopped after three valid local vLLM
+cells: the released LMCache MP server completed its lifespan shutdown and
+re-emitted SIGTERM, while the benchmark required zero. Its 30 recorded requests
+remain an invalid cell; ten later cells were not launched. The complete failed
+cohort is archived externally. A narrowly scoped benchmark correction preserves
+the literal signal status and requires fresh cache/HTTP shutdown evidence.
+The fresh complete cohort above remeasures every cell; no invalid samples are
+reused or substituted.
+
 - Ordinary installed dense H20 DRAM/io_uring recovery/restart and shared-Manager
   pressure have acceptance for their frozen budgets and execution settings.
 - Registered trusted-loopback query-control authority/leases are accepted at
