@@ -12,6 +12,8 @@
 
 namespace {
 constexpr size_t kLimit = 262144;
+constexpr uint64_t kSealed = uint64_t{1} << 63;
+constexpr uint64_t kIgnored = UINT64_MAX;
 struct Event {
     const char* name;
     uint64_t begin_ns;
@@ -24,8 +26,7 @@ struct Event {
 Event events[kLimit]{};
 std::atomic<bool> published[kLimit]{};
 std::atomic<size_t> count{0};
-std::atomic<size_t> active{0};
-std::atomic<bool> sealed{false};
+std::atomic<uint64_t> active{0};
 std::atomic<bool> invalid{false};
 pid_t owner_pid = 0;
 CUpti_SubscriberHandle subscriber{};
@@ -49,10 +50,8 @@ void CUPTIAPI callback(void*, CUpti_CallbackDomain domain, CUpti_CallbackId,
         return;
     }
     if (data->callbackSite == CUPTI_API_ENTER) {
-        *data->correlationData = 0;
-        if (sealed.load(std::memory_order_acquire)) return;
-        active.fetch_add(1, std::memory_order_acq_rel);
-        if (sealed.load(std::memory_order_acquire)) {
+        *data->correlationData = kIgnored;
+        if (active.fetch_add(1, std::memory_order_acq_rel) & kSealed) {
             active.fetch_sub(1, std::memory_order_release);
             return;
         }
@@ -68,8 +67,8 @@ void CUPTIAPI callback(void*, CUpti_CallbackDomain domain, CUpti_CallbackId,
         *data->correlationData = index + 1;
     } else if (data->callbackSite == CUPTI_API_EXIT) {
         const uint64_t token = *data->correlationData;
-        if (!token) return;
-        if (token > kLimit) {
+        if (token == kIgnored) return;
+        if (!token || token > kLimit) {
             invalid.store(true, std::memory_order_relaxed);
             return;
         }
@@ -105,9 +104,11 @@ void json_string(FILE* output, const char* text) {
 
 void write_events() {
     if (!enabled || getpid() != owner_pid) return;
-    sealed.store(true, std::memory_order_release);
+    // Admission and sealing share one atomic modification order. A concurrent
+    // admitted call invalidates the seal even if its EXIT finishes immediately.
+    const uint64_t in_flight = active.fetch_or(kSealed, std::memory_order_acq_rel);
     const size_t total = count.load(std::memory_order_acquire);
-    bool complete = active.load(std::memory_order_acquire) == 0 && total <= kLimit &&
+    bool complete = (in_flight & ~kSealed) == 0 && total <= kLimit &&
                     !invalid.load(std::memory_order_acquire);
     // Function names are CUPTI constants. Serialize before unsubscribing.
     char path[4096];

@@ -26,6 +26,19 @@ int main(int argc, char** argv) {
         token = 1;
         callback(nullptr, CUPTI_CB_DOMAIN_DRIVER_API, 0, &data);
     }
+    if (strcmp(argv[1], "natural-duplicate") == 0 || strcmp(argv[1], "orphan-exit") == 0) {
+        token = 0;
+        if (strcmp(argv[1], "orphan-exit") == 0) data.correlationId = 2;
+        data.callbackSite = CUPTI_API_EXIT;
+        callback(nullptr, CUPTI_CB_DOMAIN_DRIVER_API, 0, &data);
+    }
+    if (strcmp(argv[1], "sealed-pair") == 0) {
+        active.fetch_or(kSealed);
+        data.callbackSite = CUPTI_API_ENTER;
+        callback(nullptr, CUPTI_CB_DOMAIN_DRIVER_API, 0, &data);
+        data.callbackSite = CUPTI_API_EXIT;
+        callback(nullptr, CUPTI_CB_DOMAIN_DRIVER_API, 0, &data);
+    }
     // The CPU control has no subscriber; success/failure is supplied by a stub.
     write_events();
     return 0;

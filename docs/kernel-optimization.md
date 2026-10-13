@@ -503,7 +503,9 @@ Use the actual fixture PID in the trace filename and resolve the target's CUPTI
 SONAME through its frozen loader environment. CPU callback/output controls live
 in `benches/tests/cuda_driver_trace_writer.cpp`; compile with the same include
 directory, without `-lcupti`, and run `valid`, `unpaired`, `overflow`, `duplicate`
-in separate new trace directories. Only `valid` must exit zero. Analyzer units
+and the `orphan-exit`, `natural-duplicate`, `sealed-pair` controls in separate new
+trace directories. Only `valid` and the rejected post-seal pair must exit zero;
+every incomplete/duplicate/overflow capture must fail. Analyzer units
 run with `pytest benches/tests/test_cuda_submission.py`.
 
 The analyzer requires one complete matching process, thread and directional
