@@ -115,7 +115,8 @@ the actual interpreter after importing the node/network/lock/controller modules.
 This includes the executable, standard library, complete HTTP dependency files,
 actual import origins, links and mapped native files. All resource-owning helpers
 consume it before launch; missing snapshots, changed files and shadow imports
-fail closed. Start the controller with the frozen executable, `-B -E -s` and
+fail closed. Start the controller with `integrity.process_python(stage, node)`:
+the frozen executable, `-B -E -s -S -P` and
 `-X pycache_prefix=<stage>/.runtime-bytecode`;
 remote Python commands use those same flags. These flags disable Python environment
 and user-site import injection while retaining frozen script imports. The task
@@ -123,3 +124,8 @@ bytecode prefix must not exist; `-B` alone still reads host bytecode caches and
 cannot bind execution to frozen source. Every helper verifies the flags/prefix.
 Run the real-interpreter controls in `benches/tests/test_three_host_process_runtime.py`
 alongside the ordinary harness controls before requesting launch review.
+
+The bootstrap inserts only the frozen HTTP dependency roots and stage inputs;
+automatic `site`, `.pth` and cwd imports are disabled. A private system-site venv
+control proves that unfrozen `.pth` code runs under the old flags, while the
+reviewed bootstrap bypasses it and validates the runtime before resources.

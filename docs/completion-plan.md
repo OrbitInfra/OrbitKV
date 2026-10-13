@@ -226,6 +226,9 @@ disabled and a fresh, nonexistent task bytecode prefix. `-B` alone can read
 unfrozen cached code; controls prove that the isolated prefix reads frozen source
 and rejects a preexisting task cache. A changed digest or shadowed import fails
 before child creation.
+Automatic site and `.pth` startup are disabled with `-S`; safe-path mode and
+explicit frozen dependency roots keep host startup code outside execution.
+The verifier requires those interpreter flags before resource admission.
 This is admission code and CPU-control evidence; the new freeze and formal
 process result still require independent review.
 

@@ -130,8 +130,21 @@ def process_python(root: Path, node_name: str) -> list[str]:
         "-B",
         "-E",
         "-s",
+        "-S",
+        "-P",
         "-X",
         f"pycache_prefix={root / '.runtime-bytecode'}",
+        "-c",
+        (
+            "import sys,json,pathlib,runpy; root=pathlib.Path(sys.argv.pop(1)); "
+            "name=sys.argv.pop(1); snapshot=json.loads((root/'inputs'/(name+'.runtime.json')).read_text()); "
+            "sys.path[:0]=[str(root/'inputs'),*sorted({str(pathlib.Path(p).parent.parent) for p in snapshot['origins'].values()})]; "
+            "target=sys.argv.pop(1); "
+            "code=sys.argv.pop(1) if target=='-c' else None; "
+            "exec(code) if code is not None else runpy.run_path(target,run_name='__main__')"
+        ),
+        str(root),
+        node_name,
     ]
 
 
@@ -145,6 +158,8 @@ def verify_process_runtime(root: Path, settings: dict, node_name: str | None = N
         or not sys.flags.dont_write_bytecode
         or not sys.flags.ignore_environment
         or not sys.flags.no_user_site
+        or not sys.flags.no_site
+        or not sys.flags.safe_path
         or bytecode.exists()
         or bytecode.is_symlink()
     ):
