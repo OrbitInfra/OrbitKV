@@ -63,6 +63,8 @@ def main() -> None:
         ("copy", []),
         ("driver-init", ["driver-init"]),
         ("admission", ["admission"]),
+        ("byte-admission", ["byte-admission"]),
+        ("repeated-errors", ["repeated-errors"]),
     ]:
         with (output / f"{name}.log").open("x") as log:
             result = subprocess.run(
@@ -75,7 +77,7 @@ def main() -> None:
         exits.append(result.returncode)
     # These task-owned children use only interposed software CUDA APIs. Their
     # final kill/reap is synthetic-control teardown, never a DMA drain proof.
-    for mode in ["copy", "synchronize"]:
+    for mode in ["copy", "synchronize", "restore"]:
         path = output / f"{mode}-retention.log"
         with path.open("x") as log:
             child = subprocess.Popen(
@@ -83,7 +85,10 @@ def main() -> None:
             )
             try:
                 deadline = time.monotonic() + 3
-                while "termination unproven" not in path.read_text():
+                while not any(
+                    marker in path.read_text()
+                    for marker in ["termination unproven", "context restoration failed"]
+                ):
                     if child.poll() is not None or time.monotonic() >= deadline:
                         raise RuntimeError(f"No retained CUDA owner: {mode}")
                     time.sleep(0.01)
@@ -92,7 +97,7 @@ def main() -> None:
                 if (
                     child.poll() is not None
                     or "scratch_owner_dropped" in text
-                    or "stream_owner_released" in text
+                    or (mode != "restore" and "stream_owner_released" in text)
                     or "unproven_copy_returned" in text
                 ):
                     raise RuntimeError(f"Premature CUDA scratch release: {mode}")

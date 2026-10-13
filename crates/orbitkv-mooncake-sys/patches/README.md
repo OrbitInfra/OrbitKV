@@ -47,8 +47,9 @@ SSD, adapter crash or physical termination gates.
 Review follow-up preserves pointer-query errors using `cuPointerGetAttributes`:
 ordinary unregistered host pointers are identified by its documented successful
 zero attributes; unexpected errors never select host memcpy. Driver init failure
-rejects copying. Device/context acquisition and copy errors preserve caller
-device restoration, and failed restoration remains an error. These follow-ups
+rejects copying. Device/context acquisition errors restore the exact saved `CUcontext`, including
+an originally null context. If exact restoration fails, the worker and admission
+remain held and are not returned for reuse. These follow-ups
 have controlled CUDA API tests in `tests/native/cuda_copy_errors.cu`; they are
 not yet healthy-GPU qualification or an upstream merged change. A focused
 upstream follow-up must be prepared separately from this scoped backport.
@@ -62,3 +63,11 @@ source/query/pool budgets. A fixed diagnostic marks retention. Pre-submit
 pointer/context/stream admission errors return normally; actual-copy errors
 retain. This trades liveness for ownership safety until a native termination
 primitive is independently established. CPU-only TENT is unaffected.
+
+The device-copy/retention bounds are acquired at the copy owner. TCP request or
+response strings may already have been allocated before that boundary; this is
+not a total peak RPC allocation limit. Unexpected restore failure after a
+completed copy retains the worker; the completed stream may have been returned
+only after successful synchronization. Copy/synchronization failures keep both
+stream and scratch. Focused controls cover aggregate bytes, exact context,
+registered host/managed classification and repeated admission release.

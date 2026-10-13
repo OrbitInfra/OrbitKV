@@ -421,7 +421,8 @@ active. Controlled CUDA API checks cover these failure paths; healthy-GPU
 execution remains unqualified. After a CUDA memcpy attempt reports an error,
 the native owner retains the stream, current frame and RPC staging buffers;
 errors are not a DMA termination proof. Its separate live/retained device-copy
-admission is 64 calls and 1 GiB logical copy bytes, while existing Rust descriptor
+admission is 64 calls and 1 GiB logical copy bytes; RPC strings allocated before
+that boundary are separate transient allocations. Existing Rust descriptor
 and physical-memory owners keep their budgets. Unusable CUDA bundle admission
 fails before transport startup. No timeout-based reclamation is introduced.
 
