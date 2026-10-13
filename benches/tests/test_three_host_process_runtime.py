@@ -247,3 +247,41 @@ def test_optional_transitive_import_is_blocked_before_execution(frozen):
     assert rejected.returncode != 0
     assert "unfrozen runtime import: simplejson" in rejected.stderr
     assert not marker.exists()
+
+
+def test_actual_bootstrap_rejects_extra_stdlib_shadow_before_its_execution(frozen):
+    inputs = frozen / "inputs"
+    for name in (
+        "campaign.py",
+        "consumer_agent.py",
+        "environment.py",
+        "integrity.py",
+        "launch_agent.py",
+        "network_probe_agent.py",
+        "node_agent.py",
+        "proxy_readiness.py",
+        "resource_lock_agent.py",
+        "validate_inputs.py",
+    ):
+        (inputs / name).write_bytes((Path(integrity.__file__).parent / name).read_bytes())
+    (inputs / "settings.json").write_text(json.dumps({"nodes": [{"name": "node"}]}))
+    manifest = inputs / "SHA256SUMS"
+    manifest.write_text(
+        "".join(f"{integrity.sha256(p)}  {p.name}\n" for p in sorted(inputs.iterdir()))
+    )
+    approved = integrity.sha256(manifest)
+    marker = frozen / "stdlib-shadow-executed"
+    (inputs / "hashlib.py").write_text(f"open({str(marker)!r},'w').write('executed')\n")
+    with pytest.raises(RuntimeError, match="file inventory differs"):
+        integrity.process_python(frozen, "node", approved)
+    assert not marker.exists()
+    (inputs / "hashlib.py").unlink()
+    helper = inputs / "integrity.py"
+    helper.write_text(helper.read_text() + "\n# unreviewed modified helper\n")
+    manifest.write_text(
+        "".join(
+            f"{integrity.sha256(p)}  {p.name}\n" for p in sorted(inputs.iterdir()) if p != manifest
+        )
+    )
+    with pytest.raises(RuntimeError, match="independently approved digest"):
+        integrity.process_python(frozen, "node", approved)

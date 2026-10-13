@@ -147,7 +147,8 @@ def process_runtime_snapshot() -> dict:
     }
 
 
-def process_python(root: Path, node_name: str) -> list[str]:
+def process_python(root: Path, node_name: str, approved_manifest_sha256: str) -> list[str]:
+    verify_inputs(root, approved_manifest_sha256)
     snapshot = json.loads((root / "inputs" / f"{node_name}.runtime.json").read_text())
     return [
         snapshot["python"],
@@ -160,16 +161,27 @@ def process_python(root: Path, node_name: str) -> list[str]:
         f"pycache_prefix={root / '.runtime-bytecode'}",
         "-c",
         (
-            "import sys,json,pathlib,runpy; root=pathlib.Path(sys.argv.pop(1)); "
+            "import sys,json,pathlib,runpy,hashlib,importlib.util; root=pathlib.Path(sys.argv.pop(1)); "
             "name=sys.argv.pop(1); snapshot=json.loads((root/'inputs'/(name+'.runtime.json')).read_text()); "
+            "manifest=root/'inputs/SHA256SUMS'; expected=sys.argv.pop(1); "
+            "actual=hashlib.sha256(manifest.read_bytes()).hexdigest(); "
+            "assertion=actual==expected; "
+            "raise_error=lambda:(_ for _ in ()).throw(RuntimeError('bootstrap manifest digest differs')); "
+            "None if assertion else raise_error(); "
+            "entries=dict((name,digest) for digest,name in (line.split('  ',1) for line in manifest.read_text().splitlines())); "
+            "helper=root/'inputs/integrity.py'; "
+            "verified=hashlib.sha256(helper.read_bytes()).hexdigest()==entries['integrity.py']; "
+            "None if verified else raise_error(); "
+            "spec=importlib.util.spec_from_file_location('integrity',helper); integrity=importlib.util.module_from_spec(spec); sys.modules['integrity']=integrity; spec.loader.exec_module(integrity); "
+            "integrity.verify_inputs(root,expected); integrity.install_import_guard(root,snapshot); "
             "sys.path[:0]=[str(root/'inputs'),*sorted({str(pathlib.Path(p).parent.parent) for p in snapshot['origins'].values()})]; "
-            "import integrity; integrity.install_import_guard(root,snapshot); "
             "target=sys.argv.pop(1); "
             "code=sys.argv.pop(1) if target=='-c' else None; "
             "exec(code) if code is not None else runpy.run_path(target,run_name='__main__')"
         ),
         str(root),
         node_name,
+        approved_manifest_sha256,
     ]
 
 

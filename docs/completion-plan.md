@@ -239,7 +239,13 @@ Automatic site and `.pth` startup are disabled with `-S`; safe-path mode and
 explicit frozen dependency roots keep host startup code outside execution.
 The verifier requires those interpreter flags before resource admission.
 The frozen inventory also covers actual transitive imports, including optional
-HTTP JSON backends. Import admission rejects executable files absent from the
+HTTP JSON backends. Bootstrap verifies the approved input manifest and integrity
+helper using only standard-library paths, then installs the import guard before
+adding staged or dependency paths. A stdlib-name shadow cannot execute first.
+The independently approved digest is passed through every command owner and
+checked before loading runtime/helper inputs; rehashing modified inputs cannot
+authorize them.
+Import admission rejects executable files absent from the
 reviewed manifest before they execute; complete input inventories reject extra
 staged files. Top-level package origins alone do not establish this closure.
 This is admission code and CPU-control evidence; the new freeze and formal

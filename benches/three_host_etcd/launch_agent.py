@@ -66,7 +66,10 @@ def main() -> None:
         record_path = args.root / f"{args.node}.{suffix}.launcher.json"
         environment = direct_network_environment(settings["network_environment"])
         if "process_qualification" in settings:
-            command = [*process_python(args.root, args.node), *command[1:]]
+            command = [
+                *process_python(args.root, args.node, args.approved_input_manifest_sha256),
+                *command[1:],
+            ]
     else:
         runtime = Path(settings["orbitkv_runtime"]["source_root"])
         command = [
