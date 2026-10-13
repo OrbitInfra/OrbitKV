@@ -290,7 +290,9 @@ pub unsafe fn create(
         set_config(c"metrics/enabled", c"false");
         set_config(c"use_legacy_transport_selection", c"false");
         set_config(c"enable_runtime_queue", c"false");
-        set_config(c"enable_auto_failover_on_poll", c"true");
+        // A successful retry cannot prove that the preceding failed physical
+        // attempt has stopped touching its source and destination buffers.
+        set_config(c"enable_auto_failover_on_poll", c"false");
         set_config(c"transports/tcp/enable", c"true");
         set_config(c"transports/shm/enable", c"false");
         set_config(c"transports/gds/enable", c"false");

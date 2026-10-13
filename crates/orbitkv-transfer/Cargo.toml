@@ -17,3 +17,5 @@ cuda-13 = ["orbitkv-mooncake-sys/cuda"]
 orbitkv-mooncake-sys = { workspace = true, default-features = false }
 thiserror = "2.0"
 libc.workspace = true
+log.workspace = true
+opentelemetry.workspace = true

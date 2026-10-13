@@ -24,6 +24,37 @@ authenticated bootstrap UDS for both adapters.
 
 ## Process channel
 
+### Native TENT failure retention
+
+The pinned TENT C ABI's `tent_free_batch()` accepts a deferred free request; its
+zero return is not an independent physical-termination acknowledgement. Native
+`FAILED`, `CANCELED`, `TIMEOUT`, `INVALID` or unknown task states do not authorize
+source release or destination reuse. OrbitKV retains the synchronous native
+call, batch descriptors and caller-owned buffers after observing one. It does
+not send source release from that call or recycle its admission slot. A wrapper
+deadline initiates best-effort cancellation and retains ownership while tasks
+remain pending; only later successful completion of every task permits return
+of the original logical failure. A native failure is not converted into success
+by a later poll or replacement transport.
+
+Each TENT engine admits at most 1,024 batches and 32 MiB of C request descriptors
+across live and retained calls, rejecting excess before native allocation or
+submission. These limits bound descriptor memory, not the retained payload;
+physical memory remains owned by the existing pool/query/source budgets. Native
+transport failover on polling is disabled until the preceding attempt's
+termination can be established. Successful normal TCP/RDMA/CUDA transfers keep
+the existing completion path; physical-failure recovery remains unqualified.
+
+Retention is visible through `orbitkv_native_transfer_batches`,
+`orbitkv_native_transfer_request_bytes`,
+`orbitkv_native_transfer_retained_batches`,
+`orbitkv_native_transfer_retained_descriptor_bytes` and admission rejections.
+The retained descriptor-byte sum counts requested payload lengths, including
+overlapping slices; it is not a physical allocation-size gauge. Uncertain calls
+keep the owning process isolated and can prevent graceful shutdown. Retention
+does not authorize killing that process or reclaiming remote buffers. See S3 in
+the completion plan for the remaining native termination and installed gates.
+
 `orbitkv-channel` uses iceoryx2 `0.10.0` and a fixed 64-byte command carrying
 protocol version, opcode, request identity, Manager epoch, descriptor offset,
 length/generation, and two opcode-specific scalar fields. Variable-length
@@ -291,12 +322,14 @@ batch, so OrbitKV does not infer TCP/RDMA/GPUDirect from `--nics` or success;
 qualification records Mooncake logs and NIC/device counters externally.
 
 TENT task cancellation is best effort. OrbitKV requests cancellation after a
-deadline or partial submit, continues polling every task to a TENT terminal
-state, and only then calls `tent_free_batch`. A successful free request is not a
-completion fence. This preserves source/destination memory through TENT's
-asynchronous queue, failover and device work.
-Cancellation caused by a timeout retains the timeout result after draining;
-an earlier submission, polling or cancellation error keeps its original cause.
+deadline or partial submit and continues polling. It calls `tent_free_batch`
+only after every task reports `COMPLETED`; a successful free request is not a
+completion fence. A native non-completed terminal or unknown status retains the
+call and its source/destination buffers, as described in
+[native failure retention](#native-tent-failure-retention).
+After every task completes, the call returns the first recorded submission,
+polling or cancellation error. It returns `Timeout` only when no such error was
+recorded and the logical deadline expired.
 
 OrbitKV also exposes TENT's bounded NIC load snapshot: device name, in-flight
 bytes and EWMA bandwidth. This is live rail-pressure evidence, not a per-batch
@@ -316,16 +349,16 @@ library. TENT exposes one segment and batch model across CPU, CUDA, file and
 network-capable transports; extended registration carries memory location and
 permission, while topology and rail selection remain inside Mooncake. Its C ABI
 also exposes per-task terminal status, cancellation, notifications and NIC-load
-snapshots. OrbitKV can therefore retain each allocation until the exact batch
-has drained and can feed live resource pressure into planning without owning an
-RDMA implementation.
+snapshots. OrbitKV retains each allocation while the exact batch lacks completion
+evidence and can feed live resource pressure into planning without owning an
+RDMA implementation. Native failure statuses do not establish physical drain.
 
 The legacy wrapper primarily exposed submit/poll/free around the older
 TransferEngine object. In particular, freeing its batch handle was too easy to
 misread as a completion fence, and its Python integrations commonly held only
 raw addresses rather than registration owners. OrbitKV's TENT path instead
-uses Rust RAII registration tokens and a cancel-then-drain state machine. This
-does not make every transfer automatically faster: HBM-to-HBM speed still
+uses Rust RAII registration tokens and cancellation with completion or retained
+ownership. This does not make every transfer automatically faster: HBM-to-HBM speed still
 depends on the selected transport, topology, registration cost and chunking.
 It does make the ownership and observability needed for safe high-performance
 selection explicit. Because the current C ABI has no per-batch transport
@@ -336,8 +369,9 @@ TENT implements a real peer probe internally, but the pinned stable C ABI does
 not export it. `tent_available` reports only local-engine health, and segment
 metadata can remain thread-locally cached for an hour, so neither is a valid
 substitute. OrbitKV therefore rejects SGLang's optional failed-session probe
-mode instead of allowing a false-positive unblacklist. Ordinary failed batches
-still cancel, drain and invalidate their cached peer segment.
+mode instead of allowing a false-positive unblacklist. A failed native batch
+keeps its caller and source-completion owner held; it does not return to
+invalidate a cached peer segment while physical termination remains unproven.
 
 OrbitKV does not adopt Mooncake Store Master as its semantic authority. Today
 the cache engine handles versioned model/storage keys and leases above Mooncake.

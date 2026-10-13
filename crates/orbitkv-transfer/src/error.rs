@@ -15,6 +15,8 @@ pub enum MooncakeError {
     },
     #[error("Mooncake returned an invalid batch id")]
     InvalidBatch,
+    #[error("Mooncake native batch admission exhausted or descriptor bytes overflow")]
+    BatchAdmissionExhausted,
     #[error("Mooncake transfer task {task} failed with state {state}")]
     TransferFailed { task: usize, state: i32 },
     #[error("Mooncake transfer batch timed out")]
