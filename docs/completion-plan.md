@@ -499,6 +499,14 @@ keep CUDA in standalone files. Representative copy wins cannot select a producti
 default. Native GDS and physical failure-domain qualification remain separate.
 S2/S4/S5 stay Partial.
 
+The current attribution candidate adds benchmark-only CUPTI driver callbacks
+and optional monotonic windows to the existing native layout fixture. Its strict
+analyzer rejects incomplete/PID/TID/count/window mismatches and leaves non-driver
+host time unattributed. Production backends, CUDA sources and defaults are
+unchanged. Source/launch review, real-GPU capture and observer-overhead gates are
+separate; a component smoke cannot establish the consumed serving cause or select
+a default. See [native diagnosis](kernel-optimization.md#native-driver-submission-diagnosis).
+
 The initial 14-cell exploratory cohort stopped after three valid local vLLM
 cells: the released LMCache MP server completed its lifespan shutdown and
 re-emitted SIGTERM, while the benchmark required zero. Its 30 recorded requests

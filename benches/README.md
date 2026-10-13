@@ -66,6 +66,7 @@ uv run --isolated --no-project --with pytest --with requests --with uvicorn==0.5
 | `sharegpt.py` | Multi-turn workload using the pinned vLLM benchmark scripts |
 | `tests/` | CPU-only checks for measurement and report correctness |
 | `artifacts.py` | Validate external output locations, including symlink resolution |
+| `cuda_driver_trace.cpp`, `cuda_submission.py` | Bounded CUPTI driver callbacks matched to native copy fixture windows; diagnostic only |
 | `reproduce_preparation.sh` | Repeated preparation controls with an explicit external output root |
 
 ### GPU-pointer and full-Manager RDMA profile
