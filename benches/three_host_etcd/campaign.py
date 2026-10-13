@@ -843,7 +843,7 @@ class Campaign:
         timeout: float = 5,
     ) -> dict:
         url = f"{endpoint}{path}"
-        allowance = min(timeout, self.remaining())
+        allowance = min(timeout, self.remaining(cleanup=self.cleanup_deadline is not None))
         if payload is None:
             response = self.session.get(url, timeout=allowance)
         else:
@@ -1708,6 +1708,16 @@ class Campaign:
             raise RuntimeError(
                 f"A100 runtime hashes differ: {observed_hashes} != {expected_hashes}"
             )
+        self.host_command(
+            a100,
+            [
+                "python3",
+                "-c",
+                "from pathlib import Path; import hashlib,sys; r=Path(sys.argv[1]); m=r/'frozen/installed-payload.SHA256SUMS'; expected=sys.argv[2]; actual=hashlib.sha256(m.read_bytes()).hexdigest(); entries=[line.split('  ',1) for line in m.read_text().splitlines()]; changed=[name for digest,name in entries if hashlib.sha256((r/name).read_bytes()).hexdigest()!=digest]; sys.exit(0 if actual==expected and not changed else 1)",
+                str(runtime_root),
+                runtime["installed_payload_manifest_sha256"],
+            ],
+        )
         import_record = self.host_command(
             a100,
             [
@@ -2373,12 +2383,13 @@ class Campaign:
                 "storage": storage,
             }
 
+            self.remaining(cleanup=True)
             cleanup = {
-                "consumer": self.consumer_request("exit", timeout=120),
+                "consumer": self.consumer_request("exit", timeout=120, cleanup=True),
                 "nodes": {},
             }
             prefix = f"/orbitkv/v2/{self.settings['orbitkv_cluster']}/"
-            deadline = time.monotonic() + min(30, self.remaining())
+            deadline = time.monotonic() + min(30, self.remaining(cleanup=True))
             while True:
                 after_consumer = self.range_prefix(prefix)
                 after_header = after_consumer.get("header", {})
@@ -2442,7 +2453,7 @@ class Campaign:
                 "records": decoded_after_records,
             }
             for name in all_names:
-                cleanup["nodes"][name] = self.node_request(name, "exit", timeout=60)
+                cleanup["nodes"][name] = self.node_request(name, "exit", timeout=60, cleanup=True)
             postflight = self.postflight()
             self.complete_success(final_evidence, cleanup, postflight)
         except BaseException as error:

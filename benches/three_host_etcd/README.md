@@ -101,3 +101,10 @@ leader-loss/rejoin, quorum-loss/recovery and full final put/delete equality.
 Endpoint/member/cluster identities and raw HTTP responses are preserved.
 Each cohort requires a new exact freeze and independent launch acceptance; its
 result does not qualify Manager watch/cache recovery or physical fault domains.
+
+Missing or unreadable lock paths quarantine the owner while preserving its
+already-open locked descriptor, even if evidence persistence fails. Complete
+Manager drain checks parse raw samples, require all six phase labels and reject
+nonfinite or nonzero values before aggregation. Actual installed payload and
+helper origins are frozen and rehashed; final normal cleanup consumes the same
+controller deadline as failure cleanup. New input contracts require a new freeze.

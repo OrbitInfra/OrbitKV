@@ -6,10 +6,12 @@ import argparse
 import base64
 import fcntl
 import hashlib
+import importlib
 import ipaddress
 import json
 import math
 import os
+import re
 import socket
 import stat
 import subprocess
@@ -554,6 +556,60 @@ class Agent:
             "shutdown_seconds": seconds,
         }
 
+    def verify_imported_helpers(
+        self, runtime: dict, payload_entries: dict, projection: dict
+    ) -> dict:
+        payload_roots = runtime.get("installed_payload_roots")
+        if not isinstance(payload_roots, list) or not payload_roots:
+            raise RuntimeError("complete installed payload roots are absent")
+        observed_files = set()
+        for root in payload_roots:
+            if not isinstance(root, str) or Path(root).is_absolute() or ".." in Path(root).parts:
+                raise RuntimeError("installed payload root escapes runtime")
+            directory = (self.runtime / root).resolve(strict=True)
+            if (
+                not directory.is_relative_to(self.runtime.resolve(strict=True))
+                or not directory.is_dir()
+            ):
+                raise RuntimeError("installed payload root is invalid")
+            for path in directory.rglob("*"):
+                if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
+                    observed_files.add(path.relative_to(self.runtime).as_posix())
+        if not observed_files.issubset(payload_entries):
+            raise RuntimeError("installed payload manifest omits runtime files")
+        required_imports = {
+            "orbitkv",
+            "orbitkv.client.gpu",
+            "tests.integration.test_distributed_cache",
+            "tests.support.cache_manager",
+            "tests.support.metrics",
+        }
+        if not required_imports.issubset(runtime["import_origins"]):
+            raise RuntimeError("frozen imported helper origins are incomplete")
+        origins = {}
+        for module_name, relative in runtime["import_origins"].items():
+            module = importlib.import_module(module_name)
+            actual = Path(module.__file__).resolve(strict=True)
+            if Path(relative).is_absolute() or ".." in Path(relative).parts:
+                raise RuntimeError("frozen import origin escapes runtime")
+            expected_path = (self.runtime / relative).resolve(strict=True)
+            if (
+                actual != expected_path
+                or relative not in payload_entries
+                and not relative.startswith("projection/")
+            ):
+                raise RuntimeError(
+                    f"actual imported helper origin differs: {module_name}: {actual} != {expected_path}"
+                )
+            digest = hashlib.sha256(actual.read_bytes()).hexdigest()
+            expected_digest = payload_entries.get(relative) or projection.get(
+                relative.removeprefix("projection/")
+            )
+            if digest != expected_digest:
+                raise RuntimeError(f"actual imported helper hash differs: {module_name}")
+            origins[module_name] = {"path": str(actual), "sha256": digest}
+        return origins
+
     def preflight(self) -> dict:
         import orbitkv
         import orbitkv.orbitkv as native
@@ -575,6 +631,12 @@ class Agent:
             projection_manifest,
             runtime["projection_manifest_sha256"],
         )
+        payload_entries = verify_manifest(
+            self.runtime,
+            self.runtime / "frozen/installed-payload.SHA256SUMS",
+            runtime["installed_payload_manifest_sha256"],
+        )
+        origins = self.verify_imported_helpers(runtime, payload_entries, projection)
         projection_digest = runtime["projection_manifest_sha256"]
         artifacts = {
             "manager": self.runtime / "frozen/bin/orbitkv-cache-manager",
@@ -624,6 +686,8 @@ class Agent:
             "input_files": sorted(verified_inputs),
             "projection_manifest_sha256": projection_digest,
             "projection_files": sorted(projection),
+            "installed_payload_files": len(payload_entries),
+            "import_origins": origins,
             "hostname": node["hostname"],
             "boot_id": boot_id,
             "package": str(Path(orbitkv.__file__).resolve()),
@@ -890,7 +954,6 @@ class Agent:
         }
 
     def drain_metrics(self) -> dict:
-        metrics = fetch_orbitkv_metrics(self.manager.http_port)
         required = {
             "orbitkv_query_reserved_bytes",
             "orbitkv_query_reserved_bytes_by_phase",
@@ -903,6 +966,38 @@ class Agent:
             "orbitkv_ssd_write_queue_pending",
             "orbitkv_transfer_completion_outstanding",
         }
+        response = self.etcd_session.get(
+            f"http://127.0.0.1:{self.manager.http_port}/metrics", timeout=self.cleanup_remaining(5)
+        )
+        response.raise_for_status()
+        metrics = {}
+        phase_labels = set()
+        for line in response.text.splitlines():
+            if not line.strip() or line.startswith("#"):
+                continue
+            match = re.fullmatch(r"([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{([^}]*)\})?\s+(\S+)", line)
+            name = line.split("{", 1)[0].split()[0]
+            if name not in required:
+                continue
+            if match is None:
+                raise RuntimeError(f"Malformed required drain metric: {line}")
+            name, labels, raw_value = match.groups()
+            try:
+                value = float(raw_value)
+            except ValueError as error:
+                raise RuntimeError(f"Invalid required drain value: {line}") from error
+            if not math.isfinite(value) or value != 0:
+                raise RuntimeError(f"Manager drain metric is invalid or live: {name}={raw_value}")
+            if name == "orbitkv_query_reserved_bytes_by_phase":
+                phase_match = re.fullmatch(
+                    r'phase="(warming|preloading|prepared|preparing|ready|restoring)"', labels or ""
+                )
+                if phase_match is None or phase_match[1] in phase_labels:
+                    raise RuntimeError("Manager phase metric labels differ")
+                phase_labels.add(phase_match[1])
+            metrics[name] = metrics.get(name, 0) + value
+        if phase_labels != {"warming", "preloading", "prepared", "preparing", "ready", "restoring"}:
+            raise RuntimeError("Manager drain phase metrics are incomplete")
         missing = required - metrics.keys()
         if missing:
             raise RuntimeError(f"Manager drain metrics are absent: {sorted(missing)}")

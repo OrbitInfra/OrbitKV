@@ -134,6 +134,13 @@ def validate(root: Path, approved_input_manifest_sha256: str) -> dict:
         raise RuntimeError(
             "Frozen three-host contract failed: runtime['pressure_rounds'] * runtime['pressure_cadence_ms'] / 1000 < settings['budgets']['phase_seconds']"
         )
+    payload_digest = runtime.get("installed_payload_manifest_sha256")
+    if (
+        payload_digest != sha256(source / "frozen/installed-payload.SHA256SUMS")
+        or not runtime.get("import_origins")
+        or not runtime.get("installed_payload_roots")
+    ):
+        raise RuntimeError("installed runtime closure/import-origin freeze is absent")
     runtime_ports = {
         runtime["manager_peer_port"],
         runtime["manager_http_port"],

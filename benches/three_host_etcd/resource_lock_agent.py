@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fcntl
 import json
 import os
@@ -81,18 +82,32 @@ def main() -> None:
     }
     atomic_json(ready, record)
     while not stop.exists():
-        current = lock_path.lstat()
-        if (
-            current.st_dev != info.st_dev
-            or current.st_ino != info.st_ino
-            or current.st_uid != info.st_uid
-        ):
-            atomic_json(
-                lock_path.with_suffix(".quarantine.json"),
-                {**record, "status": "quarantined", "reason": "lock_identity_changed"},
+        try:
+            current = lock_path.lstat()
+            valid = (current.st_dev, current.st_ino, current.st_uid) == (
+                info.st_dev,
+                info.st_ino,
+                info.st_uid,
             )
+        except OSError:
+            valid = False
+        if not valid:
+            record = {
+                **record,
+                "status": "quarantined",
+                "reason": "lock_identity_changed_or_missing",
+            }
+            # Retention must survive ordinary exceptions, including evidence
+            # write failures. Keep the original locked fd open indefinitely.
             while True:
-                time.sleep(60)
+                try:
+                    if not lock_path.with_suffix(".quarantine.json").exists():
+                        atomic_json(lock_path.with_suffix(".quarantine.json"), record)
+                    atomic_json(ready, record)
+                except BaseException:
+                    pass
+                with contextlib.suppress(BaseException):
+                    time.sleep(60)
         time.sleep(0.1)
     atomic_json(
         released,

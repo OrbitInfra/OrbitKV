@@ -886,26 +886,57 @@ DRAIN_METRICS = (
 )
 
 
+def drain_text(overrides=None, missing=None, omit_phase=None):
+    overrides = overrides or {}
+    lines = []
+    for name in DRAIN_METRICS:
+        if name == missing:
+            continue
+        if name == "orbitkv_query_reserved_bytes_by_phase":
+            for phase in ["warming", "preloading", "prepared", "preparing", "ready", "restoring"]:
+                if phase != omit_phase:
+                    lines.append(f'{name}{{phase="{phase}"}} {overrides.get(phase, 0)}')
+        else:
+            lines.append(f"{name} {overrides.get(name, 0)}")
+    return "\n".join(lines) + "\n"
+
+
 @pytest.mark.parametrize("missing", DRAIN_METRICS)
-def test_drain_metrics_must_exist_and_be_zero(tmp_path: Path, monkeypatch, missing):
+def test_drain_metrics_must_exist_and_be_zero(tmp_path, missing):
     agent = bare_agent(tmp_path)
     agent.manager = types.SimpleNamespace(http_port=1)
-    metrics = dict.fromkeys(DRAIN_METRICS, 0)
-    monkeypatch.setattr(consumer_module, "fetch_orbitkv_metrics", lambda _port: metrics)
-    assert agent.drain_metrics() == metrics
-    del metrics[missing]
-    with pytest.raises(RuntimeError, match="drain metrics are absent"):
+    agent.etcd_session = types.SimpleNamespace(
+        get=lambda *_args, **_kw: types.SimpleNamespace(
+            text=drain_text(), raise_for_status=lambda: None
+        )
+    )
+    assert agent.drain_metrics()["orbitkv_query_reserved_bytes"] == 0
+    agent.etcd_session.get = lambda *_args, **_kw: types.SimpleNamespace(
+        text=drain_text(missing=missing), raise_for_status=lambda: None
+    )
+    with pytest.raises(RuntimeError, match="absent|incomplete"):
         agent.drain_metrics()
 
 
-@pytest.mark.parametrize("invalid", [True, -1, float("nan"), float("inf"), "0", None, 1])
-def test_drain_metrics_reject_invalid_or_live_values(tmp_path: Path, monkeypatch, invalid):
+@pytest.mark.parametrize(
+    "overrides,omit",
+    [
+        ({"warming": "NaN"}, None),
+        ({"warming": "+Inf"}, None),
+        ({"warming": 7, "ready": -7}, None),
+        ({}, "ready"),
+        ({"orbitkv_ssd_write_inflight": 1}, None),
+    ],
+)
+def test_drain_rejects_each_phase_sample_before_aggregation(tmp_path, overrides, omit):
     agent = bare_agent(tmp_path)
     agent.manager = types.SimpleNamespace(http_port=1)
-    metrics = dict.fromkeys(DRAIN_METRICS, 0)
-    metrics["orbitkv_ssd_write_inflight"] = invalid
-    monkeypatch.setattr(consumer_module, "fetch_orbitkv_metrics", lambda _port: metrics)
-    with pytest.raises(RuntimeError, match="invalid|did not drain"):
+    agent.etcd_session = types.SimpleNamespace(
+        get=lambda *_args, **_kw: types.SimpleNamespace(
+            text=drain_text(overrides, omit_phase=omit), raise_for_status=lambda: None
+        )
+    )
+    with pytest.raises(RuntimeError, match="invalid|incomplete"):
         agent.drain_metrics()
 
 
@@ -2157,3 +2188,73 @@ def test_readiness_failure_cleanup_cannot_reset_an_existing_deadline(monkeypatch
     monkeypatch.setattr(readiness_module.time, "monotonic", lambda: 500.0)
     readiness_module._cleanup(campaign)
     assert campaign.cleanup_deadline == 100.0
+
+
+def test_missing_lock_path_retains_live_owner_and_original_flock(tmp_path):
+    root, config, digest = staged_root(tmp_path)
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            str(root / "inputs/resource_lock_agent.py"),
+            "--root",
+            str(root),
+            "--node",
+            "s2-h20",
+            "--approved-input-manifest-sha256",
+            digest,
+        ],
+        env=direct_network_environment(config["network_environment"]),
+        start_new_session=True,
+    )
+    try:
+        ready = root / "s2-h20.resource-lock.json"
+        wait_path(ready, process)
+        lock_path = Path(config["resource_lock"]["path"])
+        lock_path.unlink()
+        deadline = time.monotonic() + 3
+        while json.loads(ready.read_text())["status"] != "quarantined":
+            assert process.poll() is None
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert process.poll() is None
+        assert lock_path.with_suffix(".quarantine.json").exists()
+        assert not (root / "s2-h20.resource-lock.released.json").exists()
+        (root / "s2-h20.resource-lock.stop").touch()
+        time.sleep(0.05)
+        assert process.poll() is None
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=2)
+
+
+def test_actual_import_origins_and_bytes_are_bound_to_payload(tmp_path, monkeypatch):
+    agent = bare_agent(tmp_path)
+    names = [
+        "orbitkv",
+        "orbitkv.client.gpu",
+        "tests.integration.test_distributed_cache",
+        "tests.support.cache_manager",
+        "tests.support.metrics",
+    ]
+    origins, payload, modules = {}, {}, {}
+    for index, name in enumerate(names):
+        relative = f"runtime-venv/lib/python3.11/site-packages/module-{index}.py"
+        path = agent.runtime / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# frozen helper\n")
+        origins[name] = relative
+        payload[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+        modules[name] = types.SimpleNamespace(__file__=str(path))
+    monkeypatch.setattr(consumer_module.importlib, "import_module", lambda name: modules[name])
+    runtime = {"import_origins": origins, "installed_payload_roots": ["runtime-venv/lib/python3.11/site-packages"]}
+    assert len(agent.verify_imported_helpers(runtime, payload, {})) == 5
+    changed = Path(modules["orbitkv.client.gpu"].__file__)
+    changed.write_text("# changed installed code\n")
+    with pytest.raises(RuntimeError, match="hash differs"):
+        agent.verify_imported_helpers(runtime, payload, {})
+    changed.write_text("# frozen helper\n")
+    modules["tests.support.cache_manager"].__file__ = str(tmp_path / "shadow.py")
+    (tmp_path / "shadow.py").write_text("# shadow helper\n")
+    with pytest.raises(RuntimeError, match="origin differs"):
+        agent.verify_imported_helpers(runtime, payload, {})

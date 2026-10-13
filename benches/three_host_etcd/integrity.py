@@ -30,6 +30,9 @@ def verify_manifest(base: Path, manifest: Path, approved_manifest_sha256: str) -
         ):
             raise RuntimeError(f"invalid input manifest line {number}: {line!r}")
         path = base / Path(*relative.parts)
+        resolved_base = base.resolve(strict=True)
+        if not path.resolve(strict=True).is_relative_to(resolved_base):
+            raise RuntimeError(f"manifest input escapes frozen base: {name}")
         if not path.is_file():
             raise RuntimeError(f"manifest input is missing: {name}")
         actual = sha256(path)
