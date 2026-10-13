@@ -229,6 +229,10 @@ before child creation.
 Automatic site and `.pth` startup are disabled with `-S`; safe-path mode and
 explicit frozen dependency roots keep host startup code outside execution.
 The verifier requires those interpreter flags before resource admission.
+The frozen inventory also covers actual transitive imports, including optional
+HTTP JSON backends. Import admission rejects executable files absent from the
+reviewed manifest before they execute; complete input inventories reject extra
+staged files. Top-level package origins alone do not establish this closure.
 This is admission code and CPU-control evidence; the new freeze and formal
 process result still require independent review.
 

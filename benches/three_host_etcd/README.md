@@ -129,3 +129,8 @@ The bootstrap inserts only the frozen HTTP dependency roots and stage inputs;
 automatic `site`, `.pth` and cwd imports are disabled. A private system-site venv
 control proves that unfrozen `.pth` code runs under the old flags, while the
 reviewed bootstrap bypasses it and validates the runtime before resources.
+
+Snapshot transitive imports after loading the actual controller and helpers.
+An import guard checks origins and bytes against runtime/input manifests before
+optional Python modules execute. Extra input files are rejected as inventory
+mismatches; an unlisted `simplejson` cannot become the HTTP JSON backend.

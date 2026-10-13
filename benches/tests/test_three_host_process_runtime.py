@@ -227,3 +227,23 @@ def test_unreviewed_site_startup_is_disabled_before_verification(frozen):
     isolated = execute(frozen, VERIFY, executable=str(virtual / "bin/python"))
     assert isolated.returncode == 0, isolated.stderr
     assert not marker.exists()
+
+
+def test_optional_transitive_import_is_blocked_before_execution(frozen):
+    optional = frozen / "optional"
+    optional.mkdir()
+    marker = frozen / "unfrozen-import"
+    (optional / "simplejson.py").write_text(
+        f"from json import *\nopen({str(marker)!r},'w').write('executed')\n"
+    )
+    (frozen / "inputs/SHA256SUMS").write_text("")
+    script = (
+        "import sys,json,pathlib; from benches.three_host_etcd.integrity import install_import_guard; "
+        "r=pathlib.Path(sys.argv[1]); s=json.loads((r/'inputs/node.runtime.json').read_text()); "
+        "install_import_guard(r,s); sys.path.insert(0,str(r/'optional')); "
+        "import simplejson"
+    )
+    rejected = execute(frozen, script)
+    assert rejected.returncode != 0
+    assert "unfrozen runtime import: simplejson" in rejected.stderr
+    assert not marker.exists()
