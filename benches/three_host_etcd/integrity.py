@@ -125,13 +125,30 @@ def process_runtime_snapshot() -> dict:
 
 def process_python(root: Path, node_name: str) -> list[str]:
     snapshot = json.loads((root / "inputs" / f"{node_name}.runtime.json").read_text())
-    return [snapshot["python"], "-B", "-E", "-s"]
+    return [
+        snapshot["python"],
+        "-B",
+        "-E",
+        "-s",
+        "-X",
+        f"pycache_prefix={root / '.runtime-bytecode'}",
+    ]
 
 
 def verify_process_runtime(root: Path, settings: dict, node_name: str | None = None) -> dict:
     """Reject a changed or shadowed runtime before this process owns resources."""
     if "process_qualification" not in settings:
         return {}
+    bytecode = root / ".runtime-bytecode"
+    if (
+        sys.pycache_prefix != str(bytecode)
+        or not sys.flags.dont_write_bytecode
+        or not sys.flags.ignore_environment
+        or not sys.flags.no_user_site
+        or bytecode.exists()
+        or bytecode.is_symlink()
+    ):
+        raise RuntimeError("process runtime bytecode/environment isolation differs")
     if node_name is None:
         import socket
 

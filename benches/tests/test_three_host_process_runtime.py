@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import py_compile
 import subprocess
 import sys
 from pathlib import Path
@@ -14,7 +15,17 @@ from benches.three_host_etcd import integrity
 
 def execute(root, source, *, prefix=""):
     return subprocess.run(
-        [sys.executable, "-B", "-E", "-s", "-c", prefix + source, str(root)],
+        [
+            sys.executable,
+            "-B",
+            "-E",
+            "-s",
+            "-X",
+            f"pycache_prefix={root / '.runtime-bytecode'}",
+            "-c",
+            prefix + source,
+            str(root),
+        ],
         env=os.environ.copy(),
         capture_output=True,
         text=True,
@@ -124,10 +135,7 @@ def test_launcher_runtime_mismatch_creates_no_child_or_ownership(frozen):
     )
     result = subprocess.run(
         [
-            sys.executable,
-            "-B",
-            "-E",
-            "-s",
+            *integrity.process_python(frozen, "node"),
             str(inputs / "launch_agent.py"),
             "--root",
             str(frozen),
@@ -147,3 +155,29 @@ def test_launcher_runtime_mismatch_creates_no_child_or_ownership(frozen):
     assert "interpreter/runtime contract differs" in result.stderr
     assert not (frozen / "node.resource-lock.launcher.json").exists()
     assert not (frozen / "node.resource-lock.log").exists()
+
+
+def test_inherited_bytecode_is_bypassed_and_task_cache_is_rejected(frozen):
+    module = frozen / "frozen_module.py"
+    module.write_text('VALUE="expected"\n')
+    mutation = frozen / "mutation.py"
+    mutation.write_text('VALUE="unexpected"\n')
+    bytecode = Path(py_compile.compile(str(module)))
+    wrong = Path(py_compile.compile(str(mutation))).read_bytes()
+    bytecode.write_bytes(bytecode.read_bytes()[:16] + wrong[16:])
+    source = "import sys; sys.path.insert(0,sys.argv[1]); import frozen_module; print(frozen_module.VALUE)"
+    inherited = subprocess.run(
+        [sys.executable, "-B", "-E", "-s", "-c", source, str(frozen)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    assert inherited.returncode == 0 and inherited.stdout.strip() == "unexpected"
+    isolated = execute(frozen, source)
+    assert isolated.returncode == 0 and isolated.stdout.strip() == "expected"
+    assert not (frozen / ".runtime-bytecode").exists()
+    (frozen / ".runtime-bytecode").mkdir()
+    rejected = execute(frozen, VERIFY)
+    assert rejected.returncode != 0
+    assert "bytecode/environment isolation differs" in rejected.stderr

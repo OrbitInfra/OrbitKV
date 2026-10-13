@@ -222,7 +222,10 @@ library, HTTP dependency file inventory, import origins, symlink targets and
 mapped native files to the reviewed input manifest. Controller, launcher, node,
 network and lock agents validate that closure before owning resources; remote
 Python commands use the frozen interpreter with environment/user imports
-disabled. A changed digest or shadowed import fails before child creation.
+disabled and a fresh, nonexistent task bytecode prefix. `-B` alone can read
+unfrozen cached code; controls prove that the isolated prefix reads frozen source
+and rejects a preexisting task cache. A changed digest or shadowed import fails
+before child creation.
 This is admission code and CPU-control evidence; the new freeze and formal
 process result still require independent review.
 
