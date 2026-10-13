@@ -7,7 +7,34 @@ external directory or CI artifacts. Preserve unsuccessful runs and controls.
 Public documentation contains reviewed conclusions, their limits and links to
 versioned evidence; passing a correctness gate does not establish a speedup.
 
-## Current SGLang restore diagnosis archive
+## SGLang independent kernel-pair archive
+
+The measurement-host archive is
+`/root/orbitkv-artifacts/s5-kernel-layout-qualification-20261013/`.
+`02-independent-source-review/` retains the rejected initial source and accepted
+`4b6c7eba` correction. The unlaunched first freeze remains in `03-freeze/`;
+`03-freeze-r2/` and `04-independent-launch-review/` bind the corrected launch
+contract, unchanged `37b48c50` native build and official engine/model/runtime.
+
+`05-cohort/` retains all four full-pool byte cells, nine fresh model cells,
+270 measured requests, commands, literal waits, immutable inputs, raw diagnostics
+and full postflight. Its complete 2,663-file archive SHA-256 is
+`86995c205da1c2ab333373eadfcaead28e7d612f82247b6b77131923d73be1d7`.
+`06-independent-outcome-review/` retains independent byte/statistical
+reconstruction, fresh physical postflight and acceptance;
+`07-final-handoff/` links source, launch, outcome and final documentation delivery.
+Reviewer CPU preparation failures stay beside their successful replacements;
+no hardware cell or original evidence was replaced.
+
+The [methodology](../benches/README.md#actual-sglang-pool-byte-and-kernel-pair-checks)
+defines full-byte controls and four-pair bootstrap guards; concise conclusions
+are in [performance](performance.md#independent-sglang-kernel-pairs).
+This is a private host archive. Scoped serial recovery acceptance does not select
+a backend default, qualify p99/throughput or repair native IPC/fault lifetime.
+All nine child `-9` exits, eight IPC warnings, native-client wait gaps and old
+missing waits remain limits.
+
+## SGLang restore diagnosis archive
 
 The measurement-host archive is
 `/root/orbitkv-artifacts/s5-sglang-restore-profile-20261012/`.

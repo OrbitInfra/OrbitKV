@@ -2,8 +2,9 @@
 
 OrbitKV has reviewed recovery, copy and peer-transfer measurements. A component
 speedup is not an end-to-end serving advantage. The official-release Qwen3-32B
-local comparison below is a reviewed descriptive collection; sustained matched
-gains and tail qualification remain separate gates. Qwen3.8 native output
+local comparison below is a reviewed descriptive collection. The separate
+SGLang kernel pairs qualify a bounded serial recovery improvement; sustained
+contention and tail qualification remain separate gates. Qwen3.8 native output
 acceptance does not supply an external-cache comparison.
 
 ## Current dense local comparison
@@ -59,6 +60,48 @@ unchanged and physical resources are empty. Six native child exits `-9` and thre
 CUDA IPC producer warnings remain explicit lifetime limits. The initial 8K-only
 collection remains separate; its different preparation order cannot be treated
 as a repair. Full traces and reviews are in [the archive](benchmark-evidence.md).
+
+## Independent SGLang kernel pairs
+
+The [independent follow-up](https://github.com/feichai0017/orbitkv/pull/225)
+at harness `4b6c7eba` uses the unchanged `37b48c50` native build, official
+SGLang 0.5.21 and immutable Qwen3-32B revision `9216db57`. One H20 runs BF16/raw,
+TP=1/PP=1, eager deterministic inference with 16,384 GPU KV tokens and 16 GiB
+host cache. Four freshly restarted DMA/kernel pairs alternate AB/BA/AB/BA;
+a fresh native output control brings the model collection to nine cells and
+270 measured requests. Profiling and diagnostic tracing stay off.
+
+Pressure TTFT below is the mean of the four process-pair medians, not a pooled
+request median. Uncertainty bootstraps the four independent pair log-ratios.
+
+| Input tokens | Direct DMA TTFT ms | Kernel TTFT ms | Kernel/DMA geometric ratio | 95% pair-bootstrap interval |
+| --- | --- | --- | --- | --- |
+| 4,096 | 176.71 | 176.78 | 1.0004 | 0.9941–1.0094 |
+| 8,192 | 202.17 | 181.05 | 0.8955 | 0.8892–0.9031 |
+
+All four 8K pressure pairs improve. The geometric mean reduction is 10.45%,
+with a 95% interval of 9.69%–11.08%, passing the frozen 3% benefit guard.
+The 4K pressure result is effectively unchanged; both lengths' cold and HBM
+controls also pass their frozen 5% interval guards. These measurements compare
+the existing explicit kernel route with DMA. HiCache and LMCache timings from
+earlier collections are not matched controls for this cohort.
+
+Before model timing, four byte-control cells exercise both backends and lengths
+on the actual released SGLang pool. Twelve restore generations check all
+4,311,744,512 registered bytes per generation, with 1,536 plane digests,
+partial destinations and deliberate payload/sentinel corruption controls.
+This verifies deterministic fixture bytes, separately from model-computed KV;
+all model outputs match the fresh native control and preserved canonical output.
+Independent review reconstructs byte controls, matched statistics, consumed
+inputs, literal waits and unchanged installed files. Physical postflight is empty.
+
+Nine native child exits `-9`, eight CUDA IPC producer warnings, logged native
+client PIDs without individual wait statuses and historical missing waits remain
+explicit lifetime limits. This acceptance qualifies the
+retained kernel direction in this serial profile; it does not select a default
+or establish p99, throughput, concurrent inference, Graph, broader models/ranks,
+P/D, HA or S3 reclamation. Complete inputs, failed preparations and reviews remain
+in [the external archive](benchmark-evidence.md#sglang-independent-kernel-pair-archive).
 
 ## Two-host RDMA component measurements
 

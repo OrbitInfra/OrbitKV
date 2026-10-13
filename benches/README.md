@@ -630,6 +630,10 @@ Neither a passing fixture nor these serial medians select a universal default,
 establish p99/throughput, prove all native children graceful, or qualify broader
 model, Graph, topology, P/D and S3 profiles. The completion plan records the
 implemented tools and independently accepted hardware scope separately.
+The accepted 13-cell H20 cohort is retained in the
+[kernel-pair archive](../docs/benchmark-evidence.md#sglang-independent-kernel-pair-archive);
+[performance](../docs/performance.md#independent-sglang-kernel-pairs) reports its
+four-pair statistics and remaining lifetime limits.
 
 ## SSD restoration
 

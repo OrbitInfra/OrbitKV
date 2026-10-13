@@ -110,6 +110,16 @@ Preserve adapter/salt/model identity and effective committed lengths. Record TP,
 PP, attention DP, EP, P/D topology and transport separately; a one-GPU process test
 does not qualify their distributed combination. Keep evidence outside checkout.
 
+For SGLang copy-backend changes, use `benches.sglang_kv_oracle` to check the
+actual released pool, full payload/sentinel coverage, partial destinations,
+event generations and deliberate corruption through the installed native path.
+Its deterministic fixture bytes do not dump model-computed KV. Evaluate the
+consumed model separately with `benches.kernel_pairs`: freeze fresh independent
+process pairs, exact input/output and installed artifacts, real shutdown receipts
+and the original benefit/regression guards. Keep profiler clocks separate.
+The accepted serial profile and its lifetime limits are recorded in S5.5;
+neither fixture success nor pair medians select a general backend default.
+
 For upstream delivery, separate baseline registration/configuration/tests/docs,
 generic lifecycle fixes and TENT transport integration into reviewable PRs.
 Use a clean engine checkout plus installed wheel as the acceptance environment.
