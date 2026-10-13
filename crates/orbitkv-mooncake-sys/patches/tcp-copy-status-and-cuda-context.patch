@@ -1,0 +1,228 @@
+diff --git a/mooncake-transfer-engine/tent/include/tent/platform/cuda.h b/mooncake-transfer-engine/tent/include/tent/platform/cuda.h
+index a808a2b6..9b5489cb 100644
+--- a/mooncake-transfer-engine/tent/include/tent/platform/cuda.h
++++ b/mooncake-transfer-engine/tent/include/tent/platform/cuda.h
+@@ -128,0 +129,3 @@ class CudaPlatform : public Platform {
++    // Device owning `addr`, or kCurrentDevice when `addr` is not device memory.
++    int getPointerDeviceId(void* addr);
++
+diff --git a/mooncake-transfer-engine/tent/include/tent/platform/cuda_utils.h b/mooncake-transfer-engine/tent/include/tent/platform/cuda_utils.h
+new file mode 100644
+index 00000000..d388f120
+--- /dev/null
++++ b/mooncake-transfer-engine/tent/include/tent/platform/cuda_utils.h
+@@ -0,0 +1,53 @@
++// Copyright 2026 KVCache.AI
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++#ifndef TENT_PLATFORM_CUDA_UTILS_H
++#define TENT_PLATFORM_CUDA_UTILS_H
++
++#include <cuda.h>
++
++#include <mutex>
++
++namespace mooncake {
++namespace tent {
++
++// cuInit() is idempotent and creates no context; the driver API does not
++// initialize itself lazily, so it must run before any driver query.
++inline bool ensureCudaDriverInit() {
++    static std::once_flag flag;
++    static CUresult result = CUDA_ERROR_NOT_INITIALIZED;
++    std::call_once(flag, []() { result = cuInit(0); });
++    return result == CUDA_SUCCESS;
++}
++
++// Device ordinal owning `ptr`, or -1 for host memory. Unlike the runtime
++// cudaPointerGetAttributes(), this never implicitly initializes the calling
++// thread's current device and its primary context (default GPU 0).
++inline int getCudaDeviceForPtr(const void* ptr) {
++    if (!ensureCudaDriverInit()) return -1;
++    unsigned int mem_type = 0;
++    CUresult res = cuPointerGetAttribute(
++        &mem_type, CU_POINTER_ATTRIBUTE_MEMORY_TYPE, (CUdeviceptr)ptr);
++    if (res != CUDA_SUCCESS || mem_type != CU_MEMORYTYPE_DEVICE) return -1;
++    unsigned int dev_ordinal = 0;
++    res = cuPointerGetAttribute(
++        &dev_ordinal, CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL, (CUdeviceptr)ptr);
++    if (res != CUDA_SUCCESS) return -1;
++    return static_cast<int>(dev_ordinal);
++}
++
++}  // namespace tent
++}  // namespace mooncake
++
++#endif  // TENT_PLATFORM_CUDA_UTILS_H
+diff --git a/mooncake-transfer-engine/tent/src/platform/cuda/cuda_allocator.cpp b/mooncake-transfer-engine/tent/src/platform/cuda/cuda_allocator.cpp
+index d60ddffa..1c067a2d 100644
+--- a/mooncake-transfer-engine/tent/src/platform/cuda/cuda_allocator.cpp
++++ b/mooncake-transfer-engine/tent/src/platform/cuda/cuda_allocator.cpp
+@@ -15,0 +16 @@
++#include "tent/platform/cuda_utils.h"
+@@ -19,0 +21 @@
++#include <cstring>
+@@ -24,0 +27,11 @@ namespace tent {
++namespace {
++// Bare cudaGetDevice() can implicitly create GPU 0 when this thread has no
++// current context. Only save/restore the caller's device when one exists.
++bool cudaHasCurrentContext() {
++    if (!ensureCudaDriverInit()) return false;
++    CUcontext ctx = nullptr;
++    return cuCtxGetCurrent(&ctx) == CUDA_SUCCESS && ctx != nullptr;
++}
++
++}  // namespace
++
+@@ -45,3 +58 @@ Status CudaPlatform::free(void* ptr, size_t size) {
+-    cudaPointerAttributes attributes;
+-    CHECK_CUDA(cudaPointerGetAttributes(&attributes, ptr));
+-    if (attributes.type == cudaMemoryTypeDevice) {
++    if (getCudaDeviceForPtr(ptr) >= 0) {
+@@ -49,3 +59,0 @@ Status CudaPlatform::free(void* ptr, size_t size) {
+-    } else if (attributes.type == cudaMemoryTypeHost ||
+-               attributes.type == cudaMemoryTypeUnregistered) {
+-        numa_free(ptr, size);
+@@ -53 +61 @@ Status CudaPlatform::free(void* ptr, size_t size) {
+-        LOG(ERROR) << "Unknown memory type, " << ptr << " " << attributes.type;
++        numa_free(ptr, size);
+@@ -62,0 +71,27 @@ Status CudaPlatform::copy(void* dst, void* src, size_t length) {
++    //
++    // cudaMemcpyAsync routes the copy through its stream's device context, so
++    // the stream must live on the device owning the device-side buffer.
++    // Control-plane RPC worker threads sit on cuda:0 while a registered buffer
++    // may live on cuda:R; taking the stream from the buffer's device routes the
++    // copy correctly without mutating the calling thread's current device.
++    // Host-only copies keep the current device.
++    int device_id = getPointerDeviceId(dst);
++    if (device_id == CUDAStreamPool::kCurrentDevice) {
++        device_id = getPointerDeviceId(src);
++    }
++    if (device_id == CUDAStreamPool::kCurrentDevice) {
++        // Host-to-host: plain memcpy. The stream pool would create a primary
++        // context on the thread's default device (GPU 0).
++        ::memcpy(dst, src, length);
++        return Status::OK();
++    }
++
++    // cudaMemcpyAsync() validates the stream against the current device's
++    // context; pin the buffer's device for the copy and restore the caller's
++    // binding only when the thread already had a context.
++    int saved_device = 0;
++    const bool have_saved =
++        cudaHasCurrentContext() && cudaGetDevice(&saved_device) == cudaSuccess;
++    if (!have_saved) (void)cudaGetLastError();
++
++    CHECK_CUDA(cudaSetDevice(device_id));
+@@ -64 +99 @@ Status CudaPlatform::copy(void* dst, void* src, size_t length) {
+-    CHECK_STATUS(getStreamFromPool(stream));
++    CHECK_STATUS(getStreamFromPool(stream, device_id));
+@@ -67,0 +103,3 @@ Status CudaPlatform::copy(void* dst, void* src, size_t length) {
++    if (have_saved) {
++        CHECK_CUDA(cudaSetDevice(saved_device));
++    }
+@@ -69,0 +108 @@ Status CudaPlatform::copy(void* dst, void* src, size_t length) {
++
+diff --git a/mooncake-transfer-engine/tent/src/platform/cuda/cuda_probe.cpp b/mooncake-transfer-engine/tent/src/platform/cuda/cuda_probe.cpp
+index 6a52601c..8cba5d29 100644
+--- a/mooncake-transfer-engine/tent/src/platform/cuda/cuda_probe.cpp
++++ b/mooncake-transfer-engine/tent/src/platform/cuda/cuda_probe.cpp
+@@ -15,0 +16 @@
++#include "tent/platform/cuda_utils.h"
+@@ -302,6 +303,7 @@ MemoryType CudaPlatform::getMemoryType(void* addr) {
+-    cudaPointerAttributes attributes{};
+-    cudaError_t result = cudaPointerGetAttributes(&attributes, addr);
+-    if (result != cudaSuccess) {
+-        LOG(WARNING) << "cudaPointerGetAttributes: "
+-                     << cudaGetErrorString(result);
+-        return MTYPE_UNKNOWN;
++    return getCudaDeviceForPtr(addr) >= 0 ? MTYPE_CUDA : MTYPE_CPU;
++}
++
++int CudaPlatform::getPointerDeviceId(void* addr) {
++    // Same guards as getMemoryType().
++    if (!cudaDevicePresent() || !cudaAbiMatches()) {
++        return CUDAStreamPool::kCurrentDevice;
+@@ -309,2 +311,3 @@ MemoryType CudaPlatform::getMemoryType(void* addr) {
+-    if (attributes.type == cudaMemoryTypeDevice) return MTYPE_CUDA;
+-    return MTYPE_CPU;
++    int device = getCudaDeviceForPtr(addr);
++    if (device < 0) return CUDAStreamPool::kCurrentDevice;
++    return device;
+@@ -339,9 +342,3 @@ const std::vector<RangeLocation> CudaPlatform::getLocation(void* start,
+-        cudaPointerAttributes attributes{};
+-        cudaError_t result = cudaPointerGetAttributes(&attributes, start);
+-        if (result != cudaSuccess) {
+-            LOG(WARNING) << "cudaPointerGetAttributes: "
+-                         << cudaGetErrorString(result);
+-            entries.push_back({(uint64_t)start, len, kWildcardLocation});
+-            return entries;
+-        }
+-        if (attributes.type == cudaMemoryTypeDevice) {
++        // Unregistered pointers fall through to the NUMA probe below.
++        int cuda_dev = getCudaDeviceForPtr(start);
++        if (cuda_dev >= 0) {
+@@ -349 +346 @@ const std::vector<RangeLocation> CudaPlatform::getLocation(void* start,
+-                {(uint64_t)start, len, genCudaNodeName(attributes.device)});
++                {(uint64_t)start, len, genCudaNodeName(cuda_dev)});
+diff --git a/mooncake-transfer-engine/tent/src/runtime/control_plane.cpp b/mooncake-transfer-engine/tent/src/runtime/control_plane.cpp
+index 0378593d..bcb245cf 100644
+--- a/mooncake-transfer-engine/tent/src/runtime/control_plane.cpp
++++ b/mooncake-transfer-engine/tent/src/runtime/control_plane.cpp
+@@ -86,0 +87,2 @@ Status ControlClient::sendData(const std::string& server_addr,
++        // resize() zero-fills the payload, so an unchecked copy failure would
++        // ship zeros that the peer stores successfully and reports COMPLETED.
+@@ -88 +90,2 @@ Status ControlClient::sendData(const std::string& server_addr,
+-        loader.copy(request.data() + sizeof(desc), local_mem_addr, length);
++        CHECK_STATUS(
++            loader.copy(request.data() + sizeof(desc), local_mem_addr, length));
+@@ -108,3 +111,2 @@ Status ControlClient::recvData(const std::string& server_addr,
+-            "RecvData failed: target address not in registered buffer");
+-    Platform::getLoader().copy(local_mem_addr, response.data(), length);
+-    return Status::OK();
++            response.empty() ? "RecvData failed: empty response" : response);
++    return Platform::getLoader().copy(local_mem_addr, response.data(), length);
+@@ -431 +433,9 @@ void ControlService::onSendData(const std::string_view& request,
+-        Platform::getLoader().copy((void*)peer_mem_addr, &desc[1], length);
++        auto status =
++            Platform::getLoader().copy((void*)peer_mem_addr, &desc[1], length);
++        if (!status.ok()) {
++            // A non-empty response is interpreted as an RPC error by the
++            // client (see ControlClient::sendData). Without this the sender's
++            // transfer would be reported COMPLETED even though the destination
++            // buffer was never written.
++            response = "SendData failed: copy: " + status.ToString();
++        }
+@@ -447,0 +458,8 @@ void ControlService::onRecvData(const std::string_view& request,
++    // The client accepts any response of exactly `length` bytes as payload (see
++    // ControlClient::recvData), so an error of that size must be padded or it
++    // would be copied into the caller's buffer and reported as success.
++    auto fail = [&response, length](std::string message) {
++        response = std::move(message);
++        if (response.size() == length) response.push_back(' ');
++    };
++
+@@ -451 +469 @@ void ControlService::onRecvData(const std::string_view& request,
+-        response = "RecvData failed: length exceeds maximum allowed";
++        fail("RecvData failed: length exceeds maximum allowed");
+@@ -463 +481,5 @@ void ControlService::onRecvData(const std::string_view& request,
+-            loader.copy(response.data(), (void*)peer_mem_addr, length);
++            auto status =
++                loader.copy(response.data(), (void*)peer_mem_addr, length);
++            if (!status.ok()) {
++                fail("RecvData failed: copy: " + status.ToString());
++            }
+@@ -466 +488 @@ void ControlService::onRecvData(const std::string_view& request,
+-        response = "RecvData failed: target address not in registered buffer";
++        fail("RecvData failed: target address not in registered buffer");

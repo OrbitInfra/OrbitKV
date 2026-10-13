@@ -38,6 +38,9 @@ fn main() {
     remove_obsolete_libraries(&runtime_dir);
 
     if let Some(prebuilt_dir) = env::var_os("ORBITKV_MOONCAKE_LIB_DIR") {
+        println!(
+            "cargo:warning=prebuilt TENT override: caller must verify the merged upstream copy-status backport in its artifact provenance"
+        );
         stage_prebuilt_libraries(Path::new(&prebuilt_dir), &runtime_dir);
         set_origin_runpaths(&runtime_dir);
         return;
@@ -55,7 +58,33 @@ fn main() {
         workspace.join("third-party/mooncake").display()
     );
 
-    configure(&source, &build_dir);
+    // Keep the pinned checkout and libraries used by other processes immutable.
+    let native_source = out_dir.join("mooncake-source");
+    if native_source.exists() {
+        fs::remove_dir_all(&native_source).expect("remove old private Mooncake source");
+    }
+    verify_backport_source(&workspace.join("third-party/mooncake"));
+    copy_mooncake_source(&workspace.join("third-party/mooncake"), &native_source);
+    let patch = manifest_dir.join("patches/tcp-copy-status-and-cuda-context.patch");
+    println!("cargo:rerun-if-changed={}", patch.display());
+    let status = Command::new("patch")
+        .args(["--batch", "--forward", "--fuzz=0", "--dry-run", "-p1", "-i"])
+        .arg(&patch)
+        .current_dir(&native_source)
+        .status()
+        .expect("check merged upstream Mooncake backport");
+    assert!(
+        status.success(),
+        "Mooncake backport does not match its pinned source"
+    );
+    let status = Command::new("patch")
+        .args(["--batch", "--forward", "--fuzz=0", "-p1", "-i"])
+        .arg(&patch)
+        .current_dir(&native_source)
+        .status()
+        .expect("apply merged upstream Mooncake backport");
+    assert!(status.success(), "Mooncake backport application failed");
+    configure(&native_source.join("mooncake-transfer-engine"), &build_dir);
     build(&build_dir);
     stage_libraries(&build_dir, &runtime_dir);
     set_origin_runpaths(&runtime_dir);
@@ -173,4 +202,67 @@ fn set_origin_runpaths(runtime_dir: &Path) {
             library.display()
         );
     }
+}
+
+fn copy_mooncake_source(source: &Path, destination: &Path) {
+    fs::create_dir_all(destination).expect("create private Mooncake source directory");
+    for entry in fs::read_dir(source).expect("read pinned Mooncake source") {
+        let entry = entry.expect("read Mooncake source entry");
+        if entry.file_name() == ".git" {
+            continue;
+        }
+        let target = destination.join(entry.file_name());
+        let kind = entry.file_type().expect("read Mooncake source type");
+        if kind.is_dir() {
+            copy_mooncake_source(&entry.path(), &target);
+        } else if kind.is_symlink() {
+            let link = fs::read_link(entry.path()).expect("read Mooncake source symlink");
+            std::os::unix::fs::symlink(link, target).expect("copy Mooncake source symlink");
+        } else {
+            fs::copy(entry.path(), target).expect("copy pinned Mooncake source file");
+        }
+    }
+}
+
+fn verify_backport_source(source: &Path) {
+    for (path, expected) in [
+        (
+            "mooncake-transfer-engine/tent/include/tent/platform/cuda.h",
+            "a808a2b6f0729c25512e5e3d44ebbd9b18383357",
+        ),
+        (
+            "mooncake-transfer-engine/tent/src/platform/cuda/cuda_allocator.cpp",
+            "d60ddffa2f6b220e6294162b422a5c25b963164b",
+        ),
+        (
+            "mooncake-transfer-engine/tent/src/platform/cuda/cuda_probe.cpp",
+            "6a52601c9a2ce7132742debeefa89038d3bcd006",
+        ),
+        (
+            "mooncake-transfer-engine/tent/src/runtime/control_plane.cpp",
+            "0378593de88cfc90b7407b8ca3bd4f1d14516fee",
+        ),
+    ] {
+        let output = Command::new("git")
+            .arg("hash-object")
+            .arg(source.join(path))
+            .output()
+            .expect("hash pinned Mooncake backport input");
+        assert!(
+            output.status.success(),
+            "Mooncake source hash failed: {path}"
+        );
+        let actual = String::from_utf8(output.stdout).expect("Git object hash is UTF-8");
+        assert_eq!(
+            actual.trim(),
+            expected,
+            "Mooncake backport input differs: {path}"
+        );
+    }
+    assert!(
+        !source
+            .join("mooncake-transfer-engine/tent/include/tent/platform/cuda_utils.h")
+            .exists(),
+        "Mooncake backport header already exists in the pinned input"
+    );
 }

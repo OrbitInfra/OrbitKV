@@ -405,6 +405,24 @@ shared Rust contract with absolute token coverage and leased group positions;
 see [hybrid recovery](hybrid-recovery.md). Logical framework page generations
 remain separate from the local source allocation IDs used by raw grants.
 
+
+### TCP copy error propagation candidate
+
+The pinned native build applies a scoped backport of merged Mooncake #3476 and
+#3973 in a private build-source directory; see
+[backport provenance](../crates/orbitkv-mooncake-sys/patches/README.md). TCP client
+and server copy errors propagate to native FAILED. A READ error response whose
+length equals the requested payload is padded, preventing error text from being
+consumed as valid bytes. CUDA host-only copies use memcpy, while device copies
+use the allocation-owning device and the driver's pointer classification.
+
+These changes preserve the existing conservative failed-batch retention. A copy
+error or FAILED status does not prove physical quiescence, and the wrapper does
+not free retained source or destination owners. Deterministic CPU controls and
+installed host-buffer byte tests have a separate trigger from healthy-GPU,
+GPUDirect RDMA, Manager SSD and adapter-fault qualification. The fixed pin is not
+replaced by an unreviewed upstream-main bundle.
+
 ## Remaining work
 
 The local raw payload arena protocol and native executor are implemented.

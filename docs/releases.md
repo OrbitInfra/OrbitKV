@@ -173,3 +173,13 @@ controls show a throughput/latency tradeoff on SGLang; see
 Distributed serving, metadata HA, automatic hybrid lookahead and cross-host TP
 remain outside the qualified single-node release scope. See
 [deployment support](deployment.md) and [the completion plan](completion-plan.md).
+
+The installed host-buffer TCP regression lives in
+`python/tests/release/test_installed_tent_tcp.py` and is marked `release_smoke`
+and `integration`. Run it from a fresh fixture directory with the installed
+wheel and without source-package import paths. It checks changing READ/WRITE
+payloads, untouched gaps, source stability, native mappings and explicit
+unregistration. This gate requires no GPU and does not replace the healthy GPU,
+RDMA, Manager SSD or adapter lifetime gates. Native source builds currently
+apply the documented [upstream copy-status backport](../crates/orbitkv-mooncake-sys/patches/README.md)
+in a private directory; freeze the patch and resulting bytes with the wheel.

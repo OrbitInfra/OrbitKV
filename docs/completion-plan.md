@@ -237,6 +237,20 @@ when CUDAPlatform::copy cannot use a device. This is not payload or hardware
 acceptance. Preserve that failed gate; promotion needs a working CUDA allocation
 and independently accepted installed payload and adapter/fault gates.
 
+The next copy-status candidate backports merged upstream TENT fixes #3476 and
+#3973 onto the existing pin in a private build-source copy. Deterministic CPU
+controls reproduce four unchecked-copy false completions on the old library;
+the candidate rejects all four at the native TCP/C ABI boundary and rejects
+READ error-length collisions. The complete CUDA13 wheel builds and imports in an isolated installation;
+installed host-buffer TCP READ/WRITE checks full payload and sentinel gaps.
+Independent code review and healthy-GPU/RDMA/Manager/adapter qualification remain
+open; the installed host-buffer control is not GPU acceptance. On 2026-10-13,
+Forge job 20551990 reports killed and both saved SSH endpoints refuse connections;
+its historical healthy CUDA gates remain distinct from the unusable old H20.
+The new candidate and all controls use
+`/root/orbitkv-artifacts/s3-installed-byte-errors-20261013/`. No formal cells have
+started. Existing resource locks and old quarantines are not released.
+
 The old three-host readiness quarantine is a separate, scoped audit case. Its
 query-source unregister succeeded; the client was deliberately closed before
 the missing metric exception, and partial cleanup then retried that closed
