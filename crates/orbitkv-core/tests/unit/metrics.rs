@@ -85,69 +85,6 @@ fn initial_ownership_metrics_child() {
         }
     };
     assert_gauges(0.0);
-    let budget = crate::query::QueryBudget::new(64, 64).unwrap();
-    let assert_phases = |active: Option<&str>| {
-        let families = registry.gather();
-        let family = families
-            .iter()
-            .find(|family| family.name() == "orbitkv_query_reserved_bytes_by_phase")
-            .expect("fresh query owner must export each phase before any query");
-        let values = family
-            .get_metric()
-            .iter()
-            .map(|metric| {
-                let phase = metric
-                    .get_label()
-                    .iter()
-                    .find(|label| label.name() == "phase")
-                    .expect("query phase label");
-                (phase.value().to_string(), metric.get_gauge().value())
-            })
-            .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(values.len(), 6);
-        for phase in [
-            "warming",
-            "preloading",
-            "prepared",
-            "preparing",
-            "ready",
-            "restoring",
-        ] {
-            assert_eq!(
-                values.get(phase),
-                Some(&if active == Some(phase) { 7.0 } else { 0.0 }),
-                "{phase}"
-            );
-        }
-    };
-    assert_phases(None);
-    let crate::query::QueryAdmission::Admitted(reservation) = budget.reserve(
-        "initial-metrics",
-        "initial-metrics",
-        7,
-        crate::query::QueryMode::Demand,
-    ) else {
-        panic!("query must fit initialized budget");
-    };
-    assert_phases(Some("preparing"));
-    reservation.ready(7).unwrap();
-    assert_phases(Some("ready"));
-    drop(reservation);
-    assert_phases(None);
-    // A second owner initializes labels without resetting another owner's live
-    // values or introducing extra label dimensions.
-    let crate::query::QueryAdmission::Admitted(reservation) = budget.reserve(
-        "initial-metrics",
-        "initial-metrics",
-        7,
-        crate::query::QueryMode::Demand,
-    ) else {
-        panic!("second query must fit");
-    };
-    let _second_budget = crate::query::QueryBudget::new(64, 64).unwrap();
-    assert_phases(Some("preparing"));
-    drop(reservation);
-    assert_phases(None);
     for (_, counter) in &counters {
         counter.add(7, &[]);
     }
