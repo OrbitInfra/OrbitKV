@@ -2202,6 +2202,8 @@ name = "orbitkv-transfer"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "log",
+ "opentelemetry",
  "orbitkv-mooncake-sys",
  "thiserror 2.0.18",
 ]

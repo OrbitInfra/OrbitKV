@@ -536,6 +536,18 @@ For backing failure correlation, use:
   session, including overdue holds. `orbitkv_transfer_expired_sessions` counts
   overdue sessions still retaining memory; `orbitkv_transfer_lock_timeouts_total`
   counts the transition once. Timeout is not a release condition.
+- `orbitkv_native_transfer_batches` and `orbitkv_native_transfer_request_bytes`
+  count admitted native calls and their C request descriptor footprint. Retained
+  calls continue to consume the same 1,024-batch / 32 MiB per-engine budget.
+- `orbitkv_native_transfer_retained_batches` counts calls held after a logical
+  timeout/error or an unproven native failure. The corresponding
+  `orbitkv_native_transfer_retained_descriptor_bytes` sums their requested payload
+  lengths, including overlap, and must not be interpreted as allocation bytes.
+  Only drained successful tasks may clear temporary retention; native
+  failed/canceled/timeout/invalid/unknown statuses leave the owner isolated.
+- `orbitkv_native_transfer_admission_rejections_total` counts refusal at the
+  native batch/descriptor budget. These instruments are observations, not
+  physical termination or permission to recycle buffers.
 - `orbitkv_transfer_completion_outstanding` counts requester slots from window setup
   through source release acknowledgement (1024 total, at most 64 per source incarnation).
   `orbitkv_transfer_completion_retries_total` counts failed release attempts;
