@@ -15,6 +15,7 @@ import re
 import socket
 import stat
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -502,6 +503,26 @@ class Agent:
             }
         )
         self.save_state()
+        expected = {
+            "PYTHONPYCACHEPREFIX": str(self.root / ".consumer-bytecode"),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        environment = dict(
+            row.split("=", 1)
+            for row in Path(f"/proc/{manager.process.pid}/environ")
+            .read_bytes()
+            .decode()
+            .split("\0")
+            if "=" in row
+        )
+        if (
+            any(environment.get(key) != value for key, value in expected.items())
+            or (self.root / ".consumer-bytecode").exists()
+        ):
+            cleanup = self._stop_manager_owner(manager, timeout=5)
+            raise RuntimeError(f"Manager embedded bytecode environment differs: {cleanup}")
+        owner_record["embedded_bytecode_environment"] = expected
+        self.save_state()
         return manager
 
     def _stop_manager_owner(self, manager: CacheManagerProcess, *, timeout: float) -> dict:
@@ -559,6 +580,17 @@ class Agent:
     def verify_imported_helpers(
         self, runtime: dict, payload_entries: dict, projection: dict
     ) -> dict:
+        bytecode = self.root / ".consumer-bytecode"
+        if (
+            sys.pycache_prefix != str(bytecode)
+            or os.environ.get("PYTHONPYCACHEPREFIX") != str(bytecode)
+            or not sys.flags.dont_write_bytecode
+            or not sys.flags.ignore_environment
+            or not sys.flags.no_user_site
+            or bytecode.exists()
+            or bytecode.is_symlink()
+        ):
+            raise RuntimeError("consumer and embedded Python bytecode isolation differs")
         payload_roots = runtime.get("installed_payload_roots")
         if not isinstance(payload_roots, list) or not payload_roots:
             raise RuntimeError("complete installed payload roots are absent")

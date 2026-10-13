@@ -2247,7 +2247,19 @@ def test_actual_import_origins_and_bytes_are_bound_to_payload(tmp_path, monkeypa
         payload[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
         modules[name] = types.SimpleNamespace(__file__=str(path))
     monkeypatch.setattr(consumer_module.importlib, "import_module", lambda name: modules[name])
-    runtime = {"import_origins": origins, "installed_payload_roots": ["runtime-venv/lib/python3.11/site-packages"]}
+    runtime = {
+        "import_origins": origins,
+        "installed_payload_roots": ["runtime-venv/lib/python3.11/site-packages"],
+    }
+    monkeypatch.setattr(
+        consumer_module.sys, "pycache_prefix", str(agent.root / ".consumer-bytecode")
+    )
+    monkeypatch.setattr(
+        consumer_module.sys,
+        "flags",
+        types.SimpleNamespace(dont_write_bytecode=True, ignore_environment=True, no_user_site=True),
+    )
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(agent.root / ".consumer-bytecode"))
     assert len(agent.verify_imported_helpers(runtime, payload, {})) == 5
     changed = Path(modules["orbitkv.client.gpu"].__file__)
     changed.write_text("# changed installed code\n")

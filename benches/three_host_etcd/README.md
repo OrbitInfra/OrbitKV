@@ -123,3 +123,12 @@ bytecode prefix must not exist; `-B` alone still reads host bytecode caches and
 cannot bind execution to frozen source. Every helper verifies the flags/prefix.
 Run the real-interpreter controls in `benches/tests/test_three_host_process_runtime.py`
 alongside the ordinary harness controls before requesting launch review.
+
+The full Manager consumer uses its installed interpreter with `-B -E -s` and a
+fresh `.consumer-bytecode` prefix. Its installed site/projection/input roots are
+inserted explicitly because `-E` ignores `PYTHONPATH`; source packages cannot
+precede the installed wheel. `PYTHONPYCACHEPREFIX` and no-bytecode-write settings
+are inherited by embedded Manager Python and checked against `/proc/<pid>/environ`
+before admitting GPU operations. Keep the prefix nonexistent throughout the run.
+Run `test_three_host_consumer_bytecode.py` to reproduce the stale-cache rejection.
+Actual embedded interpreter and installed GPU readiness remain hardware gates.

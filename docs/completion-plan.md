@@ -210,6 +210,15 @@ PID/start-tick and non-killing cleanup controls. This implementation remains
 unqualified for launch until exact runtime inputs, current resources and
 independent launch review are accepted. Preserve legacy cohort failures.
 
+The full consumer launch also isolates cached Python execution. Its installed
+site/projection paths are explicit, Python environment/user imports are disabled,
+and a nonexistent task cache prefix is shared with the Manager's embedded Python.
+Source-hash checks alone can accept altered timestamp-valid bytecode; a real
+consumer control now rejects that unisolated launch and reads the frozen source
+under the isolated prefix. Manager admission records its actual process-local
+cache environment before GPU work. Code controls do not replace the blocked
+installed-Manager/GPU readiness and independent fault launch review.
+
 A separately frozen process-only three-host etcd cohort may consume the current
 node/network/lock owners while GPU/cache qualification remains blocked. Its
 accepted result can cover etcd election/quorum/process recovery only; it does
