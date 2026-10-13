@@ -237,19 +237,22 @@ when CUDAPlatform::copy cannot use a device. This is not payload or hardware
 acceptance. Preserve that failed gate; promotion needs a working CUDA allocation
 and independently accepted installed payload and adapter/fault gates.
 
-The next copy-status candidate backports merged upstream TENT fixes #3476 and
-#3973 onto the existing pin in a private build-source copy. Deterministic CPU
-controls reproduce four unchecked-copy false completions on the old library;
-the candidate rejects all four at the native TCP/C ABI boundary and rejects
-READ error-length collisions. The complete CUDA13 wheel builds and imports in an isolated installation;
-installed host-buffer TCP READ/WRITE checks full payload and sentinel gaps.
-Independent code review and healthy-GPU/RDMA/Manager/adapter qualification remain
-open; the installed host-buffer control is not GPU acceptance. On 2026-10-13,
-Forge job 20551990 reports killed and both saved SSH endpoints refuse connections;
-its historical healthy CUDA gates remain distinct from the unusable old H20.
-The new candidate and all controls use
-`/root/orbitkv-artifacts/s3-installed-byte-errors-20261013/`. No formal cells have
-started. Existing resource locks and old quarantines are not released.
+The copy-status candidate consumes merged upstream TENT fixes #3476 and #3973
+on the existing pin in a private build-source copy. Independent code/CPU/installed
+host-byte acceptance at `6e099269` does not cover healthy GPU qualification.
+Follow-up review found that CUDA pointer-query failures could select host memcpy
+and error exits could retain the wrong device binding. A separate remediation
+uses the driver's multi-attribute query, rejects unexpected errors and unusable
+CUDA admission, and restores an existing caller device across copy failures.
+Post-attempt CUDA errors retain the native stream/frame and caller RPC scratch
+under a separate 64-call/1-GiB logical-copy admission budget; no error is used
+as a DMA fence. Its deterministic CUDA API controls are software evidence; actual GPU and
+physical termination gates remain open. Preserve the original candidate/wheel,
+controls and review under `/root/orbitkv-artifacts/s3-installed-byte-errors-20261013/`.
+On 2026-10-13 Forge job 20551990 is killed and both saved SSH endpoints refuse
+connections. Its historical healthy CUDA gates remain distinct from the old
+unusable H20. No new formal cells or hardware qualification have started, and
+old resource locks/quarantines are not released.
 
 The old three-host readiness quarantine is a separate, scoped audit case. Its
 query-source unregister succeeded; the client was deliberately closed before

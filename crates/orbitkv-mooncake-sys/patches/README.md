@@ -7,7 +7,7 @@ zero-context patch is applied with zero fuzz. Application fails closed.
 The development `ORBITKV_MOONCAKE_LIB_DIR` override skips compilation; a qualified
 runtime must separately bind those bytes to a build of this patch.
 
-The five-file patch consumes already merged upstream fixes:
+The scoped patch consumes already merged upstream fixes:
 
 - [#3476](https://github.com/kvcache-ai/Mooncake/pull/3476), merge
   `964b8cf0c8208a3fa974d1afe7b10e53e8f05070`: propagate every TCP copy status,
@@ -43,3 +43,22 @@ full destination sentinels, normal subsequent transfers and READ error-length
 collision. Run the identical helper against the original pinned library as a
 negative control. A code/CPU pass does not qualify installed GPU, RDMA, Manager
 SSD, adapter crash or physical termination gates.
+
+Review follow-up preserves pointer-query errors using `cuPointerGetAttributes`:
+ordinary unregistered host pointers are identified by its documented successful
+zero attributes; unexpected errors never select host memcpy. Driver init failure
+rejects copying. Device/context acquisition and copy errors preserve caller
+device restoration, and failed restoration remains an error. These follow-ups
+have controlled CUDA API tests in `tests/native/cuda_copy_errors.cu`; they are
+not yet healthy-GPU qualification or an upstream merged change. A focused
+upstream follow-up must be prepared separately from this scoped backport.
+
+CUDA errors after a memcpy attempt are not physical drain evidence. The copy
+owner retains its current stream, stack and callers' RPC staging buffers inline
+instead of returning them. Its device-copy admission limits are 64 live plus
+retained calls and 1 GiB of logical copy bytes per Platform; these bounds are
+separate from Rust's 1024-batch/32 MiB request-descriptor budget and physical
+source/query/pool budgets. A fixed diagnostic marks retention. Pre-submit
+pointer/context/stream admission errors return normally; actual-copy errors
+retain. This trades liveness for ownership safety until a native termination
+primitive is independently established. CPU-only TENT is unaffected.

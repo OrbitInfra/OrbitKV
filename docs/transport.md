@@ -415,6 +415,15 @@ and server copy errors propagate to native FAILED. A READ error response whose
 length equals the requested payload is padded, preventing error text from being
 consumed as valid bytes. CUDA host-only copies use memcpy, while device copies
 use the allocation-owning device and the driver's pointer classification.
+Unexpected pointer-query failures do not select host memcpy, and error exits
+after device selection restore the caller's device when one was previously
+active. Controlled CUDA API checks cover these failure paths; healthy-GPU
+execution remains unqualified. After a CUDA memcpy attempt reports an error,
+the native owner retains the stream, current frame and RPC staging buffers;
+errors are not a DMA termination proof. Its separate live/retained device-copy
+admission is 64 calls and 1 GiB logical copy bytes, while existing Rust descriptor
+and physical-memory owners keep their budgets. Unusable CUDA bundle admission
+fails before transport startup. No timeout-based reclamation is introduced.
 
 These changes preserve the existing conservative failed-batch retention. A copy
 error or FAILED status does not prove physical quiescence, and the wrapper does

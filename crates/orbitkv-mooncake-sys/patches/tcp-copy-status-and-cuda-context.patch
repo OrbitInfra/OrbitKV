@@ -1,17 +1,18 @@
 diff --git a/mooncake-transfer-engine/tent/include/tent/platform/cuda.h b/mooncake-transfer-engine/tent/include/tent/platform/cuda.h
-index a808a2b6..9b5489cb 100644
+index a808a2b6..5747b74d 100644
 --- a/mooncake-transfer-engine/tent/include/tent/platform/cuda.h
 +++ b/mooncake-transfer-engine/tent/include/tent/platform/cuda.h
-@@ -128,0 +129,3 @@ class CudaPlatform : public Platform {
-+    // Device owning `addr`, or kCurrentDevice when `addr` is not device memory.
-+    int getPointerDeviceId(void* addr);
-+
+@@ -22,0 +23 @@
++#include <atomic>
+@@ -130,0 +132,2 @@ class CudaPlatform : public Platform {
++    std::atomic<size_t> copy_calls_{0};
++    std::atomic<size_t> copy_bytes_{0};
 diff --git a/mooncake-transfer-engine/tent/include/tent/platform/cuda_utils.h b/mooncake-transfer-engine/tent/include/tent/platform/cuda_utils.h
 new file mode 100644
-index 00000000..d388f120
+index 00000000..4061d471
 --- /dev/null
 +++ b/mooncake-transfer-engine/tent/include/tent/platform/cuda_utils.h
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,69 @@
 +// Copyright 2026 KVCache.AI
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +32,8 @@ index 00000000..d388f120
 +
 +#include <cuda.h>
 +
++#include "tent/common/status.h"
++
 +#include <mutex>
 +
 +namespace mooncake {
@@ -45,20 +48,34 @@ index 00000000..d388f120
 +    return result == CUDA_SUCCESS;
 +}
 +
-+// Device ordinal owning `ptr`, or -1 for host memory. Unlike the runtime
-+// cudaPointerGetAttributes(), this never implicitly initializes the calling
-+// thread's current device and its primary context (default GPU 0).
-+inline int getCudaDeviceForPtr(const void* ptr) {
-+    if (!ensureCudaDriverInit()) return -1;
-+    unsigned int mem_type = 0;
-+    CUresult res = cuPointerGetAttribute(
-+        &mem_type, CU_POINTER_ATTRIBUTE_MEMORY_TYPE, (CUdeviceptr)ptr);
-+    if (res != CUDA_SUCCESS || mem_type != CU_MEMORYTYPE_DEVICE) return -1;
-+    unsigned int dev_ordinal = 0;
-+    res = cuPointerGetAttribute(
-+        &dev_ordinal, CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL, (CUdeviceptr)ptr);
-+    if (res != CUDA_SUCCESS) return -1;
-+    return static_cast<int>(dev_ordinal);
++// The multi-attribute API returns zero attributes successfully for ordinary
++// unregistered host pointers. Unlike the single-attribute API, no query error
++// is interpreted as host memory.
++inline Status cudaPointerDevice(const void* ptr, int& device) {
++    device = -1;
++    if (!ptr) return Status::InvalidArgument("Null CUDA copy pointer");
++    if (!ensureCudaDriverInit()) {
++        return Status::CudaError("CUDA driver initialization failed");
++    }
++    unsigned int memory_type = 0;
++    int ordinal = -1;
++    CUpointer_attribute attributes[] = {
++        CU_POINTER_ATTRIBUTE_MEMORY_TYPE,
++        CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL,
++    };
++    void* values[] = {&memory_type, &ordinal};
++    auto result = cuPointerGetAttributes(2, attributes, values, (CUdeviceptr)ptr);
++    if (result != CUDA_SUCCESS) {
++        return Status::CudaError("CUDA pointer attributes query failed: " +
++                                 std::to_string(result));
++    }
++    if (memory_type == 0 || memory_type == CU_MEMORYTYPE_HOST) return Status::OK();
++    if ((memory_type != CU_MEMORYTYPE_DEVICE && memory_type != CU_MEMORYTYPE_UNIFIED) ||
++        ordinal < 0) {
++        return Status::CudaError("Unsupported CUDA pointer memory type or device");
++    }
++    device = ordinal;
++    return Status::OK();
 +}
 +
 +}  // namespace tent
@@ -66,38 +83,40 @@ index 00000000..d388f120
 +
 +#endif  // TENT_PLATFORM_CUDA_UTILS_H
 diff --git a/mooncake-transfer-engine/tent/src/platform/cuda/cuda_allocator.cpp b/mooncake-transfer-engine/tent/src/platform/cuda/cuda_allocator.cpp
-index d60ddffa..1c067a2d 100644
+index d60ddffa..6c07fa5e 100644
 --- a/mooncake-transfer-engine/tent/src/platform/cuda/cuda_allocator.cpp
 +++ b/mooncake-transfer-engine/tent/src/platform/cuda/cuda_allocator.cpp
 @@ -15,0 +16 @@
 +#include "tent/platform/cuda_utils.h"
-@@ -19,0 +21 @@
+@@ -19,0 +21,3 @@
 +#include <cstring>
-@@ -24,0 +27,11 @@ namespace tent {
++#include <poll.h>
++#include <unistd.h>
+@@ -24,0 +29,3 @@ namespace tent {
 +namespace {
-+// Bare cudaGetDevice() can implicitly create GPU 0 when this thread has no
-+// current context. Only save/restore the caller's device when one exists.
-+bool cudaHasCurrentContext() {
-+    if (!ensureCudaDriverInit()) return false;
-+    CUcontext ctx = nullptr;
-+    return cuCtxGetCurrent(&ctx) == CUDA_SUCCESS && ctx != nullptr;
-+}
-+
 +}  // namespace
 +
-@@ -45,3 +58 @@ Status CudaPlatform::free(void* ptr, size_t size) {
+@@ -45,3 +52,3 @@ Status CudaPlatform::free(void* ptr, size_t size) {
 -    cudaPointerAttributes attributes;
 -    CHECK_CUDA(cudaPointerGetAttributes(&attributes, ptr));
 -    if (attributes.type == cudaMemoryTypeDevice) {
-+    if (getCudaDeviceForPtr(ptr) >= 0) {
-@@ -49,3 +59,0 @@ Status CudaPlatform::free(void* ptr, size_t size) {
++    int device = -1;
++    CHECK_STATUS(cudaPointerDevice(ptr, device));
++    if (device >= 0) {
+@@ -49,3 +55,0 @@ Status CudaPlatform::free(void* ptr, size_t size) {
 -    } else if (attributes.type == cudaMemoryTypeHost ||
 -               attributes.type == cudaMemoryTypeUnregistered) {
 -        numa_free(ptr, size);
-@@ -53 +61 @@ Status CudaPlatform::free(void* ptr, size_t size) {
+@@ -53 +57 @@ Status CudaPlatform::free(void* ptr, size_t size) {
 -        LOG(ERROR) << "Unknown memory type, " << ptr << " " << attributes.type;
 +        numa_free(ptr, size);
-@@ -62,0 +71,27 @@ Status CudaPlatform::copy(void* dst, void* src, size_t length) {
+@@ -63,6 +67,77 @@ Status CudaPlatform::copy(void* dst, void* src, size_t length) {
+-    CUDAStreamHandle stream;
+-    CHECK_STATUS(getStreamFromPool(stream));
+-    CHECK_CUDA(
+-        cudaMemcpyAsync(dst, src, length, cudaMemcpyDefault, stream.get()));
+-    CHECK_CUDA(cudaStreamSynchronize(stream.get()));
+-    return Status::OK();
 +    //
 +    // cudaMemcpyAsync routes the copy through its stream's device context, so
 +    // the stream must live on the device owning the device-side buffer.
@@ -105,75 +124,121 @@ index d60ddffa..1c067a2d 100644
 +    // may live on cuda:R; taking the stream from the buffer's device routes the
 +    // copy correctly without mutating the calling thread's current device.
 +    // Host-only copies keep the current device.
-+    int device_id = getPointerDeviceId(dst);
-+    if (device_id == CUDAStreamPool::kCurrentDevice) {
-+        device_id = getPointerDeviceId(src);
-+    }
-+    if (device_id == CUDAStreamPool::kCurrentDevice) {
-+        // Host-to-host: plain memcpy. The stream pool would create a primary
-+        // context on the thread's default device (GPU 0).
++    int destination_device = -1, source_device = -1;
++    CHECK_STATUS(cudaPointerDevice(dst, destination_device));
++    CHECK_STATUS(cudaPointerDevice(src, source_device));
++    const int device_id = destination_device >= 0 ? destination_device : source_device;
++    if (device_id < 0) {
 +        ::memcpy(dst, src, length);
 +        return Status::OK();
 +    }
 +
-+    // cudaMemcpyAsync() validates the stream against the current device's
-+    // context; pin the buffer's device for the copy and restore the caller's
-+    // binding only when the thread already had a context.
-+    int saved_device = 0;
-+    const bool have_saved =
-+        cudaHasCurrentContext() && cudaGetDevice(&saved_device) == cudaSuccess;
-+    if (!have_saved) (void)cudaGetLastError();
-+
-+    CHECK_CUDA(cudaSetDevice(device_id));
-@@ -64 +99 @@ Status CudaPlatform::copy(void* dst, void* src, size_t length) {
--    CHECK_STATUS(getStreamFromPool(stream));
-+    CHECK_STATUS(getStreamFromPool(stream, device_id));
-@@ -67,0 +103,3 @@ Status CudaPlatform::copy(void* dst, void* src, size_t length) {
-+    if (have_saved) {
-+        CHECK_CUDA(cudaSetDevice(saved_device));
++    constexpr size_t max_copy_calls = 64;
++    constexpr size_t max_copy_bytes = size_t{1} << 30;
++    if (length > max_copy_bytes) return Status::TooManyRequests("CUDA copy byte admission");
++    const size_t calls = copy_calls_.fetch_add(1, std::memory_order_relaxed);
++    if (calls >= max_copy_calls) {
++        copy_calls_.fetch_sub(1, std::memory_order_relaxed);
++        return Status::TooManyRequests("CUDA copy call admission");
 +    }
-@@ -69,0 +108 @@ Status CudaPlatform::copy(void* dst, void* src, size_t length) {
++    size_t bytes = copy_bytes_.load(std::memory_order_relaxed);
++    while (true) {
++        if (bytes > max_copy_bytes - length) {
++            copy_calls_.fetch_sub(1, std::memory_order_relaxed);
++            return Status::TooManyRequests("CUDA copy byte admission");
++        }
++        if (copy_bytes_.compare_exchange_weak(bytes, bytes + length, std::memory_order_relaxed)) break;
++    }
++    struct CopyAdmission {
++        std::atomic<size_t>& calls;
++        std::atomic<size_t>& bytes;
++        size_t length;
++        ~CopyAdmission() {
++            bytes.fetch_sub(length, std::memory_order_relaxed);
++            calls.fetch_sub(1, std::memory_order_relaxed);
++        }
++    } admission{copy_calls_, copy_bytes_, length};
++
++    CUcontext saved_context = nullptr;
++    CHECK_CU(cuCtxGetCurrent(&saved_context));
++    int saved_device = 0;
++    const bool have_saved = saved_context != nullptr;
++    if (have_saved) CHECK_CUDA(cudaGetDevice(&saved_device));
++    struct DeviceRestore {
++        bool active;
++        int device;
++        ~DeviceRestore() {
++            if (active) (void)cudaSetDevice(device);
++        }
++    } restore{have_saved, saved_device};
++    CHECK_CUDA(cudaSetDevice(device_id));
++    Status result;
++    {
++        CUDAStreamHandle stream;
++        result = getStreamFromPool(stream, device_id);
++        if (result.ok()) {
++            auto error = cudaMemcpyAsync(dst, src, length, cudaMemcpyDefault, stream.get());
++            if (error == cudaSuccess) error = cudaStreamSynchronize(stream.get());
++            if (error != cudaSuccess) {
++                // CUDA errors may report preceding async work. Keep this
++                // stream, admitted bytes and the caller's RPC scratch alive.
++                constexpr char message[] = "TENT: CUDA copy termination unproven; retaining stream, buffers and admission\n";
++                (void)::write(STDERR_FILENO, message, sizeof(message) - 1);
++                while (true) (void)::poll(nullptr, 0, -1);
++            }
++        }
++    }
++    if (have_saved) {
++        auto error = cudaSetDevice(saved_device);
++        if (error == cudaSuccess) restore.active = false;
++        else if (result.ok()) result = Status::CudaError(cudaGetErrorString(error));
++    }
++    return result;
+@@ -69,0 +145 @@ Status CudaPlatform::copy(void* dst, void* src, size_t length) {
 +
 diff --git a/mooncake-transfer-engine/tent/src/platform/cuda/cuda_probe.cpp b/mooncake-transfer-engine/tent/src/platform/cuda/cuda_probe.cpp
-index 6a52601c..8cba5d29 100644
+index 6a52601c..19b254a8 100644
 --- a/mooncake-transfer-engine/tent/src/platform/cuda/cuda_probe.cpp
 +++ b/mooncake-transfer-engine/tent/src/platform/cuda/cuda_probe.cpp
 @@ -15,0 +16 @@
 +#include "tent/platform/cuda_utils.h"
-@@ -302,6 +303,7 @@ MemoryType CudaPlatform::getMemoryType(void* addr) {
+@@ -255,0 +257,8 @@ Status CudaPlatform::probe(std::vector<Topology::NicEntry>& nic_list,
++    if (!ensureCudaDriverInit()) {
++        return Status::CudaError("CUDA driver initialization failed before transport admission");
++    }
++    int count = 0;
++    CHECK_CUDA(cudaGetDeviceCount(&count));
++    if (count <= 0) {
++        return Status::DeviceNotFound("CUDA bundle has no usable device");
++    }
+@@ -300 +308,0 @@ MemoryType CudaPlatform::getMemoryType(void* addr) {
+-    if (!cudaDevicePresent()) return MTYPE_CPU;
+@@ -302,9 +310,3 @@ MemoryType CudaPlatform::getMemoryType(void* addr) {
 -    cudaPointerAttributes attributes{};
 -    cudaError_t result = cudaPointerGetAttributes(&attributes, addr);
 -    if (result != cudaSuccess) {
 -        LOG(WARNING) << "cudaPointerGetAttributes: "
 -                     << cudaGetErrorString(result);
 -        return MTYPE_UNKNOWN;
-+    return getCudaDeviceForPtr(addr) >= 0 ? MTYPE_CUDA : MTYPE_CPU;
-+}
-+
-+int CudaPlatform::getPointerDeviceId(void* addr) {
-+    // Same guards as getMemoryType().
-+    if (!cudaDevicePresent() || !cudaAbiMatches()) {
-+        return CUDAStreamPool::kCurrentDevice;
-@@ -309,2 +311,3 @@ MemoryType CudaPlatform::getMemoryType(void* addr) {
+-    }
 -    if (attributes.type == cudaMemoryTypeDevice) return MTYPE_CUDA;
 -    return MTYPE_CPU;
-+    int device = getCudaDeviceForPtr(addr);
-+    if (device < 0) return CUDAStreamPool::kCurrentDevice;
-+    return device;
-@@ -339,9 +342,3 @@ const std::vector<RangeLocation> CudaPlatform::getLocation(void* start,
++    int device = -1;
++    if (!cudaPointerDevice(addr, device).ok()) return MTYPE_UNKNOWN;
++    return device >= 0 ? MTYPE_CUDA : MTYPE_CPU;
+@@ -339,5 +341,3 @@ const std::vector<RangeLocation> CudaPlatform::getLocation(void* start,
 -        cudaPointerAttributes attributes{};
 -        cudaError_t result = cudaPointerGetAttributes(&attributes, start);
 -        if (result != cudaSuccess) {
 -            LOG(WARNING) << "cudaPointerGetAttributes: "
 -                         << cudaGetErrorString(result);
--            entries.push_back({(uint64_t)start, len, kWildcardLocation});
--            return entries;
--        }
--        if (attributes.type == cudaMemoryTypeDevice) {
 +        // Unregistered pointers fall through to the NUMA probe below.
-+        int cuda_dev = getCudaDeviceForPtr(start);
++        int cuda_dev = -1;
++        if (!cudaPointerDevice(start, cuda_dev).ok()) {
+@@ -347 +347 @@ const std::vector<RangeLocation> CudaPlatform::getLocation(void* start,
+-        if (attributes.type == cudaMemoryTypeDevice) {
 +        if (cuda_dev >= 0) {
-@@ -349 +346 @@ const std::vector<RangeLocation> CudaPlatform::getLocation(void* start,
+@@ -349 +349 @@ const std::vector<RangeLocation> CudaPlatform::getLocation(void* start,
 -                {(uint64_t)start, len, genCudaNodeName(attributes.device)});
 +                {(uint64_t)start, len, genCudaNodeName(cuda_dev)});
 diff --git a/mooncake-transfer-engine/tent/src/runtime/control_plane.cpp b/mooncake-transfer-engine/tent/src/runtime/control_plane.cpp
