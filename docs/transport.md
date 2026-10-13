@@ -322,11 +322,12 @@ batch, so OrbitKV does not infer TCP/RDMA/GPUDirect from `--nics` or success;
 qualification records Mooncake logs and NIC/device counters externally.
 
 TENT task cancellation is best effort. OrbitKV requests cancellation after a
-deadline or partial submit, continues polling every task to a TENT terminal
-state, and only then calls `tent_free_batch`. A successful free request is not a
-completion fence. This preserves source/destination memory through TENT's
-asynchronous queue, failover and device work.
-Cancellation caused by a timeout retains the timeout result after draining;
+deadline or partial submit and continues polling. It calls `tent_free_batch`
+only after every task reports `COMPLETED`; a successful free request is not a
+completion fence. A native non-completed terminal or unknown status retains the
+call and its source/destination buffers, as described in
+[native failure retention](#native-tent-failure-retention).
+A logical timeout returns its original result only after every task completes;
 an earlier submission, polling or cancellation error keeps its original cause.
 
 OrbitKV also exposes TENT's bounded NIC load snapshot: device name, in-flight
@@ -347,16 +348,16 @@ library. TENT exposes one segment and batch model across CPU, CUDA, file and
 network-capable transports; extended registration carries memory location and
 permission, while topology and rail selection remain inside Mooncake. Its C ABI
 also exposes per-task terminal status, cancellation, notifications and NIC-load
-snapshots. OrbitKV can therefore retain each allocation until the exact batch
-has drained and can feed live resource pressure into planning without owning an
-RDMA implementation.
+snapshots. OrbitKV retains each allocation while the exact batch lacks completion
+evidence and can feed live resource pressure into planning without owning an
+RDMA implementation. Native failure statuses do not establish physical drain.
 
 The legacy wrapper primarily exposed submit/poll/free around the older
 TransferEngine object. In particular, freeing its batch handle was too easy to
 misread as a completion fence, and its Python integrations commonly held only
 raw addresses rather than registration owners. OrbitKV's TENT path instead
-uses Rust RAII registration tokens and a cancel-then-drain state machine. This
-does not make every transfer automatically faster: HBM-to-HBM speed still
+uses Rust RAII registration tokens and cancellation with completion or retained
+ownership. This does not make every transfer automatically faster: HBM-to-HBM speed still
 depends on the selected transport, topology, registration cost and chunking.
 It does make the ownership and observability needed for safe high-performance
 selection explicit. Because the current C ABI has no per-batch transport
@@ -367,8 +368,9 @@ TENT implements a real peer probe internally, but the pinned stable C ABI does
 not export it. `tent_available` reports only local-engine health, and segment
 metadata can remain thread-locally cached for an hour, so neither is a valid
 substitute. OrbitKV therefore rejects SGLang's optional failed-session probe
-mode instead of allowing a false-positive unblacklist. Ordinary failed batches
-still cancel, drain and invalidate their cached peer segment.
+mode instead of allowing a false-positive unblacklist. A failed native batch
+keeps its caller and source-completion owner held; it does not return to
+invalidate a cached peer segment while physical termination remains unproven.
 
 OrbitKV does not adopt Mooncake Store Master as its semantic authority. Today
 the cache engine handles versioned model/storage keys and leases above Mooncake.
