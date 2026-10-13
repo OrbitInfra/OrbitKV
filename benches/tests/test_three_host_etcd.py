@@ -1908,6 +1908,7 @@ def test_readiness_cleanup_stops_consumer_before_etcd_nodes():
     events = []
     campaign = types.SimpleNamespace(
         settings={"budgets": {"cleanup_seconds": 180}},
+        cleanup_deadline=None,
         network_probes={},
         consumer_launched=True,
         launched_nodes={"s2-h20"},
@@ -2141,3 +2142,18 @@ def test_remote_cleanup_rejects_invalid_budget(tmp_path, invalid):
     agent = bare_agent(tmp_path)
     with pytest.raises(RuntimeError, match="invalid remaining cleanup"):
         agent.accept_cleanup_budget(invalid)
+
+
+def test_readiness_failure_cleanup_cannot_reset_an_existing_deadline(monkeypatch):
+    campaign = types.SimpleNamespace(
+        cleanup_deadline=100.0,
+        settings={"budgets": {"cleanup_seconds": 180}},
+        network_probes={},
+        consumer_launched=False,
+        launched_nodes=set(),
+        postflight=lambda: {},
+        release_resource_locks=lambda: {},
+    )
+    monkeypatch.setattr(readiness_module.time, "monotonic", lambda: 500.0)
+    readiness_module._cleanup(campaign)
+    assert campaign.cleanup_deadline == 100.0

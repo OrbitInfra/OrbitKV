@@ -23,7 +23,10 @@ except ImportError:
 
 
 def _cleanup(campaign: Campaign) -> dict:
-    campaign.cleanup_deadline = time.monotonic() + campaign.settings["budgets"]["cleanup_seconds"]
+    if campaign.cleanup_deadline is None:
+        campaign.cleanup_deadline = (
+            time.monotonic() + campaign.settings["budgets"]["cleanup_seconds"]
+        )
     cleanup: dict[str, object] = {"network_probes": {}, "consumer": None, "nodes": {}}
     errors = []
     if campaign.network_probes:
