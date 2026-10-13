@@ -54,6 +54,8 @@ def verify_inputs(root: Path, approved_manifest_sha256: str) -> dict[str, str]:
         "settings.json",
         "validate_inputs.py",
     }
+    if (root / "inputs/process_qualification.py").exists():
+        required.add("process_qualification.py")
     missing = required - entries.keys()
     if missing:
         raise RuntimeError(f"input manifest omits imported helpers: {sorted(missing)}")

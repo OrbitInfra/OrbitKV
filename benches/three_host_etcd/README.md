@@ -93,3 +93,11 @@ cross-host clocks or renew a cleanup allowance. Controller timeout still fails
 closed and retains unresolved ownership. The 180-second budget covers the whole
 failure cleanup, not each service layer. CPU controls and runtime readiness are
 not formal HA results.
+
+`process_qualification.py` is a separate bounded three-host etcd process-only
+cohort. It consumes the same node/network/resource-lock owners, but never starts
+Manager, cache or GPU consumers. Its frozen four phases are bootstrap,
+leader-loss/rejoin, quorum-loss/recovery and full final put/delete equality.
+Endpoint/member/cluster identities and raw HTTP responses are preserved.
+Each cohort requires a new exact freeze and independent launch acceptance; its
+result does not qualify Manager watch/cache recovery or physical fault domains.

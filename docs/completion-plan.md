@@ -210,6 +210,13 @@ PID/start-tick and non-killing cleanup controls. This implementation remains
 unqualified for launch until exact runtime inputs, current resources and
 independent launch review are accepted. Preserve legacy cohort failures.
 
+A separately frozen process-only three-host etcd cohort may consume the current
+node/network/lock owners while GPU/cache qualification remains blocked. Its
+accepted result can cover etcd election/quorum/process recovery only; it does
+not close Manager source authorization, Watch/cache rebootstrap or independent
+physical failure domains. Formal launch remains subject to exact independent
+review and fail-stop evidence retention.
+
 **Next S2 delivery:** inspect the actual current handoff, finish the authorized
 runtime/proxy/harness remediation, freeze inputs and obtain launch review. Check
 direct etcd reachability without inherited proxy interference and complete native
