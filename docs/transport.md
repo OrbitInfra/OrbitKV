@@ -327,8 +327,9 @@ only after every task reports `COMPLETED`; a successful free request is not a
 completion fence. A native non-completed terminal or unknown status retains the
 call and its source/destination buffers, as described in
 [native failure retention](#native-tent-failure-retention).
-A logical timeout returns its original result only after every task completes;
-an earlier submission, polling or cancellation error keeps its original cause.
+After every task completes, the call returns the first recorded submission,
+polling or cancellation error. It returns `Timeout` only when no such error was
+recorded and the logical deadline expired.
 
 OrbitKV also exposes TENT's bounded NIC load snapshot: device name, in-flight
 bytes and EWMA bandwidth. This is live rail-pressure evidence, not a per-batch
