@@ -433,7 +433,16 @@ stop boundaries. Native IPC retirement needs its own consumed protocol proof,
 not reordered processes or relaxed error guards. The failed freeze and all
 unlaunched cells are retained separately; no lifetime/support gate is promoted.
 
-**Next bounded delivery:** validate the retained kernel direction in at least
+**Implemented tools; hardware qualification pending:** the released-pool
+`sglang_kv_oracle` workload checks every registered payload/sentinel byte through
+installed native transfers, including three generations, partial destinations
+and deliberate GPU corruption controls. `kernel_pairs` consumes complete source
+report validation and four balanced independently restarted DMA/kernel pairs.
+The planned new cohort contains four byte-control cells and nine model cells
+(270 model requests); source tools and CPU controls alone do not pass that cohort.
+Computed model KV, native IPC retirement and fault lifetime remain distinct gates.
+
+**Current bounded delivery:** validate the retained kernel direction in at least
 three fresh opposite-order independent direct/kernel pairs, retaining 4K and 8K,
 full GPU byte/sentinel controls, exact outputs and cleanup. Keep profiling and
 diagnostic tracing off for matched performance clocks. Select new CUDA/copy or

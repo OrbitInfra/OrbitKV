@@ -579,6 +579,58 @@ retain the profiling mode; mixed modes within a phase and inconsistent sample/
 manifest declarations are rejected. Compare actual restored tokens,
 output, budgets and native drain before attributing any restore-stage gap.
 
+### Actual SGLang pool byte and kernel-pair checks
+
+`sglang_kv_oracle` allocates the released SGLang 0.5.21 Qwen3-32B NHD pool:
+64 logical layers, 128 BF16 K/V planes, 257 pages of 64 tokens. It uses the
+installed OrbitKV layout compiler, save/query/restore and real layer events.
+Each plane/page/generation receives distinct deterministic bytes. After the
+whole pool is poisoned, native recovery writes reversed destinations; full GPU
+readback checks every payload and unselected byte against a CPU reference.
+Three generations include partial `None` destinations and deliberately corrupted
+last-payload/sentinel controls. This proves the copy fixture's bytes, rather than
+dumping the computed model KV or qualifying native IPC/crash lifetime.
+
+An owned Manager and exact installed runtime must be ready before this workload:
+
+```bash
+python -m benches.sglang_kv_oracle \
+  --model-config /path/to/immutable-Qwen3-32B/config.json \
+  --length 8192 --backend kernel --gpu-uuid GPU-REVIEWED-UUID \
+  --manager-socket /tmp/owned-manager.sock \
+  --manager-url http://127.0.0.1:50056 \
+  --output /external/byte-control-001
+```
+
+For the bounded independent-pair evaluation, freeze four byte cells covering
+both backends and 4K/8K, followed by a fresh native output control and four
+freshly restarted DMA/kernel model pairs with balanced AB/BA/AB/BA order.
+Use `single_node` with 4K-before-8K, five repeats, 16 output tokens, eager
+deterministic inference, 16,384 GPU tokens, 16 GiB host cache and boundary
+observations. Keep profiler and diagnostic tracing off. Stop admission on the
+first invalid cell and preserve its actual waits, controls and diagnostics.
+Unknown native completion retains live allocations and inherited resource locks,
+including when a receipt cannot be written.
+
+`kernel_pairs` consumes the frozen contract, complete cohort and actual report
+validators. It rejects incomplete byte controls, wrong input/output or coverage,
+profiling, changed budgets and inconsistent service stop order. It reports each
+pair ratio and a geometric-mean bootstrap interval using independent pairs as
+units; requests within a run are not independent repetitions. Its fixed 8K
+direction guard requires all four pair medians to improve and the interval upper
+bound to be at most 0.97. The 4K pressure and both lengths' cold/HBM interval upper
+bounds must be at most 1.05. Valid slow results remain valid failed guards.
+
+```bash
+python -m benches.kernel_pairs --contract /external/freeze/CONTRACT.json \
+  --runs /external/cohort --output /external/pair-analysis
+```
+
+Neither a passing fixture nor these serial medians select a universal default,
+establish p99/throughput, prove all native children graceful, or qualify broader
+model, Graph, topology, P/D and S3 profiles. The completion plan records the
+implemented tools and independently accepted hardware scope separately.
+
 ## SSD restoration
 
 Choose `--ssd-backend uring`, `auto`, or `cufile` for both engines. This benchmark
