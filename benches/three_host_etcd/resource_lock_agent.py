@@ -14,10 +14,10 @@ from pathlib import Path
 
 try:
     from .environment import direct_network_environment_evidence
-    from .integrity import verify_inputs
+    from .integrity import verify_inputs, verify_process_runtime
 except ImportError:
     from environment import direct_network_environment_evidence
-    from integrity import verify_inputs
+    from integrity import verify_inputs, verify_process_runtime
 
 
 def atomic_json(path: Path, value: dict) -> None:
@@ -41,6 +41,7 @@ def main() -> None:
     args = parser.parse_args()
     verify_inputs(args.root, args.approved_input_manifest_sha256)
     settings = json.loads((args.root / "inputs/settings.json").read_text())
+    runtime_evidence = verify_process_runtime(args.root, settings, args.node)
     direct_network_environment_evidence(os.environ, settings["network_environment"])
     node = next(item for item in settings["nodes"] if item["name"] == args.node)
     if socket.gethostname() != node["hostname"]:
@@ -66,6 +67,7 @@ def main() -> None:
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     record = {
         "status": "locked",
+        "process_runtime": runtime_evidence,
         "task_id": settings["task_id"],
         "node": args.node,
         "hostname": socket.gethostname(),

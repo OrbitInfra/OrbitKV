@@ -16,10 +16,10 @@ from pathlib import Path
 
 try:
     from .environment import direct_network_environment, direct_network_environment_evidence
-    from .integrity import verify_inputs
+    from .integrity import verify_inputs, verify_process_runtime
 except ImportError:
     from environment import direct_network_environment, direct_network_environment_evidence
-    from integrity import verify_inputs
+    from integrity import verify_inputs, verify_process_runtime
 
 
 def atomic_json(path: Path, value: dict) -> None:
@@ -152,6 +152,9 @@ class Owner:
 
     def preflight(self) -> None:
         verify_inputs(self.root, self.approved_input_manifest_sha256)
+        self.state["process_runtime"] = verify_process_runtime(
+            self.root, self.settings, self.node["name"]
+        )
         if socket.gethostname() != self.node["hostname"]:
             raise RuntimeError(
                 f"hostname mismatch: {socket.gethostname()} != {self.node['hostname']}"

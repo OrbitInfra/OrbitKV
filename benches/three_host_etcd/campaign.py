@@ -19,10 +19,10 @@ import requests
 
 try:
     from .environment import direct_network_environment, direct_network_environment_evidence
-    from .integrity import sha256, verify_inputs
+    from .integrity import process_python, sha256, verify_inputs, verify_process_runtime
 except ImportError:
     from environment import direct_network_environment, direct_network_environment_evidence
-    from integrity import sha256, verify_inputs
+    from integrity import process_python, sha256, verify_inputs, verify_process_runtime
 
 
 def atomic_json(path: Path, value: dict) -> None:
@@ -61,6 +61,7 @@ class Campaign:
         self.approved_launch_authorization_sha256 = approved_launch_authorization_sha256
         self.verified_inputs = verify_inputs(root, approved_input_manifest_sha256)
         self.settings = json.loads((root / "inputs/settings.json").read_text())
+        self.process_runtime = verify_process_runtime(root, self.settings)
         self.environment = direct_network_environment(self.settings["network_environment"])
         self.output = root / "campaign-1"
         self.started = time.monotonic()
@@ -111,6 +112,7 @@ class Campaign:
             "input_files": sorted(self.verified_inputs),
             "resource_locks": self.resource_locks,
             "network_probes": self.network_probes,
+            "process_runtime": self.process_runtime,
             "quarantined": [],
             "active_command": None,
             "network_environment": direct_network_environment_evidence(
@@ -258,6 +260,8 @@ class Campaign:
         check: bool = True,
         cleanup: bool = False,
     ) -> subprocess.CompletedProcess:
+        if "process_qualification" in self.settings and command[0] == "python3":
+            command = [*process_python(self.root, node["name"]), *command[1:]]
         if node["ssh"]:
             argv = [
                 "ssh",
@@ -440,6 +444,19 @@ class Campaign:
                 "manifest_sha256": digest,
                 "files": sorted(self.verified_inputs),
             }
+            if "process_qualification" in self.settings:
+                result = self.host_command(
+                    node,
+                    [
+                        "python3",
+                        "-c",
+                        "import sys,json,pathlib; sys.path.insert(0,sys.argv[1]); from integrity import verify_inputs,verify_process_runtime; r=pathlib.Path(sys.argv[1]).parent; verify_inputs(r,sys.argv[2]); s=json.loads((r/'inputs/settings.json').read_text()); print(json.dumps(verify_process_runtime(r,s,sys.argv[3])))",
+                        str(self.root / "inputs"),
+                        self.approved_input_manifest_sha256,
+                        node["name"],
+                    ],
+                )
+                evidence[node["name"]]["runtime"] = json.loads(result.stdout)
         return evidence
 
     def release_resource_locks(self) -> dict[str, dict]:

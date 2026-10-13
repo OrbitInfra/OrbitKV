@@ -108,3 +108,15 @@ Manager drain checks parse raw samples, require all six phase labels and reject
 nonfinite or nonzero values before aggregation. Actual installed payload and
 helper origins are frozen and rehashed; final normal cleanup consumes the same
 controller deadline as failure cleanup. New input contracts require a new freeze.
+
+For process-only cohorts, freeze `<node>.runtime.json` for every node in
+`inputs/SHA256SUMS`. Capture it with `integrity.process_runtime_snapshot()` using
+the actual interpreter after importing the node/network/lock/controller modules.
+This includes the executable, standard library, complete HTTP dependency files,
+actual import origins, links and mapped native files. All resource-owning helpers
+consume it before launch; missing snapshots, changed files and shadow imports
+fail closed. Start the controller with the frozen executable and `-B -E -s`;
+remote Python commands use those same flags. These flags disable Python environment
+and user-site import injection while retaining frozen script imports.
+Run the real-interpreter controls in `benches/tests/test_three_host_process_runtime.py`
+alongside the ordinary harness controls before requesting launch review.

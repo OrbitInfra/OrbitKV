@@ -10,10 +10,10 @@ from pathlib import Path
 
 try:
     from .environment import direct_network_environment, direct_network_environment_evidence
-    from .integrity import verify_inputs
+    from .integrity import process_python, verify_inputs, verify_process_runtime
 except ImportError:
     from environment import direct_network_environment, direct_network_environment_evidence
-    from integrity import verify_inputs
+    from integrity import process_python, verify_inputs, verify_process_runtime
 
 
 def start_ticks(pid: int) -> str | None:
@@ -36,6 +36,7 @@ def main() -> None:
     args = parser.parse_args()
     verify_inputs(args.root, args.approved_input_manifest_sha256)
     settings = json.loads((args.root / "inputs/settings.json").read_text())
+    runtime_evidence = verify_process_runtime(args.root, settings, args.node)
     if args.kind in ("node", "resource-lock", "network-probe"):
         if not args.node:
             parser.error("--node is required for node, lock and network agents")
@@ -64,6 +65,8 @@ def main() -> None:
         log_path = args.root / f"{args.node}.{suffix}.log"
         record_path = args.root / f"{args.node}.{suffix}.launcher.json"
         environment = direct_network_environment(settings["network_environment"])
+        if "process_qualification" in settings:
+            command = [*process_python(args.root, args.node), *command[1:]]
     else:
         runtime = Path(settings["orbitkv_runtime"]["source_root"])
         command = [
@@ -111,6 +114,7 @@ def main() -> None:
         "start_ticks": start_ticks(process.pid),
         "process_group": process.pid,
         "command": command,
+        "process_runtime": runtime_evidence,
         "started_unix_ns": time.time_ns(),
         "network_environment": direct_network_environment_evidence(
             environment, settings["network_environment"]

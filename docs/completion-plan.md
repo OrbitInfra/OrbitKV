@@ -217,6 +217,15 @@ not close Manager source authorization, Watch/cache rebootstrap or independent
 physical failure domains. Formal launch remains subject to exact independent
 review and fail-stop evidence retention.
 
+The process-only launcher binds each host's actual Python executable, standard
+library, HTTP dependency file inventory, import origins, symlink targets and
+mapped native files to the reviewed input manifest. Controller, launcher, node,
+network and lock agents validate that closure before owning resources; remote
+Python commands use the frozen interpreter with environment/user imports
+disabled. A changed digest or shadowed import fails before child creation.
+This is admission code and CPU-control evidence; the new freeze and formal
+process result still require independent review.
+
 **Next S2 delivery:** inspect the actual current handoff, finish the authorized
 runtime/proxy/harness remediation, freeze inputs and obtain launch review. Check
 direct etcd reachability without inherited proxy interference and complete native
