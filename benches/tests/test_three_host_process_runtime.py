@@ -29,7 +29,7 @@ def frozen(tmp_path):
     inputs.mkdir()
     snapshot = execute(
         tmp_path,
-        "import json; from benches.three_host_etcd.integrity import process_runtime_snapshot; print(json.dumps(process_runtime_snapshot()))",
+        "import json; from benches.three_host_etcd import campaign,node_agent,launch_agent,network_probe_agent,resource_lock_agent; from benches.three_host_etcd.integrity import process_runtime_snapshot; print(json.dumps(process_runtime_snapshot()))",
     )
     assert snapshot.returncode == 0, snapshot.stderr
     (inputs / "node.runtime.json").write_text(snapshot.stdout)

@@ -111,7 +111,7 @@ def process_runtime_snapshot() -> dict:
             if not path.is_file():
                 raise RuntimeError(f"process runtime mapped file is unavailable: {path}")
             mappings.add(str(path.resolve(strict=True)))
-            files[str(path)] = sha256(path)
+            files[str(path.resolve(strict=True))] = sha256(path)
     return {
         "python": str(executable),
         "version": sys.version,
@@ -156,8 +156,13 @@ def verify_process_runtime(root: Path, settings: dict, node_name: str | None = N
         if str(Path(module.__file__).resolve(strict=True)) != origin:
             raise RuntimeError(f"process runtime import origin differs: {name}")
     current = process_runtime_snapshot()
-    if current["files"] != snapshot["files"]:
+    expected_files = set(snapshot["files"]) - set(snapshot["mapped_files"])
+    current_files = set(current["files"]) - set(snapshot["mapped_files"])
+    if current_files != expected_files:
         raise RuntimeError("process runtime file inventory or digest differs")
+    for name, digest in snapshot["files"].items():
+        if not Path(name).is_absolute() or sha256(Path(name)) != digest:
+            raise RuntimeError("process runtime file inventory or digest differs")
     if current["links"] != snapshot["links"]:
         raise RuntimeError("process runtime link differs")
     observed = set(current["mapped_files"])
