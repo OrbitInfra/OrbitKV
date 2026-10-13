@@ -310,7 +310,29 @@ Empty managed/codec parts remain visible but do not count as raw H2D geometry. R
 or source-operation linkage, physical failure drain, pinned NUMA residency and
 native-HBM/OrbitKV/LMCache model performance remain separate qualifications.
 
-## Current qualification
+## SGLang model-pair qualification
+
+The existing mapped-host KernelBackend has independently accepted serial
+Qwen3-32B recovery evidence on H20 with official SGLang 0.5.21. Harness
+`4b6c7eba` adds a released-pool full-byte oracle and frozen four-pair evaluation,
+consuming the unchanged `37b48c50` native build. Four byte cells cover both
+backends and 4K/8K across twelve restore generations, including partial targets,
+all registered payload/sentinel bytes and deliberate corruption controls.
+Nine unprofiled model cells contain a fresh native control and four independently
+restarted AB/BA/AB/BA DMA/kernel pairs, totaling 270 measured requests.
+
+The frozen 8K benefit and five cold/HBM/4K regression guards pass: 8K pressure
+TTFT improves by a pair-geometric 10.45%, with a 95% interval of 9.69%–11.08%;
+4K remains near parity. [Performance](performance.md#independent-sglang-kernel-pairs)
+defines the statistic and limits. This qualifies a retained explicit backend
+direction in the recorded serial profile. It adds no production shader, transfer
+policy or default and does not infer a specific submission-path cause.
+Native child `-9`/IPC warnings and historical missing waits remain lifetime
+limits; computed model KV, contention, p99, Graph and broader ranks remain open.
+Complete frozen inputs and independent reviews are in
+[the archive](benchmark-evidence.md#sglang-independent-kernel-pair-archive).
+
+## Earlier A100 component qualification
 
 **Implemented; A100 SM80 local gates pass; independent acceptance open.** The
 component driver passes 30 byte controls. Six order-alternated native runs cover

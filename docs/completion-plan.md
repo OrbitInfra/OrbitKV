@@ -433,15 +433,35 @@ stop boundaries. Native IPC retirement needs its own consumed protocol proof,
 not reordered processes or relaxed error guards. The failed freeze and all
 unlaunched cells are retained separately; no lifetime/support gate is promoted.
 
-**Next bounded delivery:** validate the retained kernel direction in at least
-three fresh opposite-order independent direct/kernel pairs, retaining 4K and 8K,
-full GPU byte/sentinel controls, exact outputs and cleanup. Keep profiling and
-diagnostic tracing off for matched performance clocks. Select new CUDA/copy or
-scheduling code only after its demonstrated cost and correctness contract are
-accepted through KDA. Preserve all-enqueued admission, event generations, source
-ownership and physical drain; keep CUDA in standalone files. Representative
-copy wins cannot select a production default. Native GDS and physical failure-domain
-qualification remain separate. S2/S4/S5 stay Partial.
+**Accepted bounded kernel delivery:** the `4b6c7eba` harness consumes unchanged
+`37b48c50` native bytes in 13 valid H20 cells. Four byte-control cells check every
+registered payload/sentinel byte in the actual released SGLang pool across twelve
+restore generations, including partial destinations and deliberate corruption.
+Nine freshly restarted model cells contain a native output control and four
+balanced independent DMA/kernel pairs: 270 measured Qwen3-32B requests, 4K/8K,
+BF16/raw, TP1/PP1, eager, with profiling and diagnostic tracing off.
+Independent reconstruction accepts all byte/output controls, frozen inputs,
+literal waits, unchanged installed files and empty physical postflight.
+
+8K pressure TTFT improves by a pair-geometric 10.45% (95% interval 9.69%–11.08%);
+all four pairs improve and the frozen 3% benefit guard passes. 4K pressure and
+both lengths' cold/HBM controls pass the 5% interval guards. This qualifies the
+existing explicit kernel direction for this serial profile. Nine native child
+`-9` exits, eight IPC warnings, native-client wait gaps and historical missing
+waits stay lifetime limits.
+Computed model KV, p99/throughput/contention, Graph, broader models/ranks and
+native IPC/fault reclamation remain separate; no production default is selected.
+See [performance](performance.md#independent-sglang-kernel-pairs) and
+[external evidence](benchmark-evidence.md#sglang-independent-kernel-pair-archive).
+
+**Next bounded delivery:** select new CUDA/copy or scheduling code only after
+its demonstrated consumed cost and correctness contract are accepted through
+KDA. Measure packing, upload, submission and forward admission under the actual
+fragment geometry and inference load before changing their owners. Preserve
+all-enqueued admission, event generations, source ownership and physical drain;
+keep CUDA in standalone files. Representative copy wins cannot select a production
+default. Native GDS and physical failure-domain qualification remain separate.
+S2/S4/S5 stay Partial.
 
 The initial 14-cell exploratory cohort stopped after three valid local vLLM
 cells: the released LMCache MP server completed its lifespan shutdown and
