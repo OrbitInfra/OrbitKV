@@ -34,6 +34,29 @@ def test_pair_bootstrap_resamples_runs_and_overlap_includes_post_return_boundary
     assert not _overlaps([100, 300], [150, 350], 151, 299)
 
 
+@pytest.mark.parametrize("shared_record", [True, False], ids=["await-stop", "cancel-start"])
+def test_stop_published_between_wait_probes_is_success_only_when_requested(
+    tmp_path, monkeypatch, shared_record
+):
+    stop = tmp_path / "stop.json"
+    requested = stop if shared_record else tmp_path / "start.json"
+    exists = Path.exists
+    published = False
+
+    def publish_stop_after_first_probe(path):
+        nonlocal published
+        found = exists(path)
+        if path == requested and not published:
+            assert not found
+            stop.write_text("{}\n")
+            published = True
+        return found
+
+    monkeypatch.setattr(Path, "exists", publish_stop_after_first_probe)
+    assert polling._wait_for(requested, stop, 1) is shared_record
+    assert published
+
+
 @contextmanager
 def owner_server(owner: dict):
     class Handler(BaseHTTPRequestHandler):

@@ -57,7 +57,7 @@ def _wait_for(
 ) -> bool:
     deadline = time.monotonic() + timeout_seconds
     while not path.exists():
-        if (cancel is not None and cancel.is_set()) or stop.exists():
+        if (cancel is not None and cancel.is_set()) or (stop != path and stop.exists()):
             return False
         if time.monotonic() >= deadline:
             raise TimeoutError(f"timed out waiting for {path.name}")
