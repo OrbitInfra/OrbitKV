@@ -204,6 +204,57 @@ acceptance and installed-Manager readiness remain open. The old missing-metric
 readiness/quarantine evidence is preserved. Harness drain gates must reject
 missing applicable ownership/SSD metrics rather than defaulting them to zero.
 
+The three-host harness integration requires complete finite ownership/SSD drain
+series and explicitly validated frozen configuration, with real subprocess
+PID/start-tick and non-killing cleanup controls. This implementation remains
+unqualified for launch until exact runtime inputs, current resources and
+independent launch review are accepted. Preserve legacy cohort failures.
+
+A separately frozen process-only three-host etcd cohort may consume the current
+node/network/lock owners while GPU/cache qualification remains blocked. Its
+accepted result can cover etcd election/quorum/process recovery only; it does
+not close Manager source authorization, Watch/cache rebootstrap or independent
+physical failure domains. Formal launch remains subject to exact independent
+review and fail-stop evidence retention.
+
+The single stage021 process-only cohort at `82c07bd9` is independently
+**ACCEPTED_RESULT**. Three hosts pass bootstrap, normal leader SIGTERM/rejoin,
+quorum stop/recovery and complete final puts/deletes: 65 acknowledged mutations,
+nine complete range oracles and identical 17-key final sets at revision 66.
+Six etcd runs have actual SIGTERM/reap records; final owned processes/ports are
+absent and three locks release within the cumulative cleanup budget. The leader
+shutdown includes etcd's graceful leadership transfer, so abrupt crash detection
+is unqualified. Raw evidence and independent replay remain under
+`/root/orbitkv-artifacts/s2-three-host-runtime-gates-20261013/` in
+`process-stage-021-formal-freeze-approved-bootstrap` and its independent result
+review directory. This closes only the frozen process-only contract; Manager
+Watch/source authorization/cache HA and independent physical domains remain open.
+
+The process-only launcher binds each host's actual Python executable, standard
+library, HTTP dependency file inventory, import origins, symlink targets and
+mapped native files to the reviewed input manifest. Controller, launcher, node,
+network and lock agents validate that closure before owning resources; remote
+Python commands use the frozen interpreter with environment/user imports
+disabled and a fresh, nonexistent task bytecode prefix. `-B` alone can read
+unfrozen cached code; controls prove that the isolated prefix reads frozen source
+and rejects a preexisting task cache. A changed digest or shadowed import fails
+before child creation.
+Automatic site and `.pth` startup are disabled with `-S`; safe-path mode and
+explicit frozen dependency roots keep host startup code outside execution.
+The verifier requires those interpreter flags before resource admission.
+The frozen inventory also covers actual transitive imports, including optional
+HTTP JSON backends. Bootstrap verifies the approved input manifest and integrity
+helper using only standard-library paths, then installs the import guard before
+adding staged or dependency paths. A stdlib-name shadow cannot execute first.
+The independently approved digest is passed through every command owner and
+checked before loading runtime/helper inputs; rehashing modified inputs cannot
+authorize them.
+Import admission rejects executable files absent from the
+reviewed manifest before they execute; complete input inventories reject extra
+staged files. Top-level package origins alone do not establish this closure.
+This is admission code and CPU-control evidence; the new freeze and formal
+process result still require independent review.
+
 **Next S2 delivery:** inspect the actual current handoff, finish the authorized
 runtime/proxy/harness remediation, freeze inputs and obtain launch review. Check
 direct etcd reachability without inherited proxy interference and complete native
