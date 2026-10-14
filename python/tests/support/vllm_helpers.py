@@ -180,6 +180,8 @@ class VLLMServer:
             str(self.tensor_parallel_size),
             "--pipeline-parallel-size",
             str(self.pipeline_parallel_size),
+            "--shutdown-timeout",
+            "30",
         ]
 
         if self.max_model_len is not None:

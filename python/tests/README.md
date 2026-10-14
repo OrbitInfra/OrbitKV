@@ -90,6 +90,13 @@ and unknown group ownership are recorded as failures, and cleanup preserves any
 original workload failure. These controls do not establish GPU
 worker or physical CUDA IPC lifetime qualification.
 
+The vLLM service helper selects the official release's `--shutdown-timeout 30`
+so normal SIGTERM requests native drain instead of the default immediate abort.
+Its 90-second process wait remains a separate bound; the grace period is not a
+DMA fence. Installed-wheel runs must set `ORBITKV_CACHE_MANAGER_BINARY` to the
+wheel's frozen Manager executable. Preserve actual service exits, complete
+native shutdown logs and any forced-worker diagnostics before accepting a run.
+
 Shared client ownership is tested in Rust under
 `crates/orbitkv-channel/tests/unit/cache_client.rs`: query revisions, immutable
 hash snapshots and shared views, warming limits/expiry, separate publish traffic, lost restore
