@@ -26,8 +26,11 @@ def _read(path: Path) -> dict:
 def _sha256(path: Path) -> str:
     if path.is_symlink() or not path.is_file():
         raise ValueError(f"Missing regular observation evidence: {path}")
+    digest = hashlib.sha256()
     with path.open("rb") as source:
-        return hashlib.file_digest(source, "sha256").hexdigest()
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def validate_observations(result: dict, contract: dict) -> list[int]:
@@ -106,7 +109,14 @@ def validate_observations(result: dict, contract: dict) -> list[int]:
 
 
 def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
-    contract = _read(contract_path)
+    if contract_path.is_symlink() or not contract_path.is_file():
+        raise ValueError("Missing regular observation contract")
+    contract_bytes = contract_path.read_bytes()
+    contract = json.loads(contract_bytes)
+    if not isinstance(contract, dict):
+        raise ValueError("Malformed observation contract")
+    contract_sha = hashlib.sha256(contract_bytes).hexdigest()
+    compiler_sha = _sha256(native_fixture)
     if (
         contract.get("schema") != "s4.copy-observation-pilot.v1"
         or type(contract.get("warmup")) is not int
@@ -127,15 +137,14 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
             "off": {"trace": False, "driver": False, "limit": 0},
             "on": {"trace": True, "driver": True, "limit": 65536},
         }
-        or hashlib.sha256(native_fixture.read_bytes()).hexdigest()
-        != contract.get("native_fixture_sha256")
+        or compiler_sha != contract.get("native_fixture_sha256")
     ):
         raise ValueError("Pilot design differs from the frozen eight-cell contract")
-    contract_sha = hashlib.sha256(contract_path.read_bytes()).hexdigest()
     rows = []
     names = set()
     owners = set()
-    inputs = {contract_path: _sha256(contract_path), native_fixture: _sha256(native_fixture)}
+    inputs = {contract_path: contract_sha, native_fixture: compiler_sha}
+    driver_files = {}
     paths = []
     for index, cell in enumerate(contract["cells"]):
         name, mode = cell["name"], cell["mode"]
@@ -169,8 +178,11 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
             if list((path / "driver").iterdir()) != [trace]:
                 raise ValueError(f"Missing or foreign driver capture: {name}")
             inputs[trace] = _sha256(trace)
-        elif (path / "driver").exists():
-            raise ValueError(f"Disabled diagnostic unexpectedly emitted capture: {name}")
+            driver_files[path / "driver"] = [trace]
+        else:
+            driver_files[path / "driver"] = None
+            if (path / "driver").exists():
+                raise ValueError(f"Disabled diagnostic unexpectedly emitted capture: {name}")
     previous_stop = previous_start_ticks = 0
     for cell, path in zip(contract["cells"], paths, strict=True):
         name, mode = cell["name"], cell["mode"]
@@ -273,6 +285,11 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
         max(ratios) <= contract["max_ratio"]
         and summary["bootstrap_95_ci"][1] <= contract["max_ratio"]
     )
+    for path, files in driver_files.items():
+        if (files is None and path.exists()) or (
+            files is not None and (not path.is_dir() or list(path.iterdir()) != files)
+        ):
+            raise ValueError("Diagnostic directory inventory changed during cohort analysis")
     if any(_sha256(path) != expected for path, expected in inputs.items()):
         raise ValueError("Consumed observation evidence changed during cohort analysis")
     return {

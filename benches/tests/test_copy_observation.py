@@ -337,3 +337,39 @@ def test_consumed_byte_evidence_cannot_change_during_analysis(cohort, monkeypatc
     monkeypatch.setattr(observation, "analyze_engine", mutate)
     with pytest.raises(ValueError, match="evidence changed"):
         observation.collect(root, cp, native)
+
+
+@pytest.mark.parametrize("fault", ["compiler_after_first_hash", "late_off_driver"])
+def test_initial_compiler_binding_and_disabled_inventory_survive_analysis(
+    cohort, monkeypatch, fault
+):
+    root, cp, native, contract = cohort
+    if fault == "compiler_after_first_hash":
+        original = observation._sha256
+        changed = False
+
+        def replace_after_hash(path):
+            nonlocal changed
+            digest = original(path)
+            if path == native and not changed:
+                native.write_bytes(b"Replaced after initial compiler validation")
+                changed = True
+            return digest
+
+        monkeypatch.setattr(observation, "_sha256", replace_after_hash)
+    else:
+        original = observation.analyze_engine
+
+        def add_capture(*args):
+            (root / contract["cells"][0]["name"] / "driver").mkdir(exist_ok=True)
+            return original(*args)
+
+        monkeypatch.setattr(observation, "analyze_engine", add_capture)
+    with pytest.raises(ValueError, match="changed during cohort analysis"):
+        observation.collect(root, cp, native)
+
+
+def test_file_integrity_checks_work_without_python311_file_digest(cohort, monkeypatch):
+    root, cp, native, _ = cohort
+    monkeypatch.delattr(hashlib, "file_digest", raising=False)
+    assert observation.collect(root, cp, native)["status"] == "PILOT_OVERHEAD_PASS"
