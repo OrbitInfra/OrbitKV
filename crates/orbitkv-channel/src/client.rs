@@ -87,6 +87,18 @@ impl ChannelClient {
         &self.bootstrap.info_ref().service_name
     }
 
+    /// Observe the authenticated Manager process, independently of channel
+    /// health or a stalled request. This is not a device-operation fence.
+    pub fn peer_alive(&self) -> Result<bool, ChannelError> {
+        let peer = self
+            .peer_process
+            .as_ref()
+            .ok_or(ChannelError::GpuPeerUnobservable)?;
+        crate::transport::peer_exited(peer)
+            .map(|exited| !exited)
+            .map_err(Into::into)
+    }
+
     /// Registration and liveness metadata use UDS, independently of the hot descriptor slot.
     pub fn lifecycle(
         &self,
@@ -327,10 +339,7 @@ impl ChannelClient {
         let response = self.bootstrap.completions().poll(operation_id)?;
         // Descriptor admission may be closed while previously claimed DMA
         // still runs. A socket HUP is not process death or transfer completion.
-        if response.state == RestoreState::Pending
-            && let Some(peer) = &self.peer_process
-            && crate::transport::peer_exited(peer)?
-        {
+        if response.state == RestoreState::Pending && !self.peer_alive()? {
             self.close();
             // A terminal publication can race the first read and process exit.
             let final_response = self.bootstrap.completions().poll(operation_id)?;

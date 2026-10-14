@@ -623,6 +623,11 @@ impl PyCacheManagerClient {
         Ok((true, String::new()))
     }
 
+    fn peer_alive(&self, py: Python<'_>) -> PyResult<bool> {
+        py.detach(|| self.inner.channel().peer_alive())
+            .map_err(client_error)
+    }
+
     fn unregister_context(&self, py: Python<'_>, instance_id: String) -> PyResult<(bool, String)> {
         py.detach(|| {
             let mut local = self

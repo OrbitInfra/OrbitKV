@@ -212,6 +212,14 @@ class CacheManagerClient:
     def session_epoch(self) -> int: ...
     @property
     def notification_fd(self) -> int: ...
+    def peer_alive(self) -> bool:
+        """Observe the authenticated Manager PID without RPC or waiting for a reply.
+
+        False indicates process exit. A live but stalled Manager stays True.
+        Neither result proves DMA termination or permits page/source release.
+        An unavailable/invalid process descriptor raises OrbitKVError.
+        """
+        ...
     def query_candidates(
         self, instance_id: str, block_hashes: BlockHashes, req_id: str, group_id: int = 0
     ) -> QueryCandidates | QueryLoading: ...

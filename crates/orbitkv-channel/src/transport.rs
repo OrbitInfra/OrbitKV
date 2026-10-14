@@ -300,6 +300,14 @@ pub(crate) fn peer_exited(peer: &OwnedFd) -> Result<bool, TransportError> {
         tv_nsec: 0,
     };
     poll(&mut fds, Some(&timeout)).map_err(|error| TransportError::Receive(error.to_string()))?;
+    if fds[0]
+        .revents()
+        .intersects(PollFlags::ERR | PollFlags::NVAL)
+    {
+        return Err(TransportError::Receive(
+            "invalid Manager process descriptor".to_string(),
+        ));
+    }
     Ok(fds[0].revents().contains(PollFlags::IN))
 }
 

@@ -111,12 +111,19 @@ fn pending_restore_reports_actual_peer_process_exit_without_fabricating_completi
             loads: vec![],
         })
         .unwrap();
+    assert!(client.channel().peer_alive().unwrap());
     assert_eq!(
         client.poll_restore(handle).unwrap().state,
         RestoreState::Pending
     );
     std::fs::write(dir.path().join("exit"), b"").unwrap();
     child.wait_for_success();
+    assert!(!client.channel().peer_alive().unwrap());
+    assert!(
+        client
+            .restore_completions_ready(Duration::from_secs(5))
+            .unwrap()
+    );
     assert!(matches!(
         client.poll_restore(handle),
         Err(ChannelError::SessionRequiresReconnect)
@@ -181,6 +188,7 @@ fn manager_process_death_does_not_fence_active_engine_dma() {
         client.claim_local_restore(handle).unwrap().unwrap();
         std::fs::write(dir.path().join("exit"), b"").unwrap();
         child.wait_for_success();
+        assert!(!client.channel().peer_alive().unwrap());
         assert_eq!(
             client.poll_restore(handle).unwrap().state,
             RestoreState::Pending
@@ -195,6 +203,51 @@ fn manager_process_death_does_not_fence_active_engine_dma() {
             Err(ChannelError::SessionRequiresReconnect)
         ));
     }
+}
+
+#[test]
+fn peer_liveness_does_not_wait_for_reply_or_follow_replacement_manager() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut first = ChildGuard::start(dir.path());
+    let client =
+        CacheClient::connect(dir.path().join("cache.sock"), CallOptions::default()).unwrap();
+    let handle = client
+        .start_restore(&RestoreRequest {
+            instance_id: "pending-until-exit".into(),
+            tp_rank: 0,
+            device_id: 0,
+            layer_groups: vec![],
+            loads: vec![],
+        })
+        .unwrap();
+    for _ in 0..8 {
+        assert!(client.channel().peer_alive().unwrap());
+        assert_eq!(
+            client.poll_restore(handle).unwrap().state,
+            RestoreState::Pending
+        );
+    }
+    std::fs::write(dir.path().join("exit"), b"").unwrap();
+    first.wait_for_success();
+    assert!(!client.channel().peer_alive().unwrap());
+    std::fs::remove_file(dir.path().join("ready")).unwrap();
+    std::fs::remove_file(dir.path().join("exit")).unwrap();
+    let mut replacement = ChildGuard::start(dir.path());
+    let fresh =
+        CacheClient::connect(dir.path().join("cache.sock"), CallOptions::default()).unwrap();
+    assert!(fresh.channel().peer_alive().unwrap());
+    assert!(!client.channel().peer_alive().unwrap());
+    fresh
+        .start_restore(&RestoreRequest {
+            instance_id: "pending-until-exit".into(),
+            tp_rank: 0,
+            device_id: 0,
+            layer_groups: vec![],
+            loads: vec![],
+        })
+        .unwrap();
+    std::fs::write(dir.path().join("exit"), b"").unwrap();
+    replacement.wait_for_success();
 }
 
 #[test]
@@ -251,7 +304,10 @@ fn shared_completion_child() {
             })
             .unwrap();
         if directory.join("exit").exists() {
-            assert_eq!(calls, 1);
+            assert_eq!(
+                calls,
+                usize::from(!directory.join("liveness-only").exists())
+            );
             for (id, _) in &pending {
                 assert_eq!(
                     session.completions().poll(*id).unwrap().state,
