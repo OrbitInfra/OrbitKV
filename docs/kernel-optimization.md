@@ -16,35 +16,27 @@ The descriptor format and Python API are unchanged.
 
 CUDA device code lives in `crates/orbitkv-core/src/transfer/kernel.cu`, embedded
 with Rust's `include_str!` and compiled through NVRTC. Installed binaries need no
-source-file lookup. The original one-CTA baseline is retained in
-`benches/kernels/batch_copy_baseline.cu`; `benches/kernels/fragmented_copy.cu`
-retains the component candidate. The direct DMA backend still coalesces legal
+source-file lookup. The maintained benchmarks consume this production shader;
+the direct DMA backend still coalesces legal
 adjacent/strided ranges and remains the ordinary dense-attention default. vLLM's
 existing MLA resolver selects the kernel when no override is supplied; the
 measurements below do not qualify MLA serving. Select the kernel explicitly with
 vLLM's `kv_connector_extra_config["orbitkv.transfer_backend"]="kernel"` or SGLang's
 `ORBITKV_TRANSFER_BACKEND=kernel`. This task changes neither resolver.
 
-The component driver checks H2D and D2H, empty/zero-size batches, independent
-address misalignment, tails, reordered ranges, source preservation, guard bytes
-and batches exceeding the grid limit before collecting timing samples:
-
-```bash
-python -m benches.kernel_copy \
-  --source-root /path/to/orbitkv \
-  --output /var/tmp/orbitkv-kda/validation-001 --validate-only
-python -m benches.kernel_copy \
-  --source-root /path/to/orbitkv \
-  --output /var/tmp/orbitkv-kda/measurement-001
-```
-
-This driver requires PyTorch, CUDA and NVRTC; `--nvrtc` selects a toolkit path.
-It records hardware, sources, compiler inputs and kernel/upload/submit-to-drain
-boundaries. Python timing is not native restore latency.
+The retired PyTorch/NVRTC component experiment remains reproducible from its
+[frozen source revision](https://github.com/feichai0017/orbitkv/tree/21b6cfaf04888413d404fba439f508db69303cd6/benches).
+Its baseline, candidate, commands and failed controls are preserved in that
+revision and `/root/orbitkv-artifacts/kda-fragment-copy-20261006/`.
+Both archive manifests were fully verified before removing the duplicate driver
+and shader copies from the maintained tree. Its Python timing is not native
+restore latency.
 
 The native driver consumes the actual Rust `KernelBackend` and `MemcpyBackend`,
 including descriptor packing, upload, submission, synchronization and legal DMA
-coalescing. Each backend must preserve all source/guard bytes in both directions:
+coalescing. It covers empty/zero-size batches, independent address misalignment,
+scalar tails, reordered ranges and batches exceeding the grid limit. Each backend
+must preserve all source/guard bytes in both directions:
 
 ```bash
 cargo bench -p orbitkv-core --bench native_kernel_copy \
