@@ -51,7 +51,10 @@ def capture(tmp_path):
                     names = (
                         ["cuMemcpyHtoDAsync_v2", "cuLaunchKernel"]
                         if backend == "kernel"
-                        else ["cuMemcpyHtoDAsync_v2"] * 64
+                        else [
+                            "cuMemcpyHtoDAsync_v2" if direction == "h2d" else "cuMemcpyDtoHAsync_v2"
+                        ]
+                        * 64
                     )
                     for index, name in enumerate(names):
                         trace.append(
@@ -163,7 +166,21 @@ def test_invalid_capture_fails_closed(capture, mutation, match):
 @pytest.mark.parametrize("backend", ["direct", "kernel"])
 @pytest.mark.parametrize(
     "mutation",
-    [None, "pid", "clock", "thread", "window", "drain", "missing_copy", "error", "changed_log"],
+    [
+        None,
+        "multipart",
+        "late_clock",
+        "pid",
+        "clock",
+        "thread",
+        "window",
+        "drain",
+        "missing_copy",
+        "wrong_copy",
+        "generic_copy",
+        "error",
+        "changed_log",
+    ],
 )
 def test_consumed_engine_driver_windows_require_complete_matching_inputs(
     tmp_path, monkeypatch, backend, mutation
@@ -198,7 +215,24 @@ def test_consumed_engine_driver_windows_require_complete_matching_inputs(
                 "result": 0,
             }
         )
-    if mutation == "pid":
+    if mutation in {"multipart", "late_clock"}:
+        events[2]["final_part"] = False
+        second = copy.deepcopy(events)
+        for event in second:
+            event["sequence"] = 1
+        second[0]["records_before"] = 3
+        second[1].update(part_id=1, begin_ns=5000, submitted_ns=6000)
+        second[2].update(part_id=1, drained_ns=7000, final_part=True)
+        second[-1].update(parts=2, batches=2, descriptors=2, records_reserved=6)
+        if mutation == "late_clock":
+            second[0]["clock"] = "CLOCK_REALTIME"
+        events.extend(second)
+        for api in copy.deepcopy(driver[1:]):
+            api.update(
+                id=len(driver) - 1, begin_ns=api["begin_ns"] + 4000, end_ns=api["end_ns"] + 4000
+            )
+            driver.append(api)
+    elif mutation == "pid":
         driver[0]["pid"] = 999
     elif mutation == "clock":
         events[0]["clock"] = "CLOCK_REALTIME"
@@ -210,6 +244,10 @@ def test_consumed_engine_driver_windows_require_complete_matching_inputs(
         events[2]["drained_ns"] = 1500
     elif mutation == "missing_copy":
         driver[1]["name"] = "cuCtxGetCurrent"
+    elif mutation == "wrong_copy":
+        driver[1]["name"] = "cuMemcpyDtoHAsync_v2"
+    elif mutation == "generic_copy":
+        driver[1]["name"] = "cuMemcpyAsync"
     elif mutation == "error":
         driver[1]["result"] = 1
     driver.append(
@@ -233,7 +271,7 @@ def test_consumed_engine_driver_windows_require_complete_matching_inputs(
         return result
 
     monkeypatch.setattr("benches.local_restore_shapes.collect", compiler_control)
-    if mutation:
+    if mutation not in {None, "multipart"}:
         with pytest.raises(ValueError):
             analyze_engine(trace, engine_log, tmp_path / "native-fixture")
     else:
@@ -243,3 +281,4 @@ def test_consumed_engine_driver_windows_require_complete_matching_inputs(
         assert batch["unattributed_host_wall_ns"] == 1000 - 10 * len(names)
         assert batch["drained_ns"] == 3000
         assert result["native_geometry_validation"]["scope"] == "unit control"
+        assert len(result["batches"]) == (2 if mutation == "multipart" else 1)

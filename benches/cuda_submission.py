@@ -76,7 +76,13 @@ def _driver_capture(trace_path: Path) -> tuple[int, int, dict[int, list[dict]]]:
 
 
 def _submission(
-    by_thread: dict[int, list[dict]], tid: int, left: int, right: int, kernel: bool, ranges: int
+    by_thread: dict[int, list[dict]],
+    tid: int,
+    left: int,
+    right: int,
+    kernel: bool,
+    ranges: int,
+    direction: str,
 ) -> dict:
     matching = []
     for api in by_thread.get(tid, ()):
@@ -89,6 +95,14 @@ def _submission(
         raise ValueError("No driver calls in submission window")
     copies = [api for api in matching if api["name"].startswith("cuMemcpy")]
     launches = [api for api in matching if api["name"].startswith("cuLaunchKernel")]
+    copy_api = "cuMemcpyHtoDAsync_v2" if kernel or direction == "h2d" else "cuMemcpyDtoHAsync_v2"
+    allowed_copies = {copy_api}
+    if not kernel:
+        allowed_copies.add("cuMemcpy2DAsync_v2")
+    if any(api["name"] not in allowed_copies for api in copies):
+        raise ValueError("Copy API is incompatible with the backend/direction")
+    if any(api["name"] != "cuLaunchKernel" for api in launches):
+        raise ValueError("Launch API is incompatible with the consumed backend")
     if not kernel and (len(copies) != ranges or launches):
         raise ValueError("DMA driver count differs from compiled geometry")
     if kernel and (len(copies) != 1 or len(launches) != 1):
@@ -173,7 +187,9 @@ def analyze(trace_path: Path, fixture_path: Path) -> dict:
                         raise ValueError("Reversed submission/drain clocks")
                     all_windows[tid].append((left, drained))
                     attributed.append(
-                        _submission(by_thread, tid, left, right, backend == "kernel", ranges)
+                        _submission(
+                            by_thread, tid, left, right, backend == "kernel", ranges, direction
+                        )
                         | {"drained_ns": drained}
                     )
                 groups.append(
@@ -221,7 +237,10 @@ def analyze_engine(trace_path: Path, engine_log: Path, native_fixture: Path) -> 
     windows = defaultdict(list)
     for trace in geometry["traces"]:
         header = trace["header"]
-        if header["pid"] != pid or header.get("clock") != "CLOCK_MONOTONIC":
+        if any(
+            part_header["pid"] != pid or part_header.get("clock") != "CLOCK_MONOTONIC"
+            for part_header in trace["headers"]
+        ):
             raise ValueError("Engine/driver PID or clock mismatch")
         parts = {part["part_id"]: part for part in trace["parts"]}
         for batch in trace["batches"]:
@@ -234,7 +253,13 @@ def analyze_engine(trace_path: Path, engine_log: Path, native_fixture: Path) -> 
             windows[tid].append((left, right))
             batches.append(
                 _submission(
-                    by_thread, tid, left, right, batch["backend"] == "kernel", batch["dma_ranges"]
+                    by_thread,
+                    tid,
+                    left,
+                    right,
+                    batch["backend"] == "kernel",
+                    batch["dma_ranges"],
+                    batch["direction"],
                 )
                 | {
                     "trace_id": header["trace_id"],

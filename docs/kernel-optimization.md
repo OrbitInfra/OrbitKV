@@ -539,7 +539,10 @@ python -m benches.cuda_submission \
   --native-fixture /path/to/native_copy_layout
 ```
 
-The analyzer rejects incomplete records, mismatched clocks/processes/threads,
+The analyzer validates the clock on every part header and requires copy/launch
+API families matching the consumed backend and direction. A 2D API name alone
+does not attest its arguments; the production geometry and exact-byte controls
+remain required. It rejects incomplete records, mismatched clocks/processes/threads,
 wrong copy/launch counts, calls crossing batch boundaries and submissions after
 their declared part drain. Its driver union includes callback overhead; remaining
 host time is unattributed. Device identity, exact GPU bytes/model output, normal
