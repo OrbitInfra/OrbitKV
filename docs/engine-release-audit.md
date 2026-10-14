@@ -70,6 +70,18 @@ hybrid/P-D support expansion. SGLang pending admission now consumes the native
 authenticated peer observation; that observation preserves held ownership on
 failure and does not establish physical transfer termination.
 
+The final installed wheel from `f6d4bff2` passes the official SGLang 0.5.21
+Qwen3-8B dense TP=1/PP=1 DRAM/io_uring model gate. Independent review accepts
+flush/restart recovery, concurrent shared prefixes, identity isolation and exact
+text/token-count plus bounded finite-logprob controls against the same-engine
+cold profile. Eight service receipts and installed/model hashes are verified.
+The six official internal helper SIGKILL exits and CUDA IPC producer warnings
+remain S3 limits; software failed-peer controls do not qualify GPU peer-failure
+handling. Raw HTTP response/metric bodies were not separately archived, so no
+numeric counter or performance claim is derived from this assertion-based gate.
+Evidence is preserved outside the checkout with
+[PR #238](https://github.com/feichai0017/orbitkv/pull/238).
+
 ## Released integration boundaries
 
 | Engine | Consumed interface | Ownership |

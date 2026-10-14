@@ -405,12 +405,17 @@ their reviewed scopes. CUDA sources live in separate files. Rejected descriptor
 reuse, READV merging and TENT RPC-thread/lane candidates remain rejected;
 correct bytes do not override a performance regression.
 
-**Implemented diagnostic candidate; GPU qualification open:** engine-local raw
-H2D captures now carry Linux thread identity and monotonic submission/part-drain
-windows. The CUPTI analyzer consumes the existing native descriptor compiler
-before attributing driver intervals to those actual batches. This does not infer
-packing cost, first-layer readiness, physical fault reclamation or serving gains;
-matched observation-overhead and inference-contention gates remain required.
+**Scoped H20 functional acceptance (2026-10-14):** engine-local raw H2D
+captures carry Linux thread identity and monotonic submission/part-drain windows.
+The installed-wheel SGLang 0.5.21 page-pool gate passed three generations of full
+payload/sentinel checking, including partial destinations and deliberate
+corruption. Independent replay consumed the production descriptor compiler and
+matched 384 batches / 22,144 H2D calls; all native owners exited normally and
+installed-file hashes were unchanged. This does not infer packing cost,
+first-layer readiness, physical fault reclamation or serving gains; matched
+observation-overhead and inference-contention gates remain required. The frozen
+one-cell evidence and preceding invalid CLI attempt are preserved with
+[PR #238](https://github.com/feichai0017/orbitkv/pull/238).
 
 - Profile actual adapter hashing/conversions, destination checks, fragmentation,
   dispatch, scratch allocation and repeated shared-prefix H2D before selecting
@@ -478,13 +483,21 @@ keep cold/native-HBM/full/partial/restart/failure controls, exact outputs, actua
 restore bytes, installed-file integrity and truthful process cleanup. Remove
 obsolete code only after its replacement is consumed and passes the same contract.
 
-**Implemented admission candidate; installed GPU qualification open:** SGLang
+**Scoped installed-wheel acceptance (2026-10-14):** SGLang
 pending-query admission consumes authenticated native `peer_alive()`, without a
 health RPC or using peer death as a DMA fence. Peer failure preserves the query
 owner and fails explicitly. Ready dense lookups reuse leased recovery boundaries
 until their keys or absolute origin change. Native HBM/no-pending admission adds
-no peer probe. Software contracts pass; released callbacks, GPU/model correctness,
-physical faults and end-to-end performance retain their separate gates.
+no peer probe. The final wheel from `f6d4bff2` passes the official SGLang 0.5.21
+Qwen3-8B TP=1/PP=1 DRAM and io_uring model controls: restore after flush, concurrent
+shared prefixes, restart, changed-identity misses and same-engine output checks.
+Independent review accepts both cases, unchanged installed/model hashes and eight
+normal service receipts. Failed-peer behavior has software coverage; no GPU
+peer-failure injection ran. Six official internal helper SIGKILL exits and CUDA
+IPC producer warnings remain explicit S3 limits. Public callbacks, physical
+faults and end-to-end performance retain their separate gates. Frozen evidence
+and preceding launch failures are preserved with
+[PR #238](https://github.com/feichai0017/orbitkv/pull/238).
 
 ### S5.3 — Public lifecycle and hybrid-state contracts
 

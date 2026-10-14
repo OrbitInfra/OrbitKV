@@ -549,3 +549,19 @@ host time is unattributed. Device identity, exact GPU bytes/model output, normal
 owned-process cleanup and matched overhead controls require their own receipts.
 The collector's inherited-fork and simultaneous-profiler restrictions still apply.
 A successful CPU compiler replay does not qualify GPU capture or a kernel default.
+
+
+The 2026-10-14 H20 functional cell uses the final installed wheel built from
+`f6d4bff2`, official SGLang 0.5.21 and fixed Qwen3-32B pool geometry without a
+model forward. Three sequential parts verify 12,935,233,536 total pool bytes,
+including 2,902,458,368 restored bytes, sentinel pages and corruption controls.
+Independent reconstruction matches every plane hash; replay validates all 384
+batches and 22,144 `cuMemcpyHtoDAsync_v2` calls against the native compiler and
+same-thread monotonic windows. The complete collector contains 42,224 calls,
+including operations outside those restoration windows. Oracle, Manager and
+controller all exit zero without forced cleanup; input/runtime hashes remain
+unchanged. This is functional attribution, with no overhead or performance
+promotion. Full traces, controls, preceding invalid CLI launch and independent
+reviews remain outside the checkout at
+`/root/orbitkv-artifacts/s4-s5-runtime-completion-20261014/`, linked from
+[PR #238](https://github.com/feichai0017/orbitkv/pull/238).
