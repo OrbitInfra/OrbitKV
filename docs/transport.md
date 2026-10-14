@@ -74,11 +74,9 @@ upstream ABI does not provide this extension; it is not released upstream
 support. The receipt covers CPU-only/TCP-only source shutdown. It does not prove
 device/RDMA termination, close an individual transfer ticket, or permit live
 allocation/page reuse. Those paths remain retained and unqualified.
-The task captures its native epoch at the first segment lookup; it does not
-receive an expected native epoch from the OrbitKV source grant yet. The old
-packet control therefore proves packet/retry fencing, while a stale grant's
-first submission after endpoint/address reuse remains unqualified.
-The subsequent grant-epoch candidate adds `native_source_epoch` to transfer
+The original packet control captured its native epoch at the first segment
+lookup and proved packet/retry fencing only. The separately accepted
+grant-epoch code adds `native_source_epoch` to transfer
 authorization. Manager captures it from its actual registered TENT owner,
 not discovery. Rust rejects missing/malformed values, refreshes the existing
 TENT descriptor before native batch allocation, and passes the same expected
@@ -87,8 +85,15 @@ and preserves it through retry; request merging keeps different epochs apart.
 The same-endpoint/address CPU restart gate checks stale rejection with untouched
 sentinels and exact replacement bytes for a fresh grant. Clearing the expected
 epoch is a deliberate negative control. Matching peer/native artifacts are
-required; this is a candidate TCP generation check, not allocation/page reuse,
-RDMA endpoint fencing or a new physical-drain receipt.
+required. Independent `ACCEPTED_CODE_CPU_SCOPE` at `02ab7fe3` covers this
+source-grant/first-TCP-attempt code and CPU control boundary. The decisive
+restart control establishes a healthy replacement connection, then explicitly
+rejects the old expected epoch; clearing that expectation reads all replacement
+bytes. Earlier EOF-only race evidence remains rejected. Actual installed
+Manager/server RPC, GPU and RDMA qualification remain open. This does not
+qualify allocation/page reuse, RDMA endpoint fencing or a new physical-drain
+receipt; see S3 in the completion plan and the immutable grant-epoch artifact
+root for review and hashes.
 The CPU/TCP receipt profile rejects delegated raw-pointer transfers: that
 staging API lacks a source epoch and would bypass the guarded pointer ingress.
 Ordinary CPU/TCP READ/WRITE remains available. Other transport profiles still

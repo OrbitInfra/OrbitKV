@@ -360,9 +360,10 @@ the Rust pool owner also requires its local requester admission to be empty
 before unregistering. TCP requests carry a native engine epoch, and retries
 cannot silently switch to a restarted source epoch. This is whole-engine
 shutdown, not per-ticket orphan reclamation or allocation/page generation.
-The native packet epoch is captured at the first TENT segment lookup. It is
-not yet bound to the OrbitKV source authorization reply, so first submission
-of a stale grant after endpoint/address reuse remains an open generation gate.
+The original source-close packet epoch was captured at the first TENT segment
+lookup. Its controls did not bind the OrbitKV source authorization reply; the
+separately accepted grant-epoch substage below closes that CPU/TCP first-submit
+code/control gap. Installed Manager and hardware qualification remain open.
 The focused native extension is an unreleased candidate on the fixed pin;
 matching peer/runtime packages are required. CUDA builds and other loaded
 transports return unsupported, retaining the engine, registration tokens and
@@ -416,15 +417,25 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   source grants, destination use and adapter boundaries. Keep semantic last-use
   separate from completion of CUDA/RDMA/SSD work. Extend existing owners instead
   of adding an unused generic fence framework.
-  The next native-epoch candidate captures the registered transport's epoch in
+  The grant-epoch implementation captures the registered transport's epoch in
   the source authorization reply and preserves it through Rust admission and
   the C request into the first TCP attempt. A fresh TENT metadata check rejects
   stale source epochs before batch allocation; the TCP worker also rejects a
-  changed epoch after that check. Same-endpoint/same-address CPU restart and a
-  cleared-expectation mutation are the consumed gate. This does not implement
-  allocation/page generation, RDMA QP/MR revocation or physical termination.
-  Independent acceptance and installed/GPU qualification remain open; evidence
-  belongs under `/root/orbitkv-artifacts/s3-grant-native-epoch-20261015/`.
+  changed epoch after that check. Independent `ACCEPTED_CODE_CPU_SCOPE` at
+  `02ab7fe317c003c9b94d7f1f0ed3397af2427365`, tree `1c9a9499`, covers this
+  code/TCP control boundary. Its five independently rerun native scenes first
+  establish healthy replacement bytes, then explicitly reject the old epoch;
+  the paired cleared expectation reads all 8,192 replacement bytes. The prior
+  `b7d50489` EOF-only race oracle remains rejected and archived. Review SHA256
+  `e6d9c45444f08a37ce5080d9833052ba8f95fdaa126432652bc101626adf7535` and
+  new freeze manifest
+  `1542bc40046b4eb5a952cd5f735a20f2335be35459a0a504c270cc192988b449`
+  are under `/root/orbitkv-artifacts/s3-grant-native-epoch-20261015/`.
+  This does not implement allocation/page generation, RDMA QP/MR revocation or
+  physical termination. Actual installed Manager/server RPC, GPU and both
+  adapter lifetime gates remain open. Before adding page reuse, audit managed
+  Restore errors so process exit or unreadable completion cannot return pages
+  without an actual completion or never-submitted proof.
 - Replace the remaining framework CUDA IPC pickle interpretation in the Manager
   with explicit validated registration data; remove the retired wire/API path.
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
