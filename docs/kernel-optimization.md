@@ -570,9 +570,11 @@ reviews remain outside the checkout at
 ## Matched observation overhead pilot
 
 The next bounded S4 gate uses the maintained installed-wheel byte oracle with
-`--warmup 1 --samples 4`. This optional mode repeats the same full 4K restore
+`--warmup 1 --samples 2`. This optional mode repeats the same full 4K restore
 geometry and deterministic payload; the default three-generation byte gate
-retains its full/partial coverage. Each operation checks every payload/sentinel
+retains its full/partial coverage. The three full restores consume 48,387
+trace-accounted records under the unchanged 65,536 cap; independent prelaunch
+review rejected the original five-restore proposal. Each operation checks every payload/sentinel
 byte and corruption control, with distinct native session/operation identities.
 
 Symmetric host monotonic observations begin after target initialization and
@@ -590,7 +592,7 @@ every slow sample and failed cell.
 
 ```bash
 python -m benches.sglang_kv_oracle --model-config /path/to/frozen-config.json \
-  --length 4096 --backend direct --warmup 1 --samples 4 \
+  --length 4096 --backend direct --warmup 1 --samples 2 \
   --manager-socket /path/to/owned.sock --manager-url http://127.0.0.1:20642 \
   --gpu-uuid GPU-full-physical-uuid --output /external/pilot/cell/bytes
 python -m benches.copy_observation --contract /external/pilot/contract.json \
@@ -599,7 +601,7 @@ python -m benches.copy_observation --contract /external/pilot/contract.json \
 
 Every pair median ratio and the independent-pair bootstrap 95% upper bound must
 be at most 1.05 before a separate inference-contention contract can open. Warm-up
-samples remain archived and are explicitly excluded from the four measured
+samples remain archived and are explicitly excluded from the two measured
 samples. Requests are not bootstrap replicates. A failed overhead guard blocks
 further diagnosis; this small pilot cannot qualify p99, serving gains, fault
 reclamation or a new backend default. GPU0's failed-run reservation remains

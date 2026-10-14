@@ -23,6 +23,13 @@ def _read(path: Path) -> dict:
     return value
 
 
+def _sha256(path: Path) -> str:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"Missing regular observation evidence: {path}")
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
+
+
 def validate_observations(result: dict, contract: dict) -> list[int]:
     """Require the exact warm-up, physical terminal and full-byte controls."""
     count = contract["warmup"] + contract["samples"]
@@ -105,7 +112,7 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
         or type(contract.get("warmup")) is not int
         or type(contract.get("samples")) is not int
         or contract.get("warmup") != 1
-        or contract.get("samples") != 4
+        or contract.get("samples") != 2
         or contract.get("length") != 4096
         or contract.get("max_ratio") != 1.05
         or len(contract.get("cells", [])) != 8
@@ -128,6 +135,8 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
     rows = []
     names = set()
     owners = set()
+    inputs = {contract_path: _sha256(contract_path), native_fixture: _sha256(native_fixture)}
+    paths = []
     for index, cell in enumerate(contract["cells"]):
         name, mode = cell["name"], cell["mode"]
         expected_mode = (("off", "on"), ("on", "off"))[index // 2 % 2][index % 2]
@@ -143,6 +152,28 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
             raise ValueError("Unbalanced or invalid observation pair order")
         names.add(name)
         path = directory / name
+        paths.append(path)
+        for file in (
+            "CELL.json",
+            "ORACLE-WAIT.json",
+            "manager.cleanup.json",
+            "bytes/RESULT.json",
+            "oracle.stderr",
+        ):
+            inputs[path / file] = _sha256(path / file)
+        wait = _read(path / "ORACLE-WAIT.json")
+        if type(wait.get("pid")) is not int or wait["pid"] <= 0:
+            raise ValueError(f"Invalid capture process identity: {name}")
+        if mode == "on":
+            trace = path / "driver" / f"cuda-driver-{wait['pid']}.jsonl"
+            if list((path / "driver").iterdir()) != [trace]:
+                raise ValueError(f"Missing or foreign driver capture: {name}")
+            inputs[trace] = _sha256(trace)
+        elif (path / "driver").exists():
+            raise ValueError(f"Disabled diagnostic unexpectedly emitted capture: {name}")
+    previous_stop = previous_start_ticks = 0
+    for cell, path in zip(contract["cells"], paths, strict=True):
+        name, mode = cell["name"], cell["mode"]
         receipt = _read(path / "CELL.json")
         wait = _read(path / "ORACLE-WAIT.json")
         if (
@@ -161,14 +192,30 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
             or wait["exit_code"] != 0
             or wait.get("normal_wait") is not True
             or wait.get("forced_cleanup") is not False
+            or any(
+                type(wait.get(k)) is not int or wait[k] <= 0
+                for k in ("launched_mono_ns", "waited_mono_ns")
+            )
+            or wait["start_ticks"] <= previous_start_ticks
+            or wait["launched_mono_ns"] < previous_stop
         ):
             raise ValueError(f"Invalid runtime/ownership receipt: {name}")
         owners.add((wait["pid"], wait["start_ticks"]))
         if type(_read(path / "manager.cleanup.json").get("exit_code")) is not int:
             raise ValueError(f"Invalid Manager wait status: {name}")
-        _service(path, "manager")
+        cleanup = _service(path, "manager")
         result = _read(path / "bytes" / "RESULT.json")
         elapsed = validate_observations(result, contract)
+        if not (
+            wait["launched_mono_ns"]
+            <= result["rounds"][0]["observation"]["started_ns"]
+            < result["rounds"][-1]["observation"]["drained_ns"]
+            <= wait["waited_mono_ns"]
+            <= cleanup["stop_started_mono_ns"]
+        ):
+            raise ValueError(f"Native clocks lie outside live process ownership: {name}")
+        previous_stop = cleanup["stop_finished_mono_ns"]
+        previous_start_ticks = wait["start_ticks"]
         capture = None
         if mode == "on":
             capture = analyze_engine(
@@ -199,8 +246,8 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
                     for b in group
                 ):
                     raise ValueError(f"Driver windows differ from native operation: {name}")
-        elif (path / "driver").exists():
-            raise ValueError(f"Disabled diagnostic unexpectedly emitted capture: {name}")
+        elif "cache_timeline " in (path / "oracle.stderr").read_text():
+            raise ValueError(f"Disabled diagnostic emitted native timeline records: {name}")
         rows.append(
             {
                 "name": name,
@@ -226,7 +273,10 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
         max(ratios) <= contract["max_ratio"]
         and summary["bootstrap_95_ci"][1] <= contract["max_ratio"]
     )
+    if any(_sha256(path) != expected for path, expected in inputs.items()):
+        raise ValueError("Consumed observation evidence changed during cohort analysis")
     return {
+        "input_sha256": {str(path): expected for path, expected in inputs.items()},
         "status": "PILOT_OVERHEAD_PASS" if passed else "PILOT_OVERHEAD_FAIL",
         "contract_sha256": contract_sha,
         "cells": rows,

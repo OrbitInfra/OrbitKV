@@ -11,12 +11,12 @@ from benches.metrics import DRAIN_GAUGES, REQUIRED_OWNERSHIP_GAUGES
 from benches.sglang_kv_oracle import PAGE_BYTES, PAGES, PLANES, page_maps
 
 
-def result(contract, factor=1):
+def result(contract, factor=1, offset=0):
     sources, targets = page_maps(4096, 0)
     payload = len(sources) * PAGE_BYTES * PLANES
     rounds = []
-    for index in range(5):
-        start = 1_000_000 + index * 1_000_000
+    for index in range(contract["warmup"] + contract["samples"]):
+        start = 10_000_000_000 + offset + 1_000_000 + index * 1_000_000
         duration = int(400_000 * factor)
         rounds.append(
             {
@@ -71,7 +71,7 @@ def result(contract, factor=1):
         "bytes_per_page_per_plane": PAGE_BYTES,
         "unregistered": True,
         "client_closed": True,
-        "observation_design": {"warmup": 1, "samples": 4},
+        "observation_design": {"warmup": contract["warmup"], "samples": contract["samples"]},
         "rounds": rounds,
     }
 
@@ -83,7 +83,7 @@ def cohort(tmp_path, monkeypatch):
     contract = {
         "schema": "s4.copy-observation-pilot.v1",
         "warmup": 1,
-        "samples": 4,
+        "samples": 2,
         "length": 4096,
         "max_ratio": 1.05,
         "seed": 20260920,
@@ -111,7 +111,8 @@ def cohort(tmp_path, monkeypatch):
     for i, cell in enumerate(contract["cells"]):
         path = root / cell["name"]
         (path / "bytes").mkdir(parents=True)
-        put(path / "bytes/RESULT.json", result(contract))
+        put(path / "bytes/RESULT.json", result(contract, offset=i * 1_000_000_000))
+        (path / "oracle.stderr").write_text("")
         put(
             path / "CELL.json",
             {
@@ -127,7 +128,9 @@ def cohort(tmp_path, monkeypatch):
             path / "ORACLE-WAIT.json",
             {
                 "pid": 100 + i,
-                "start_ticks": 1000 + i,
+                "start_ticks": 1000 + i * 100,
+                "launched_mono_ns": 10_000_000_000 + i * 1_000_000_000,
+                "waited_mono_ns": 10_000_000_000 + i * 1_000_000_000 + 4_000_000,
                 "exit_code": 0,
                 "normal_wait": True,
                 "forced_cleanup": False,
@@ -144,13 +147,15 @@ def cohort(tmp_path, monkeypatch):
                 "interrupted": False,
                 "remaining_group": [],
                 "process_group_errors": 0,
-                "stop_started_mono_ns": 1,
-                "stop_finished_mono_ns": 2,
+                "stop_started_mono_ns": 10_000_000_000 + i * 1_000_000_000 + 5_000_000,
+                "stop_finished_mono_ns": 10_000_000_000 + i * 1_000_000_000 + 6_000_000,
             },
         )
         if cell["mode"] == "on":
             (path / "driver").mkdir()
-            (path / "oracle.stderr").write_text("")
+            (path / "driver" / f"cuda-driver-{100 + i}.jsonl").write_text(
+                "Frozen capture fixture\n"
+            )
 
     def analyze(trace, log, validator):
         data = json.loads((log.parent / "bytes/RESULT.json").read_text())
@@ -179,12 +184,12 @@ def test_all_samples_and_independent_pairs_are_retained(cohort):
     root, cp, native, contract = cohort
     row = result(contract)
     row["rounds"][0]["observation"]["drained_ns"] += 500_000
-    row["rounds"][4]["observation"]["drained_ns"] += 100_000
+    row["rounds"][2]["observation"]["drained_ns"] += 100_000
     path = root / contract["cells"][0]["name"] / "bytes/RESULT.json"
     path.write_text(json.dumps(row))
     data = observation.collect(root, cp, native)
     assert data["status"] == "PILOT_OVERHEAD_PASS"
-    assert data["cells"][0]["elapsed_ns"] == [400_000, 400_000, 400_000, 500_000]
+    assert data["cells"][0]["elapsed_ns"] == [400_000, 500_000]
     assert data["pairs"]["independent_pairs"] == 4
     assert (
         "requests are not replicates" in data["pairs"]["bootstrap_unit"]
@@ -195,7 +200,9 @@ def test_all_samples_and_independent_pairs_are_retained(cohort):
 def test_one_failed_pair_blocks_further_contention(cohort):
     root, cp, native, contract = cohort
     cell = contract["cells"][1]
-    (root / cell["name"] / "bytes/RESULT.json").write_text(json.dumps(result(contract, 1.08)))
+    (root / cell["name"] / "bytes/RESULT.json").write_text(
+        json.dumps(result(contract, 1.08, offset=1_000_000_000))
+    )
     data = observation.collect(root, cp, native)
     assert data["status"] == "PILOT_OVERHEAD_FAIL"
     assert data["eligible_for_separate_contention_contract"] is False
@@ -246,7 +253,18 @@ def test_incomplete_byte_or_native_boundaries_cannot_qualify(cohort, fault):
 
 
 @pytest.mark.parametrize(
-    "fault", ["mode", "wait", "signal", "owner", "compiler", "baseline_capture"]
+    "fault",
+    [
+        "mode",
+        "wait",
+        "signal",
+        "owner",
+        "compiler",
+        "baseline_capture",
+        "order",
+        "shutdown",
+        "trace_off",
+    ],
 )
 def test_bad_runtime_and_process_identity_cannot_form_a_pair(cohort, fault):
     root, cp, native, contract = cohort
@@ -255,6 +273,14 @@ def test_bad_runtime_and_process_identity_cannot_form_a_pair(cohort, fault):
         native.write_bytes(b"different compiler")
     elif fault == "baseline_capture":
         (path / "driver").mkdir()
+    elif fault == "trace_off":
+        (path / "oracle.stderr").write_text('cache_timeline {"stage":"local_raw_copy_open"}\n')
+    elif fault == "shutdown":
+        file = path / "manager.cleanup.json"
+        data = json.loads(file.read_text())
+        data["stop_started_mono_ns"] = 1
+        data["stop_finished_mono_ns"] = 2
+        file.write_text(json.dumps(data))
     elif fault == "mode":
         file = path / "CELL.json"
         data = json.loads(file.read_text())
@@ -269,7 +295,9 @@ def test_bad_runtime_and_process_identity_cannot_form_a_pair(cohort, fault):
             data["exit_code"] = -9
         elif fault == "owner":
             data["pid"] = 101
-            data["start_ticks"] = 1001
+            data["start_ticks"] = 1100
+        elif fault == "order":
+            data["start_ticks"] = 1200
         file.write_text(json.dumps(data))
     with pytest.raises(ValueError):
         observation.collect(root, cp, native)
@@ -292,4 +320,20 @@ def test_driver_capture_must_cover_this_process_and_operation(cohort, monkeypatc
 
     monkeypatch.setattr(observation, "analyze_engine", wrong)
     with pytest.raises(ValueError):
+        observation.collect(root, cp, native)
+
+
+def test_consumed_byte_evidence_cannot_change_during_analysis(cohort, monkeypatch):
+    root, cp, native, contract = cohort
+    original = observation.analyze_engine
+    path = root / contract["cells"][0]["name"] / "bytes/RESULT.json"
+
+    def mutate(*args):
+        data = json.loads(path.read_text())
+        data["rounds"][0]["observation"]["terminal_success"] = False
+        path.write_text(json.dumps(data))
+        return original(*args)
+
+    monkeypatch.setattr(observation, "analyze_engine", mutate)
+    with pytest.raises(ValueError, match="evidence changed"):
         observation.collect(root, cp, native)

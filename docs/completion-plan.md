@@ -419,8 +419,10 @@ one-cell evidence and preceding invalid CLI attempt are preserved with
 
 **Next bounded delivery — observation overhead:** use the accepted installed
 SGLang pool/native H2D path for four independently restarted off/on pairs, with
-one warm-up and four measured complete restores per cell at the frozen 4K
-geometry. Preserve every GPU byte, terminal drain and shutdown receipt; require
+one warm-up and two measured complete restores per cell at the frozen 4K
+geometry. Three full restores consume 48,387 trace-accounted records, below the
+unchanged 65,536 cap; the original five-restore proposal was rejected before
+CUDA launch. Preserve every GPU byte, terminal drain and shutdown receipt; require
 all pair median ratios and the independent-pair 95% upper bound to stay within
 5% before opening inference-contention diagnosis. This small pilot does not
 qualify p99, serving gains or a backend default. The GPU0 failed-run reservation
