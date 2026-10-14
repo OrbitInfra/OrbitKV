@@ -66,8 +66,18 @@ uv run --isolated --no-project --with pytest --with requests --with uvicorn==0.5
 | `sharegpt.py` | Multi-turn workload using the pinned vLLM benchmark scripts |
 | `tests/` | CPU-only checks for measurement and report correctness |
 | `artifacts.py` | Validate external output locations, including symlink resolution |
+| `native_kernel_copy.rs` | Production DMA/kernel byte controls for empty batches, alignment, tails, reordered ranges and grid limits |
+| `native_copy_layout.rs`, `native_copy_layout/` | Production model-shaped DMA/kernel comparisons with descriptor and CUDA submission attribution |
 | `cuda_driver_trace.cpp`, `cuda_submission.py` | Bounded CUPTI driver callbacks matched to native copy fixture windows; diagnostic only |
 | `reproduce_preparation.sh` | Repeated preparation controls with an explicit external output root |
+
+Run harness regressions with `python -m pytest -q benches/tests`. They protect
+measurement validity, real CPU process ownership, payload oracles and evidence
+admission; they do not launch inference engines or qualify GPU paths. Shared
+three-host source/manifest fixtures live in `tests/three_host_fixtures.py`;
+process-runtime and installed-consumer controls retain their separate contracts.
+Current CUDA reproduction uses the native fixtures above; the retired component
+experiment is linked from [kernel optimization](../docs/kernel-optimization.md).
 
 ### GPU-pointer and full-Manager RDMA profile
 

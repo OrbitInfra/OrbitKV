@@ -1,6 +1,5 @@
 """Real interpreter controls for the process-only frozen runtime consumer."""
 
-import hashlib
 import json
 import os
 import py_compile
@@ -10,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from benches.tests.three_host_fixtures import freeze_inputs, stage_helpers
 from benches.three_host_etcd import integrity
 
 
@@ -94,47 +94,18 @@ def test_actual_process_runtime_rejects_changed_digest_and_shadowed_import(froze
 def test_runtime_manifest_requires_every_node_snapshot_before_launch(tmp_path):
     inputs = tmp_path / "inputs"
     inputs.mkdir()
-    for name in (
-        "campaign.py",
-        "consumer_agent.py",
-        "environment.py",
-        "integrity.py",
-        "launch_agent.py",
-        "network_probe_agent.py",
-        "node_agent.py",
-        "proxy_readiness.py",
-        "resource_lock_agent.py",
-        "validate_inputs.py",
-        "process_qualification.py",
-    ):
-        (inputs / name).write_text("\n")
+    stage_helpers(inputs, process_only=True, stub=True)
     (inputs / "settings.json").write_text(
         json.dumps({"process_qualification": {}, "nodes": [{"name": "node"}]})
     )
-    manifest = inputs / "SHA256SUMS"
-    manifest.write_text(
-        "".join(f"{integrity.sha256(p)}  {p.name}\n" for p in sorted(inputs.iterdir()))
-    )
+    approved = freeze_inputs(tmp_path)
     with pytest.raises(RuntimeError, match="node.runtime.json"):
-        integrity.verify_inputs(tmp_path, hashlib.sha256(manifest.read_bytes()).hexdigest())
+        integrity.verify_inputs(tmp_path, approved)
 
 
 def test_launcher_runtime_mismatch_creates_no_child_or_ownership(frozen):
     inputs = frozen / "inputs"
-    for name in (
-        "campaign.py",
-        "consumer_agent.py",
-        "environment.py",
-        "integrity.py",
-        "launch_agent.py",
-        "network_probe_agent.py",
-        "node_agent.py",
-        "proxy_readiness.py",
-        "resource_lock_agent.py",
-        "validate_inputs.py",
-        "process_qualification.py",
-    ):
-        (inputs / name).write_bytes((Path(integrity.__file__).parent / name).read_bytes())
+    stage_helpers(inputs, process_only=True)
     snapshot_path = inputs / "node.runtime.json"
     snapshot = json.loads(snapshot_path.read_text())
     snapshot["python"] = "/unavailable/frozen-python"
@@ -142,10 +113,7 @@ def test_launcher_runtime_mismatch_creates_no_child_or_ownership(frozen):
     (inputs / "settings.json").write_text(
         json.dumps({"process_qualification": {}, "nodes": [{"name": "node"}]})
     )
-    manifest = inputs / "SHA256SUMS"
-    manifest.write_text(
-        "".join(f"{integrity.sha256(p)}  {p.name}\n" for p in sorted(inputs.iterdir()))
-    )
+    approved = freeze_inputs(frozen)
     result = subprocess.run(
         [
             sys.executable,
@@ -166,7 +134,7 @@ def test_launcher_runtime_mismatch_creates_no_child_or_ownership(frozen):
             "--node",
             "node",
             "--approved-input-manifest-sha256",
-            integrity.sha256(manifest),
+            approved,
         ],
         capture_output=True,
         text=True,
@@ -251,25 +219,9 @@ def test_optional_transitive_import_is_blocked_before_execution(frozen):
 
 def test_actual_bootstrap_rejects_extra_stdlib_shadow_before_its_execution(frozen):
     inputs = frozen / "inputs"
-    for name in (
-        "campaign.py",
-        "consumer_agent.py",
-        "environment.py",
-        "integrity.py",
-        "launch_agent.py",
-        "network_probe_agent.py",
-        "node_agent.py",
-        "proxy_readiness.py",
-        "resource_lock_agent.py",
-        "validate_inputs.py",
-    ):
-        (inputs / name).write_bytes((Path(integrity.__file__).parent / name).read_bytes())
+    stage_helpers(inputs)
     (inputs / "settings.json").write_text(json.dumps({"nodes": [{"name": "node"}]}))
-    manifest = inputs / "SHA256SUMS"
-    manifest.write_text(
-        "".join(f"{integrity.sha256(p)}  {p.name}\n" for p in sorted(inputs.iterdir()))
-    )
-    approved = integrity.sha256(manifest)
+    approved = freeze_inputs(frozen)
     marker = frozen / "stdlib-shadow-executed"
     (inputs / "hashlib.py").write_text(f"open({str(marker)!r},'w').write('executed')\n")
     with pytest.raises(RuntimeError, match="file inventory differs"):
@@ -278,10 +230,6 @@ def test_actual_bootstrap_rejects_extra_stdlib_shadow_before_its_execution(froze
     (inputs / "hashlib.py").unlink()
     helper = inputs / "integrity.py"
     helper.write_text(helper.read_text() + "\n# unreviewed modified helper\n")
-    manifest.write_text(
-        "".join(
-            f"{integrity.sha256(p)}  {p.name}\n" for p in sorted(inputs.iterdir()) if p != manifest
-        )
-    )
+    freeze_inputs(frozen)
     with pytest.raises(RuntimeError, match="independently approved digest"):
         integrity.process_python(frozen, "node", approved)

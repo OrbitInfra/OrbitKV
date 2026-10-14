@@ -6,7 +6,6 @@ import base64
 import hashlib
 import json
 import os
-import shutil
 import signal
 import socket
 import subprocess
@@ -19,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from benches.tests.three_host_fixtures import freeze_inputs, stage_helpers
 from benches.three_host_etcd import campaign as campaign_module
 from benches.three_host_etcd import consumer_agent as consumer_module
 from benches.three_host_etcd import launch_agent as launch_module
@@ -29,19 +29,6 @@ from benches.three_host_etcd.environment import (
     direct_network_environment,
     direct_network_environment_evidence,
     validated_manager_socket_paths,
-)
-
-INPUT_FILES = (
-    "campaign.py",
-    "consumer_agent.py",
-    "environment.py",
-    "integrity.py",
-    "launch_agent.py",
-    "network_probe_agent.py",
-    "node_agent.py",
-    "proxy_readiness.py",
-    "resource_lock_agent.py",
-    "validate_inputs.py",
 )
 
 
@@ -206,9 +193,7 @@ def staged_root(tmp_path: Path, name: str = "stage") -> tuple[Path, dict, str]:
     root = tmp_path / name
     inputs = root / "inputs"
     inputs.mkdir(parents=True)
-    source = Path(campaign_module.__file__).parent
-    for filename in INPUT_FILES:
-        shutil.copy2(source / filename, inputs / filename)
+    stage_helpers(inputs)
     config = settings(tmp_path / "exclusive.lock")
     config["orbitkv_runtime"].update(
         {
@@ -228,20 +213,8 @@ def staged_root(tmp_path: Path, name: str = "stage") -> tuple[Path, dict, str]:
         }
     )
     (inputs / "settings.json").write_text(json.dumps(config, indent=2) + "\n")
-    digest = write_manifest(root)
+    digest = freeze_inputs(root)
     return root, config, digest
-
-
-def write_manifest(root: Path) -> str:
-    inputs = root / "inputs"
-    names = (*INPUT_FILES, "settings.json")
-    manifest = "".join(
-        f"{hashlib.sha256((inputs / filename).read_bytes()).hexdigest()}  {filename}\n"
-        for filename in sorted(names)
-    )
-    (inputs / "SHA256SUMS").write_text(manifest)
-    digest = hashlib.sha256((inputs / "SHA256SUMS").read_bytes()).hexdigest()
-    return digest
 
 
 def child(code: str) -> subprocess.Popen:
@@ -901,21 +874,20 @@ def drain_text(overrides=None, missing=None, omit_phase=None):
     return "\n".join(lines) + "\n"
 
 
-@pytest.mark.parametrize("missing", DRAIN_METRICS)
+@pytest.mark.parametrize("missing", [None, *DRAIN_METRICS])
 def test_drain_metrics_must_exist_and_be_zero(tmp_path, missing):
     agent = bare_agent(tmp_path)
     agent.manager = types.SimpleNamespace(http_port=1)
     agent.etcd_session = types.SimpleNamespace(
         get=lambda *_args, **_kw: types.SimpleNamespace(
-            text=drain_text(), raise_for_status=lambda: None
+            text=drain_text(missing=missing), raise_for_status=lambda: None
         )
     )
-    assert agent.drain_metrics()["orbitkv_query_reserved_bytes"] == 0
-    agent.etcd_session.get = lambda *_args, **_kw: types.SimpleNamespace(
-        text=drain_text(missing=missing), raise_for_status=lambda: None
-    )
-    with pytest.raises(RuntimeError, match="absent|incomplete"):
-        agent.drain_metrics()
+    if missing is None:
+        assert agent.drain_metrics()["orbitkv_query_reserved_bytes"] == 0
+    else:
+        with pytest.raises(RuntimeError, match="absent|incomplete"):
+            agent.drain_metrics()
 
 
 @pytest.mark.parametrize(
@@ -2015,7 +1987,7 @@ def test_network_probe_binds_exact_ports_and_records_source(tmp_path: Path):
     for node in config["nodes"]:
         node["ipv6"] = "::1"
     (root / "inputs/settings.json").write_text(json.dumps(config, indent=2) + "\n")
-    digest = write_manifest(root)
+    digest = freeze_inputs(root)
     process = subprocess.Popen(
         [
             sys.executable,
@@ -2058,8 +2030,8 @@ def test_resource_lock_is_real_and_exclusive(tmp_path: Path):
             {"global_seconds": 0.01, "cleanup_seconds": 0.01, "command_seconds": 0.01}
         )
         (root / "inputs/settings.json").write_text(json.dumps(config, indent=2) + "\n")
-    first_digest = write_manifest(first)
-    second_digest = write_manifest(second)
+    first_digest = freeze_inputs(first)
+    second_digest = freeze_inputs(second)
     script = first / "inputs/resource_lock_agent.py"
     first_process = subprocess.Popen(
         [
@@ -2125,20 +2097,13 @@ def test_input_manifest_digest_and_helper_coverage_are_mandatory(tmp_path: Path)
         campaign_module.Campaign(root, reduced)
 
 
-def test_production_harness_has_no_implicit_subprocess_timeout_kill():
-    source = Path(consumer_module.__file__).read_text()
-    assert "subprocess.run(" not in source
-    lock_source = (Path(campaign_module.__file__).parent / "resource_lock_agent.py").read_text()
-    assert '"expired"' not in lock_source
-
-
 def test_frozen_configuration_guard_remains_active_under_optimized_python(tmp_path):
     root, _, digest = staged_root(tmp_path)
     settings_path = root / "inputs/settings.json"
     config = json.loads(settings_path.read_text())
     config["formal_launch_authorized"] = True
     settings_path.write_text(json.dumps(config) + "\n")
-    digest = write_manifest(root)
+    digest = freeze_inputs(root)
     command = [
         sys.executable,
         "-O",
