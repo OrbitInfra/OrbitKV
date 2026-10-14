@@ -427,6 +427,8 @@ class CacheManagerProcess:
         self._binary_path = find_cache_manager_binary()
         self._log_path: Path | None = None
         self._log_file = None
+        self._graceful_shutdown_timed_out = False
+        self._process_start_ticks: str | None = None
 
     def start(self) -> bool:
         """Start the server process. Returns True if successful."""
@@ -516,6 +518,7 @@ class CacheManagerProcess:
             self._log_file = os.fdopen(fd, "wb")
 
         try:
+            self._graceful_shutdown_timed_out = False
             self.process = subprocess.Popen(
                 cmd,
                 env=env,
@@ -528,6 +531,12 @@ class CacheManagerProcess:
         except (FileNotFoundError, PermissionError):
             self._close_log()
             return False
+        try:
+            self._process_start_ticks = (
+                Path(f"/proc/{self.process.pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+            )
+        except OSError:
+            self._process_start_ticks = None
 
         return wait_for_server_ready(self.bootstrap_socket, process=self.process)
 
@@ -571,21 +580,95 @@ class CacheManagerProcess:
                 with contextlib.suppress(OSError):
                     Path(self.bootstrap_socket).unlink()
 
-    def terminate_gracefully(self, timeout: float = 10) -> tuple[int, float]:
-        """Require SIGTERM shutdown without falling back to SIGKILL."""
-        if self.process is None:
-            raise RuntimeError("Cache Manager is not running")
+    def stop_without_kill(self, timeout: float = 5) -> dict:
+        """Attempt normal termination, but retain ownership if it does not finish."""
         process = self.process
-        started = time.monotonic()
+        if process is None:
+            self._close_log()
+            return {
+                "status": "already_released",
+                "pid": None,
+                "start_ticks": None,
+                "sigterm_sent": False,
+                "forced_cleanup": False,
+                "reaped": True,
+                "returncode": None,
+            }
+
+        pid = process.pid
+        stat = Path(f"/proc/{pid}/stat")
+        try:
+            start_ticks = stat.read_text().rsplit(")", 1)[1].split()[19]
+        except OSError:
+            start_ticks = None
+        record = {
+            "status": "terminating",
+            "pid": pid,
+            "start_ticks": start_ticks,
+            "sigterm_sent": False,
+            "forced_cleanup": False,
+            "reaped": False,
+            "returncode": process.returncode,
+            "prior_graceful_timeout": self._graceful_shutdown_timed_out,
+        }
+        if self._graceful_shutdown_timed_out and process.poll() is None:
+            record["status"] = "quarantined"
+            record["reason"] = "prior_graceful_shutdown_timeout"
+            return record
+
         if process.poll() is None:
-            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-        returncode = process.wait(timeout=timeout)
-        elapsed = time.monotonic() - started
+            if start_ticks is None or start_ticks != self._process_start_ticks:
+                record["status"] = "quarantined"
+                record["reason"] = "process_identity_changed"
+                return record
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
+                record["sigterm_sent"] = True
+            except ProcessLookupError:
+                pass
+            except OSError as error:
+                record["status"] = "quarantined"
+                record["reason"] = "sigterm_failed"
+                record["error"] = repr(error)
+                return record
+        try:
+            returncode = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self._graceful_shutdown_timed_out = True
+            record["status"] = "quarantined"
+            record["reason"] = "termination_timeout"
+            return record
+        except OSError as error:
+            record["status"] = "quarantined"
+            record["reason"] = "wait_failed"
+            record["error"] = repr(error)
+            return record
+
         self.process = None
+        self._graceful_shutdown_timed_out = False
         self._close_log()
         with contextlib.suppress(OSError):
             Path(self.bootstrap_socket).unlink()
-        return returncode, elapsed
+        record.update(
+            {
+                "status": "exited",
+                "reaped": True,
+                "returncode": returncode,
+            }
+        )
+        return record
+
+    def terminate_gracefully(self, timeout: float = 10) -> tuple[int, float]:
+        """Require task-owned SIGTERM/reap without falling back to SIGKILL."""
+        if self.process is None:
+            raise RuntimeError("Cache Manager is not running")
+        started = time.monotonic()
+        record = self.stop_without_kill(timeout=timeout)
+        if record["status"] == "quarantined":
+            raise subprocess.TimeoutExpired(self.command or "Cache Manager", timeout)
+        if record["status"] != "exited" or not record["reaped"]:
+            raise RuntimeError(f"Cache Manager graceful stop did not reap: {record}")
+        return record["returncode"], time.monotonic() - started
 
     def is_running(self) -> bool:
         """Check if server process is still running."""

@@ -30,7 +30,7 @@ branches at cutover. See [interface audit](engine-release-audit.md).
 | --- | --- | --- |
 | S0 | Complete | Handoff/skill migration merged in PR #190 |
 | S1 | Accepted at `ec3add9b` | Preserve external evidence and one queue |
-| S2 | Partial | DRAM/SSD isolation FAIL; sixteen owners UNQUALIFIED; support stays four owners. Cross-host cache HA and independent etcd failure domains remain unqualified |
+| S2 | Accepted implementation; full qualification open | Reviewed metadata contracts, the same-host four-owner baseline and one normal-SIGTERM three-host etcd process-only cohort are accepted. DRAM/SSD isolation FAIL; sixteen owners UNQUALIFIED; support stays four owners. Cross-host cache HA and independent etcd failure domains remain unqualified |
 | S3 | Implementation partial; qualification open | Conservative native failure retention has limited code/CPU acceptance at `27f1cb1b`; physical termination proof, installed GPU/adapter gates, page generations, explicit registration and crash reclamation remain open |
 | S4 | Partial | Measured copy/SSD/control improvements exist; mixed contention, complete serving gains and S3-dependent faults remain open |
 | S5 | Partial | Official dense cache/restart and scoped deployment profiles accepted; public lifecycle, complete hybrid recovery, native P/D faults and broader topology remain open |
@@ -78,6 +78,18 @@ in the immutable plan.
 **Depends on:** S1. **Owners:** `orbitkv-server/src/cluster/`, `orbitkv-catalog/`,
 core inventory and metadata diagnostics.
 
+**Accepted engineering scope:** reviewed metadata contracts, the same-host
+four-owner baseline and one normal-SIGTERM three-host etcd process-only cohort
+are handed off. Their
+acceptance does not mean every qualification criterion below passed.
+Historical isolation failures, sixteen-owner
+expansion, cross-host cache HA and independent failure domains retain their
+failed/unqualified state; their evidence, budgets and thresholds are unchanged.
+Those gates require separately authorized fresh cohorts and independent review.
+S3 may proceed only through accepted metadata contracts and its own lifetime
+gates. Unaccepted contracts or failed prerequisite gates cannot authorize
+dependent work.
+
 - Extend real-etcd coverage to quota exhaustion/recovery, slow/disconnected
   Watches, concurrent rebuild and eviction, sustained journal overflow, member
   churn, index exhaustion and network partition/rejoin. Preserve incarnation and
@@ -92,7 +104,8 @@ core inventory and metadata diagnostics.
   Three etcd processes on one machine prove process faults only. Include startup
   readiness, operational diagnosis and recovery instructions.
 
-**Acceptance:** no lost final puts/deletes after convergence, no stale incarnation
+**Full qualification acceptance (required before claiming completion):**
+  no lost final puts/deletes after convergence, no stale incarnation
   authorization, bounded memory/queues, local cache still usable during metadata
   loss, and a repeatable capacity/recovery report. A fenced runtime restarts with
   a new incarnation; it cannot silently resume using the expired one.
@@ -197,14 +210,85 @@ Later valid 25-cell qualification still fails DRAM/SSD isolation; it does not
 expand owner support. Original invalid runtime/wheel-shadowing smokes remain
 archived rather than replaced or hidden.
 
-**Next S2 delivery:** inspect the actual current handoff, finish the authorized
-runtime/proxy/harness remediation, freeze inputs and obtain launch review. Check
-direct etcd reachability without inherited proxy interference and complete native
-runtime closure before admitting a new fault cohort. Run only newly authorized
-cells, retain failures and check cleanup. Network readiness and ordinary RDMA
-serving do not close HA. Do not start dependent S3/S6/S7 work from an unaccepted
-launch or failed qualification. The immutable history preserves earlier
-task-specific fail-stop contracts; current external handoffs need their own review.
+A fresh-query-owner readiness correction initializes all six phase-budget
+metric series before a first query. Its real Prometheus regression preserves
+live accounting across reservation transitions and multiple owners; independent
+acceptance and installed-Manager readiness remain open. The old missing-metric
+readiness/quarantine evidence is preserved. Harness drain gates must reject
+missing applicable ownership/SSD metrics rather than defaulting them to zero.
+
+The three-host harness integration requires complete finite ownership/SSD drain
+series and explicitly validated frozen configuration, with real subprocess
+PID/start-tick and non-killing cleanup controls. This implementation remains
+unqualified for launch until exact runtime inputs, current resources and
+independent launch review are accepted. Preserve legacy cohort failures.
+
+The full consumer launch also isolates cached Python execution. Its installed
+site/projection paths are explicit, Python environment/user imports are disabled,
+and a nonexistent task cache prefix is shared with the Manager's embedded Python.
+Source-hash checks alone can accept altered timestamp-valid bytecode; a real
+consumer control now rejects that unisolated launch and reads the frozen source
+under the isolated prefix. Manager admission records its actual process-local
+cache environment before GPU work. Code controls do not replace the blocked
+installed-Manager/GPU readiness and independent fault launch review.
+
+A separately frozen process-only three-host etcd cohort may consume the current
+node/network/lock owners while GPU/cache qualification remains blocked. Its
+accepted result can cover etcd election/quorum/process recovery only; it does
+not close Manager source authorization, Watch/cache rebootstrap or independent
+physical failure domains. Formal launch remains subject to exact independent
+review and fail-stop evidence retention.
+
+The single stage021 process-only cohort at `82c07bd9` is independently
+**ACCEPTED_RESULT**. Three hosts pass bootstrap, normal leader SIGTERM/rejoin,
+quorum stop/recovery and complete final puts/deletes: 65 acknowledged mutations,
+nine complete range oracles and identical 17-key final sets at revision 66.
+Six etcd runs have actual SIGTERM/reap records; final owned processes/ports are
+absent and three locks release within the cumulative cleanup budget. The leader
+shutdown includes etcd's graceful leadership transfer, so abrupt crash detection
+is unqualified. Raw evidence and independent replay remain under
+`/root/orbitkv-artifacts/s2-three-host-runtime-gates-20261013/` in
+`process-stage-021-formal-freeze-approved-bootstrap` and its independent result
+review directory. This closes only the frozen process-only contract; Manager
+Watch/source authorization/cache HA and independent physical domains remain open.
+
+The process-only launcher binds each host's actual Python executable, standard
+library, HTTP dependency file inventory, import origins, symlink targets and
+mapped native files to the reviewed input manifest. Controller, launcher, node,
+network and lock agents validate that closure before owning resources; remote
+Python commands use the frozen interpreter with environment/user imports
+disabled and a fresh, nonexistent task bytecode prefix. `-B` alone can read
+unfrozen cached code; controls prove that the isolated prefix reads frozen source
+and rejects a preexisting task cache. A changed digest or shadowed import fails
+before child creation.
+Automatic site and `.pth` startup are disabled with `-S`; safe-path mode and
+explicit frozen dependency roots keep host startup code outside execution.
+The verifier requires those interpreter flags before resource admission.
+The frozen inventory also covers actual transitive imports, including optional
+HTTP JSON backends. Bootstrap verifies the approved input manifest and integrity
+helper using only standard-library paths, then installs the import guard before
+adding staged or dependency paths. A stdlib-name shadow cannot execute first.
+The independently approved digest is passed through every command owner and
+checked before loading runtime/helper inputs; rehashing modified inputs cannot
+authorize them.
+Import admission rejects executable files absent from the
+reviewed manifest before they execute; complete input inventories reject extra
+staged files. Top-level package origins alone do not establish this closure.
+This is admission code and CPU-control evidence; the new freeze and formal
+process result still require independent review.
+
+**Remaining S2 delivery:** keep the original failed/unqualified gates visible.
+Continue evidence-based isolation diagnosis; apply harness or production repairs
+only when the evidence justifies them, then obtain fresh matched qualification.
+The embedded Rust Manager/GPU runtime and installed full-Manager/cache-fault
+gates remain blocked or unqualified, despite code/CPU acceptance of the full
+consumer. Cross-host cache HA and independent physical failure-domain
+qualification remain in this queue.
+A future qualification campaign must inspect the actual handoff, verify runtime,
+proxy and resource ownership, freeze new inputs and obtain independent launch
+review. Retain failures and cleanup evidence. Readiness and ordinary RDMA serving
+do not close HA. Engineering acceptance does not authorize S6/S7 or release any old
+quarantine. Historical task-specific fail-stop contracts remain unchanged.
 
 ## S3 — Transfer lifetime and generation-safe ownership
 
@@ -249,6 +333,12 @@ under a separate 64-call/1-GiB logical-copy admission budget; no error is used
 as a DMA fence. Its deterministic CUDA API controls are software evidence; actual GPU and
 physical termination gates remain open. Preserve the original candidate/wheel,
 controls and review under `/root/orbitkv-artifacts/s3-installed-byte-errors-20261013/`.
+The 2026-10-14 merge review also reproduced a combined device-selection and
+context-restoration failure that returned through an unchecked guard. One checked
+guard now restores on every return and retains admission if restoration fails.
+Software controls reject the previous allocator and verify that 64 retained
+context-error calls reject further admission without any memcpy submission;
+these controls add no GPU or physical termination qualification.
 On 2026-10-13 Forge job 20551990 is killed and both saved SSH endpoints refuse
 connections. Its historical healthy CUDA gates remain distinct from the old
 unusable H20. No new formal cells or hardware qualification have started, and
@@ -529,6 +619,19 @@ all-enqueued admission, event generations, source ownership and physical drain;
 keep CUDA in standalone files. Representative copy wins cannot select a production
 default. Native GDS and physical failure-domain qualification remain separate.
 S2/S4/S5 stay Partial.
+
+**Bounded attribution delivery:** source `4b568860` adds benchmark-only CUPTI
+driver callbacks and optional monotonic windows to the native layout fixture.
+One H20 functional capture completes both directions, DMA/kernel and event modes:
+80 submissions, 32 measured operations, full byte/source/guard controls and 5,017
+driver records. The strict analyzer verifies process/thread/window identity and
+compiled copy counts; native and controller exit normally with empty physical
+postflight. Independent review accepts this functional capture only.
+Non-driver host time stays unattributed. Matched observation-overhead controls
+and consumed engine attribution remain open before selecting further copy or
+scheduling changes; production backends and defaults are unchanged.
+See [native diagnosis](kernel-optimization.md#native-driver-submission-diagnosis)
+and [external evidence](benchmark-evidence.md#native-driver-capture-archive).
 
 The initial 14-cell exploratory cohort stopped after three valid local vLLM
 cells: the released LMCache MP server completed its lifespan shutdown and

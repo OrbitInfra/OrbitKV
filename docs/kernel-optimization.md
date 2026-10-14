@@ -16,35 +16,27 @@ The descriptor format and Python API are unchanged.
 
 CUDA device code lives in `crates/orbitkv-core/src/transfer/kernel.cu`, embedded
 with Rust's `include_str!` and compiled through NVRTC. Installed binaries need no
-source-file lookup. The original one-CTA baseline is retained in
-`benches/kernels/batch_copy_baseline.cu`; `benches/kernels/fragmented_copy.cu`
-retains the component candidate. The direct DMA backend still coalesces legal
+source-file lookup. The maintained benchmarks consume this production shader;
+the direct DMA backend still coalesces legal
 adjacent/strided ranges and remains the ordinary dense-attention default. vLLM's
 existing MLA resolver selects the kernel when no override is supplied; the
 measurements below do not qualify MLA serving. Select the kernel explicitly with
 vLLM's `kv_connector_extra_config["orbitkv.transfer_backend"]="kernel"` or SGLang's
 `ORBITKV_TRANSFER_BACKEND=kernel`. This task changes neither resolver.
 
-The component driver checks H2D and D2H, empty/zero-size batches, independent
-address misalignment, tails, reordered ranges, source preservation, guard bytes
-and batches exceeding the grid limit before collecting timing samples:
-
-```bash
-python -m benches.kernel_copy \
-  --source-root /path/to/orbitkv \
-  --output /var/tmp/orbitkv-kda/validation-001 --validate-only
-python -m benches.kernel_copy \
-  --source-root /path/to/orbitkv \
-  --output /var/tmp/orbitkv-kda/measurement-001
-```
-
-This driver requires PyTorch, CUDA and NVRTC; `--nvrtc` selects a toolkit path.
-It records hardware, sources, compiler inputs and kernel/upload/submit-to-drain
-boundaries. Python timing is not native restore latency.
+The retired PyTorch/NVRTC component experiment remains reproducible from its
+[frozen source revision](https://github.com/feichai0017/orbitkv/tree/21b6cfaf04888413d404fba439f508db69303cd6/benches).
+Its baseline, candidate, commands and failed controls are preserved in that
+revision and `/root/orbitkv-artifacts/kda-fragment-copy-20261006/`.
+Both archive manifests were fully verified before removing the duplicate driver
+and shader copies from the maintained tree. Its Python timing is not native
+restore latency.
 
 The native driver consumes the actual Rust `KernelBackend` and `MemcpyBackend`,
 including descriptor packing, upload, submission, synchronization and legal DMA
-coalescing. Each backend must preserve all source/guard bytes in both directions:
+coalescing. It covers empty/zero-size batches, independent address misalignment,
+scalar tails, reordered ranges and batches exceeding the grid limit. Each backend
+must preserve all source/guard bytes in both directions:
 
 ```bash
 cargo bench -p orbitkv-core --bench native_kernel_copy \
@@ -465,3 +457,65 @@ permit; timing alone cannot identify a hardware bottleneck. KDA component byte
 controls and matched native measurements precede final-wheel engine gates. SSD
 host reader batching is a Rust submission optimization, described in
 [SSD performance](ssd-performance.md); it adds no CUDA kernel.
+
+## Native driver submission diagnosis
+
+`benches/cuda_driver_trace.cpp` is a benchmark-only CUPTI DRIVER_API collector.
+It retains at most 262,144 fixed records, formats them after the single-process
+fixture returns, and never changes CUDA arguments, return values or memory owners.
+Incomplete pairs, overflow and output failures invalidate capture. It does not
+support inherited fork children or simultaneous profiler subscriptions.
+
+The existing `native_copy_layout` fixture emits optional `CLOCK_MONOTONIC`
+submission/drain windows when `ORBITKV_CUDA_DRIVER_TRACE_DIR` is nonempty.
+`--case` selects one disclosed layout for a bounded smoke. Both directions,
+DMA/kernel, event-off/event-on and the existing full source/payload/guard controls
+remain present; the production backends and kernel are unchanged.
+
+Build the collector against the target runtime's CUPTI ABI and freeze its native
+dependencies together with the fixture before an independently reviewed launch:
+
+```bash
+g++ -O2 -std=c++17 -Wall -Wextra -Werror -fPIC -shared \
+  -I/path/to/cuda/include benches/cuda_driver_trace.cpp \
+  -L/path/to/cuda/lib -lcupti -o /external/diagnosis/cuda_driver_trace.so
+cargo build --release -p orbitkv-core --bench native_copy_layout \
+  --no-default-features --features cuda-13
+mkdir /external/diagnosis/trace
+LD_PRELOAD=/external/diagnosis/cuda_driver_trace.so \
+ORBITKV_CUDA_DRIVER_TRACE_DIR=/external/diagnosis/trace \
+  /path/to/native_copy_layout --case d192-r64 --samples 4 \
+  --output /external/diagnosis/fixture.jsonl
+python -m benches.cuda_submission \
+  --trace /external/diagnosis/trace/cuda-driver-PID.jsonl \
+  --fixture /external/diagnosis/fixture.jsonl
+```
+
+Use the actual fixture PID in the trace filename and resolve the target's CUPTI
+SONAME through its frozen loader environment. CPU callback/output controls live
+in `benches/tests/cuda_driver_trace_writer.cpp`; compile with the same include
+directory, without `-lcupti`, and run `valid`, `unpaired`, `overflow`, `duplicate`
+and the `orphan-exit`, `natural-duplicate`, `sealed-pair` controls in separate new
+trace directories. Only `valid` and the rejected post-seal pair must exit zero;
+every incomplete/duplicate/overflow capture must fail. Analyzer units
+run with `pytest benches/tests/test_cuda_submission.py`.
+
+The analyzer requires one complete matching process, thread and directional
+fixture, checks copy/launch counts against the compiled geometry, and reports
+driver interval unions and remaining unattributed host wall time. Remaining time
+is not proven descriptor packing; callbacks themselves perturb API duration.
+This diagnostic does not isolate GPU execution or forward admission and cannot
+promote performance. Consumed engine capture and matched observation-overhead
+controls remain separate gates.
+
+The `4b568860` H20 functional smoke uses `d192-r64`: 192 descriptors, 64 compiled
+DMA ranges and 12 MiB of payload. Both directions, both backends and both event
+modes complete 80 submissions with 32 measured windows; complete byte/source/guard
+controls, exact copy/launch counts, normal owned-process waits and empty physical
+postflight pass independent review. The capture contains 5,017 driver records
+with a complete footer.
+Four profiled samples per group do not qualify overhead or performance. In
+particular, lower CPU submission time does not establish lower complete restore
+latency. Preserve this capture while evaluating matched unprofiled controls and
+the consumed engine path. The [private archive](benchmark-evidence.md#native-driver-capture-archive)
+retains frozen inputs, rejected launch controls and raw outputs.

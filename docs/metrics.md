@@ -880,3 +880,10 @@ exact sequence. A progress confirmation at unchanged sequence preserves the
 original install time; snapshot/delta commit updates it after the index becomes
 complete under its write lock. A benchmark must reject superseded targets and
 verify the host clock domain; these timestamps do not give a cross-host latency.
+
+The query-budget owner initializes all six `orbitkv_query_reserved_bytes_by_phase`
+labels when it is created, before any reservation. Zero initialization adds a
+zero delta; creating another owner does not reset live values. Qualification
+harnesses must require the metric and each applicable ownership/SSD metric to
+exist; a missing series is not a measured zero. This readiness contract does
+not establish native drain or safe reclamation.

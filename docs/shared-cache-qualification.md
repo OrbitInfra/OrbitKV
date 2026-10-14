@@ -1,5 +1,12 @@
 # Shared-cache qualification
 
+The stage021 three-host etcd process-only result is independently accepted for
+normal leader SIGTERM/rejoin, quorum stop/recovery and complete final keys.
+The leader stop performs graceful leadership transfer. No Manager or payload
+consumer runs in that cohort, so it does not qualify abrupt crash detection,
+cache/source authorization, Watch recovery, GPU lifetime or independent physical
+failure domains. The completion plan retains the remaining S2/S3 gates.
+
 All recorded serving results below predate the S2.8 owner inventory-stream
 cutover. They remain historical controls and do not qualify the current
 candidate until rerun with frozen S2.8 artifacts. Their directory-RPC,

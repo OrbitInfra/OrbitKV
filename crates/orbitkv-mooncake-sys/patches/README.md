@@ -54,6 +54,12 @@ have controlled CUDA API tests in `tests/native/cuda_copy_errors.cu`; they are
 not yet healthy-GPU qualification or an upstream merged change. A focused
 upstream follow-up must be prepared separately from this scoped backport.
 
+One checked context guard performs restoration on every exit, including a
+device-selection error after CUDA has changed the current context. Combined
+device-selection/restoration failure retains the worker, caller scratch and
+admission without submitting a copy. Software controls also saturate all 64
+retained context-error calls and require the next call to reject admission.
+
 CUDA errors after a memcpy attempt are not physical drain evidence. The copy
 owner retains its current stream, stack and callers' RPC staging buffers inline
 instead of returning them. Its device-copy admission limits are 64 live plus

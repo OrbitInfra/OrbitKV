@@ -273,3 +273,98 @@ fn assert_exported_peaks(registry: &prometheus::Registry, total: u64, instance: 
         Some(&instance)
     );
 }
+
+#[test]
+fn fresh_query_owner_exports_initial_phase_series() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "query::tests::initial_phase_series_child",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("ORBITKV_INITIAL_QUERY_PHASE_CHILD", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+#[ignore = "Invoked in a fresh process by the query phase exporter gate"]
+fn initial_phase_series_child() {
+    if std::env::var("ORBITKV_INITIAL_QUERY_PHASE_CHILD").as_deref() != Ok("1") {
+        return;
+    }
+    let registry = prometheus::Registry::new();
+    let reader = opentelemetry_prometheus::exporter()
+        .with_registry(registry.clone())
+        .build()
+        .unwrap();
+    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+        .with_reader(reader)
+        .build();
+    opentelemetry::global::set_meter_provider(provider.clone());
+    let budget = QueryBudget::new(64, 64).unwrap();
+    let assert_phases = |active: Option<&str>| {
+        let families = registry.gather();
+        let family = families
+            .iter()
+            .find(|family| family.name() == "orbitkv_query_reserved_bytes_by_phase")
+            .expect("fresh query owner must export each phase before any query");
+        let values = family
+            .get_metric()
+            .iter()
+            .map(|metric| {
+                let phase = metric
+                    .get_label()
+                    .iter()
+                    .find(|label| label.name() == "phase")
+                    .expect("query phase label");
+                (phase.value().to_string(), metric.get_gauge().value())
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(values.len(), 6);
+        for phase in [
+            "warming",
+            "preloading",
+            "prepared",
+            "preparing",
+            "ready",
+            "restoring",
+        ] {
+            assert_eq!(
+                values.get(phase),
+                Some(&if active == Some(phase) { 7.0 } else { 0.0 }),
+                "{phase}"
+            );
+        }
+    };
+    assert_phases(None);
+    let QueryAdmission::Admitted(reservation) =
+        budget.reserve("initial-metrics", "initial-metrics", 7, QueryMode::Demand)
+    else {
+        panic!("query must fit initialized budget");
+    };
+    assert_phases(Some("preparing"));
+    reservation.ready(7).unwrap();
+    assert_phases(Some("ready"));
+    drop(reservation);
+    assert_phases(None);
+    // A second owner initializes labels without resetting another owner's live
+    // values or introducing extra label dimensions.
+    let QueryAdmission::Admitted(reservation) =
+        budget.reserve("initial-metrics", "initial-metrics", 7, QueryMode::Demand)
+    else {
+        panic!("second query must fit");
+    };
+    let _second_budget = QueryBudget::new(64, 64).unwrap();
+    assert_phases(Some("preparing"));
+    drop(reservation);
+    assert_phases(None);
+    provider.shutdown().unwrap();
+}

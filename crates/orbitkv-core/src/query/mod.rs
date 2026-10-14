@@ -94,6 +94,16 @@ impl QueryBudget {
         if global == 0 || per_instance == 0 || per_instance > global || global > i64::MAX as u64 {
             return Err("query byte limits must satisfy 0 < instance <= global <= i64::MAX".into());
         }
+        for phase in [
+            Phase::Warming,
+            Phase::Preloading,
+            Phase::Prepared,
+            Phase::Preparing,
+            Phase::Ready,
+            Phase::Restoring,
+        ] {
+            account(0, phase);
+        }
         let total_peak = Arc::new(AtomicU64::new(0));
         let instance_peak = Arc::new(AtomicU64::new(0));
         let meter = global::meter("orbitkv-core");

@@ -265,6 +265,7 @@ struct Measurements {
     cpu_submission_ms: Vec<f64>,
     host_wait_ms: Vec<f64>,
     stream_event_ms: Option<Vec<f32>>,
+    submission_windows: Vec<SubmissionWindow>,
 }
 
 impl Measurements {
@@ -274,6 +275,7 @@ impl Measurements {
             cpu_submission_ms: Vec::with_capacity(samples),
             host_wait_ms: Vec::with_capacity(samples),
             stream_event_ms: events.then(|| Vec::with_capacity(samples)),
+            submission_windows: Vec::new(),
         }
     }
 
@@ -281,6 +283,9 @@ impl Measurements {
         self.call_to_return_ms.push(sample.total);
         self.cpu_submission_ms.push(sample.submission);
         self.host_wait_ms.push(sample.wait);
+        if let Some(window) = sample.window {
+            self.submission_windows.push(window);
+        }
         if let Some(events) = &mut self.stream_event_ms {
             events.push(sample.event.expect("event sample"));
         } else {
@@ -294,6 +299,29 @@ struct Sample {
     submission: f64,
     wait: f64,
     event: Option<f32>,
+    window: Option<SubmissionWindow>,
+}
+
+#[derive(Serialize)]
+struct SubmissionWindow {
+    begin_ns: u64,
+    submitted_ns: u64,
+    drained_ns: u64,
+    tid: libc::c_long,
+}
+
+fn monotonic_ns() -> u64 {
+    let mut value = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: clock_gettime writes one live timespec; no CUDA owners are touched.
+    assert_eq!(
+        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut value) },
+        0
+    );
+    u64::try_from(value.tv_sec).expect("positive monotonic seconds") * 1_000_000_000
+        + u64::try_from(value.tv_nsec).expect("positive monotonic nanoseconds")
 }
 
 fn submit(
@@ -302,24 +330,28 @@ fn submit(
     stream: &Arc<CudaStream>,
     h2d: bool,
     events: Option<&Events>,
+    driver_trace: bool,
 ) -> Sample {
     let outer = Instant::now();
     if let Some(events) = events {
         events.start.record(stream).expect("record start event");
     }
     let started = Instant::now();
+    let begin_ns = driver_trace.then(monotonic_ns);
     let result = if h2d {
         backend.h2d(copies, stream)
     } else {
         backend.d2h(copies, stream)
     };
     let submitted = Instant::now();
+    let submitted_ns = driver_trace.then(monotonic_ns);
     let event_result = events.map(|events| events.end.record(stream));
     if let Err(error) = stream.synchronize() {
         eprintln!("physical native drain unavailable: {error}");
         std::process::abort();
     }
     let drained = Instant::now();
+    let drained_ns = driver_trace.then(monotonic_ns);
     result.expect("native backend submission after physical drain");
     if let Some(result) = event_result {
         result.expect("record end event after physical drain");
@@ -335,6 +367,13 @@ fn submit(
         submission: submitted.duration_since(started).as_secs_f64() * 1000.0,
         wait: drained.duration_since(submitted).as_secs_f64() * 1000.0,
         event,
+        window: begin_ns.map(|begin_ns| SubmissionWindow {
+            begin_ns,
+            submitted_ns: submitted_ns.expect("matching submission clock"),
+            drained_ns: drained_ns.expect("matching drain clock"),
+            // SAFETY: gettid observes only the current thread identity.
+            tid: unsafe { libc::syscall(libc::SYS_gettid) },
+        }),
     }
 }
 
@@ -345,6 +384,9 @@ fn main() {
     let mut samples: usize = 100;
     let mut validate_only = false;
     let mut local_geometry: Option<PathBuf> = None;
+    let mut selected_case: Option<String> = None;
+    let driver_trace = std::env::var_os("ORBITKV_CUDA_DRIVER_TRACE_DIR")
+        .is_some_and(|directory| !directory.is_empty());
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--output" => output = Some(args.next().expect("output path").into()),
@@ -357,6 +399,7 @@ fn main() {
                     .expect("numeric samples");
             }
             "--validate-layout-only" => validate_only = true,
+            "--case" => selected_case = Some(args.next().expect("case name")),
             "--validate-local-geometry" => {
                 local_geometry = Some(args.next().expect("geometry path").into());
             }
@@ -385,6 +428,10 @@ fn main() {
         return;
     }
     let mut layouts = geometry::layouts();
+    if let Some(name) = selected_case {
+        layouts.retain(|layout| layout.name == name);
+        assert_eq!(layouts.len(), 1, "select one existing layout case");
+    }
     for layout in &layouts {
         let copies = layout.virtual_copies().expect("valid pointer-free layout");
         assert_eq!(
@@ -393,6 +440,7 @@ fn main() {
         );
     }
     if validate_only {
+        let count = layouts.len();
         for layout in layouts {
             writeln!(file, "{}", json!({
                 "case": layout.name, "layers": LAYERS, "fragment_bytes": FRAGMENT_BYTES,
@@ -404,7 +452,7 @@ fn main() {
             })).expect("write CPU layout receipt");
         }
         file.flush().expect("flush CPU validation");
-        println!("9 layouts passed before CUDA initialization");
+        println!("{count} layouts passed before CUDA initialization");
         return;
     }
     let context = CudaContext::new(0).expect("CUDA context");
@@ -456,10 +504,24 @@ fn main() {
                 for (event_id, measurements) in data[backend_id].iter().enumerate() {
                     let selected_events = (event_id == 1).then_some(&events);
                     memory.prepare(h2d);
-                    submit(*backend, &copies, &stream, h2d, selected_events);
+                    submit(
+                        *backend,
+                        &copies,
+                        &stream,
+                        h2d,
+                        selected_events,
+                        driver_trace,
+                    );
                     memory.validate(h2d);
                     for _ in 0..5 {
-                        submit(*backend, &copies, &stream, h2d, selected_events);
+                        submit(
+                            *backend,
+                            &copies,
+                            &stream,
+                            h2d,
+                            selected_events,
+                            driver_trace,
+                        );
                     }
                     assert!(measurements.call_to_return_ms.is_empty());
                 }
@@ -479,6 +541,7 @@ fn main() {
                         &stream,
                         h2d,
                         (event == 1).then_some(&events),
+                        driver_trace,
                     ));
                 }
             }
