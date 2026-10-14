@@ -74,6 +74,10 @@ upstream ABI does not provide this extension; it is not released upstream
 support. The receipt covers CPU-only/TCP-only source shutdown. It does not prove
 device/RDMA termination, close an individual transfer ticket, or permit live
 allocation/page reuse. Those paths remain retained and unqualified.
+The CPU/TCP receipt profile rejects delegated raw-pointer transfers: that
+staging API lacks a source epoch and would bypass the guarded pointer ingress.
+Ordinary CPU/TCP READ/WRITE remains available. Other transport profiles still
+cannot produce a physical receipt.
 
 `orbitkv-channel` uses iceoryx2 `0.10.0` and a fixed 64-byte command carrying
 protocol version, opcode, request identity, Manager epoch, descriptor offset,

@@ -1,0 +1,2 @@
+# Unified patches represent empty context lines with a single space.
+crates/orbitkv-mooncake-sys/patches/*.patch whitespace=-blank-at-eol

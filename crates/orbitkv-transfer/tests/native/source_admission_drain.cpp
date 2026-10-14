@@ -12,13 +12,18 @@
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <sys/random.h>
+#include <sys/syscall.h>
 #include <thread>
+#include <unistd.h>
 
 namespace {
 constexpr size_t bytes = 8192;
 std::unique_ptr<unsigned char[]> source(new unsigned char[bytes]);
 std::array<unsigned char, bytes> target{}, expected{};
 std::atomic<bool> pause_copy{true}, inside_copy{false};
+std::atomic<bool> classify_source_for_barrier{true};
+std::atomic<bool> fail_entropy{false};
 bool inject_partial_submit = false;
 void require(bool value, const char *message) {
   if (!value)
@@ -77,6 +82,12 @@ tent_status_t complete(tent_engine_t engine, tent_batch_id_t batch,
 }
 } // namespace
 
+ssize_t getrandom(void *buffer, size_t length, unsigned int flags) {
+  if (fail_entropy.load() && length == 16)
+    return 0;
+  return syscall(SYS_getrandom, buffer, length, flags);
+}
+
 // Deterministic C-ABI fault: the native engine admits the first real request,
 // then this test-only boundary returns failure before the second submission.
 int tent_submit(tent_engine_t engine, tent_batch_id_t batch,
@@ -99,7 +110,9 @@ class ControlledPlatform final : public CpuPlatform {
 public:
   ControlledPlatform() : CpuPlatform(std::make_shared<Config>()) {}
   MemoryType getMemoryType(void *pointer) override {
-    return pointer == source.get() ? MTYPE_CUDA : MTYPE_CPU;
+    return pointer == source.get() && classify_source_for_barrier.load()
+               ? MTYPE_CUDA
+               : MTYPE_CPU;
   }
   const std::string type() const override { return "cpu"; }
   Status copy(void *dst, void *src, size_t length) override {
@@ -126,18 +139,65 @@ int main(int argc, char **argv) {
     require(argc == 2, "expected scenario");
     std::string scenario = argv[1];
     require(scenario == "delayed" || scenario == "cancel" ||
-                scenario == "partial" || scenario == "restart",
+                scenario == "partial" || scenario == "restart" ||
+                scenario == "delegate" || scenario == "entropy",
             "unknown scenario");
     for (size_t i = 0; i < bytes; ++i)
       source[i] = expected[i] = (i * 17 + 31) % 251;
     target.fill(0x5a);
     owner = make_engine();
+    if (scenario == "entropy") {
+      fail_entropy.store(true);
+      auto unavailable = tent_create_engine();
+      fail_entropy.store(false);
+      require(unavailable && tent_available(unavailable) == 0,
+              "entropy control did not create unavailable native object");
+      char epoch[33];
+      std::memset(epoch, 0x5a, sizeof(epoch));
+      uint64_t active = UINT64_MAX;
+      auto close = tent_close_source(unavailable, 0, epoch, &active);
+      require(close == -1 && active == UINT64_MAX &&
+                  std::all_of(std::begin(epoch), std::end(epoch),
+                              [](auto c) { return c == 0x5a; }),
+              "unavailable engine produced or modified a source receipt");
+      // Neither engine registered any allocation or submitted any transfer.
+      tent_destroy_engine(unavailable);
+      tent_destroy_engine(owner);
+      owner = nullptr;
+      std::cout << "scenario=entropy native_close=-1 receipt_untouched=1 "
+                   "no_registration_or_submit=1 result=PASS\n";
+      return 0;
+    }
     requester = make_engine();
     require(tent_register_memory(owner, source.get(), bytes) == 0,
             "source register");
     require(tent_register_memory(requester, target.data(), bytes) == 0,
             "target register");
     auto owner_endpoint = endpoint(owner);
+    if (scenario == "delegate") {
+      tent_segment_id_t receiver_segment{};
+      auto receiver_endpoint = endpoint(requester);
+      require(tent_open_segment(owner, &receiver_segment,
+                                receiver_endpoint.c_str()) == 0,
+              "open delegate receiver");
+      mooncake::tent::Request delegated{};
+      delegated.opcode = mooncake::tent::Request::WRITE;
+      delegated.source = source.get();
+      delegated.target_id = receiver_segment;
+      delegated.target_offset = reinterpret_cast<uint64_t>(target.data());
+      delegated.length = bytes;
+      pause_copy.store(false, std::memory_order_release);
+      classify_source_for_barrier.store(false);
+      auto denied =
+          mooncake::tent::ControlClient::delegate(owner_endpoint, delegated);
+      require(!denied.ok() && std::all_of(target.begin(), target.end(),
+                                          [](auto c) { return c == 0x5a; }),
+              "unfenced delegate touched source/destination");
+      classify_source_for_barrier.store(true);
+      pause_copy.store(true, std::memory_order_release);
+      require(tent_close_segment(owner, receiver_segment) == 0,
+              "close delegate receiver");
+    }
     tent_segment_id_t segment{};
     require(tent_open_segment(requester, &segment, owner_endpoint.c_str()) == 0,
             "open source");

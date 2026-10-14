@@ -368,6 +368,13 @@ pools and 1 TiB of registered backing, distinct from batch descriptors and
 per-query/export payload budgets. Independent acceptance, installed package,
 GPU/RDMA and adapter qualification remain open for this candidate. Preserve
 all controls under `/root/orbitkv-artifacts/s3-source-read-drain-20261014/`.
+The first checkpoint `dd5589c5` was independently rejected for an unguarded
+Delegate pointer entry and an invalid close receipt on an unavailable engine.
+Its freeze and failing controls remain preserved. The correction refuses that
+unversioned delegate entry in the CPU/TCP receipt profile and validates native
+availability/epoch before touching receipt outputs. Native byte controls and
+test-only host-registration/C ABI controls of the actual Rust pool owner are
+separate from real CUDA registration, installed-package and GPU/RDMA gates.
 
 The old three-host readiness quarantine is a separate, scoped audit case. Its
 query-source unregister succeeded; the client was deliberately closed before

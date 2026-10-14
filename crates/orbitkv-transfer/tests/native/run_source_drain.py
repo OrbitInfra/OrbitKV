@@ -85,7 +85,14 @@ def main() -> None:
     }
     if built.returncode == 0:
         record["binary_sha256"] = digest(binary)
-        for scenario in ("delayed", "cancel", "partial", "restart"):
+        for scenario in (
+            "delayed",
+            "cancel",
+            "partial",
+            "restart",
+            "delegate",
+            "entropy",
+        ):
             timed_out = False
             with (output / f"{scenario}.log").open("x") as log:
                 run = subprocess.Popen(
@@ -162,7 +169,7 @@ def main() -> None:
     (output / "RESULT.json").write_text(json.dumps(record, indent=2) + "\n")
     if (
         built.returncode
-        or len(record["cells"]) != 4
+        or len(record["cells"]) != 6
         or any(
             cell["exit_code"] != 0
             or cell["forced_cpu_control_cleanup"]

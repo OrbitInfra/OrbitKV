@@ -51,6 +51,16 @@ Use test-owned processes for faults; preserve other workloads and collect logs
 outside the repo. Keep same-host TCP, physical two-host TCP and RDMA evidence
 separate. Build first, then test with native binaries/libraries frozen.
 
+The source-shutdown candidate calls the irreversible native source gate before
+unregistering the pinned-pool owner. Only CPU-only/TCP-only handler drain plus
+empty Rust requester admission permits release. Unsupported paths or errors
+retain engine, tokens and pool in the bounded source registry; do not retry
+unregister from token Drop or reset its process admission. Native Delegate is
+rejected in this narrow profile because its pointer wire has no source epoch.
+This is whole-engine shutdown, not a per-ticket orphan, GPU or RDMA receipt.
+Keep CPU host-registration/C ABI test-shim controls separate from real CUDA
+registration and installed hardware gates; see S3 and `docs/transport.md`.
+
 For a normal Manager stop, require SIGTERM to fence membership before gRPC waits
 for inventory streams, then drain lifecycle ownership and revoke the member lease.
 Do not accept a test helper's SIGKILL fallback as graceful shutdown evidence.

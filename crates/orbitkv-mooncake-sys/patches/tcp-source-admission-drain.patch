@@ -67,11 +67,12 @@
  struct FileBufferDesc {
 --- a/mooncake-transfer-engine/tent/include/tent/runtime/transfer_engine_impl.h
 +++ b/mooncake-transfer-engine/tent/include/tent/runtime/transfer_engine_impl.h
-@@ -320,6 +320,7 @@
+@@ -320,6 +320,8 @@
      // enable_progress_worker is false. Transport completion paths use this as
      // an idempotent "maybe ready" signal.
      void notifyBatchMaybeReady(BatchID batch_id);
 +    int closeSource(uint64_t timeout_ms, char* epoch, uint64_t* active);
++    bool supportsSourceDrain();
  
     private:
      friend class ProgressWorker;
@@ -268,6 +269,17 @@
      } else {
          fail("RecvData failed: target address not in registered buffer");
      }
+@@ -525,6 +586,10 @@
+ 
+ void ControlService::onDelegate(const std::string_view& request,
+                                 std::string& response) {
++    if (impl_->supportsSourceDrain()) {
++        response = "Delegated pointer transfers are unsupported by CPU/TCP source drain";
++        return;
++    }
+     Request user_request = json::parse(std::string(request)).get<Request>();
+     auto status = impl_->transferSync({user_request});
+     if (!status.ok()) response = status.ToString();
 --- a/mooncake-transfer-engine/tent/src/runtime/transfer_engine_impl.cpp
 +++ b/mooncake-transfer-engine/tent/src/runtime/transfer_engine_impl.cpp
 @@ -795,6 +795,8 @@
@@ -287,22 +299,27 @@
  
          // MR warm-up: pin pages via temp ibv_reg_mr, benefits both
          // subsequent RDMA registration and NUMA probing
-@@ -846,6 +849,21 @@
+@@ -846,6 +849,26 @@
  
  // WARNING: before exiting TE, make sure that all local memory are
  // unregistered, otherwise the CUDA may halt!
 +int TransferEngineImpl::closeSource(uint64_t timeout_ms, char* epoch, uint64_t* active) {
-+    if (!metadata_ || !epoch || !active || timeout_ms > 5000) return -1;
++    if (!available_ || !metadata_ || !epoch || !active || timeout_ms > 5000 ||
++        metadata_->sourceEpoch().size() != 32) return -1;
 +    memcpy(epoch, metadata_->sourceEpoch().c_str(), 33);
 +    *active = metadata_->closeSource(timeout_ms);
-+#ifdef USE_CUDA
-+    // CPU handler return does not establish device completion on a CUDA build.
-+    return 2;
-+#else
-+    if (Platform::getLoader().type() != "cpu") return 2;
-+    for (size_t type = 0; type < kSupportedTransportTypes; ++type)
-+        if (type != TCP && transport_list_[type]) return 2;
++    if (!supportsSourceDrain()) return 2;
 +    return *active == 0 ? 0 : 1;
++}
++
++bool TransferEngineImpl::supportsSourceDrain() {
++#ifdef USE_CUDA
++    return false;
++#else
++    if (Platform::getLoader().type() != "cpu") return false;
++    for (size_t type = 0; type < kSupportedTransportTypes; ++type)
++        if (type != TCP && transport_list_[type]) return false;
++    return true;
 +#endif
 +}
 +
