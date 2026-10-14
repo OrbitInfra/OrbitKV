@@ -202,6 +202,14 @@ claim without drain evidence leaves its sources, byte reservations, and session
 credits quarantined. Neither TTL, UDS closure, nor pidfd exit authorizes source
 reuse. If the Manager dies during a claimed local copy, the engine retains its
 own imported mapping, CUDA registration, and tensors until local drain.
+A managed Restore without a terminal publication also remains pending after
+Manager process exit. An unreadable/unknown completion keeps the native worker
+job and registered tensors owned; it does not produce `RestoreStatus.done`.
+`poll_restore` can expose a bounded retention reason while `wait_restore` still
+respects its deadline. Pending operation admission remains charged until a
+known completion or a proven never-submitted drain. This candidate does not
+provide a device/RDMA failure fence or reclaim orphaned pages.
+
 
 SSD, encoded, and mixed-source restores use a `Managed` execution state and
 retain Manager workers for their materialization, decode, and I/O. This follows

@@ -24,6 +24,7 @@ cuda-13 = ["orbitkv-core/cuda-13", "orbitkv-server/cuda-13", "orbitkv-transfer?/
 mooncake = ["dep:orbitkv-transfer", "orbitkv-core/mooncake", "orbitkv-server/mooncake"]
 
 [dependencies]
+log.workspace = true
 pyo3 = { workspace = true, features = ["extension-module"] }
 orbitkv-common.workspace = true
 orbitkv-state.workspace = true

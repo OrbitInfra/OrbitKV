@@ -9,21 +9,27 @@ use orbitkv_channel::{
     RESPONSE_FLAG_REQUEST_CONSUMED, Response, RestoreRequest, RestoreState, TransportServer,
 };
 
-struct ChildGuard(Child);
+struct ChildGuard {
+    child: Child,
+    start_ticks: String,
+}
 
 impl ChildGuard {
     fn start(directory: &Path) -> Self {
-        let mut child = Self(
-            Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "shared_completion_child", "--nocapture"])
-                .env("ORBITKV_COMPLETION_TEST_DIRECTORY", directory)
-                .spawn()
-                .unwrap(),
-        );
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "shared_completion_child", "--nocapture"])
+            .env("ORBITKV_COMPLETION_TEST_DIRECTORY", directory)
+            .spawn()
+            .unwrap();
+        let start_ticks = process_start_ticks(child.id()).unwrap();
+        let mut child = Self { child, start_ticks };
         let deadline = Instant::now() + Duration::from_secs(10);
         while !directory.join("ready").exists() {
             assert!(Instant::now() < deadline, "child did not start");
-            assert!(child.0.try_wait().unwrap().is_none(), "child exited early");
+            assert!(
+                child.child.try_wait().unwrap().is_none(),
+                "child exited early"
+            );
             std::thread::sleep(Duration::from_millis(1));
         }
         child
@@ -32,8 +38,14 @@ impl ChildGuard {
     fn wait_for_success(&mut self) {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            if let Some(status) = self.0.try_wait().unwrap() {
+            if let Some(status) = self.child.try_wait().unwrap() {
                 assert!(status.success());
+                assert!(process_start_ticks(self.child.id()).is_none());
+                println!(
+                    "owned_pid={} start_ticks={} exit=0 reaped=1 forced_cleanup=0",
+                    self.child.id(),
+                    self.start_ticks
+                );
                 return;
             }
             assert!(Instant::now() < deadline, "child did not exit");
@@ -44,9 +56,31 @@ impl ChildGuard {
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        if matches!(self.child.try_wait(), Ok(None)) {
+            if process_start_ticks(self.child.id()).as_ref() == Some(&self.start_ticks) {
+                eprintln!(
+                    "owned_pid={} start_ticks={} forced_cleanup=1",
+                    self.child.id(),
+                    self.start_ticks
+                );
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+            } else {
+                eprintln!("owned process identity unavailable; refusing signal");
+            }
+        }
     }
+}
+
+fn process_start_ticks(pid: u32) -> Option<String> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    Some(
+        stat.rsplit_once(')')?
+            .1
+            .split_whitespace()
+            .nth(19)?
+            .to_string(),
+    )
 }
 
 #[test]
@@ -124,14 +158,21 @@ fn pending_restore_reports_actual_peer_process_exit_without_fabricating_completi
             .restore_completions_ready(Duration::from_secs(5))
             .unwrap()
     );
+    let response = client.poll_restore(handle).unwrap();
+    assert_eq!(response.state, RestoreState::Pending);
+    assert!(response.message.contains("resources retained"));
     assert!(matches!(
-        client.poll_restore(handle),
-        Err(ChannelError::SessionRequiresReconnect)
+        client.wait_restore(handle, Duration::from_millis(2)),
+        Err(ChannelError::RestoreTimeout { .. })
     ));
-    assert!(matches!(
-        client.wait_restore(handle, Duration::from_secs(1)),
-        Err(ChannelError::SessionRequiresReconnect)
-    ));
+    assert_eq!(
+        client
+            .channel()
+            .restore_completions()
+            .state(handle.operation_id)
+            .unwrap(),
+        GrantState::Managed
+    );
 }
 
 #[test]

@@ -96,6 +96,22 @@ hash snapshots and shared views, warming limits/expiry, separate publish traffic
 notifications, deadlines, and client-bound handles. These replace the old mocked
 Python facade tests. The GPU process-boundary gate below verifies the PyO3 API.
 
+The Rust completion-owner controls in `python/tests/unit/local_restore.rs` run
+separately from pytest. For native Restore result or retention changes, build
+`cargo test -p orbitkv-channel --test completion_process --no-run` first, then
+set `ORBITKV_SHARED_COMPLETION_TEST_BINARY` to that test executable. Run
+`cargo test -p orbitkv-py --lib --no-default-features --features cuda-13,mooncake
+local_restore::tests -- --include-ignored --nocapture` from the repository root.
+Choose an embedding-capable `PYO3_PYTHON`; when testing the extension crate on
+Debian Python 3.11, use
+`RUSTFLAGS='-C link-arg=/usr/lib/x86_64-linux-gnu/libpython3.11.so'` for that
+invocation. This link setting belongs only to the CPU test executable.
+The actual native `advance` path is exercised with an authenticated subprocess
+and shared completion records; its test executor owns no CUDA mapping and
+submits no device work. A pending diagnostic cannot consume the result or
+release the job. Actual GPU tensor ownership, managed DMA termination and
+adapter page reuse remain separate installed hardware gates.
+
 ## Server Integration Gate
 
 ### Installed GPU identity gate

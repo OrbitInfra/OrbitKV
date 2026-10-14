@@ -436,6 +436,16 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   adapter lifetime gates remain open. Before adding page reuse, audit managed
   Restore errors so process exit or unreadable completion cannot return pages
   without an actual completion or never-submitted proof.
+- The managed-Restore retention candidate preserves a pending `Managed` record
+  after authenticated Manager process exit. Unknown claim/poll/completion errors
+  in the actual engine-local worker keep the job and tensor owners instead of
+  publishing a terminal failure. Pending diagnostics are bounded to 1 KiB per
+  operation, with the existing 1,024-operation worker admission still charged;
+  deadlines preserve ownership. Already drained local work and actual Manager
+  terminal publications retain their normal completion path. This is not a
+  physical-failure drain or reclamation primitive. Independent acceptance,
+  final installed package and GPU/adapter fault gates remain open; controls
+  belong under `/root/orbitkv-artifacts/s3-managed-restore-retention-20261015/`.
 - Replace the remaining framework CUDA IPC pickle interpretation in the Manager
   with explicit validated registration data; remove the retired wire/API path.
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
