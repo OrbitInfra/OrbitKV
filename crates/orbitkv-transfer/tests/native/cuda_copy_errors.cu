@@ -76,7 +76,7 @@ extern "C" CUresult CUDAAPI cuCtxGetCurrent(CUcontext *context) {
   return CUDA_SUCCESS;
 }
 extern "C" CUresult CUDAAPI cuCtxSetCurrent(CUcontext context) {
-  if (failure == "restore")
+  if (failure == "restore" || failure == "set-device-restore")
     return CUDA_ERROR_INVALID_CONTEXT;
   current_context = context;
   current_device = context ? 7 : -1;
@@ -94,6 +94,9 @@ extern "C" cudaError_t CUDARTAPI cudaSetDevice(int device) {
     return cudaErrorInvalidDevice;
   current_device = device;
   current_context = reinterpret_cast<CUcontext>(device + 0x200);
+  if ((failure == "set-device-mutated" || failure == "set-device-restore") &&
+      device == 2)
+    return cudaErrorInvalidDevice;
   return cudaSuccess;
 }
 extern "C" cudaError_t CUDARTAPI cudaGetDeviceCount(int *count) {
@@ -138,20 +141,23 @@ int main(int argc, char **argv) {
     mooncake::tent::CudaPlatform platform(nullptr);
     if (argc > 1) {
       failure = argv[1];
-      if (failure == "admission" || failure == "byte-admission") {
+      if (failure == "admission" || failure == "byte-admission" ||
+          failure == "context-admission") {
         const bool byte_cap = failure == "byte-admission";
+        const bool context_failure = failure == "context-admission";
         const size_t quantum = byte_cap ? 32 * 1024 * 1024 : 1;
         const unsigned calls = byte_cap ? 32 : 64;
         std::vector<unsigned char> payload(quantum), destination(quantum);
         device_address = destination.data();
-        failure = "copy";
+        failure = context_failure ? "set-device-restore" : "copy";
+        auto &entered = context_failure ? switches : copies;
         for (unsigned index = 0; index < calls; ++index) {
           std::thread([&] {
             (void)platform.copy(destination.data(), payload.data(), quantum);
           }).detach();
           const auto deadline =
               std::chrono::steady_clock::now() + std::chrono::seconds(3);
-          while (copies.load() <= index) {
+          while (entered.load() <= index) {
             if (std::chrono::steady_clock::now() >= deadline)
               _exit(1);
             usleep(1000);
@@ -161,6 +167,8 @@ int main(int argc, char **argv) {
         std::cout << "retained_admission=" << result.ToString()
                   << " byte_cap=" << byte_cap << std::endl;
         if (!result.IsTooManyRequests())
+          _exit(1);
+        if (context_failure && copies.load() != 0)
           _exit(1);
         // No DMA exists in this isolated interposed-API control. This process
         // exit is synthetic teardown, not a physical drain qualification.
@@ -187,7 +195,7 @@ int main(int argc, char **argv) {
         return 0;
       }
       if (failure == "copy" || failure == "synchronize" ||
-          failure == "restore") {
+          failure == "restore" || failure == "set-device-restore") {
         struct ScratchOwner {
           ~ScratchOwner() { std::cout << "scratch_owner_dropped" << std::endl; }
         } owner;
@@ -205,7 +213,8 @@ int main(int argc, char **argv) {
     unsigned errors = 0;
     for (const std::string scenario :
          {"memory-type", "ordinal", "invalid-device", "context-query",
-          "set-device", "stream", "oversize", "host-only", "registered-host",
+          "set-device", "set-device-mutated", "stream", "oversize", "host-only",
+          "registered-host",
           "managed", "managed-invalid-device", "no-context", "normal"}) {
       failure = scenario;
       copies = syncs = switches = 0;
@@ -225,7 +234,8 @@ int main(int argc, char **argv) {
           scenario == "memory-type" || scenario == "ordinal" ||
           scenario == "invalid-device" ||
           scenario == "managed-invalid-device" || scenario == "context-query" ||
-          scenario == "set-device" || scenario == "stream" ||
+          scenario == "set-device" || scenario == "set-device-mutated" ||
+          scenario == "stream" ||
           scenario == "oversize" || scenario == "copy";
       const bool sentinel = std::all_of(target.begin(), target.end(),
                                         [](auto c) { return c == 0x5a; });

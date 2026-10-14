@@ -249,6 +249,12 @@ under a separate 64-call/1-GiB logical-copy admission budget; no error is used
 as a DMA fence. Its deterministic CUDA API controls are software evidence; actual GPU and
 physical termination gates remain open. Preserve the original candidate/wheel,
 controls and review under `/root/orbitkv-artifacts/s3-installed-byte-errors-20261013/`.
+The 2026-10-14 merge review also reproduced a combined device-selection and
+context-restoration failure that returned through an unchecked guard. One checked
+guard now restores on every return and retains admission if restoration fails.
+Software controls reject the previous allocator and verify that 64 retained
+context-error calls reject further admission without any memcpy submission;
+these controls add no GPU or physical termination qualification.
 On 2026-10-13 Forge job 20551990 is killed and both saved SSH endpoints refuse
 connections. Its historical healthy CUDA gates remain distinct from the old
 unusable H20. No new formal cells or hardware qualification have started, and

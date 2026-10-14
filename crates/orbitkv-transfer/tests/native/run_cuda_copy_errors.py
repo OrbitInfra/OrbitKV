@@ -63,6 +63,7 @@ def main() -> None:
         ("copy", []),
         ("driver-init", ["driver-init"]),
         ("admission", ["admission"]),
+        ("context-admission", ["context-admission"]),
         ("byte-admission", ["byte-admission"]),
         ("repeated-errors", ["repeated-errors"]),
     ]:
@@ -77,7 +78,8 @@ def main() -> None:
         exits.append(result.returncode)
     # These task-owned children use only interposed software CUDA APIs. Their
     # final kill/reap is synthetic-control teardown, never a DMA drain proof.
-    for mode in ["copy", "synchronize", "restore"]:
+    retained_modes = []
+    for mode in ["copy", "synchronize", "restore", "set-device-restore"]:
         path = output / f"{mode}-retention.log"
         with path.open("x") as log:
             child = subprocess.Popen(
@@ -101,6 +103,7 @@ def main() -> None:
                     or "unproven_copy_returned" in text
                 ):
                     raise RuntimeError(f"Premature CUDA scratch release: {mode}")
+                retained_modes.append(mode)
             finally:
                 if child.poll() is None:
                     child.kill()
@@ -109,6 +112,7 @@ def main() -> None:
         "command": command,
         "compile_exit": compiled.returncode,
         "run_exits": exits,
+        "retained_owner_controls": retained_modes,
         "helper_sha256": hashlib.sha256(helper.read_bytes()).hexdigest(),
         "allocator_sha256": hashlib.sha256(allocator.read_bytes()).hexdigest(),
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),

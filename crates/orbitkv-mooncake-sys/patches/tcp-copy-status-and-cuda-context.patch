@@ -83,7 +83,7 @@ index 00000000..4061d471
 +
 +#endif  // TENT_PLATFORM_CUDA_UTILS_H
 diff --git a/mooncake-transfer-engine/tent/src/platform/cuda/cuda_allocator.cpp b/mooncake-transfer-engine/tent/src/platform/cuda/cuda_allocator.cpp
-index d60ddffa..71fd4822 100644
+index d60ddffa..ac8c6e67 100644
 --- a/mooncake-transfer-engine/tent/src/platform/cuda/cuda_allocator.cpp
 +++ b/mooncake-transfer-engine/tent/src/platform/cuda/cuda_allocator.cpp
 @@ -15,0 +16 @@
@@ -92,25 +92,25 @@ index d60ddffa..71fd4822 100644
 +#include <cstring>
 +#include <poll.h>
 +#include <unistd.h>
-@@ -24,0 +29,3 @@ namespace tent {
+@@ -24,0 +29,3 @@
 +namespace {
 +}  // namespace
 +
-@@ -45,3 +52,3 @@ Status CudaPlatform::free(void* ptr, size_t size) {
+@@ -45,3 +52,3 @@
 -    cudaPointerAttributes attributes;
 -    CHECK_CUDA(cudaPointerGetAttributes(&attributes, ptr));
 -    if (attributes.type == cudaMemoryTypeDevice) {
 +    int device = -1;
 +    CHECK_STATUS(cudaPointerDevice(ptr, device));
 +    if (device >= 0) {
-@@ -49,3 +55,0 @@ Status CudaPlatform::free(void* ptr, size_t size) {
+@@ -49,2 +56 @@
 -    } else if (attributes.type == cudaMemoryTypeHost ||
 -               attributes.type == cudaMemoryTypeUnregistered) {
--        numa_free(ptr, size);
-@@ -53 +57 @@ Status CudaPlatform::free(void* ptr, size_t size) {
++    } else {
+@@ -52,2 +57,0 @@
+-    } else {
 -        LOG(ERROR) << "Unknown memory type, " << ptr << " " << attributes.type;
-+        numa_free(ptr, size);
-@@ -63,6 +67,76 @@ Status CudaPlatform::copy(void* dst, void* src, size_t length) {
+@@ -63,6 +67,72 @@
 -    CUDAStreamHandle stream;
 -    CHECK_STATUS(getStreamFromPool(stream));
 -    CHECK_CUDA(
@@ -162,12 +162,15 @@ index d60ddffa..71fd4822 100644
 +    CUcontext saved_context = nullptr;
 +    CHECK_CU(cuCtxGetCurrent(&saved_context));
 +    struct ContextRestore {
-+        bool active;
 +        CUcontext context;
 +        ~ContextRestore() {
-+            if (active) (void)cuCtxSetCurrent(context);
++            if (cuCtxSetCurrent(context) != CUDA_SUCCESS) {
++                constexpr char message[] = "TENT: CUDA context restoration failed; retaining worker and copy admission\n";
++                (void)::write(STDERR_FILENO, message, sizeof(message) - 1);
++                while (true) (void)::poll(nullptr, 0, -1);
++            }
 +        }
-+    } restore{true, saved_context};
++    } restore{saved_context};
 +    CHECK_CUDA(cudaSetDevice(device_id));
 +    Status result;
 +    {
@@ -185,15 +188,8 @@ index d60ddffa..71fd4822 100644
 +            }
 +        }
 +    }
-+    auto restored = cuCtxSetCurrent(saved_context);
-+    if (restored == CUDA_SUCCESS) restore.active = false;
-+    else {
-+        constexpr char message[] = "TENT: CUDA context restoration failed; retaining worker and copy admission\n";
-+        (void)::write(STDERR_FILENO, message, sizeof(message) - 1);
-+        while (true) (void)::poll(nullptr, 0, -1);
-+    }
 +    return result;
-@@ -69,0 +144 @@ Status CudaPlatform::copy(void* dst, void* src, size_t length) {
+@@ -69,0 +140 @@
 +
 diff --git a/mooncake-transfer-engine/tent/src/platform/cuda/cuda_probe.cpp b/mooncake-transfer-engine/tent/src/platform/cuda/cuda_probe.cpp
 index 6a52601c..19b254a8 100644
