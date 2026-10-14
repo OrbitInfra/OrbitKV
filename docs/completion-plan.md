@@ -30,7 +30,7 @@ branches at cutover. See [interface audit](engine-release-audit.md).
 | --- | --- | --- |
 | S0 | Complete | Handoff/skill migration merged in PR #190 |
 | S1 | Accepted at `ec3add9b` | Preserve external evidence and one queue |
-| S2 | Complete for the accepted implementation scope | User closed this engineering stage on 2026-10-14. DRAM/SSD isolation FAIL; sixteen owners UNQUALIFIED; support stays four owners. Cross-host cache HA and independent etcd failure domains remain unqualified |
+| S2 | Accepted implementation; full qualification open | Metadata implementation, four-owner baseline and scoped three-host process-only delivery are accepted. DRAM/SSD isolation FAIL; sixteen owners UNQUALIFIED; support stays four owners. Cross-host cache HA and independent etcd failure domains remain unqualified |
 | S3 | Implementation partial; qualification open | Conservative native failure retention has limited code/CPU acceptance at `27f1cb1b`; physical termination proof, installed GPU/adapter gates, page generations, explicit registration and crash reclamation remain open |
 | S4 | Partial | Measured copy/SSD/control improvements exist; mixed contention, complete serving gains and S3-dependent faults remain open |
 | S5 | Partial | Official dense cache/restart and scoped deployment profiles accepted; public lifecycle, complete hybrid recovery, native P/D faults and broader topology remain open |
@@ -78,9 +78,9 @@ in the immutable plan.
 **Depends on:** S1. **Owners:** `orbitkv-server/src/cluster/`, `orbitkv-catalog/`,
 core inventory and metadata diagnostics.
 
-**Engineering stage closed at the user's request on 2026-10-14.** Complete here
-means the accepted metadata implementation, four-owner baseline and scoped
-three-host process-only delivery are handed off. It does not mean every original
+**Accepted engineering scope:** the metadata implementation, four-owner baseline
+and scoped three-host process-only delivery are handed off. Their acceptance
+does not mean every original
 qualification criterion below passed. Historical isolation failures, sixteen-owner
 expansion, cross-host cache HA and independent failure domains retain their
 failed/unqualified state; their evidence, budgets and thresholds are unchanged.
@@ -102,7 +102,7 @@ performance/HA qualification limits.
   Three etcd processes on one machine prove process faults only. Include startup
   readiness, operational diagnosis and recovery instructions.
 
-**Original full qualification criteria (not all satisfied by stage closure):**
+**Original full qualification criteria (still open):**
   no lost final puts/deletes after convergence, no stale incarnation
   authorization, bounded memory/queues, local cache still usable during metadata
   loss, and a repeatable capacity/recovery report. A fenced runtime restarts with
@@ -275,11 +275,11 @@ staged files. Top-level package origins alone do not establish this closure.
 This is admission code and CPU-control evidence; the new freeze and formal
 process result still require independent review.
 
-**After engineering closure:** keep the original failed/unqualified gates visible.
+**Remaining qualification:** keep the original failed/unqualified gates visible.
 A future qualification campaign must inspect the actual handoff, verify runtime,
 proxy and resource ownership, freeze new inputs and obtain independent launch
 review. Retain failures and cleanup evidence. Readiness and ordinary RDMA serving
-do not close HA. Stage closure does not authorize S6/S7 or release any old
+do not close HA. Engineering acceptance does not authorize S6/S7 or release any old
 quarantine. Historical task-specific fail-stop contracts remain unchanged.
 
 ## S3 — Transfer lifetime and generation-safe ownership
