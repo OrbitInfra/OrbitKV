@@ -565,3 +565,42 @@ promotion. Full traces, controls, preceding invalid CLI launch and independent
 reviews remain outside the checkout at
 `/root/orbitkv-artifacts/s4-s5-runtime-completion-20261014/`, linked from
 [PR #238](https://github.com/feichai0017/orbitkv/pull/238).
+
+
+## Matched observation overhead pilot
+
+The next bounded S4 gate uses the maintained installed-wheel byte oracle with
+`--warmup 1 --samples 4`. This optional mode repeats the same full 4K restore
+geometry and deterministic payload; the default three-generation byte gate
+retains its full/partial coverage. Each operation checks every payload/sentinel
+byte and corruption control, with distinct native session/operation identities.
+
+Symmetric host monotonic observations begin after target initialization and
+synchronization, record all-enqueued acknowledgement, and finish after successful
+terminal `wait_restore`. Full byte checks and Manager metric requests occur
+outside this interval. It includes Python/native return boundaries and does not
+measure device-only time or first-layer readiness.
+
+Freeze four fresh off/on process pairs in alternating order, keeping the runtime,
+geometry, payload, CPU placement and Manager budgets equal. On cells enable both
+raw geometry and the CUPTI collector; off cells enable neither. Validate complete
+captures against the actual compiler, PID and operation windows, and require
+explicit unregistration/close plus normal component and Manager waits. Keep
+every slow sample and failed cell.
+
+```bash
+python -m benches.sglang_kv_oracle --model-config /path/to/frozen-config.json \
+  --length 4096 --backend direct --warmup 1 --samples 4 \
+  --manager-socket /path/to/owned.sock --manager-url http://127.0.0.1:20642 \
+  --gpu-uuid GPU-full-physical-uuid --output /external/pilot/cell/bytes
+python -m benches.copy_observation --contract /external/pilot/contract.json \
+  --directory /external/pilot/cells --native-fixture /path/to/frozen-validator
+```
+
+Every pair median ratio and the independent-pair bootstrap 95% upper bound must
+be at most 1.05 before a separate inference-contention contract can open. Warm-up
+samples remain archived and are explicitly excluded from the four measured
+samples. Requests are not bootstrap replicates. A failed overhead guard blocks
+further diagnosis; this small pilot cannot qualify p99, serving gains, fault
+reclamation or a new backend default. GPU0's failed-run reservation remains
+untouched, and a new card needs an independent launch/resource review.

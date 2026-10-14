@@ -417,6 +417,15 @@ observation-overhead and inference-contention gates remain required. The frozen
 one-cell evidence and preceding invalid CLI attempt are preserved with
 [PR #238](https://github.com/feichai0017/orbitkv/pull/238).
 
+**Next bounded delivery — observation overhead:** use the accepted installed
+SGLang pool/native H2D path for four independently restarted off/on pairs, with
+one warm-up and four measured complete restores per cell at the frozen 4K
+geometry. Preserve every GPU byte, terminal drain and shutdown receipt; require
+all pair median ratios and the independent-pair 95% upper bound to stay within
+5% before opening inference-contention diagnosis. This small pilot does not
+qualify p99, serving gains or a backend default. The GPU0 failed-run reservation
+remains untouched; a separate H20 card requires its own launch/resource review.
+
 - Profile actual adapter hashing/conversions, destination checks, fragmentation,
   dispatch, scratch allocation and repeated shared-prefix H2D before selecting
   the next bottleneck. Keep GIL/observer timing separate from native execution.
