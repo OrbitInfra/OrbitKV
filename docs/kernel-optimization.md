@@ -606,3 +606,26 @@ samples. Requests are not bootstrap replicates. A failed overhead guard blocks
 further diagnosis; this small pilot cannot qualify p99, serving gains, fault
 reclamation or a new backend default. GPU0's failed-run reservation remains
 untouched, and a new card needs an independent launch/resource review.
+
+
+The single reviewed H20 pilot on 2026-10-15 stopped after five of eight cells.
+Each completed cell passed its three full payload/sentinel/corruption checks,
+explicit native unregistration/close and normal SDK/Manager waits. However, both
+on-cell directories also contain an unexpected child-process capture. Their
+complete zero-call footers do not establish the children's launch lineage or
+satisfy the frozen exact inventory. The external controller validated only the
+main file before marking each cell complete, so this admission check also needs
+repair. The final maintained analyzer rejects the foreign file.
+
+The cohort is `INVALID_COHORT_FAIL_STOP`, with observation overhead
+`NOT_EVALUATED_INVALID_COHORT`; no pair ratio, CI, p99 or performance acceptance is
+published. All main/child captures are preserved; cells 05–07 did not launch.
+The external handoff remains at
+`/root/orbitkv-artifacts/s4-copy-observation-overhead-20261014/`.
+GPU1 was released after explicit terminal native work and normal process waits;
+no forced native cleanup or retry occurred. The independently observed unreaped
+CPU-only supervisor zombie remains explicit in the postflight evidence; cleanup
+acceptance covers the successfully drained native owners. A new freeze needs an independently
+reviewed process-scope and per-cell inventory fix before another cohort. The
+runtime, installed wheel, descriptor compiler and collector were not changed by
+this pilot, and it promotes no backend or kernel.

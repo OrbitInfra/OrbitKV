@@ -417,16 +417,28 @@ observation-overhead and inference-contention gates remain required. The frozen
 one-cell evidence and preceding invalid CLI attempt are preserved with
 [PR #238](https://github.com/feichai0017/orbitkv/pull/238).
 
-**Next bounded delivery — observation overhead:** use the accepted installed
-SGLang pool/native H2D path for four independently restarted off/on pairs, with
-one warm-up and two measured complete restores per cell at the frozen 4K
-geometry. Three full restores consume 48,387 trace-accounted records, below the
-unchanged 65,536 cap; the original five-restore proposal was rejected before
-CUDA launch. Preserve every GPU byte, terminal drain and shutdown receipt; require
-all pair median ratios and the independent-pair 95% upper bound to stay within
-5% before opening inference-contention diagnosis. This small pilot does not
-qualify p99, serving gains or a backend default. The GPU0 failed-run reservation
-remains untouched; a separate H20 card requires its own launch/resource review.
+**Observation-overhead pilot (2026-10-15): implemented; qualification open.**
+The matched byte oracle and analyzer were independently accepted at `35dd3e2c`;
+all 13 exact-head CI checks passed. The single reviewed eight-cell H20 pilot
+stopped after five completed cells because each on-cell directory contained an
+unexpected child-process CUPTI capture. The final analyzer rejects this exact
+inventory; the external controller's per-cell check missed it and allowed later
+cells to run before the stop. Preserve both main and child captures, the normal
+native waits and the unchanged runtime; do not treat the five-cell timings as an
+overhead PASS or FAIL. Fifteen complete restores passed payload/sentinel and
+corruption controls, with SDK/Manager exit zero and explicit native release.
+No retry or replacement cell ran; GPU1 was released normally and GPU0's prior
+failed-run reservation remains untouched. The invalid cohort and reviews are
+preserved outside the checkout with [PR #238](https://github.com/feichai0017/orbitkv/pull/238).
+
+**Next bounded delivery:** establish the collector's child-process scope and
+make the exact capture inventory a per-cell admission gate, then independently
+review a new freeze. Keep the four independent off/on pairs, one warm-up and two
+measured full 4K restores, unchanged capture caps and the 5% median/independent-
+pair CI guard. A new cohort must retain all failures and establish successful
+physical drain before cleanup. Inference contention and kernel/default promotion
+remain blocked by this observation gate; a pool-only pilot does not qualify p99,
+model output or serving gains.
 
 - Profile actual adapter hashing/conversions, destination checks, fragmentation,
   dispatch, scratch allocation and repeated shared-prefix H2D before selecting
