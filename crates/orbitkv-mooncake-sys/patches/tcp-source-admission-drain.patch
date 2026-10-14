@@ -1,3 +1,43 @@
+--- a/mooncake-transfer-engine/tent/include/tent/rpc/rpc.h
++++ b/mooncake-transfer-engine/tent/include/tent/rpc/rpc.h
+@@ -16,6 +16,8 @@
+ #define TENT_YLT_RPC_H
+ 
+ #include <atomic>
++#include <chrono>
++#include <condition_variable>
+ #include <csignal>
+ #include <cstdint>
+ #include <functional>
+@@ -84,6 +86,7 @@
+     Status start(uint16_t &port, bool ipv6 = false, size_t threads = 1);
+ 
+     Status stop();
++    uint64_t closeDispatch(std::chrono::milliseconds timeout);
+ 
+     Status call(const std::string &server_addr, int func_id,
+                 const std::string_view &request, std::string &response);
+@@ -106,6 +109,20 @@
+     std::shared_ptr<ClientPool> getOrCreatePool(const std::string &server_addr);
+ 
+    private:
++    class DispatchGuard {
++       public:
++        explicit DispatchGuard(CoroRpcAgent& owner) : owner_(owner) {}
++        ~DispatchGuard() { owner_.finishDispatch(); }
++        DispatchGuard(const DispatchGuard&) = delete;
++        DispatchGuard& operator=(const DispatchGuard&) = delete;
++       private:
++        CoroRpcAgent& owner_;
++    };
++    void finishDispatch();
++    std::mutex dispatch_mutex_;
++    std::condition_variable dispatch_cv_;
++    uint64_t dispatch_active_{0};
++    bool dispatch_closed_{true};
+     struct Handler {
+         Function func;
+         bool offload = false;
 --- a/mooncake-transfer-engine/tent/include/tent/runtime/control_plane.h
 +++ b/mooncake-transfer-engine/tent/include/tent/runtime/control_plane.h
 @@ -60,6 +60,7 @@
@@ -22,25 +62,30 @@
  
      static Status notify(const std::string& server_addr,
                           const Notification& message);
-@@ -139,6 +140,11 @@
+@@ -139,6 +140,14 @@
      void setNotifyCallback(const OnNotify& callback);
  
      Status start(uint16_t& port, bool ipv6_ = false, size_t threads = 1);
 +    const std::string& sourceEpoch() const { return source_epoch_; }
 +    bool sourceClosed();
++    void markSourceReady(bool supported);
++    bool beginAuxiliary();
++    void stop();
 +    uint64_t closeSource(uint64_t timeout_ms);
 +    bool beginSource(const char* epoch);
 +    void finishSource();
  
     private:
      void onGetSegmentDesc(const std::string_view& request,
-@@ -174,6 +180,11 @@
+@@ -174,6 +183,13 @@
      void finishNotifyCallback();
  
     private:
 +    std::mutex source_mutex_;
 +    std::condition_variable source_cv_;
 +    bool source_closed_{false};
++    bool source_ready_{false};
++    bool source_drain_supported_{false};
 +    uint64_t source_active_{0};
 +    std::string source_epoch_;
      std::unique_ptr<SegmentManager> manager_;
@@ -103,6 +148,72 @@
  
     private:
      bool installed_;
+--- a/mooncake-transfer-engine/tent/src/rpc/rpc.cpp
++++ b/mooncake-transfer-engine/tent/src/rpc/rpc.cpp
+@@ -122,6 +122,10 @@
+                 port = 0;
+                 continue;
+             }
++            {
++                std::lock_guard<std::mutex> guard(dispatch_mutex_);
++                dispatch_closed_ = false;
++            }
+             running_ = true;
+             return Status::OK();
+         } catch (const std::exception& e) {
+@@ -133,7 +137,26 @@
+     return Status::RpcServiceError("Failed to bind any RPC port" LOC_MARK);
+ }
+ 
++uint64_t CoroRpcAgent::closeDispatch(std::chrono::milliseconds timeout) {
++    std::unique_lock<std::mutex> guard(dispatch_mutex_);
++    dispatch_closed_ = true;
++    dispatch_cv_.wait_for(guard, timeout, [this] { return dispatch_active_ == 0; });
++    return dispatch_active_;
++}
++
++void CoroRpcAgent::finishDispatch() {
++    std::lock_guard<std::mutex> guard(dispatch_mutex_);
++    --dispatch_active_;
++    dispatch_cv_.notify_all();
++}
++
+ Status CoroRpcAgent::stop() {
++    {
++        std::unique_lock<std::mutex> guard(dispatch_mutex_);
++        dispatch_closed_ = true;
++        // Keep I/O alive until queued global-executor handlers resume and finish.
++        dispatch_cv_.wait(guard, [this] { return dispatch_active_ == 0; });
++    }
+     if (server_) {
+         server_->stop();
+         delete server_;
+@@ -150,9 +173,22 @@
+ 
+ Lazy<void> CoroRpcAgent::process(int func_id) {
+     auto* ctx = co_await coro_rpc::get_context_in_coro();
+-    auto it = func_map_.find(func_id);
+-    if (it == func_map_.end()) co_return;
+-    const auto handler = it->second;
++    {
++        std::lock_guard<std::mutex> guard(dispatch_mutex_);
++        if (dispatch_closed_ || dispatch_active_ == UINT64_MAX) {
++            ctx->set_response_attachment(std::string("RPC dispatch admission closed"));
++            co_return;
++        }
++        ++dispatch_active_;
++    }
++    DispatchGuard dispatch_guard(*this);
++    Handler handler;
++    {
++        std::lock_guard<std::mutex> guard(func_map_mutex_);
++        auto it = func_map_.find(func_id);
++        if (it == func_map_.end()) co_return;
++        handler = it->second;
++    }
+ 
+     auto request = ctx->get_request_attachment();
+     std::string response;
 --- a/mooncake-transfer-engine/tent/src/runtime/control_plane.cpp
 +++ b/mooncake-transfer-engine/tent/src/runtime/control_plane.cpp
 @@ -13,6 +13,10 @@
@@ -154,7 +265,29 @@
  }
  
  inline void to_json(nlohmann::json& j, const Notification& n) {
-@@ -233,6 +241,14 @@
+@@ -196,7 +204,11 @@
+     request_raw = j.dump();
+     CHECK_STATUS(
+         tl_rpc_agent.call(server_addr, Pin, request_raw, response_raw));
+-    addr = json::parse(response_raw).get<uint64_t>();
++    try {
++        addr = json::parse(response_raw).get<uint64_t>();
++    } catch (const std::exception&) {
++        return Status::RpcServiceError(response_raw);
++    }
+     return Status::OK();
+ }
+ 
+@@ -207,7 +219,7 @@
+     request_raw = j.dump();
+     CHECK_STATUS(
+         tl_rpc_agent.call(server_addr, Unpin, request_raw, response_raw));
+-    return Status::OK();
++    return response_raw.empty() ? Status::OK() : Status::RpcServiceError(response_raw);
+ }
+ 
+ void ControlClient::unpinStageBufferAsync(const std::string& server_addr,
+@@ -233,6 +245,14 @@
                                 const std::string& servers,
                                 TransferEngineImpl* impl)
      : bootstrap_callback_(nullptr), notify_callback_(nullptr), impl_(impl) {
@@ -169,7 +302,7 @@
      if (type == "p2p") {
          auto agent = std::make_unique<PeerSegmentRegistry>();
          manager_ = std::make_unique<SegmentManager>(std::move(agent));
-@@ -355,6 +371,7 @@
+@@ -355,6 +375,7 @@
  }
  
  Status ControlService::start(uint16_t& port, bool ipv6_, size_t threads) {
@@ -177,7 +310,7 @@
      return rpc_server_->start(port, ipv6_, threads);
  }
  
-@@ -412,26 +429,61 @@
+@@ -412,26 +433,91 @@
      response = j.dump();
  }
  
@@ -186,17 +319,47 @@
 +    return source_closed_;
 +}
 +
++void ControlService::markSourceReady(bool supported) {
++    std::lock_guard<std::mutex> guard(source_mutex_);
++    source_drain_supported_ = supported;
++    source_ready_ = true;
++}
++
++bool ControlService::beginAuxiliary() {
++    std::lock_guard<std::mutex> guard(source_mutex_);
++    if (!source_ready_ || source_closed_ || source_drain_supported_ ||
++        source_active_ == std::numeric_limits<uint64_t>::max()) return false;
++    ++source_active_;
++    return true;
++}
++
++void ControlService::stop() {
++    {
++        std::lock_guard<std::mutex> guard(source_mutex_);
++        source_closed_ = true;
++        source_ready_ = false;
++    }
++    rpc_server_.reset();
++}
++
 +uint64_t ControlService::closeSource(uint64_t timeout_ms) {
-+    std::unique_lock<std::mutex> guard(source_mutex_);
-+    source_closed_ = true;
-+    source_cv_.wait_for(guard, std::chrono::milliseconds(timeout_ms),
-+                        [this] { return source_active_ == 0; });
-+    return source_active_;
++    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
++    rpc_server_->closeDispatch(std::chrono::milliseconds(0));
++    uint64_t active;
++    {
++        std::unique_lock<std::mutex> guard(source_mutex_);
++        source_closed_ = true;
++        source_cv_.wait_until(guard, deadline, [this] { return source_active_ == 0; });
++        active = source_active_;
++    }
++    const auto remaining = std::max(std::chrono::milliseconds(0),
++        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()));
++    return std::max(active, rpc_server_->closeDispatch(remaining));
 +}
 +
 +bool ControlService::beginSource(const char* epoch) {
 +    std::lock_guard<std::mutex> guard(source_mutex_);
-+    if (source_closed_ || memcmp(epoch, source_epoch_.data(), 32) != 0 ||
++    if (!source_ready_ || source_closed_ || memcmp(epoch, source_epoch_.data(), 32) != 0 ||
 +        epoch[32] != 0 || source_active_ == std::numeric_limits<uint64_t>::max())
 +        return false;
 +    ++source_active_;
@@ -242,7 +405,7 @@
          if (!status.ok()) {
              // A non-empty response is interpreted as an RPC error by the
              // client (see ControlClient::sendData). Without this the sender's
-@@ -450,7 +502,14 @@
+@@ -450,7 +536,14 @@
          response = "RecvData failed: request too short";
          return;
      }
@@ -258,7 +421,7 @@
      auto local_desc = manager_->getLocal();
      auto peer_mem_addr = le64toh(desc->peer_mem_addr);
      auto length = le64toh(desc->length);
-@@ -482,8 +541,10 @@
+@@ -482,8 +575,10 @@
                  loader.copy(response.data(), (void*)peer_mem_addr, length);
              if (!status.ok()) {
                  fail("RecvData failed: copy: " + status.ToString());
@@ -269,20 +432,59 @@
      } else {
          fail("RecvData failed: target address not in registered buffer");
      }
-@@ -525,6 +586,10 @@
+@@ -525,6 +620,11 @@
  
  void ControlService::onDelegate(const std::string_view& request,
                                  std::string& response) {
-+    if (impl_->supportsSourceDrain()) {
-+        response = "Delegated pointer transfers are unsupported by CPU/TCP source drain";
++    if (!beginAuxiliary()) {
++        response = "Delegated pointer transfers are unsupported or source admission closed";
 +        return;
 +    }
++    CallbackInvocationGuard source_guard([this] { finishSource(); });
      Request user_request = json::parse(std::string(request)).get<Request>();
      auto status = impl_->transferSync({user_request});
      if (!status.ok()) response = status.ToString();
+@@ -532,6 +632,11 @@
+ 
+ void ControlService::onPinStageBuffer(const std::string_view& request,
+                                       std::string& response) {
++    if (!beginAuxiliary()) {
++        response = "Source pointer admission closed or unsupported";
++        return;
++    }
++    CallbackInvocationGuard source_guard([this] { finishSource(); });
+     std::string location = json::parse(request).get<std::string>();
+     uint64_t addr = impl_->lockStageBuffer(location);
+     json j = addr;
+@@ -540,6 +645,11 @@
+ 
+ void ControlService::onUnpinStageBuffer(const std::string_view& request,
+                                         std::string& response) {
++    if (!beginAuxiliary()) {
++        response = "Source pointer admission closed or unsupported";
++        return;
++    }
++    CallbackInvocationGuard source_guard([this] { finishSource(); });
+     uint64_t addr = json::parse(request).get<uint64_t>();
+     impl_->unlockStageBuffer(addr);
+ }
 --- a/mooncake-transfer-engine/tent/src/runtime/transfer_engine_impl.cpp
 +++ b/mooncake-transfer-engine/tent/src/runtime/transfer_engine_impl.cpp
-@@ -795,6 +795,8 @@
+@@ -500,10 +500,13 @@
+                   << " started successfully";
+     }
+ 
++    metadata_->markSourceReady(supportsSourceDrain());
+     return Status::OK();
+ }
+ 
+ Status TransferEngineImpl::deconstruct() {
++    // Join RPC callbacks before tearing down the fields their handlers use.
++    if (metadata_) metadata_->stop();
+     // Metrics cleanup is handled automatically by TentMetrics destructor
+ 
+     // Stop the progress worker first so it cannot race with batch teardown
+@@ -795,6 +798,8 @@
              "No available transport for registerLocalMemory" LOC_MARK);
      }
  
@@ -291,7 +493,7 @@
      // Build BufferDescs: warm-up → NUMA probe → fill location
      std::vector<BufferDesc> desc_list;
      desc_list.reserve(addr_list.size());
-@@ -802,6 +804,7 @@
+@@ -802,6 +807,7 @@
          BufferDesc desc;
          desc.addr = (uint64_t)addr_list[i];
          desc.length = size_list[i];
@@ -299,7 +501,7 @@
  
          // MR warm-up: pin pages via temp ibv_reg_mr, benefits both
          // subsequent RDMA registration and NUMA probing
-@@ -846,6 +849,26 @@
+@@ -846,6 +852,26 @@
  
  // WARNING: before exiting TE, make sure that all local memory are
  // unregistered, otherwise the CUDA may halt!

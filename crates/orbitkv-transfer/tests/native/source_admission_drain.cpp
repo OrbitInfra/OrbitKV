@@ -140,7 +140,8 @@ int main(int argc, char **argv) {
     std::string scenario = argv[1];
     require(scenario == "delayed" || scenario == "cancel" ||
                 scenario == "partial" || scenario == "restart" ||
-                scenario == "delegate" || scenario == "entropy",
+                scenario == "delegate" || scenario == "entropy" ||
+                scenario == "staging",
             "unknown scenario");
     for (size_t i = 0; i < bytes; ++i)
       source[i] = expected[i] = (i * 17 + 31) % 251;
@@ -174,6 +175,16 @@ int main(int argc, char **argv) {
     require(tent_register_memory(requester, target.data(), bytes) == 0,
             "target register");
     auto owner_endpoint = endpoint(owner);
+    if (scenario == "staging") {
+      uint64_t unissued = UINT64_MAX;
+      auto pin = mooncake::tent::ControlClient::pinStageBuffer(
+          owner_endpoint, "invalid-control-location", unissued);
+      require(!pin.ok() && unissued == UINT64_MAX,
+              "CPU receipt profile admitted Pin before closure");
+      auto unpin = mooncake::tent::ControlClient::unpinStageBuffer(
+          owner_endpoint, UINT64_MAX);
+      require(!unpin.ok(), "CPU receipt profile admitted Unpin before closure");
+    }
     if (scenario == "delegate") {
       tent_segment_id_t receiver_segment{};
       auto receiver_endpoint = endpoint(requester);
@@ -230,6 +241,18 @@ int main(int argc, char **argv) {
     int first_close = tent_close_source(owner, 10, epoch, &active);
     require(first_close == 1 && active == 1 && inside_copy.load(),
             "close must retain admitted physical copy");
+    if (scenario == "staging") {
+      uint64_t unissued = UINT64_MAX;
+      require(!mooncake::tent::ControlClient::pinStageBuffer(
+                   owner_endpoint, "invalid-control-location", unissued)
+                      .ok() &&
+                  unissued == UINT64_MAX,
+              "post-close Pin reached native owner");
+      require(!mooncake::tent::ControlClient::unpinStageBuffer(owner_endpoint,
+                                                               UINT64_MAX)
+                   .ok(),
+              "post-close Unpin reached native owner");
+    }
     std::array<unsigned char, 45> denied;
     denied.fill(0x5a);
     auto denied_status = mooncake::tent::ControlClient::recvData(

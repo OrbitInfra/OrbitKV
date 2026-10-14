@@ -19,6 +19,7 @@ def main() -> None:
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--ylt", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--gate", choices=("source", "dispatch"), default="source")
     args = parser.parse_args()
     source = args.source.resolve(strict=True)
     runtime = args.runtime.resolve(strict=True)
@@ -38,7 +39,16 @@ def main() -> None:
         )
     ):
         raise RuntimeError("a complete CPU-only TENT closure is required")
-    helper = Path(__file__).with_name("source_admission_drain.cpp")
+    helper = Path(__file__).with_name(
+        "source_admission_drain.cpp"
+        if args.gate == "source"
+        else "rpc_dispatch_drain.cpp"
+    )
+    scenarios = (
+        ("delayed", "cancel", "partial", "restart", "delegate", "entropy", "staging")
+        if args.gate == "source"
+        else ("queued", "running", "throw")
+    )
     binary = output / "source-drain"
     command = [
         "c++",
@@ -76,6 +86,7 @@ def main() -> None:
         )
     record = {
         "compile_command": command,
+        "gate": args.gate,
         "compile_exit": built.returncode,
         "runtime_sha256": digest(library),
         "helper_sha256": digest(helper),
@@ -85,14 +96,7 @@ def main() -> None:
     }
     if built.returncode == 0:
         record["binary_sha256"] = digest(binary)
-        for scenario in (
-            "delayed",
-            "cancel",
-            "partial",
-            "restart",
-            "delegate",
-            "entropy",
-        ):
+        for scenario in scenarios:
             timed_out = False
             with (output / f"{scenario}.log").open("x") as log:
                 run = subprocess.Popen(
@@ -169,7 +173,7 @@ def main() -> None:
     (output / "RESULT.json").write_text(json.dumps(record, indent=2) + "\n")
     if (
         built.returncode
-        or len(record["cells"]) != 6
+        or len(record["cells"]) != len(scenarios)
         or any(
             cell["exit_code"] != 0
             or cell["forced_cpu_control_cleanup"]

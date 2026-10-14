@@ -58,6 +58,11 @@ retain engine, tokens and pool in the bounded source registry; do not retry
 unregister from token Drop or reset its process admission. Native Delegate is
 rejected in this narrow profile because its pointer wire has no source epoch.
 This is whole-engine shutdown, not a per-ticket orphan, GPU or RDMA receipt.
+Pin/Unpin and queued global-executor handlers require the same ownership:
+dispatch is counted before offload and drained before service deletion. Source
+close shares its deadline with that drain; server I/O shutdown alone is not
+proof that a global-executor callback ended. Readiness is published after all
+native worker initialization.
 Keep CPU host-registration/C ABI test-shim controls separate from real CUDA
 registration and installed hardware gates; see S3 and `docs/transport.md`.
 

@@ -82,6 +82,15 @@ The CPU/TCP receipt profile rejects delegated raw-pointer transfers: that
 staging API lacks a source epoch and would bypass the guarded pointer ingress.
 Ordinary CPU/TCP READ/WRITE remains available. Other transport profiles still
 cannot produce a physical receipt.
+Delegate, Pin and Unpin use the same pointer admission owner. They are refused
+before parsing in the CPU/TCP receipt profile; other profiles count accepted
+callbacks and still return unsupported physical drain. RPC readiness is
+published only after all engine initialization. Per-agent dispatch ownership
+is acquired before a handler is queued on YLT's global executor and released
+after actual callback completion. Source close shares its five-second deadline
+with dispatch drain. Native teardown joins those owned callbacks before
+stopping I/O and resetting service/transport fields; it does not stop the shared
+global executor. A queued callback keeps the source owner retained.
 
 `orbitkv-channel` uses iceoryx2 `0.10.0` and a fixed 64-byte command carrying
 protocol version, opcode, request identity, Manager epoch, descriptor offset,

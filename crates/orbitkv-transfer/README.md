@@ -72,6 +72,9 @@ This gate executes delayed CPU copy, partial C ABI submission, cancellation
 request, restart/epoch rejection, unversioned Delegate rejection and failed
 entropy creation. TCP cancellation remains unsupported; the original admitted
 copy must still finish. The copy barrier and partial-submit fault are test-only.
+Pin/Unpin rejection before and after closure is also checked. `--gate dispatch`
+runs actual queued/running/throwing handlers on the global YLT executor and
+verifies owned callback drain and that the shared executor remains usable.
 Each process records actual mapped libraries, identity and wait/reap. A timeout
 is forced CPU control cleanup and fails the gate.
 

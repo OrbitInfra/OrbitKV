@@ -378,6 +378,13 @@ unversioned delegate entry in the CPU/TCP receipt profile and validates native
 availability/epoch before touching receipt outputs. Native byte controls and
 test-only host-registration/C ABI controls of the actual Rust pool owner are
 separate from real CUDA registration, installed-package and GPU/RDMA gates.
+Further teardown review found queued global-executor callbacks and staging RPCs
+were not covered by server I/O shutdown. The current correction counts dispatch
+before offload, closes that admission, waits actual callback completion within
+the same source-close budget, and publishes readiness at the final successful
+constructor boundary. Pin/Unpin are refused in the CPU receipt profile. Existing
+failed checkpoints remain rejected until independent exact rereview accepts the
+new source, dispatch and actual-owner CPU controls.
 
 The old three-host readiness quarantine is a separate, scoped audit case. Its
 query-source unregister succeeded; the client was deliberately closed before
