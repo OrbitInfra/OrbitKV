@@ -55,7 +55,13 @@ def main() -> None:
         else ("queued", "running", "throw")
     )
     if args.gate == "grant":
-        scenarios = ("warm", "lost-push", "preflight-race", "abi-mixed")
+        scenarios = (
+            "warm",
+            "lost-push",
+            "preflight-race",
+            "preflight-race-clear",
+            "abi-mixed",
+        )
     binary = output / "source-drain"
     command = [
         "c++",

@@ -86,7 +86,8 @@ int main(int argc, char **argv) {
   require(argc == 2, "expected scenario");
   const std::string scenario = argv[1];
   require(scenario == "warm" || scenario == "lost-push" ||
-              scenario == "preflight-race" || scenario == "abi-mixed",
+              scenario == "preflight-race" ||
+              scenario == "preflight-race-clear" || scenario == "abi-mixed",
           "unknown scenario");
   for (size_t i = 0; i < source.size(); ++i)
     source[i] = (i * 17 + 31) % 251;
@@ -169,18 +170,56 @@ int main(int argc, char **argv) {
               std::strcmp(new_epoch, old_epoch) != 0,
           "new source identity");
   target.fill(0x5a);
-  if (scenario == "preflight-race") {
+  if (scenario == "preflight-race" || scenario == "preflight-race-clear") {
+    // Establish a healthy replacement connection and refresh the same native
+    // worker.
+    auto fresh_request = request;
+    std::memcpy(fresh_request.expected_source_epoch, new_epoch, 33);
+    require(tent_validate_remote_epoch(requester, segment, new_epoch) == 0,
+            "healthy replacement metadata");
+    auto healthy = tent_allocate_batch(requester, 1);
+    require(tent_submit(requester, healthy, &fresh_request, 1) == 0,
+            "healthy replacement submit");
+    s = settled(requester, healthy);
+    require(s.status == STATUS_COMPLETED && target == source,
+            "replacement connection is not healthy");
+    require(tent_free_batch(requester, healthy) == 0,
+            "healthy replacement batch free");
+    target.fill(0x5a);
+    if (scenario == "preflight-race-clear")
+      std::memset(request.expected_source_epoch, 0, 33);
     auto batch = tent_allocate_batch(requester, 1);
     require(tent_submit(requester, batch, &request, 1) == 0, "race submit");
     s = settled(requester, batch);
+    if (scenario == "preflight-race-clear") {
+      require(s.status == STATUS_COMPLETED && target == source,
+              "cleared-expectation control did not read replacement");
+      require(tent_free_batch(requester, batch) == 0,
+              "clear expectation completed batch free");
+      require(tent_close_source(owner, 1000, closed, &active) == 0 &&
+                  tent_close_source(requester, 1000, closed, &active) == 0,
+              "clear control normal drain");
+      require(
+          tent_unregister_memory(owner, source.data(), source.size()) == 0 &&
+              tent_unregister_memory(requester, target.data(), target.size()) ==
+                  0,
+          "clear control unregister");
+      tent_destroy_engine(owner);
+      tent_destroy_engine(requester);
+      std::cout << "scenario=preflight-race-clear "
+                   "healthy_worker_new_connection=1 old_expectation_cleared=1 "
+                   "replacement_bytes=8192 result=EXPECTED_NEGATIVE_CONTROL\n";
+      return 0;
+    }
     require(s.status == STATUS_FAILED,
             "old expectation upgraded after successful preflight");
     require(std::all_of(target.begin(), target.end(),
                         [](auto c) { return c == 0x5a; }),
             "race accessed replacement payload");
-    std::cout
-        << "scenario=preflight-race successful_preflight_before_restart=1 "
-           "target_sentinel=1 failed_batch_retained=1 result=PASS\n";
+    std::cout << "scenario=preflight-race healthy_worker_new_connection=1 "
+                 "explicit_old_expected_epoch=1 "
+                 "successful_preflight_before_restart=1 "
+                 "target_sentinel=1 failed_batch_retained=1 result=PASS\n";
     return 0;
   }
   require(tent_validate_remote_epoch(requester, segment, new_epoch) == 0,
