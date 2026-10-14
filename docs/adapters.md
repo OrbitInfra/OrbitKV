@@ -270,6 +270,13 @@ ok, message = client.health()
 client.close()
 ```
 
+`client.peer_alive()` observes the authenticated Manager process through its
+pidfd without an RPC or waiting behind a Publish. A live stalled Manager returns
+true, process exit returns false, and unavailable identity raises an error.
+Replacing the socket does not rebind an old client. Liveness does not authorize
+GPU page reuse or release a source grant; native operation drain remains separate.
+SGLang failed-session probing is still gated by its adapter qualification.
+
 `CacheManagerClient` is the Rust owner exposed through PyO3. Construct
 `BlockHashes(page_hashes)` once per lookup; slices share its native allocation.
 `query_prefetch` owns submission, revision and polling.

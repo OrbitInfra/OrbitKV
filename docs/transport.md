@@ -97,6 +97,12 @@ stable UDS address; `--channel-service` is a prefix. Old handles cannot be
 adopted by a new client. Reconnect establishes new mappings and tensor bindings.
 See [fault qualification](fault-qualification.md).
 
+Native `peer_alive()` reads the pidfd of the Manager authenticated at bootstrap.
+It remains independent of UDS health and descriptor/lifecycle waits. The restore
+completion owner uses it for pending peer-exit diagnosis and to wake readiness
+checks after process exit, while Active/ActiveMore local DMA stays pending until
+the engine reports its drain. It neither reconnects nor changes generations.
+
 `ObserveCompletion` carries bounded P/D completion and decode-resource evidence,
 without request IDs or state keys. Cache schema **8** combines these observations
 with the engine-local Restore grant protocol; older schemas are rejected.

@@ -829,6 +829,9 @@ impl CacheClient {
     }
 
     pub fn restore_completions_ready(&self, timeout: Duration) -> Result<bool, ChannelError> {
+        if !self.channel.peer_alive()? {
+            return Ok(true);
+        }
         let mut last = self
             .last_completion_poll
             .lock()
