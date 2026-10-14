@@ -499,6 +499,20 @@ faults and end-to-end performance retain their separate gates. Frozen evidence
 and preceding launch failures are preserved with
 [PR #238](https://github.com/feichai0017/orbitkv/pull/238).
 
+**vLLM final-wheel controls; native shutdown rejected (2026-10-14):** the
+official 0.31.0 Qwen3-8B dense DRAM gate consumes actual save/restart recovery,
+same-engine outputs and zero RPC/load-failure assertions: six checks pass and
+the unsupported hybrid assertion skips. Four services exit zero without test
+forcing. The stricter frozen drain profile still fails because the native Noop
+baseline logs `AsyncLLM output_handler failed` / `EngineDeadError` during
+intentional shutdown. This matches the released teardown ordering described in
+[vLLM #48745](https://github.com/vllm-project/vllm/issues/48745); the associated
+[fix #49000](https://github.com/vllm-project/vllm/pull/49000) remains unmerged.
+The failed contract and quarantine are preserved with PR #238; functional
+assertions do not turn that cohort into a pass or qualify S3 physical lifetime.
+The earlier missing-Manager-binary attempt also remains failed. No fork patch
+or relaxed log rule is installed, and the support matrix is unchanged.
+
 ### S5.3 — Public lifecycle and hybrid-state contracts
 
 **Partial.** Idle process-scoped vLLM external reset is accepted at `6d874384`;

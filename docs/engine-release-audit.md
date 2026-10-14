@@ -82,6 +82,16 @@ numeric counter or performance claim is derived from this assertion-based gate.
 Evidence is preserved outside the checkout with
 [PR #238](https://github.com/feichai0017/orbitkv/pull/238).
 
+The same-wheel vLLM model checks pass six assertions with one explicit hybrid
+skip, but their separate native shutdown contract is rejected. An official
+Noop baseline emits `EngineDeadError` after intentional teardown; the selected
+release closes the engine before cancelling its output handler. Existing
+[issue #48745](https://github.com/vllm-project/vllm/issues/48745) and unmerged
+[PR #49000](https://github.com/vllm-project/vllm/pull/49000) track this race.
+The frozen `--shutdown-timeout 30` gate retains its failure and quarantine;
+normal API exits do not qualify physical drain. No expected-error filter,
+upstream runtime patch or new support claim is applied.
+
 ## Released integration boundaries
 
 | Engine | Consumed interface | Ownership |
