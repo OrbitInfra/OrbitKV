@@ -360,6 +360,9 @@ the Rust pool owner also requires its local requester admission to be empty
 before unregistering. TCP requests carry a native engine epoch, and retries
 cannot silently switch to a restarted source epoch. This is whole-engine
 shutdown, not per-ticket orphan reclamation or allocation/page generation.
+The native packet epoch is captured at the first TENT segment lookup. It is
+not yet bound to the OrbitKV source authorization reply, so first submission
+of a stale grant after endpoint/address reuse remains an open generation gate.
 The focused native extension is an unreleased candidate on the fixed pin;
 matching peer/runtime packages are required. CUDA builds and other loaded
 transports return unsupported, retaining the engine, registration tokens and

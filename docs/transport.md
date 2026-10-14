@@ -74,6 +74,10 @@ upstream ABI does not provide this extension; it is not released upstream
 support. The receipt covers CPU-only/TCP-only source shutdown. It does not prove
 device/RDMA termination, close an individual transfer ticket, or permit live
 allocation/page reuse. Those paths remain retained and unqualified.
+The task captures its native epoch at the first segment lookup; it does not
+receive an expected native epoch from the OrbitKV source grant yet. The old
+packet control therefore proves packet/retry fencing, while a stale grant's
+first submission after endpoint/address reuse remains unqualified.
 The CPU/TCP receipt profile rejects delegated raw-pointer transfers: that
 staging API lacks a source epoch and would bypass the guarded pointer ingress.
 Ordinary CPU/TCP READ/WRITE remains available. Other transport profiles still
