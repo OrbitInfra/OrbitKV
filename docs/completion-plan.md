@@ -289,9 +289,11 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   without a control RPC or taking a blocked Publish/lifecycle lock. Restore
   readiness and pending-result checks consume that observation. A live stalled
   peer remains alive; replacing the stable UDS does not change the old process
-  identity. Unknown/invalid descriptors are errors. This implementation needs
-  independent CPU/installed review before SGLang failed-session probing is
-  enabled; peer exit still does not fence active engine DMA or release pages.
+  identity. Unknown/invalid descriptors are errors. Independent code/CPU and
+  installed peer-API acceptance at `cdd45f05` covers the authenticated pidfd and
+  replacement controls. Rust readiness is a recheck hint; Python readiness keeps
+  its local DMA-result eventfd. SGLang probing and actual GPU/fault gates remain
+  open; peer exit still does not fence active engine DMA or release pages.
 - Add a bounded operational response to a live Manager that never completes a
   Publish, preserving held pages until drain or established process death.
 
