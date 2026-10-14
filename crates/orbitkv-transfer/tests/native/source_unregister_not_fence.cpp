@@ -141,7 +141,7 @@ int main() {
               << " source_handler_active=" << still_active
               << " native_status=" << status.status
               << " bytes=" << status.transferred_bytes
-              << " target_is_new_generation="
+              << " target_is_replacement_payload="
               << (target == source && target != old_source)
               << " reproduced=" << reproduced << std::endl;
     require(!inside_copy.load(), "source CPU copy did not return");
