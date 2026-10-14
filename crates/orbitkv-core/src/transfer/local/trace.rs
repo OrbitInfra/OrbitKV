@@ -29,6 +29,9 @@ struct Geometry {
 struct Batch {
     geometry: Vec<Geometry>,
     shape: orbitkv_common::timeline::RawCopyTimelineFields,
+    tid: u64,
+    begin_ns: u64,
+    submitted_ns: u64,
 }
 
 struct Part {
@@ -100,6 +103,7 @@ impl LocalCopyTrace {
         serde_json::json!({
             "schema": 2, "pid": std::process::id(), "trace_id": self.id,
             "device": self.device, "sequence": self.parts,
+            "clock": "CLOCK_MONOTONIC",
         })
     }
 
@@ -200,7 +204,14 @@ impl LocalCopyTrace {
             return None;
         }
         let index = part.batches.len();
-        part.batches.push(Batch { geometry, shape });
+        part.batches.push(Batch {
+            geometry,
+            shape,
+            // SAFETY: gettid only observes the current Linux thread identity.
+            tid: unsafe { libc::syscall(libc::SYS_gettid) } as u64,
+            begin_ns: orbitkv_common::timeline::monotonic_ns(),
+            submitted_ns: 0,
+        });
         Some(index)
     }
 
@@ -210,6 +221,7 @@ impl LocalCopyTrace {
             .as_mut()
             .and_then(|part| part.batches.get_mut(index))
         {
+            batch.submitted_ns = orbitkv_common::timeline::monotonic_ns();
             batch.shape.cpu_submit_ns = cpu_submit_ns;
             batch.shape.success = success;
         } else {
@@ -234,6 +246,7 @@ impl LocalCopyTrace {
         let Some(part) = self.part.take() else {
             return;
         };
+        let drained_ns = orbitkv_common::timeline::monotonic_ns();
         let base = self.base();
         let part_id = self.parts;
         let mut successful = success;
@@ -255,6 +268,9 @@ impl LocalCopyTrace {
                 event["max_bytes"] = shape.max_bytes.into();
                 event["size_histogram"] = serde_json::json!(shape.size_histogram);
                 event["cpu_submit_ns"] = shape.cpu_submit_ns.into();
+                event["tid"] = batch.tid.into();
+                event["begin_ns"] = batch.begin_ns.into();
+                event["submitted_ns"] = batch.submitted_ns.into();
                 event["success"] = shape.success.into();
                 event["copies"] = serde_json::json!(batch.geometry);
                 write(event);
@@ -270,6 +286,7 @@ impl LocalCopyTrace {
             event["submitted_descriptors"] = submitted.into();
             event["batches"] = part.batches.len().into();
             event["host_drain_ns"] = host_drain_ns.into();
+            event["drained_ns"] = drained_ns.into();
             event["success"] = success.into();
             write(event);
             successful &= submitted == part.planned_descriptors;

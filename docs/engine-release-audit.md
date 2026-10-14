@@ -58,6 +58,18 @@ are open and unmerged. No dependent Hook removal or support expansion is
 authorized by this recheck. Primary API snapshots are preserved with
 `/root/orbitkv-artifacts/s5-budget-peaks-20261008/`.
 
+## 2026-10-14 upstream recheck
+
+The latest official non-prerelease versions remain vLLM 0.31.0 and SGLang 0.5.21.
+[SGLang #40896](https://github.com/sgl-project/sglang/pull/40896) merged on
+2026-10-12 as `f92199b5`; it is not part of the selected 0.5.21 release.
+[SGLang #40595](https://github.com/sgl-project/sglang/pull/40595) and
+[vLLM #59410](https://github.com/vllm-project/vllm/pull/59410) remain open.
+These facts do not authorize private-Hook removal, fork runtime dependencies or
+hybrid/P-D support expansion. SGLang pending admission now consumes the native
+authenticated peer observation; that observation preserves held ownership on
+failure and does not establish physical transfer termination.
+
 ## Released integration boundaries
 
 | Engine | Consumed interface | Ownership |

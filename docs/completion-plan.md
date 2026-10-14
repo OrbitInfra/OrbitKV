@@ -405,6 +405,13 @@ their reviewed scopes. CUDA sources live in separate files. Rejected descriptor
 reuse, READV merging and TENT RPC-thread/lane candidates remain rejected;
 correct bytes do not override a performance regression.
 
+**Implemented diagnostic candidate; GPU qualification open:** engine-local raw
+H2D captures now carry Linux thread identity and monotonic submission/part-drain
+windows. The CUPTI analyzer consumes the existing native descriptor compiler
+before attributing driver intervals to those actual batches. This does not infer
+packing cost, first-layer readiness, physical fault reclamation or serving gains;
+matched observation-overhead and inference-contention gates remain required.
+
 - Profile actual adapter hashing/conversions, destination checks, fragmentation,
   dispatch, scratch allocation and repeated shared-prefix H2D before selecting
   the next bottleneck. Keep GIL/observer timing separate from native execution.
@@ -470,6 +477,14 @@ H20 acceptance. Broader graph shapes, models, ranks and fault profiles remain op
 keep cold/native-HBM/full/partial/restart/failure controls, exact outputs, actual
 restore bytes, installed-file integrity and truthful process cleanup. Remove
 obsolete code only after its replacement is consumed and passes the same contract.
+
+**Implemented admission candidate; installed GPU qualification open:** SGLang
+pending-query admission consumes authenticated native `peer_alive()`, without a
+health RPC or using peer death as a DMA fence. Peer failure preserves the query
+owner and fails explicitly. Ready dense lookups reuse leased recovery boundaries
+until their keys or absolute origin change. Native HBM/no-pending admission adds
+no peer probe. Software contracts pass; released callbacks, GPU/model correctness,
+physical faults and end-to-end performance retain their separate gates.
 
 ### S5.3 — Public lifecycle and hybrid-state contracts
 

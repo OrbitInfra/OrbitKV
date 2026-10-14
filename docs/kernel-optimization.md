@@ -519,3 +519,30 @@ particular, lower CPU submission time does not establish lower complete restore
 latency. Preserve this capture while evaluating matched unprofiled controls and
 the consumed engine path. The [private archive](benchmark-evidence.md#native-driver-capture-archive)
 retains frozen inputs, rejected launch controls and raw outputs.
+
+
+## Consumed engine driver attribution
+
+Engine-local raw H2D geometry records additionally carry `CLOCK_MONOTONIC`, Linux
+thread IDs and batch submission windows; each physically drained part supplies
+one shared drain timestamp. They are emitted only by the existing opt-in bounded
+capture. Transfer backends, CUDA kernels, readiness and allocation owners are
+unchanged. Instrumentation overhead remains a separate gate.
+
+After an independently reviewed capture, join one process's driver trace to its
+actual engine batches through the existing production geometry validator:
+
+```bash
+python -m benches.cuda_submission \
+  --trace /external/capture/cuda-driver-PID.jsonl \
+  --engine-log /external/capture/engine.log \
+  --native-fixture /path/to/native_copy_layout
+```
+
+The analyzer rejects incomplete records, mismatched clocks/processes/threads,
+wrong copy/launch counts, calls crossing batch boundaries and submissions after
+their declared part drain. Its driver union includes callback overhead; remaining
+host time is unattributed. Device identity, exact GPU bytes/model output, normal
+owned-process cleanup and matched overhead controls require their own receipts.
+The collector's inherited-fork and simultaneous-profiler restrictions still apply.
+A successful CPU compiler replay does not qualify GPU capture or a kernel default.
