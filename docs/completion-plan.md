@@ -304,6 +304,29 @@ when CUDAPlatform::copy cannot use a device. This is not payload or hardware
 acceptance. Preserve that failed gate; promotion needs a working CUDA allocation
 and independently accepted installed payload and adapter/fault gates.
 
+The copy-status candidate consumes merged upstream TENT fixes #3476 and #3973
+on the existing pin in a private build-source copy. Independent code/CPU/installed
+host-byte acceptance at `6e099269` does not cover healthy GPU qualification.
+Follow-up review found that CUDA pointer-query failures could select host memcpy
+and error exits could retain the wrong device binding. A separate remediation
+uses the driver's multi-attribute query, rejects unexpected errors and unusable
+CUDA admission, and restores an existing caller device across copy failures.
+Post-attempt CUDA errors retain the native stream/frame and caller RPC scratch
+under a separate 64-call/1-GiB logical-copy admission budget; no error is used
+as a DMA fence. Its deterministic CUDA API controls are software evidence; actual GPU and
+physical termination gates remain open. Preserve the original candidate/wheel,
+controls and review under `/root/orbitkv-artifacts/s3-installed-byte-errors-20261013/`.
+The 2026-10-14 merge review also reproduced a combined device-selection and
+context-restoration failure that returned through an unchecked guard. One checked
+guard now restores on every return and retains admission if restoration fails.
+Software controls reject the previous allocator and verify that 64 retained
+context-error calls reject further admission without any memcpy submission;
+these controls add no GPU or physical termination qualification.
+On 2026-10-13 Forge job 20551990 is killed and both saved SSH endpoints refuse
+connections. Its historical healthy CUDA gates remain distinct from the old
+unusable H20. No new formal cells or hardware qualification have started, and
+old resource locks/quarantines are not released.
+
 The old three-host readiness quarantine is a separate, scoped audit case. Its
 query-source unregister succeeded; the client was deliberately closed before
 the missing metric exception, and partial cleanup then retried that closed
