@@ -55,6 +55,26 @@ keep the owning process isolated and can prevent graceful shutdown. Retention
 does not authorize killing that process or reclaiming remote buffers. See S3 in
 the completion plan for the remaining native termination and installed gates.
 
+The source shutdown candidate closes a whole native engine's TCP admission
+before waiting for inbound pointer handlers. Handler acquisition precedes
+address resolution, and release follows synchronous CPU access. A closed gate
+never reopens; local Rust requester admission also closes, and active requester
+owners prevent a successful close. Only then does the Manager pool owner
+unregister and release its backing. Timeout, unsupported transport or error
+preserves engine, tokens and pool without an unregister/destructor retry.
+The process charges live and retained pools against 1,024 registrations of pools
+and 1 TiB registered backing. These are additional source-owner caps, not a
+change to the 1,024 batch/32 MiB request-descriptor limits or pool/query budgets.
+
+The candidate TCP wire carries a random 128-bit native engine epoch and an
+explicit success marker on READ replies. Old epochs are denied before resolving
+pointers, including after source restart; a retry cannot upgrade the request to
+a different epoch. Peers require matching candidate packages. The pinned
+upstream ABI does not provide this extension; it is not released upstream
+support. The receipt covers CPU-only/TCP-only source shutdown. It does not prove
+device/RDMA termination, close an individual transfer ticket, or permit live
+allocation/page reuse. Those paths remain retained and unqualified.
+
 `orbitkv-channel` uses iceoryx2 `0.10.0` and a fixed 64-byte command carrying
 protocol version, opcode, request identity, Manager epoch, descriptor offset,
 length/generation, and two opcode-specific scalar fields. Variable-length

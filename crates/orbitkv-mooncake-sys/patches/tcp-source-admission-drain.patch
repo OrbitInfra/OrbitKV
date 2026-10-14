@@ -1,0 +1,392 @@
+--- a/mooncake-transfer-engine/tent/include/tent/runtime/control_plane.h
++++ b/mooncake-transfer-engine/tent/include/tent/runtime/control_plane.h
+@@ -60,6 +60,7 @@
+ struct XferDataDesc {
+     uint64_t peer_mem_addr;
+     size_t length;
++    char source_epoch[33];
+ };
+ 
+ using OnReceiveBootstrap =
+@@ -83,11 +84,11 @@
+ 
+     static Status sendData(const std::string& server_addr,
+                            uint64_t peer_mem_addr, void* local_mem_addr,
+-                           size_t length);
++                           size_t length, const std::string& source_epoch);
+ 
+     static Status recvData(const std::string& server_addr,
+                            uint64_t peer_mem_addr, void* local_mem_addr,
+-                           size_t length);
++                           size_t length, const std::string& source_epoch);
+ 
+     static Status notify(const std::string& server_addr,
+                          const Notification& message);
+@@ -139,6 +140,11 @@
+     void setNotifyCallback(const OnNotify& callback);
+ 
+     Status start(uint16_t& port, bool ipv6_ = false, size_t threads = 1);
++    const std::string& sourceEpoch() const { return source_epoch_; }
++    bool sourceClosed();
++    uint64_t closeSource(uint64_t timeout_ms);
++    bool beginSource(const char* epoch);
++    void finishSource();
+ 
+    private:
+     void onGetSegmentDesc(const std::string_view& request,
+@@ -174,6 +180,11 @@
+     void finishNotifyCallback();
+ 
+    private:
++    std::mutex source_mutex_;
++    std::condition_variable source_cv_;
++    bool source_closed_{false};
++    uint64_t source_active_{0};
++    std::string source_epoch_;
+     std::unique_ptr<SegmentManager> manager_;
+     std::shared_ptr<CoroRpcAgent> rpc_server_;
+ 
+--- a/mooncake-transfer-engine/tent/include/tent/runtime/segment.h
++++ b/mooncake-transfer-engine/tent/include/tent/runtime/segment.h
+@@ -71,6 +71,7 @@
+     std::unordered_map<TransportType, std::string> transport_attrs;
+     // mutable elements
+     int ref_count{0};
++    std::string source_epoch;
+ 
+     // backward compatilble
+     std::vector<uint32_t> rkey;
+@@ -83,7 +84,7 @@
+    public:
+     NLOHMANN_DEFINE_TYPE_INTRUSIVE(BufferDesc, addr, length, location,
+                                    transports, regions, transport_attrs, rkey,
+-                                   shm_path, mnnvl_handle, internal);
++                                   shm_path, mnnvl_handle, internal, source_epoch);
+ };
+ 
+ struct FileBufferDesc {
+--- a/mooncake-transfer-engine/tent/include/tent/runtime/transfer_engine_impl.h
++++ b/mooncake-transfer-engine/tent/include/tent/runtime/transfer_engine_impl.h
+@@ -320,6 +320,7 @@
+     // enable_progress_worker is false. Transport completion paths use this as
+     // an idempotent "maybe ready" signal.
+     void notifyBatchMaybeReady(BatchID batch_id);
++    int closeSource(uint64_t timeout_ms, char* epoch, uint64_t* active);
+ 
+    private:
+     friend class ProgressWorker;
+--- a/mooncake-transfer-engine/tent/include/tent/transfer_engine.h
++++ b/mooncake-transfer-engine/tent/include/tent/transfer_engine.h
+@@ -131,6 +131,12 @@
+ tent_engine_t tent_create_engine();
+ 
+ void tent_destroy_engine(tent_engine_t engine);
++// Irreversibly close source admission, then await admitted CPU/TCP handlers.
++// 0: drained; 1: still owned; 2: unsupported physical path; -1: error.
++// epoch points to 33 bytes; active is observed after the bounded wait.
++// This does not drain requester batches or authorize individual ticket reuse.
++int tent_close_source(tent_engine_t engine, uint64_t timeout_ms,
++                      char* epoch, uint64_t* active);
+ 
+ int tent_segment_name(tent_engine_t engine, char* buf, size_t buf_len);
+ 
+--- a/mooncake-transfer-engine/tent/include/tent/transport/tcp/tcp_transport.h
++++ b/mooncake-transfer-engine/tent/include/tent/transport/tcp/tcp_transport.h
+@@ -106,7 +106,8 @@
+     Status doTransferWithRetry(TcpTask *task);
+ 
+     Status findRemoteSegment(uint64_t dest_addr, uint64_t length,
+-                             uint64_t target_id, std::string &rpc_server_addr);
++                             uint64_t target_id, std::string &rpc_server_addr,
++                             std::string &source_epoch);
+ 
+    private:
+     bool installed_;
+--- a/mooncake-transfer-engine/tent/src/runtime/control_plane.cpp
++++ b/mooncake-transfer-engine/tent/src/runtime/control_plane.cpp
+@@ -13,6 +13,10 @@
+ // limitations under the License.
+ 
+ #include "tent/runtime/control_plane.h"
++#include <sys/random.h>
++#include <array>
++#include <limits>
++#include <stdexcept>
+ #include "tent/runtime/transfer_engine_impl.h"
+ 
+ #include <cassert>
+@@ -71,9 +75,11 @@
+ 
+ Status ControlClient::sendData(const std::string& server_addr,
+                                uint64_t peer_mem_addr, void* local_mem_addr,
+-                               size_t length) {
++                               size_t length, const std::string& source_epoch) {
+     std::string response;
+-    XferDataDesc desc{htole64(peer_mem_addr), htole64(length)};
++    XferDataDesc desc{htole64(peer_mem_addr), htole64(length), {}};
++    if (source_epoch.size() != 32) return Status::InvalidArgument("Invalid source epoch");
++    memcpy(desc.source_epoch, source_epoch.data(), 32);
+     std::string request;
+     request.reserve(sizeof(XferDataDesc) + length);
+     request.resize(sizeof(XferDataDesc));
+@@ -99,17 +105,19 @@
+ 
+ Status ControlClient::recvData(const std::string& server_addr,
+                                uint64_t peer_mem_addr, void* local_mem_addr,
+-                               size_t length) {
++                               size_t length, const std::string& source_epoch) {
+     std::string request, response;
+-    XferDataDesc desc{htole64(peer_mem_addr), htole64(length)};
++    XferDataDesc desc{htole64(peer_mem_addr), htole64(length), {}};
++    if (source_epoch.size() != 32) return Status::InvalidArgument("Invalid source epoch");
++    memcpy(desc.source_epoch, source_epoch.data(), 32);
+     request.resize(sizeof(XferDataDesc));
+     memcpy(&request[0], &desc, sizeof(desc));
+     auto status = tl_rpc_agent.call(server_addr, RecvData, request, response);
+     if (!status.ok()) return status;
+-    if (response.size() != length)
++    if (response.empty() || length == SIZE_MAX || response.size() != length + 1 || response[0] != 0)
+         return Status::RpcServiceError(
+             response.empty() ? "RecvData failed: empty response" : response);
+-    return Platform::getLoader().copy(local_mem_addr, response.data(), length);
++    return Platform::getLoader().copy(local_mem_addr, response.data() + 1, length);
+ }
+ 
+ inline void to_json(nlohmann::json& j, const Notification& n) {
+@@ -233,6 +241,14 @@
+                                const std::string& servers,
+                                TransferEngineImpl* impl)
+     : bootstrap_callback_(nullptr), notify_callback_(nullptr), impl_(impl) {
++    std::array<unsigned char, 16> epoch{};
++    if (getrandom(epoch.data(), epoch.size(), 0) == static_cast<ssize_t>(epoch.size())) {
++        constexpr char hex[] = "0123456789abcdef";
++        for (auto byte : epoch) {
++            source_epoch_.push_back(hex[byte >> 4]);
++            source_epoch_.push_back(hex[byte & 15]);
++        }
++    }
+     if (type == "p2p") {
+         auto agent = std::make_unique<PeerSegmentRegistry>();
+         manager_ = std::make_unique<SegmentManager>(std::move(agent));
+@@ -355,6 +371,7 @@
+ }
+ 
+ Status ControlService::start(uint16_t& port, bool ipv6_, size_t threads) {
++    if (source_epoch_.size() != 32) return Status::InternalError("Source epoch entropy unavailable");
+     return rpc_server_->start(port, ipv6_, threads);
+ }
+ 
+@@ -412,26 +429,61 @@
+     response = j.dump();
+ }
+ 
++bool ControlService::sourceClosed() {
++    std::lock_guard<std::mutex> guard(source_mutex_);
++    return source_closed_;
++}
++
++uint64_t ControlService::closeSource(uint64_t timeout_ms) {
++    std::unique_lock<std::mutex> guard(source_mutex_);
++    source_closed_ = true;
++    source_cv_.wait_for(guard, std::chrono::milliseconds(timeout_ms),
++                        [this] { return source_active_ == 0; });
++    return source_active_;
++}
++
++bool ControlService::beginSource(const char* epoch) {
++    std::lock_guard<std::mutex> guard(source_mutex_);
++    if (source_closed_ || memcmp(epoch, source_epoch_.data(), 32) != 0 ||
++        epoch[32] != 0 || source_active_ == std::numeric_limits<uint64_t>::max())
++        return false;
++    ++source_active_;
++    return true;
++}
++
++void ControlService::finishSource() {
++    std::lock_guard<std::mutex> guard(source_mutex_);
++    --source_active_;
++    source_cv_.notify_all();
++}
++
+ void ControlService::onSendData(const std::string_view& request,
+                                 std::string& response) {
+     if (request.size() < sizeof(XferDataDesc)) {
+         response = "SendData failed: request too short";
+         return;
+     }
+-    XferDataDesc* desc = (XferDataDesc*)request.data();
++    XferDataDesc value{};
++    memcpy(&value, request.data(), sizeof(value));
++    const auto* desc = &value;
++    if (!beginSource(desc->source_epoch)) {
++        response = "Source admission closed or epoch mismatch";
++        return;
++    }
++    CallbackInvocationGuard source_guard([this] { finishSource(); });
+     auto local_desc = manager_->getLocal();
+     auto peer_mem_addr = le64toh(desc->peer_mem_addr);
+     auto length = le64toh(desc->length);
+ 
+     // Validate request size to prevent buffer over-read
+-    if (request.size() < sizeof(XferDataDesc) + length) {
++    if (length > request.size() - sizeof(XferDataDesc)) {
+         response = "SendData failed: invalid request size";
+         return;
+     }
+ 
+     if (local_desc->findBuffer(peer_mem_addr, length)) {
+         auto status =
+-            Platform::getLoader().copy((void*)peer_mem_addr, &desc[1], length);
++            Platform::getLoader().copy((void*)peer_mem_addr, const_cast<char*>(request.data()) + sizeof(XferDataDesc), length);
+         if (!status.ok()) {
+             // A non-empty response is interpreted as an RPC error by the
+             // client (see ControlClient::sendData). Without this the sender's
+@@ -450,7 +502,14 @@
+         response = "RecvData failed: request too short";
+         return;
+     }
+-    XferDataDesc* desc = (XferDataDesc*)request.data();
++    XferDataDesc value{};
++    memcpy(&value, request.data(), sizeof(value));
++    const auto* desc = &value;
++    if (!beginSource(desc->source_epoch)) {
++        response = "Source admission closed or epoch mismatch";
++        return;
++    }
++    CallbackInvocationGuard source_guard([this] { finishSource(); });
+     auto local_desc = manager_->getLocal();
+     auto peer_mem_addr = le64toh(desc->peer_mem_addr);
+     auto length = le64toh(desc->length);
+@@ -482,8 +541,10 @@
+                 loader.copy(response.data(), (void*)peer_mem_addr, length);
+             if (!status.ok()) {
+                 fail("RecvData failed: copy: " + status.ToString());
++                return;
+             }
+         }
++        response.insert(response.begin(), 0);
+     } else {
+         fail("RecvData failed: target address not in registered buffer");
+     }
+--- a/mooncake-transfer-engine/tent/src/runtime/transfer_engine_impl.cpp
++++ b/mooncake-transfer-engine/tent/src/runtime/transfer_engine_impl.cpp
+@@ -795,6 +795,8 @@
+             "No available transport for registerLocalMemory" LOC_MARK);
+     }
+ 
++    if (metadata_->sourceClosed())
++        return Status::InvalidArgument("Source admission permanently closed");
+     // Build BufferDescs: warm-up → NUMA probe → fill location
+     std::vector<BufferDesc> desc_list;
+     desc_list.reserve(addr_list.size());
+@@ -802,6 +804,7 @@
+         BufferDesc desc;
+         desc.addr = (uint64_t)addr_list[i];
+         desc.length = size_list[i];
++        desc.source_epoch = metadata_->sourceEpoch();
+ 
+         // MR warm-up: pin pages via temp ibv_reg_mr, benefits both
+         // subsequent RDMA registration and NUMA probing
+@@ -846,6 +849,21 @@
+ 
+ // WARNING: before exiting TE, make sure that all local memory are
+ // unregistered, otherwise the CUDA may halt!
++int TransferEngineImpl::closeSource(uint64_t timeout_ms, char* epoch, uint64_t* active) {
++    if (!metadata_ || !epoch || !active || timeout_ms > 5000) return -1;
++    memcpy(epoch, metadata_->sourceEpoch().c_str(), 33);
++    *active = metadata_->closeSource(timeout_ms);
++#ifdef USE_CUDA
++    // CPU handler return does not establish device completion on a CUDA build.
++    return 2;
++#else
++    if (Platform::getLoader().type() != "cpu") return 2;
++    for (size_t type = 0; type < kSupportedTransportTypes; ++type)
++        if (type != TCP && transport_list_[type]) return 2;
++    return *active == 0 ? 0 : 1;
++#endif
++}
++
+ Status TransferEngineImpl::unregisterLocalMemory(void* addr, size_t size) {
+     bool removed = false;
+     auto status = local_segment_tracker_->remove(
+--- a/mooncake-transfer-engine/tent/src/transfer_engine_c.cpp
++++ b/mooncake-transfer-engine/tent/src/transfer_engine_c.cpp
+@@ -59,6 +59,16 @@
+     }
+ }
+ 
++int tent_close_source(tent_engine_t engine, uint64_t timeout_ms,
++                      char* epoch, uint64_t* active) {
++    CHECK_POINTER(engine);
++    CHECK_POINTER(epoch);
++    CHECK_POINTER(active);
++    try {
++        return CAST(engine)->closeSource(timeout_ms, epoch, active);
++    } catch (...) { return -1; }
++}
++
+ int tent_segment_name(tent_engine_t engine, char* buf, size_t buf_len) {
+     CHECK_POINTER(engine);
+     CHECK_POINTER(buf);
+--- a/mooncake-transfer-engine/tent/src/transport/tcp/tcp_transport.cpp
++++ b/mooncake-transfer-engine/tent/src/transport/tcp/tcp_transport.cpp
+@@ -234,10 +234,10 @@
+ }
+ 
+ Status TcpTransport::doTransferWithRetry(TcpTask *task) {
+-    std::string rpc_server_addr;
++    std::string rpc_server_addr, source_epoch;
+     auto status =
+         findRemoteSegment(task->request.target_offset, task->request.length,
+-                          task->request.target_id, rpc_server_addr);
++                          task->request.target_id, rpc_server_addr, source_epoch);
+     if (!status.ok()) return status;
+ 
+     Status last_error;
+@@ -264,11 +264,11 @@
+         if (task->request.opcode == Request::WRITE) {
+             status = ControlClient::sendData(
+                 rpc_server_addr, task->request.target_offset,
+-                task->request.source, task->request.length);
++                task->request.source, task->request.length, source_epoch);
+         } else {
+             status = ControlClient::recvData(
+                 rpc_server_addr, task->request.target_offset,
+-                task->request.source, task->request.length);
++                task->request.source, task->request.length, source_epoch);
+         }
+ 
+         if (status.ok()) return Status::OK();
+@@ -284,10 +284,13 @@
+         // Peer may have restarted with a new address; re-resolve before retry
+         if (status.IsRpcServiceError()) {
+             rpc_server_addr.clear();
++            std::string refreshed_epoch;
+             auto resolve = findRemoteSegment(
+                 task->request.target_offset, task->request.length,
+-                task->request.target_id, rpc_server_addr);
++                task->request.target_id, rpc_server_addr, refreshed_epoch);
+             if (!resolve.ok()) return resolve;
++            if (refreshed_epoch != source_epoch)
++                return Status::RpcServiceError("Source epoch changed during retry");
+         }
+     }
+ 
+@@ -296,7 +299,8 @@
+ 
+ Status TcpTransport::findRemoteSegment(uint64_t dest_addr, uint64_t length,
+                                        uint64_t target_id,
+-                                       std::string &rpc_server_addr) {
++                                       std::string &rpc_server_addr,
++                                       std::string &source_epoch) {
+     return metadata_->segmentManager().withCachedSegment(
+         target_id, [&](SegmentDesc *segment) {
+             auto buffer = segment->findBuffer(dest_addr, length);
+@@ -309,6 +313,7 @@
+                 return Status::NeedsRefreshCache(
+                     "Empty RPC server addr" LOC_MARK);
+             }
++            source_epoch = buffer->source_epoch;
+             return Status::OK();
+         });
+ }

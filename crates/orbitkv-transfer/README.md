@@ -23,6 +23,9 @@ The public Rust API is deliberately small:
 - `TransferEngine::new` creates one upstream Mooncake TENT engine.
 - `register_memory_owned` returns an RAII token for stable host or device memory.
 - `submit_and_wait` executes a READ or WRITE batch.
+- `close_source` permanently closes Rust admission and the native source gate;
+  only a CPU/TCP handler receipt and empty requester admission permit success.
+  Other paths keep their registrations and backing owners.
 - `submit_and_notify` couples a batch to a peer notification.
 - generation-scoped notification waits retain messages for concurrent requests
   and wake cancelled/replaced waiters; `send_notification` emits completion and

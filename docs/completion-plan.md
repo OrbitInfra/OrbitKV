@@ -351,6 +351,24 @@ old-library failures are preserved. Independent acceptance, installed package
 and hardware qualification remain separate. Delayed batch/address reuse and
 physical termination are not established by this candidate.
 
+PR #237 is merged at `53e69620`: its accepted CPU/TCP counterexample proves
+that logical unregister can return while a previously admitted source copy
+still uses the address. The next candidate adds an irreversible native source
+admission gate and counts actual inbound handlers before pointer resolution.
+Only a CPU-only, TCP-only engine whose handlers have returned can report drain;
+the Rust pool owner also requires its local requester admission to be empty
+before unregistering. TCP requests carry a native engine epoch, and retries
+cannot silently switch to a restarted source epoch. This is whole-engine
+shutdown, not per-ticket orphan reclamation or allocation/page generation.
+The focused native extension is an unreleased candidate on the fixed pin;
+matching peer/runtime packages are required. CUDA builds and other loaded
+transports return unsupported, retaining the engine, registration tokens and
+pool. Live and retained source pools share a process admission cap of 1,024
+pools and 1 TiB of registered backing, distinct from batch descriptors and
+per-query/export payload budgets. Independent acceptance, installed package,
+GPU/RDMA and adapter qualification remain open for this candidate. Preserve
+all controls under `/root/orbitkv-artifacts/s3-source-read-drain-20261014/`.
+
 The old three-host readiness quarantine is a separate, scoped audit case. Its
 query-source unregister succeeded; the client was deliberately closed before
 the missing metric exception, and partial cleanup then retried that closed

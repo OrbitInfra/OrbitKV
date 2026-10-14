@@ -42,6 +42,15 @@ the metrics again does not reset active ownership. Readiness and drain checks
 must still reject missing required gauges; an absent series is not evidence of
 zero outstanding work.
 
+The source shutdown candidate exposes `orbitkv_peer_retained_source_pools_total`
+and `orbitkv_peer_retained_source_pool_bytes_total` when the peer transport owner
+initializes. Both start at zero. Failure to prove source drain retains the exact
+engine, registrations and pool until process isolation; the counters accumulate
+those owned pools and their full registered backing bytes, including partial
+registration failures. They do not count unique transfer payloads or authorize
+reclamation. These owners remain charged against the process source-pool caps
+of 1,024 pools and 1 TiB registered backing.
+
 ### Bounded cost observations
 
 See the [P4.1 boundaries](state-planning.md#p41-observation-contract) before

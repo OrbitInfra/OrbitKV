@@ -31,6 +31,15 @@ later without changing cache or framework code.
 - release: `v0.3.13.post1`
 - commit: `719735896c86b56fabec6cf3e825fb2ea640597a`
 
+The private build copy applies the checked TCP copy/context and worker-ownership
+backports plus the unreleased `tcp-source-admission-drain.patch` candidate.
+`tent_close_source` closes a whole engine permanently: status 0 is CPU/TCP
+handler drain, 1 remains owned, 2 has an unsupported physical path, and negative
+status is an error. It never drains requester batches or fences one RDMA ticket.
+CUDA builds refuse this physical receipt. Matching TCP peers consume the native
+engine epoch and READ success envelope; there is no old-wire fallback. Loading
+a prebuilt runtime without the new symbol fails before creating an engine.
+
 To use compatible prebuilt libraries instead of invoking CMake, set
 `ORBITKV_MOONCAKE_LIB_DIR` to a directory containing the three TENT runtime
 shared objects. A directory containing only `libtransfer_engine.so` is rejected.
