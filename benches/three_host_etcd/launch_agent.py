@@ -74,7 +74,15 @@ def main() -> None:
         runtime = Path(settings["orbitkv_runtime"]["source_root"])
         command = [
             str(runtime / "runtime-venv/bin/python"),
+            "-B",
+            "-E",
+            "-s",
+            "-X",
+            f"pycache_prefix={args.root / '.consumer-bytecode'}",
+            "-c",
+            "import runpy,sys; script=sys.argv.pop(1); sys.path[:0]=sys.argv.pop(1).split(':'); runpy.run_path(script,run_name='__main__')",
             str(args.root / "inputs/consumer_agent.py"),
+            f"{runtime / 'runtime-venv/lib/python3.11/site-packages'}:{runtime / 'projection'}:{args.root / 'inputs'}",
             "--root",
             str(args.root),
             "--approved-input-manifest-sha256",
@@ -89,6 +97,7 @@ def main() -> None:
                 "PYTHONPATH": f"{site}:{runtime / 'projection'}",
                 "PYTHONDONTWRITEBYTECODE": "1",
                 "PYTHONNOUSERSITE": "1",
+                "PYTHONPYCACHEPREFIX": str(args.root / ".consumer-bytecode"),
                 "ETCD_BIN": str(runtime / "frozen/bin/etcd"),
                 "ORBITKV_CACHE_MANAGER_BINARY": str(runtime / "frozen/bin/orbitkv-cache-manager"),
                 "ORBITKV_SERVER_TEST_BINARY": str(runtime / "frozen/bin/server-tests"),
@@ -97,6 +106,10 @@ def main() -> None:
                 "MC_FORCE_TCP": "1",
             },
         )
+        if (args.root / ".consumer-bytecode").exists() or (
+            args.root / ".consumer-bytecode"
+        ).is_symlink():
+            raise RuntimeError("consumer bytecode prefix already exists")
     if record_path.exists() or log_path.exists():
         raise FileExistsError(record_path if record_path.exists() else log_path)
     log = log_path.open("xb")
