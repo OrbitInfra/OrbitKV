@@ -30,7 +30,7 @@ branches at cutover. See [interface audit](engine-release-audit.md).
 | --- | --- | --- |
 | S0 | Complete | Handoff/skill migration merged in PR #190 |
 | S1 | Accepted at `ec3add9b` | Preserve external evidence and one queue |
-| S2 | Accepted implementation; full qualification open | Metadata implementation, four-owner baseline and normal-SIGTERM three-host etcd process-only cohort are accepted. DRAM/SSD isolation FAIL; sixteen owners UNQUALIFIED; support stays four owners. Cross-host cache HA and independent etcd failure domains remain unqualified |
+| S2 | Accepted implementation; full qualification open | Reviewed metadata contracts, the same-host four-owner baseline and one normal-SIGTERM three-host etcd process-only cohort are accepted. DRAM/SSD isolation FAIL; sixteen owners UNQUALIFIED; support stays four owners. Cross-host cache HA and independent etcd failure domains remain unqualified |
 | S3 | Implementation partial; qualification open | Conservative native failure retention has limited code/CPU acceptance at `27f1cb1b`; physical termination proof, installed GPU/adapter gates, page generations, explicit registration and crash reclamation remain open |
 | S4 | Partial | Measured copy/SSD/control improvements exist; mixed contention, complete serving gains and S3-dependent faults remain open |
 | S5 | Partial | Official dense cache/restart and scoped deployment profiles accepted; public lifecycle, complete hybrid recovery, native P/D faults and broader topology remain open |
@@ -78,15 +78,17 @@ in the immutable plan.
 **Depends on:** S1. **Owners:** `orbitkv-server/src/cluster/`, `orbitkv-catalog/`,
 core inventory and metadata diagnostics.
 
-**Accepted engineering scope:** the metadata implementation, four-owner baseline
-and normal-SIGTERM three-host etcd process-only cohort are handed off. Their
+**Accepted engineering scope:** reviewed metadata contracts, the same-host
+four-owner baseline and one normal-SIGTERM three-host etcd process-only cohort
+are handed off. Their
 acceptance does not mean every qualification criterion below passed.
 Historical isolation failures, sixteen-owner
 expansion, cross-host cache HA and independent failure domains retain their
 failed/unqualified state; their evidence, budgets and thresholds are unchanged.
 Those gates require separately authorized fresh cohorts and independent review.
-S3 consumes the accepted metadata contract and proceeds independently of those
-performance/HA qualification limits.
+S3 may proceed only through accepted metadata contracts and its own lifetime
+gates. Unaccepted contracts or failed prerequisite gates cannot authorize
+dependent work.
 
 - Extend real-etcd coverage to quota exhaustion/recovery, slow/disconnected
   Watches, concurrent rebuild and eviction, sustained journal overflow, member
@@ -275,11 +277,13 @@ staged files. Top-level package origins alone do not establish this closure.
 This is admission code and CPU-control evidence; the new freeze and formal
 process result still require independent review.
 
-**Remaining qualification:** keep the original failed/unqualified gates visible.
+**Remaining S2 delivery:** keep the original failed/unqualified gates visible.
 Continue evidence-based isolation diagnosis; apply harness or production repairs
 only when the evidence justifies them, then obtain fresh matched qualification.
-Installed full-Manager/cache-fault and cross-host cache HA gates remain in this
-queue, with independent physical failure-domain qualification still open.
+The embedded Rust Manager/GPU runtime and installed full-Manager/cache-fault
+gates remain blocked or unqualified, despite code/CPU acceptance of the full
+consumer. Cross-host cache HA and independent physical failure-domain
+qualification remain in this queue.
 A future qualification campaign must inspect the actual handoff, verify runtime,
 proxy and resource ownership, freeze new inputs and obtain independent launch
 review. Retain failures and cleanup evidence. Readiness and ordinary RDMA serving
