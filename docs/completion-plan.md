@@ -499,13 +499,18 @@ keep CUDA in standalone files. Representative copy wins cannot select a producti
 default. Native GDS and physical failure-domain qualification remain separate.
 S2/S4/S5 stay Partial.
 
-The current attribution candidate adds benchmark-only CUPTI driver callbacks
-and optional monotonic windows to the existing native layout fixture. Its strict
-analyzer rejects incomplete/PID/TID/count/window mismatches and leaves non-driver
-host time unattributed. Production backends, CUDA sources and defaults are
-unchanged. Source/launch review, real-GPU capture and observer-overhead gates are
-separate; a component smoke cannot establish the consumed serving cause or select
-a default. See [native diagnosis](kernel-optimization.md#native-driver-submission-diagnosis).
+**Bounded attribution delivery:** source `4b568860` adds benchmark-only CUPTI
+driver callbacks and optional monotonic windows to the native layout fixture.
+One H20 functional capture completes both directions, DMA/kernel and event modes:
+80 submissions, 32 measured operations, full byte/source/guard controls and 5,017
+driver records. The strict analyzer verifies process/thread/window identity and
+compiled copy counts; native and controller exit normally with empty physical
+postflight. Independent review accepts this functional capture only.
+Non-driver host time stays unattributed. Matched observation-overhead controls
+and consumed engine attribution remain open before selecting further copy or
+scheduling changes; production backends and defaults are unchanged.
+See [native diagnosis](kernel-optimization.md#native-driver-submission-diagnosis)
+and [external evidence](benchmark-evidence.md#native-driver-capture-archive).
 
 The initial 14-cell exploratory cohort stopped after three valid local vLLM
 cells: the released LMCache MP server completed its lifespan shutdown and

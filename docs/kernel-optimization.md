@@ -515,3 +515,15 @@ is not proven descriptor packing; callbacks themselves perturb API duration.
 This diagnostic does not isolate GPU execution or forward admission and cannot
 promote performance. Consumed engine capture and matched observation-overhead
 controls remain separate gates.
+
+The `4b568860` H20 functional smoke uses `d192-r64`: 192 descriptors, 64 compiled
+DMA ranges and 12 MiB of payload. Both directions, both backends and both event
+modes complete 80 submissions with 32 measured windows; complete byte/source/guard
+controls, exact copy/launch counts, normal owned-process waits and empty physical
+postflight pass independent review. The capture contains 5,017 driver records
+with a complete footer.
+Four profiled samples per group do not qualify overhead or performance. In
+particular, lower CPU submission time does not establish lower complete restore
+latency. Preserve this capture while evaluating matched unprofiled controls and
+the consumed engine path. The [private archive](benchmark-evidence.md#native-driver-capture-archive)
+retains frozen inputs, rejected launch controls and raw outputs.
