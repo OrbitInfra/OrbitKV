@@ -7,6 +7,34 @@ external directory or CI artifacts. Preserve unsuccessful runs and controls.
 Public documentation contains reviewed conclusions, their limits and links to
 versioned evidence; passing a correctness gate does not establish a speedup.
 
+## Native driver capture archive
+
+The measurement-host archive is
+`/root/orbitkv-artifacts/s4-native-submission-gpu-20261014/`.
+It binds source `4b568860` and the separately accepted v5 runtime preparation at
+`/root/orbitkv-artifacts/s4-native-submission-runtime-20261014/`.
+The original launch review rejects an unresolved-postflight lease-release path;
+its controller expires without launching the native fixture. The separately
+frozen v2 controller passes 18 fresh CPU ownership controls and independent launch
+review. Real default-NVRTC/PTX arithmetic and external driver/JIT closure checks
+precede the single approved capture; these are readiness checks, not copy samples.
+
+`smoke-002/` retains the full directional fixture, raw CUPTI records, native
+waits, approval and physical postflight. `analyzer-rerun.json` retains the parent
+replay; `independent-outcome-review/analyzer-recomputed.json` retains the reviewer's
+separate reconstruction. `OUTCOME-SHA256SUMS` seals 24 files
+with SHA-256 `52fed67599a6be8efb7333828597ca31fc7e9fd6a5e13dced9c6cf5b7780a9e1`.
+The eight groups contain four measured windows each, with all byte/source/guard
+controls passing. Both native and controller wait normally with exit zero and
+an empty GPU postflight. Independent review accepts functional capture only;
+`independent-outcome-review/REVIEW.md` has SHA-256
+`825bdf4c2d9b74f223a9886b788331b073241f7d6b764f99b00a7272d1945ce0`.
+
+This is a private host archive, not a public download. The trace includes CUPTI
+callback overhead; four samples per group cannot qualify latency, throughput,
+observer overhead or a backend default. Unattributed host time is not proven
+packing cost. See [the methodology](kernel-optimization.md#native-driver-submission-diagnosis).
+
 ## SGLang independent kernel-pair archive
 
 The measurement-host archive is
