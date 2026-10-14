@@ -65,25 +65,30 @@ fn main() {
     }
     verify_backport_source(&workspace.join("third-party/mooncake"));
     copy_mooncake_source(&workspace.join("third-party/mooncake"), &native_source);
-    let patch = manifest_dir.join("patches/tcp-copy-status-and-cuda-context.patch");
-    println!("cargo:rerun-if-changed={}", patch.display());
-    let status = Command::new("patch")
-        .args(["--batch", "--forward", "--fuzz=0", "--dry-run", "-p1", "-i"])
-        .arg(&patch)
-        .current_dir(&native_source)
-        .status()
-        .expect("check merged upstream Mooncake backport");
-    assert!(
-        status.success(),
-        "Mooncake backport does not match its pinned source"
-    );
-    let status = Command::new("patch")
-        .args(["--batch", "--forward", "--fuzz=0", "-p1", "-i"])
-        .arg(&patch)
-        .current_dir(&native_source)
-        .status()
-        .expect("apply merged upstream Mooncake backport");
-    assert!(status.success(), "Mooncake backport application failed");
+    for name in [
+        "tcp-copy-status-and-cuda-context.patch",
+        "tcp-worker-terminal-owner.patch",
+    ] {
+        let patch = manifest_dir.join("patches").join(name);
+        println!("cargo:rerun-if-changed={}", patch.display());
+        let status = Command::new("patch")
+            .args(["--batch", "--forward", "--fuzz=0", "--dry-run", "-p1", "-i"])
+            .arg(&patch)
+            .current_dir(&native_source)
+            .status()
+            .expect("check merged upstream Mooncake backport");
+        assert!(
+            status.success(),
+            "Mooncake backport does not match its pinned source"
+        );
+        let status = Command::new("patch")
+            .args(["--batch", "--forward", "--fuzz=0", "-p1", "-i"])
+            .arg(&patch)
+            .current_dir(&native_source)
+            .status()
+            .expect("apply merged upstream Mooncake backport");
+        assert!(status.success(), "Mooncake backport application failed");
+    }
     configure(&native_source.join("mooncake-transfer-engine"), &build_dir);
     build(&build_dir);
     stage_libraries(&build_dir, &runtime_dir);
@@ -237,6 +242,10 @@ fn verify_backport_source(source: &Path) {
         (
             "mooncake-transfer-engine/tent/src/platform/cuda/cuda_probe.cpp",
             "6a52601c9a2ce7132742debeefa89038d3bcd006",
+        ),
+        (
+            "mooncake-transfer-engine/tent/src/transport/tcp/tcp_transport.cpp",
+            "973173ca723e292916166ae5f9e70b240d65b772",
         ),
         (
             "mooncake-transfer-engine/tent/src/runtime/control_plane.cpp",
