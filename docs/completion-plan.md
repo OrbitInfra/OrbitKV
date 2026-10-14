@@ -197,6 +197,13 @@ Later valid 25-cell qualification still fails DRAM/SSD isolation; it does not
 expand owner support. Original invalid runtime/wheel-shadowing smokes remain
 archived rather than replaced or hidden.
 
+A fresh-query-owner readiness correction initializes all six phase-budget
+metric series before a first query. Its real Prometheus regression preserves
+live accounting across reservation transitions and multiple owners; independent
+acceptance and installed-Manager readiness remain open. The old missing-metric
+readiness/quarantine evidence is preserved. Harness drain gates must reject
+missing applicable ownership/SSD metrics rather than defaulting them to zero.
+
 **Next S2 delivery:** inspect the actual current handoff, finish the authorized
 runtime/proxy/harness remediation, freeze inputs and obtain launch review. Check
 direct etcd reachability without inherited proxy interference and complete native
