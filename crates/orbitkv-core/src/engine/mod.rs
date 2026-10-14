@@ -639,6 +639,16 @@ impl OrbitKVEngine {
     pub fn transfer_endpoint(&self) -> Option<&str> {
         None
     }
+
+    #[cfg(feature = "mooncake")]
+    pub fn transfer_source_epoch(&self) -> Option<&str> {
+        self.storage.transfer_source_epoch()
+    }
+
+    #[cfg(not(feature = "mooncake"))]
+    pub fn transfer_source_epoch(&self) -> Option<&str> {
+        None
+    }
 }
 
 #[cfg(test)]

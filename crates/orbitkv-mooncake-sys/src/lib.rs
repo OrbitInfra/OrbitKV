@@ -68,6 +68,7 @@ pub struct TransferRequest {
     pub length: u64,
     pub priority: c_int,
     pub transport_hint: c_int,
+    pub expected_source_epoch: [c_char; 33],
 }
 
 #[repr(C)]
@@ -118,6 +119,8 @@ type RegisterMemory =
     unsafe extern "C" fn(NativeEngine, *mut c_void, usize, *mut MemoryOptions) -> c_int;
 type UnregisterMemory = unsafe extern "C" fn(NativeEngine, *mut c_void, usize) -> c_int;
 type CloseSource = unsafe extern "C" fn(NativeEngine, u64, *mut c_char, *mut u64) -> c_int;
+type SourceEpoch = unsafe extern "C" fn(NativeEngine, *mut c_char, usize) -> c_int;
+type ValidateRemoteEpoch = unsafe extern "C" fn(NativeEngine, SegmentId, *const c_char) -> c_int;
 type AllocateBatch = unsafe extern "C" fn(NativeEngine, usize) -> BatchId;
 type Submit = unsafe extern "C" fn(NativeEngine, BatchId, *mut TransferRequest, usize) -> c_int;
 type SubmitWithNotify = unsafe extern "C" fn(
@@ -152,6 +155,8 @@ struct Api {
     register_memory: RegisterMemory,
     unregister_memory: UnregisterMemory,
     close_source: CloseSource,
+    source_epoch: SourceEpoch,
+    validate_remote_epoch: ValidateRemoteEpoch,
     allocate_batch: AllocateBatch,
     submit: Submit,
     submit_with_notify: SubmitWithNotify,
@@ -246,6 +251,8 @@ unsafe fn load_api_from(directory: &Path) -> Result<Api, String> {
         register_memory: unsafe { symbol(&library, b"tent_register_memory_ex\0")? },
         unregister_memory: unsafe { symbol(&library, b"tent_unregister_memory\0")? },
         close_source: unsafe { symbol(&library, b"tent_close_source\0")? },
+        source_epoch: unsafe { symbol(&library, b"tent_source_epoch\0")? },
+        validate_remote_epoch: unsafe { symbol(&library, b"tent_validate_remote_epoch\0")? },
         allocate_batch: unsafe { symbol(&library, b"tent_allocate_batch\0")? },
         submit: unsafe { symbol(&library, b"tent_submit\0")? },
         submit_with_notify: unsafe { symbol(&library, b"tent_submit_notif\0")? },
@@ -379,6 +386,18 @@ pub unsafe fn close_source(
     active: &mut u64,
 ) -> c_int {
     unsafe { (api().close_source)(engine, timeout_ms, epoch.as_mut_ptr(), active) }
+}
+
+pub unsafe fn source_epoch(engine: NativeEngine, epoch: &mut [c_char; 33]) -> c_int {
+    unsafe { (api().source_epoch)(engine, epoch.as_mut_ptr(), epoch.len()) }
+}
+
+pub unsafe fn validate_remote_epoch(
+    engine: NativeEngine,
+    segment: SegmentId,
+    epoch: &[c_char; 33],
+) -> c_int {
+    unsafe { (api().validate_remote_epoch)(engine, segment, epoch.as_ptr()) }
 }
 
 pub unsafe fn allocate_batch(engine: NativeEngine, batch_size: usize) -> BatchId {

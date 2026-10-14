@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(not(any(feature = "cuda-12", feature = "cuda-13")))]
+use crate::P2P_METADATA;
 use crate::types::{STATUS_CANCELED, STATUS_FAILED, STATUS_INVALID};
 
 #[test]
@@ -55,6 +57,7 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
                 name: "loopback".to_string(),
                 message: "done".to_string(),
             },
+            None,
         )
         .expect("peer write");
     assert_eq!(
@@ -109,7 +112,8 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
                 TransferOp::Read,
                 &segment,
                 &slices,
-                Duration::from_millis(1)
+                Duration::from_millis(1),
+                None,
             ),
             Err(MooncakeError::BatchAdmissionExhausted)
         ));
@@ -154,6 +158,122 @@ fn engine_creation_restores_the_process_nic_filter() {
                 libc::unsetenv(c"MC_TE_FILTERS".as_ptr());
             }
         }
+    }
+}
+
+#[test]
+#[cfg(not(any(feature = "cuda-12", feature = "cuda-13")))]
+fn grant_epoch_rejects_first_read_after_same_endpoint_restart() {
+    unsafe {
+        libc::setenv(c"MC_FORCE_TCP".as_ptr(), c"1".as_ptr(), 1);
+    }
+    let source_engine =
+        Arc::new(TransferEngine::new(P2P_METADATA, "127.0.0.1:0", "127.0.0.1", 0, &[]).unwrap());
+    let endpoint = source_engine.local_segment_name().unwrap();
+    let port: u64 = endpoint.rsplit_once(':').unwrap().1.parse().unwrap();
+    let grant_epoch = source_engine.source_epoch().to_string();
+    let mut source = vec![0u8; 8192];
+    for (i, byte) in source.iter_mut().enumerate() {
+        *byte = ((i * 17 + 31) % 251) as u8;
+    }
+    let mut destination = vec![0x5au8; source.len()];
+    let source_pointer = NonNull::new(source.as_mut_ptr()).unwrap();
+    let destination_pointer = NonNull::new(destination.as_mut_ptr()).unwrap();
+    let source_registration = unsafe {
+        source_engine
+            .register_memory_owned(source_pointer, source.len(), "cpu:0")
+            .unwrap()
+    };
+    let requester =
+        Arc::new(TransferEngine::new(P2P_METADATA, "127.0.0.1:0", "127.0.0.1", 0, &[]).unwrap());
+    let target_registration = unsafe {
+        requester
+            .register_memory_owned(destination_pointer, destination.len(), "cpu:0")
+            .unwrap()
+    };
+    requester.open_segment(&endpoint).unwrap();
+    let slices = [TransferSlice {
+        local: destination_pointer,
+        remote_address: source_pointer.as_ptr() as u64,
+        length: source.len(),
+    }];
+    requester
+        .submit_and_wait(
+            TransferOp::Read,
+            &endpoint,
+            &slices,
+            Duration::from_secs(2),
+            Some(&grant_epoch),
+        )
+        .unwrap();
+    assert_eq!(source, destination);
+    destination.fill(0x5a);
+    source_engine.close_source(Duration::from_secs(1)).unwrap();
+    source_registration.unregister().unwrap();
+    drop(source_engine);
+    let replacement =
+        Arc::new(TransferEngine::new(P2P_METADATA, &endpoint, "127.0.0.1", port, &[]).unwrap());
+    assert_eq!(replacement.local_segment_name().unwrap(), endpoint);
+    assert_ne!(replacement.source_epoch(), grant_epoch);
+    for (i, byte) in source.iter_mut().enumerate() {
+        *byte = ((i * 29 + 73) % 251) as u8;
+    }
+    let replacement_registration = unsafe {
+        replacement
+            .register_memory_owned(source_pointer, source.len(), "cpu:0")
+            .unwrap()
+    };
+    let mutation = std::env::var_os("ORBITKV_TEST_CLEAR_GRANT_EPOCH").is_some();
+    let expected = if mutation {
+        None
+    } else {
+        Some(grant_epoch.as_str())
+    };
+    let old_read = requester.submit_and_wait(
+        TransferOp::Read,
+        &endpoint,
+        &slices,
+        Duration::from_secs(2),
+        expected,
+    );
+    println!(
+        "old_grant_result={old_read:?} sentinel_unchanged={} replacement_payload_observed={} mutation={mutation}",
+        destination.iter().all(|byte| *byte == 0x5a),
+        destination == source
+    );
+    assert!(
+        old_read.is_err(),
+        "stale grant captured a new source epoch and read replacement bytes"
+    );
+    assert!(destination.iter().all(|byte| *byte == 0x5a));
+    {
+        let admission = requester.admission.lock().unwrap();
+        assert_eq!(admission.active, 0);
+        assert_eq!(
+            admission.request_bytes, 0,
+            "pre-submit rejection retained a native batch"
+        );
+    }
+    let fresh_read = requester
+        .submit_and_wait(
+            TransferOp::Read,
+            &endpoint,
+            &slices,
+            Duration::from_secs(2),
+            Some(replacement.source_epoch()),
+        )
+        .unwrap();
+    assert_eq!(fresh_read, source.len());
+    assert_eq!(source, destination);
+    replacement.close_source(Duration::from_secs(1)).unwrap();
+    replacement_registration.unregister().unwrap();
+    requester.close_source(Duration::from_secs(1)).unwrap();
+    target_registration.unregister().unwrap();
+    println!(
+        "same_endpoint_same_address=true old_grant_rejected_before_batch=true fresh_payload_bytes={fresh_read} mutation={mutation}"
+    );
+    unsafe {
+        libc::unsetenv(c"MC_FORCE_TCP".as_ptr());
     }
 }
 
@@ -322,6 +442,7 @@ fn native_tcp_rejection_child() {
             &segment,
             &[slice],
             Duration::from_secs(5),
+            None,
         );
         println!("native_call_returned={result:?}");
     });

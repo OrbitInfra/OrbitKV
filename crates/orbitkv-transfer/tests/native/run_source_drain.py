@@ -19,7 +19,10 @@ def main() -> None:
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--ylt", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--gate", choices=("source", "dispatch"), default="source")
+    parser.add_argument(
+        "--gate", choices=("source", "dispatch", "grant"), default="source"
+    )
+    parser.add_argument("--mutation", choices=("stale-worker-cache",))
     args = parser.parse_args()
     source = args.source.resolve(strict=True)
     runtime = args.runtime.resolve(strict=True)
@@ -40,15 +43,19 @@ def main() -> None:
     ):
         raise RuntimeError("a complete CPU-only TENT closure is required")
     helper = Path(__file__).with_name(
-        "source_admission_drain.cpp"
-        if args.gate == "source"
-        else "rpc_dispatch_drain.cpp"
+        {
+            "source": "source_admission_drain.cpp",
+            "dispatch": "rpc_dispatch_drain.cpp",
+            "grant": "source_grant_epoch.cpp",
+        }[args.gate]
     )
     scenarios = (
         ("delayed", "cancel", "partial", "restart", "delegate", "entropy", "staging")
         if args.gate == "source"
         else ("queued", "running", "throw")
     )
+    if args.gate == "grant":
+        scenarios = ("warm", "lost-push", "preflight-race", "abi-mixed")
     binary = output / "source-drain"
     command = [
         "c++",
@@ -80,6 +87,10 @@ def main() -> None:
         "-o",
         str(binary),
     ]
+    if args.mutation:
+        if args.gate != "grant":
+            raise ValueError("worker-cache mutation requires the grant gate")
+        command.insert(1, "-DBASELINE_WORKER_CACHE")
     with (output / "compile.log").open("x") as log:
         built = subprocess.run(
             command, stdout=log, stderr=subprocess.STDOUT, timeout=120, check=False
@@ -87,6 +98,7 @@ def main() -> None:
     record = {
         "compile_command": command,
         "gate": args.gate,
+        "mutation": args.mutation,
         "compile_exit": built.returncode,
         "runtime_sha256": digest(library),
         "helper_sha256": digest(helper),
@@ -167,7 +179,15 @@ def main() -> None:
                     "wait_reaped": run.returncode is not None,
                     "owned_process_alive_after_wait": still_owned,
                     "forced_cpu_control_cleanup": timed_out,
-                    "normal_teardown": code == 0 and not timed_out and not still_owned,
+                    "safe_retention_to_cpu_process_exit": args.gate == "grant"
+                    and scenario in ("preflight-race", "abi-mixed"),
+                    "normal_teardown": code == 0
+                    and not timed_out
+                    and not still_owned
+                    and not (
+                        args.gate == "grant"
+                        and scenario in ("preflight-race", "abi-mixed")
+                    ),
                 }
             )
     (output / "RESULT.json").write_text(json.dumps(record, indent=2) + "\n")

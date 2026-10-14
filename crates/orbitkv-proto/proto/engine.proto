@@ -133,6 +133,7 @@ message QueryBlocksForTransferResponse {
   repeated TransferBlockInfo blocks = 2;
   uint32 lock_timeout_secs = 3;         // Source overdue threshold; expiry never releases pins
   string transfer_endpoint = 4;        // Mooncake segment name (host:port)
+  string native_source_epoch = 5;      // Captured from the registered source engine, not discovery
 }
 
 message ReleaseTransferLockRequest {

@@ -69,6 +69,7 @@ fn main() {
         "tcp-copy-status-and-cuda-context.patch",
         "tcp-worker-terminal-owner.patch",
         "tcp-source-admission-drain.patch",
+        "source-grant-epoch.patch",
     ] {
         let patch = manifest_dir.join("patches").join(name);
         println!("cargo:rerun-if-changed={}", patch.display());

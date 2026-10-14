@@ -416,6 +416,15 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   source grants, destination use and adapter boundaries. Keep semantic last-use
   separate from completion of CUDA/RDMA/SSD work. Extend existing owners instead
   of adding an unused generic fence framework.
+  The next native-epoch candidate captures the registered transport's epoch in
+  the source authorization reply and preserves it through Rust admission and
+  the C request into the first TCP attempt. A fresh TENT metadata check rejects
+  stale source epochs before batch allocation; the TCP worker also rejects a
+  changed epoch after that check. Same-endpoint/same-address CPU restart and a
+  cleared-expectation mutation are the consumed gate. This does not implement
+  allocation/page generation, RDMA QP/MR revocation or physical termination.
+  Independent acceptance and installed/GPU qualification remain open; evidence
+  belongs under `/root/orbitkv-artifacts/s3-grant-native-epoch-20261015/`.
 - Replace the remaining framework CUDA IPC pickle interpretation in the Manager
   with explicit validated registration data; remove the retired wire/API path.
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

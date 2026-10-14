@@ -3,6 +3,39 @@ use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+#[test]
+fn transfer_authorization_requires_the_source_epoch_before_destination_use() {
+    let records = [orbitkv_state::InventoryRecord {
+        key: orbitkv_state::StateKey::new("source".into(), vec![1]),
+        sequence: 1,
+        present: true,
+        metadata: None,
+    }];
+    let mut response = QueryBlocksForTransferResponse {
+        transfer_endpoint: "127.0.0.1:15123".into(),
+        blocks: vec![TransferBlockInfo {
+            block_hash: vec![1],
+            slots: vec![],
+        }],
+        ..Default::default()
+    };
+    for (epoch, valid) in [
+        ("", false),
+        ("0", false),
+        ("GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG", false),
+        ("0123456789abcdef0123456789abcdef", true),
+    ] {
+        response.native_source_epoch = epoch.into();
+        assert_eq!(
+            valid_transfer_authorization(&response, &records),
+            valid,
+            "epoch={epoch}"
+        );
+    }
+    response.blocks[0].block_hash = vec![2];
+    assert!(!valid_transfer_authorization(&response, &records));
+}
+
 fn test_allocate_fn(calls: Arc<AtomicUsize>) -> AllocateFn {
     let allocator = Arc::new(crate::memory::pool::PinnedAllocator::new_global(
         32 * 1024 * 1024,

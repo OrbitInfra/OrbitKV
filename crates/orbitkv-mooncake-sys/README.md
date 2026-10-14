@@ -39,6 +39,11 @@ status is an error. It never drains requester batches or fences one RDMA ticket.
 CUDA builds refuse this physical receipt. Matching TCP peers consume the native
 engine epoch and READ success envelope; there is no old-wire fallback. Loading
 a prebuilt runtime without the new symbol fails before creating an engine.
+The grant-epoch candidate additionally requires `tent_source_epoch` and
+`tent_validate_remote_epoch`, and appends the expected source epoch to each
+`tent_request_t`. The source reply supplies the expectation; TCP never replaces
+it with a restarted source's value. Rust preflight refreshes TENT metadata before
+batch allocation. The wire/ABI requires matching bundles and is unreleased.
 
 To use compatible prebuilt libraries instead of invoking CMake, set
 `ORBITKV_MOONCAKE_LIB_DIR` to a directory containing the three TENT runtime

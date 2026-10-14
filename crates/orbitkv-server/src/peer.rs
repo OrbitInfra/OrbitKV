@@ -182,6 +182,13 @@ impl Engine for P2pTransferService {
             status: Some(Self::ok_status()),
             blocks,
             lock_timeout_secs: self.engine.peer_exports().lock_timeout().as_secs() as u32,
+            native_source_epoch: self
+                .engine
+                .transfer_source_epoch()
+                .ok_or_else(|| {
+                    Status::failed_precondition("registered native source epoch is unavailable")
+                })?
+                .to_string(),
             transfer_endpoint: self
                 .engine
                 .transfer_endpoint()

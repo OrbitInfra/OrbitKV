@@ -78,6 +78,17 @@ The task captures its native epoch at the first segment lookup; it does not
 receive an expected native epoch from the OrbitKV source grant yet. The old
 packet control therefore proves packet/retry fencing, while a stale grant's
 first submission after endpoint/address reuse remains unqualified.
+The subsequent grant-epoch candidate adds `native_source_epoch` to transfer
+authorization. Manager captures it from its actual registered TENT owner,
+not discovery. Rust rejects missing/malformed values, refreshes the existing
+TENT descriptor before native batch allocation, and passes the same expected
+epoch into each C request. TCP requires that expectation at its first attempt
+and preserves it through retry; request merging keeps different epochs apart.
+The same-endpoint/address CPU restart gate checks stale rejection with untouched
+sentinels and exact replacement bytes for a fresh grant. Clearing the expected
+epoch is a deliberate negative control. Matching peer/native artifacts are
+required; this is a candidate TCP generation check, not allocation/page reuse,
+RDMA endpoint fencing or a new physical-drain receipt.
 The CPU/TCP receipt profile rejects delegated raw-pointer transfers: that
 staging API lacks a source epoch and would bypass the guarded pointer ingress.
 Ordinary CPU/TCP READ/WRITE remains available. Other transport profiles still

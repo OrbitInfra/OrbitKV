@@ -149,6 +149,7 @@ impl Drop for AdmittedBatch<'_> {
 
 pub struct TransferEngine {
     native: native::NativeEngine,
+    source_epoch: String,
     segments: Mutex<HashMap<String, native::SegmentId>>,
     notification_poll: Mutex<()>,
     notification_mailbox: Mutex<NotificationMailbox>,
@@ -232,8 +233,21 @@ impl TransferEngine {
         if native.is_null() {
             return Err(MooncakeError::Create);
         }
+        let mut epoch = [0 as c_char; 33];
+        if let Err(error) = check("sourceEpoch", unsafe {
+            native::source_epoch(native, &mut epoch)
+        }) {
+            unsafe { native::destroy(native) };
+            return Err(error);
+        }
+        let source_epoch = fixed_c_string(&epoch);
+        if let Err(error) = source_epoch_bytes(&source_epoch) {
+            unsafe { native::destroy(native) };
+            return Err(error);
+        }
         Ok(Self {
             native,
+            source_epoch,
             segments: Mutex::new(HashMap::new()),
             notification_poll: Mutex::new(()),
             notification_mailbox: Mutex::new(NotificationMailbox::default()),
@@ -247,6 +261,10 @@ impl TransferEngine {
             native::local_ip_and_port(self.native, output.as_mut_ptr(), output.len())
         })?;
         Ok(fixed_c_string(&output))
+    }
+
+    pub fn source_epoch(&self) -> &str {
+        &self.source_epoch
     }
 
     /// Permanently stop admission and await source CPU/TCP pointer handlers.
@@ -358,8 +376,16 @@ impl TransferEngine {
         remote_segment: &str,
         slices: &[TransferSlice],
         timeout: Duration,
+        expected_source_epoch: Option<&str>,
     ) -> Result<usize> {
-        self.submit_and_wait_inner(operation, remote_segment, slices, timeout, None)
+        self.submit_and_wait_inner(
+            operation,
+            remote_segment,
+            slices,
+            timeout,
+            None,
+            expected_source_epoch,
+        )
     }
 
     pub fn submit_and_notify(
@@ -369,6 +395,7 @@ impl TransferEngine {
         slices: &[TransferSlice],
         timeout: Duration,
         notification: &Notification,
+        expected_source_epoch: Option<&str>,
     ) -> Result<usize> {
         self.submit_and_wait_inner(
             operation,
@@ -376,6 +403,7 @@ impl TransferEngine {
             slices,
             timeout,
             Some(notification),
+            expected_source_epoch,
         )
     }
 
@@ -386,6 +414,7 @@ impl TransferEngine {
         slices: &[TransferSlice],
         timeout: Duration,
         notification: Option<&Notification>,
+        expected_source_epoch: Option<&str>,
     ) -> Result<usize> {
         if slices.is_empty() {
             return Ok(0);
@@ -406,6 +435,15 @@ impl TransferEngine {
             })
             .transpose()?;
         let segment = self.open_segment(remote_segment)?;
+        let expected_epoch = expected_source_epoch
+            .map(source_epoch_bytes)
+            .transpose()?
+            .unwrap_or([0; 33]);
+        if expected_source_epoch.is_some() {
+            check("validateSourceEpochBeforeSubmit", unsafe {
+                native::validate_remote_epoch(self.native, segment, &expected_epoch)
+            })?;
+        }
         let mut requests = slices
             .iter()
             .map(|slice| native::TransferRequest {
@@ -416,6 +454,7 @@ impl TransferEngine {
                 length: slice.length as u64,
                 priority: 0,
                 transport_hint: 0,
+                expected_source_epoch: expected_epoch,
             })
             .collect::<Vec<_>>();
         let batch = unsafe { native::allocate_batch(self.native, slices.len()) };
@@ -684,6 +723,24 @@ impl TransferEngine {
             let _ = unsafe { native::close_segment(self.native, segment) };
         }
     }
+}
+
+fn source_epoch_bytes(value: &str) -> Result<[c_char; 33]> {
+    if value.len() != 32
+        || value
+            .bytes()
+            .any(|byte| !matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Err(MooncakeError::Operation {
+            operation: "invalidSourceEpoch",
+            status: -1,
+        });
+    }
+    let mut output = [0 as c_char; 33];
+    for (out, byte) in output.iter_mut().zip(value.bytes()) {
+        *out = byte as c_char;
+    }
+    Ok(output)
 }
 
 fn fixed_c_string(value: &[c_char]) -> String {
