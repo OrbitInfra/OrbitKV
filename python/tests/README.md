@@ -44,6 +44,7 @@ hybrid recovery E2Es continue to qualify ordinary selected-range reads.
 | Distributed startup, placement, embedded catalog protocol and packaged Manager | Distributed process gate | `ETCD_BIN=/path/to/etcd pytest -m integration tests/integration/test_distributed_cache.py` | Starts two Managers and real etcd, checks remote Mooncake/GPU bytes and local recovery after coordinator loss; requires built native artifacts and CUDA. |
 | Peer transfer, source ownership, catalog recovery or either engine adapter | Shared-replica serving gate | `ETCD_BIN=/path/to/etcd ORBITKV_CACHE_MANAGER_BINARY=/path/to/manager pytest -m e2e tests/e2e/test_shared_cache.py -k vllm --model /path/to/qwen3-8b` | Repeat in SGLang's environment with `-k sglang`; checks remote bytes, output, catalog replay, source restart and reservation drain. Same-host TCP only. |
 | vLLM connector correctness, cache semantics, save/load/hit behavior, release candidate confidence | vLLM correctness E2E | `../.venv/vllm-release/bin/python -m pytest -m e2e tests/e2e/test_vllm_e2e_correctness.py --model /path/to/model` | Native prefix-cache control follows the same prompt plan; `long_warm` must load saved KV after vLLM restart. |
+| SGLang registration reference retirement | Installed pool/linker lifecycle | `ORBITKV_TEST_STRICT_SHUTDOWN=1 python -B -m pytest -m 'integration and gpu' tests/integration/test_sglang_registration_lifetime.py --model /path/to/model` | Actual released GPU pool, queued offload, normal close and independent exporter hold; requires a matching installed wheel and Manager. No cancellation/fault qualification. |
 | SGLang direct GPU linker, CUDA IPC layout, or plugin registration | SGLang direct E2E | `../.venv/sglang-release/bin/python -m pytest -m e2e tests/e2e/test_sglang_direct_e2e.py --model /path/to/model` | Restores after HBM flush and engine restart, with DRAM/forced-SSD byte counters. Output IDs and finite log probabilities match native HBM reuse; a changed identity matches cold computation. |
 | Native P/D, cache composition or request lifetime | vLLM native P/D model gate | `python -m pytest -m e2e tests/e2e/test_vllm_native_pd_e2e.py --model /path/to/dense-model --basetemp /var/tmp/orbitkv-pd/run-001` | Official vLLM/NIXL and upstream router from `docs/pd.md`; standalone P/D, both cache orders, restart, real pressure preemption and strict output. TP=1/PP=1 eager NIXL/UCX. |
 | SGLang native P/D or cache composition | SGLang P/D model gate | `python -m pytest -m e2e tests/e2e/test_sglang_pd_e2e.py --model /path/to/model --basetemp /var/tmp/orbitkv-pd/sglang-001` | Official engine, built Manager and `sglang-router==0.3.2`; one GPU for two model copies or two GPUs. Native retraction, restart/cache bytes and strict monolithic output; delayed ACK/partial-write faults need separate release gates. |
@@ -100,6 +101,10 @@ The 2026-10-14 official 0.31.0 model assertions pass, but the separate strict
 drain profile remains rejected by the upstream intentional-shutdown race
 [vLLM #48745](https://github.com/vllm-project/vllm/issues/48745). A successful
 pytest exit does not override that native-log failure or establish S3 drain.
+The subsequent independently accepted `c5681616`/`eefcf8f6` healthy installed
+cohort passes the strict native log/wait checks for six dense vLLM cases. Keep
+that nominal result separate from the original rejected run and fault/reuse
+qualification; see [PR #246](https://github.com/feichai0017/orbitkv/pull/246).
 
 Shared client ownership is tested in Rust under
 `crates/orbitkv-channel/tests/unit/cache_client.rs`: query revisions, immutable

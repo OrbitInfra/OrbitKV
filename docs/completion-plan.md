@@ -515,8 +515,17 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   queued authority intact. CPU weak-reference controls execute the consumed
   cleanup bodies and reject the original source. Installed default and
   SGLang-only environments are validated separately; the original combined
-  environment collection failure is preserved. Remediation acceptance remains
-  pending; no hardware or S3 completion claim changes.
+  environment collection failure is preserved. Independent source/CPU review
+  accepts the corrected consumer cleanup at `f338e84b` and the real released-pool
+  lifecycle gate at `ff5a9287`. The earlier frozen `c5681616`/`eefcf8f6` runtime
+  independently passes two native, six vLLM and two DRAM/SSD SGLang healthy
+  installed gates with normal controller/service waits. Those results do not
+  test the later consumer-reference delta. Its matching Python-only artifact
+  must pass the separately reviewed real SGLang close/independent-hold GPU gate
+  before merge; current evidence is linked from
+  [PR #246](https://github.com/feichai0017/orbitkv/pull/246).
+  Healthy completion does not close physical faults, allocation/page generation
+  or S3. Original failures and native IPC/helper-exit limits remain preserved.
 - Replace the remaining framework CUDA IPC pickle interpretation in the Manager
   with explicit validated registration data; remove the retired wire/API path.
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
