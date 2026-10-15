@@ -177,6 +177,114 @@ def validate_observations(result: dict, contract: dict) -> list[int]:
     return elapsed
 
 
+def validate_capture(
+    path: Path,
+    result: dict,
+    wait: dict,
+    contract: dict,
+    native_fixture: Path,
+    mode: str,
+) -> dict | None:
+    """Reject an invalid mode capture before admitting another hardware cell."""
+    name = path.name
+    capture_file(path, mode, wait.get("pid"))
+    validate_activation(result, contract, mode, wait["pid"])
+    capture = None
+    if VARIANTS[mode]["trace"]:
+        if mode == "on":
+            capture = analyze_engine(
+                path / "driver" / f"cuda-driver-{wait['pid']}.jsonl",
+                path / "oracle.stderr",
+                native_fixture,
+            )
+        else:
+            native = collect_native(path / "oracle.stderr", native_fixture)
+            capture = {
+                "native_geometry_validation": native["native_geometry_validation"],
+                "pid": wait["pid"],
+                "batches": [],
+            }
+            for trace in native["traces"]:
+                if trace["header"]["pid"] != wait["pid"]:
+                    raise ValueError(f"Foreign native capture: {name}")
+                parts = {part["part_id"]: part for part in trace["parts"]}
+                for batch in trace["batches"]:
+                    capture["batches"].append(
+                        {
+                            **batch,
+                            "trace_id": trace["header"]["trace_id"],
+                            "drained_ns": parts[batch["part_id"]]["drained_ns"],
+                        }
+                    )
+        expected = (contract["warmup"] + contract["samples"]) * PLANES
+        batches = capture["batches"]
+        if len(batches) != expected or capture["pid"] != wait["pid"]:
+            raise ValueError(f"Incomplete or foreign native batch capture: {name}")
+        parts = sorted({(b["trace_id"], b["part_id"]) for b in batches})
+        if (
+            len(parts) != contract["warmup"] + contract["samples"]
+            or len({t for t, _ in parts}) != 1
+        ):
+            raise ValueError(f"Incorrect operation/trace coverage: {name}")
+        for operation, part in zip(result["rounds"], parts, strict=True):
+            observed = operation["observation"]
+            group = [b for b in batches if (b["trace_id"], b["part_id"]) == part]
+            if len(group) != PLANES or any(
+                b["backend"] != "direct"
+                or not observed["started_ns"]
+                <= b["begin_ns"]
+                < b["submitted_ns"]
+                <= observed["enqueued_ns"]
+                or b["drained_ns"] > observed["drained_ns"]
+                for b in group
+            ):
+                raise ValueError(f"Driver windows differ from native operation: {name}")
+    elif any(
+        marker in (path / "oracle.stderr").read_text()
+        for marker in ("cache_timeline ", "local_raw_copy ")
+    ):
+        raise ValueError(f"Disabled diagnostic emitted native timeline records: {name}")
+    if mode == "driver":
+        pid, calls, threads = _driver_capture(path / "driver" / f"cuda-driver-{wait['pid']}.jsonl")
+        events = [event for thread in threads.values() for event in thread]
+        if pid != wait["pid"] or any(
+            not wait["launched_mono_ns"]
+            <= event["begin_ns"]
+            <= event["end_ns"]
+            <= wait["waited_mono_ns"]
+            for event in events
+        ):
+            raise ValueError(f"Foreign driver-only process/window: {name}")
+        operation_calls = []
+        for row in result["rounds"]:
+            clocks = row["observation"]
+            copies = [
+                event
+                for event in events
+                if event["name"].startswith("cuMemcpy")
+                and event["begin_ns"] < clocks["drained_ns"]
+                and event["end_ns"] > clocks["started_ns"]
+            ]
+            if not copies or any(
+                not clocks["started_ns"]
+                <= event["begin_ns"]
+                <= event["end_ns"]
+                <= clocks["enqueued_ns"]
+                or event["name"] not in {"cuMemcpyHtoDAsync_v2", "cuMemcpy2DAsync_v2"}
+                or event["result"] != 0
+                for event in copies
+            ):
+                raise ValueError(f"Missing or failed driver-only operation capture: {name}")
+            operation_calls.append(len(copies))
+        capture = {
+            "pid": pid,
+            "captured_driver_calls": calls,
+            "operation_copy_calls": operation_calls,
+        }
+    capture_file(path, mode, wait["pid"])
+    return capture
+
+
 def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
     if contract_path.is_symlink() or not contract_path.is_file():
         raise ValueError("Missing regular observation contract")
@@ -284,7 +392,6 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
         cleanup = _service(path, "manager")
         result = _read(path / "bytes" / "RESULT.json")
         elapsed = validate_observations(result, contract)
-        validate_activation(result, contract, mode, wait["pid"])
         if not (
             wait["launched_mono_ns"]
             <= result["rounds"][0]["observation"]["started_ns"]
@@ -295,98 +402,7 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
             raise ValueError(f"Native clocks lie outside live process ownership: {name}")
         previous_stop = cleanup["stop_finished_mono_ns"]
         previous_start_ticks = wait["start_ticks"]
-        capture = None
-        if VARIANTS[mode]["trace"]:
-            if mode == "on":
-                capture = analyze_engine(
-                    path / "driver" / f"cuda-driver-{wait['pid']}.jsonl",
-                    path / "oracle.stderr",
-                    native_fixture,
-                )
-            else:
-                native = collect_native(path / "oracle.stderr", native_fixture)
-                capture = {
-                    "native_geometry_validation": native["native_geometry_validation"],
-                    "pid": wait["pid"],
-                    "batches": [],
-                }
-                for trace in native["traces"]:
-                    if trace["header"]["pid"] != wait["pid"]:
-                        raise ValueError(f"Foreign native capture: {name}")
-                    parts = {part["part_id"]: part for part in trace["parts"]}
-                    for batch in trace["batches"]:
-                        capture["batches"].append(
-                            {
-                                **batch,
-                                "trace_id": trace["header"]["trace_id"],
-                                "drained_ns": parts[batch["part_id"]]["drained_ns"],
-                            }
-                        )
-            expected = (contract["warmup"] + contract["samples"]) * PLANES
-            batches = capture["batches"]
-            if len(batches) != expected or capture["pid"] != wait["pid"]:
-                raise ValueError(f"Incomplete or foreign native batch capture: {name}")
-            parts = sorted({(b["trace_id"], b["part_id"]) for b in batches})
-            if (
-                len(parts) != contract["warmup"] + contract["samples"]
-                or len({t for t, _ in parts}) != 1
-            ):
-                raise ValueError(f"Incorrect operation/trace coverage: {name}")
-            for operation, part in zip(result["rounds"], parts, strict=True):
-                observed = operation["observation"]
-                group = [b for b in batches if (b["trace_id"], b["part_id"]) == part]
-                if len(group) != PLANES or any(
-                    b["backend"] != "direct"
-                    or not observed["started_ns"]
-                    <= b["begin_ns"]
-                    < b["submitted_ns"]
-                    <= observed["enqueued_ns"]
-                    or b["drained_ns"] > observed["drained_ns"]
-                    for b in group
-                ):
-                    raise ValueError(f"Driver windows differ from native operation: {name}")
-        elif any(
-            marker in (path / "oracle.stderr").read_text()
-            for marker in ("cache_timeline ", "local_raw_copy ")
-        ):
-            raise ValueError(f"Disabled diagnostic emitted native timeline records: {name}")
-        if mode == "driver":
-            pid, calls, threads = _driver_capture(
-                path / "driver" / f"cuda-driver-{wait['pid']}.jsonl"
-            )
-            events = [event for thread in threads.values() for event in thread]
-            if pid != wait["pid"] or any(
-                not wait["launched_mono_ns"]
-                <= event["begin_ns"]
-                <= event["end_ns"]
-                <= wait["waited_mono_ns"]
-                for event in events
-            ):
-                raise ValueError(f"Foreign driver-only process/window: {name}")
-            operation_calls = []
-            for row in result["rounds"]:
-                clocks = row["observation"]
-                copies = [
-                    event
-                    for event in events
-                    if event["name"].startswith("cuMemcpy")
-                    and clocks["started_ns"]
-                    <= event["begin_ns"]
-                    <= event["end_ns"]
-                    <= clocks["drained_ns"]
-                ]
-                if not copies or any(
-                    event["name"] not in {"cuMemcpyHtoDAsync_v2", "cuMemcpy2DAsync_v2"}
-                    or event["result"] != 0
-                    for event in copies
-                ):
-                    raise ValueError(f"Missing or failed driver-only operation capture: {name}")
-                operation_calls.append(len(copies))
-            capture = {
-                "pid": pid,
-                "captured_driver_calls": calls,
-                "operation_copy_calls": operation_calls,
-            }
+        capture = validate_capture(path, result, wait, contract, native_fixture, mode)
         rows.append(
             {
                 "name": name,

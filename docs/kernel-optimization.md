@@ -708,8 +708,10 @@ disabled. `on` enables both and `off` enables neither. Every cell retains one
 warm-up, two measured complete 4K restores, full payload/sentinel/corruption
 controls, installed-file integrity and normal native/Manager shutdown.
 Native-only captures require the actual production geometry compiler; driver-only
-captures require the waited main process, complete driver records and copy calls
-inside every operation. Disabled captures must be absent.
+captures require the waited main process and complete driver records. Every
+memcpy overlapping an operation must be a successful H2D submission contained
+between operation start and all-enqueued acknowledgement; straddling calls and
+late submissions invalidate the cell. Disabled captures must be absent.
 
 The primary decision remains four independent `on/off` ratios and their paired
 95% interval, all bounded by 1.05. Each mode appears once in each position; native

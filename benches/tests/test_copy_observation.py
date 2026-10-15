@@ -496,6 +496,9 @@ def test_frozen_collector_activation_is_consumed(cohort, fault):
         "driver_window",
         "driver_result",
         "driver_direction",
+        "driver_after_enqueued",
+        "driver_crossing_start",
+        "driver_crossing_end",
         "missing_operation",
         "native_when_disabled",
     ],
@@ -527,6 +530,20 @@ def test_component_cost_requires_actual_mode_and_operation_coverage(cohort, monk
                 threads[7][0]["result"] = 1
             elif fault == "driver_direction":
                 threads[7][0]["name"] = "cuMemcpyDtoHAsync_v2"
+            elif fault == "driver_after_enqueued":
+                for event in threads[7]:
+                    event["begin_ns"] += 200_000
+                    event["end_ns"] += 200_000
+            elif fault == "driver_crossing_start":
+                event = threads[7][0].copy()
+                event["begin_ns"] -= 20
+                event["name"] = "cuMemcpyDtoHAsync_v2"
+                threads[7].append(event)
+            elif fault == "driver_crossing_end":
+                event = threads[7][0].copy()
+                event["begin_ns"] += 399_980
+                event["end_ns"] += 400_000
+                threads[7].append(event)
             else:
                 threads[7].pop()
             return pid, calls, threads
