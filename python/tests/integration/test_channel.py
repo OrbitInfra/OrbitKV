@@ -46,12 +46,16 @@ def test_channel_lifecycle_runs_with_no_grpc_listener(channel_server):
         client.health()
 
 
-def test_query_bundle_uses_bootstrapped_arena_and_core(channel_server, channel_client_context):
+@pytest.mark.parametrize("diagnostic", [False, True], ids=["save", "save-diagnostic"])
+def test_query_bundle_uses_bootstrapped_arena_and_core(
+    channel_server, channel_client_context, request, diagnostic
+):
     orbitkv_native = importlib.import_module("orbitkv.orbitkv")
     torch = pytest.importorskip("torch")
     bootstrap_socket = channel_server.bootstrap_socket
     assert bootstrap_socket is not None
     query_client = orbitkv_native.CacheManagerClient(bootstrap_socket)
+    request.addfinalizer(query_client.close)
     assert query_client.notification_fd >= 0
 
     def query(**kwargs):
@@ -83,10 +87,21 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(channel_server, channel_c
 
     block_hashes = [bytes([1]) * 32, bytes([2]) * 32]
     expected = channel_client_context.get_kv_cache()[:, 0:2].cpu().clone()
-    channel_client_context.client.save(
-        channel_client_context.registration,
-        [(channel_client_context._layer_names[0], [0, 1], block_hashes)],
-    )
+    registration = channel_client_context.registration
+    assert isinstance(registration, orbitkv_native.GpuRegistration)
+    saves = [(channel_client_context._layer_names[0], [0, 1], block_hashes)]
+    if diagnostic:
+        ok, message, observation = channel_client_context.client.save_diagnostic(
+            registration, saves
+        )
+        assert observation.session_epoch == channel_client_context.client.session_epoch
+        assert observation.request_id > 0 and observation.session_token > 0
+        assert (
+            0 < observation.submitted_mono_ns <= observation.returned_mono_ns <= time.monotonic_ns()
+        )
+    else:
+        ok, message = channel_client_context.client.save(registration, saves)
+    assert ok, message
     channel_client_context.get_kv_cache().zero_()
     torch.cuda.synchronize()
 

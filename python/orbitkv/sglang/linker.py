@@ -11,7 +11,7 @@ import time
 import uuid
 from concurrent.futures import CancelledError
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
@@ -29,6 +29,9 @@ from orbitkv.logging_utils import TRANSFER_TRACING, trace_transfer
 
 from .config import derive_namespace, resolve_static_loras, resolve_transfer_backend
 from .events import _LayerDoneCounter
+
+if TYPE_CHECKING:
+    from orbitkv import GpuRegistration
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +148,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self._queued_loads: dict[str, _Load] = {}
         self._load_queue: queue.Queue[tuple[int, list[_Load]] | None] = queue.Queue()
         self._offload_queue: queue.Queue[
-            tuple[list[tuple[str, list[int], list[bytes]]], torch.cuda.Event] | None
+            tuple[GpuRegistration, list[tuple[str, list[int], list[bytes]]], torch.cuda.Event]
+            | None
         ] = queue.Queue()
         self._completed_loads: queue.Queue[list[str]] = queue.Queue()
         self._load_error: Exception | None = None
