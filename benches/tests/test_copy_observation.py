@@ -204,6 +204,9 @@ def cohort(tmp_path, monkeypatch, request):
             "traces": [
                 {
                     "header": {"pid": value["pid"], "trace_id": 1},
+                    "headers": [
+                        {"pid": value["pid"], "clock": "CLOCK_MONOTONIC"} for _ in data["rounds"]
+                    ],
                     "parts": [
                         {"part_id": i, "drained_ns": row["observation"]["drained_ns"] - 10}
                         for i, row in enumerate(data["rounds"])
@@ -518,7 +521,7 @@ def test_component_cost_requires_actual_mode_and_operation_coverage(cohort, monk
 
         def change(*args):
             value = copy.deepcopy(original(*args))
-            value["traces"][0]["header"]["pid"] += 1
+            value["traces"][0]["headers"][0]["pid"] += 1
             return value
 
         monkeypatch.setattr(observation, "collect_native", change)
@@ -608,3 +611,84 @@ def test_live_cell_capture_cannot_change_before_next_admission(cohort, monkeypat
     monkeypatch.setattr(observation, owner, modify_after_parse)
     with pytest.raises(ValueError, match="changed during cell validation"):
         observation.validate_capture(path, data, wait, contract, native, mode)
+
+
+@pytest.mark.parametrize("cohort", ["components"], indirect=True)
+@pytest.mark.parametrize(
+    "fault", [None, "duration_as_clock", "early", "late", "missing", "float", "clock"]
+)
+def test_native_only_consumes_absolute_part_completion_from_real_parser(cohort, monkeypatch, fault):
+    from benches.local_restore_shapes import _collect
+    from benches.tests.test_local_restore_shapes import records
+
+    root, _, native, contract = cohort
+    cell = next(cell for cell in contract["cells"] if cell["mode"] == "native")
+    path = root / cell["name"]
+    wait = json.loads((path / "ORACLE-WAIT.json").read_text())
+    data = json.loads((path / "bytes/RESULT.json").read_text())
+    events = []
+    for part, row in enumerate(data["rounds"]):
+        header, batch, drained, footer = records()
+        for event in (header, batch, drained, footer):
+            event.update(pid=wait["pid"], sequence=part, clock="CLOCK_MONOTONIC")
+        reserved = 2 * PLANES + 1
+        header.update(limit=65536, records_before=part * reserved)
+        if fault == "clock" and part == 1:
+            header["clock"] = "CLOCK_REALTIME"
+        events.append(header)
+        for plane in range(PLANES):
+            item = copy.deepcopy(batch)
+            item.update(
+                part_id=part,
+                batch_id=plane,
+                begin_ns=row["observation"]["started_ns"] + 10 + plane * 1000,
+                submitted_ns=row["observation"]["started_ns"] + 510 + plane * 1000,
+            )
+            item["copies"][0]["device"] += plane * 65536
+            item["copies"][0]["registered_device_start"] += plane * 65536
+            events.append(item)
+        drained.update(
+            part_id=part,
+            batches=PLANES,
+            planned_descriptors=PLANES,
+            submitted_descriptors=PLANES,
+            host_drain_ns=10,
+            drained_ns=row["observation"]["drained_ns"] - 10,
+        )
+        if part == 0:
+            if fault == "duration_as_clock":
+                drained["drained_ns"] = drained["host_drain_ns"]
+            elif fault == "early":
+                drained["drained_ns"] = row["observation"]["started_ns"] + 1000
+            elif fault == "late":
+                drained["drained_ns"] = row["observation"]["drained_ns"] + 1
+            elif fault == "missing":
+                drained.pop("drained_ns")
+            elif fault == "float":
+                drained["drained_ns"] = float(drained["drained_ns"])
+        footer.update(
+            parts=part + 1,
+            batches=(part + 1) * PLANES,
+            descriptors=(part + 1) * PLANES,
+            records_reserved=(part + 1) * reserved,
+        )
+        events.extend((drained, footer))
+    (path / "oracle.stderr").write_text(
+        "".join("local_raw_copy " + json.dumps(event) + "\n" for event in events)
+    )
+
+    def native_collect(log, fixture):
+        # This CPU contract test consumes real schema records; native compiler
+        # execution is exercised separately by installed-artifact review.
+        return _collect(log) | {"native_geometry_validation": {"fixture": str(fixture)}}
+
+    monkeypatch.setattr(observation, "collect_native", native_collect)
+    if fault is None:
+        value = observation.validate_capture(path, data, wait, contract, native, "native")
+        assert len(value["batches"]) == 3 * PLANES
+        assert (
+            value["batches"][0]["drained_ns"] == data["rounds"][0]["observation"]["drained_ns"] - 10
+        )
+    else:
+        with pytest.raises(ValueError, match="clock|windows|drained_ns"):
+            observation.validate_capture(path, data, wait, contract, native, "native")

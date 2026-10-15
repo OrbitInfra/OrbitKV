@@ -12,6 +12,7 @@ from .cuda_submission import _driver_capture, analyze_engine
 from .kernel_pairs import _ratio_summary, _service
 from .local_restore_shapes import collect as collect_native
 from .metrics import validate_ownership
+from .raw_copy_shapes import _integer
 from .sglang_kv_oracle import PAGE_BYTES, PAGES, PLANES, page_maps
 
 VARIANTS = {
@@ -213,15 +214,18 @@ def validate_capture(
                 "batches": [],
             }
             for trace in native["traces"]:
-                if trace["header"]["pid"] != wait["pid"]:
-                    raise ValueError(f"Foreign native capture: {name}")
+                if any(
+                    header["pid"] != wait["pid"] or header.get("clock") != "CLOCK_MONOTONIC"
+                    for header in trace["headers"]
+                ):
+                    raise ValueError(f"Foreign native capture PID/clock: {name}")
                 parts = {part["part_id"]: part for part in trace["parts"]}
                 for batch in trace["batches"]:
                     capture["batches"].append(
                         {
                             **batch,
                             "trace_id": trace["header"]["trace_id"],
-                            "drained_ns": parts[batch["part_id"]]["drained_ns"],
+                            "drained_ns": _integer(parts[batch["part_id"]], "drained_ns", 1),
                         }
                     )
         expected = (contract["warmup"] + contract["samples"]) * PLANES
@@ -240,10 +244,10 @@ def validate_capture(
             if len(group) != PLANES or any(
                 b["backend"] != "direct"
                 or not observed["started_ns"]
-                <= b["begin_ns"]
-                < b["submitted_ns"]
+                <= _integer(b, "begin_ns", 1)
+                < _integer(b, "submitted_ns", 1)
                 <= observed["enqueued_ns"]
-                or b["drained_ns"] > observed["drained_ns"]
+                or not b["submitted_ns"] <= _integer(b, "drained_ns", 1) <= observed["drained_ns"]
                 for b in group
             ):
                 raise ValueError(f"Driver windows differ from native operation: {name}")
