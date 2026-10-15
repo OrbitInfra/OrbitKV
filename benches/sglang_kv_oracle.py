@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import ctypes
 import hashlib
 import importlib.metadata
 import json
@@ -435,6 +436,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260920)
     parser.add_argument("--warmup", type=int)
     parser.add_argument("--samples", type=int)
+    parser.add_argument("--driver-collector", type=Path)
     parser.add_argument("--output", type=external_path, required=True)
     args = parser.parse_args()
     if not __debug__ or os.environ.get("PYTHONOPTIMIZE"):
@@ -448,7 +450,42 @@ def main() -> None:
     validate_model(json.loads(args.model_config.read_text()))
     args.output.mkdir(parents=True, exist_ok=False)
     try:
+        if os.environ.get("LD_PRELOAD"):
+            raise ValueError("The controlled oracle forbids inherited LD_PRELOAD")
+        collector = None
+        collector_sha = None
+        directory = os.environ.get("ORBITKV_CUDA_DRIVER_TRACE_DIR")
+        if args.driver_collector is not None:
+            if any(module in sys.modules for module in ("torch", "sglang", "orbitkv")):
+                raise ValueError("Driver collector must load before Torch/engine/native imports")
+            library = args.driver_collector
+            if not library.is_absolute() or library.is_symlink() or not library.is_file():
+                raise ValueError("Driver collector must be an absolute regular library")
+            if not directory:
+                raise ValueError("Explicit driver collection requires a trace directory")
+            trace_dir = Path(directory)
+            if (
+                not trace_dir.is_absolute()
+                or trace_dir.is_symlink()
+                or not trace_dir.is_dir()
+                or any(trace_dir.iterdir())
+            ):
+                raise ValueError("Driver trace directory must be absolute, regular and empty")
+            collector_sha = hashlib.sha256(library.read_bytes()).hexdigest()
+            collector = ctypes.CDLL(str(library))
+        elif directory:
+            raise ValueError("A driver trace directory requires --driver-collector")
         result = run(args)
+        result["driver_capture"] = (
+            {
+                "loader": "explicit-dlopen",
+                "pid": os.getpid(),
+                "library": str(args.driver_collector),
+                "sha256": collector_sha,
+            }
+            if collector is not None
+            else None
+        )
     except BaseException as error:
         try:
             _write(

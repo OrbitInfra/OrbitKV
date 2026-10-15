@@ -11,7 +11,7 @@ from benches.metrics import DRAIN_GAUGES, REQUIRED_OWNERSHIP_GAUGES
 from benches.sglang_kv_oracle import PAGE_BYTES, PAGES, PLANES, page_maps
 
 
-def result(contract, factor=1, offset=0):
+def result(contract, factor=1, offset=0, mode="off"):
     sources, targets = page_maps(4096, 0)
     payload = len(sources) * PAGE_BYTES * PLANES
     rounds = []
@@ -71,6 +71,14 @@ def result(contract, factor=1, offset=0):
         "bytes_per_page_per_plane": PAGE_BYTES,
         "unregistered": True,
         "client_closed": True,
+        "driver_capture": {
+            "loader": "explicit-dlopen",
+            "pid": 100 + offset // 1_000_000_000,
+            "library": contract["collector"],
+            "sha256": contract["collector_sha256"],
+        }
+        if mode == "on"
+        else None,
         "observation_design": {"warmup": contract["warmup"], "samples": contract["samples"]},
         "rounds": rounds,
     }
@@ -81,7 +89,7 @@ def cohort(tmp_path, monkeypatch):
     native = tmp_path / "native"
     native.write_bytes(b"Frozen compiled geometry control")
     contract = {
-        "schema": "s4.copy-observation-pilot.v1",
+        "schema": "s4.copy-observation-pilot.v2",
         "warmup": 1,
         "samples": 2,
         "length": 4096,
@@ -90,6 +98,8 @@ def cohort(tmp_path, monkeypatch):
         "model_config_sha256": "a" * 64,
         "gpu_uuid": "GPU-26b6f4ae-dd04-cfdd-3e78-0150a85ae9fb",
         "native_fixture_sha256": hashlib.sha256(native.read_bytes()).hexdigest(),
+        "collector": str(tmp_path / "collector.so"),
+        "collector_sha256": "c" * 64,
         "expected_plane_sha256": [f"{i:064x}" for i in range(PLANES)],
         "variant_envs": {
             "off": {"trace": False, "driver": False, "limit": 0},
@@ -111,7 +121,10 @@ def cohort(tmp_path, monkeypatch):
     for i, cell in enumerate(contract["cells"]):
         path = root / cell["name"]
         (path / "bytes").mkdir(parents=True)
-        put(path / "bytes/RESULT.json", result(contract, offset=i * 1_000_000_000))
+        put(
+            path / "bytes/RESULT.json",
+            result(contract, offset=i * 1_000_000_000, mode=cell["mode"]),
+        )
         (path / "oracle.stderr").write_text("")
         put(
             path / "CELL.json",
@@ -201,7 +214,7 @@ def test_one_failed_pair_blocks_further_contention(cohort):
     root, cp, native, contract = cohort
     cell = contract["cells"][1]
     (root / cell["name"] / "bytes/RESULT.json").write_text(
-        json.dumps(result(contract, 1.08, offset=1_000_000_000))
+        json.dumps(result(contract, 1.08, offset=1_000_000_000, mode="on"))
     )
     data = observation.collect(root, cp, native)
     assert data["status"] == "PILOT_OVERHEAD_FAIL"
@@ -373,3 +386,56 @@ def test_file_integrity_checks_work_without_python311_file_digest(cohort, monkey
     root, cp, native, _ = cohort
     monkeypatch.delattr(hashlib, "file_digest", raising=False)
     assert observation.collect(root, cp, native)["status"] == "PILOT_OVERHEAD_PASS"
+
+
+@pytest.mark.parametrize(
+    "fault", ["foreign-zero-call", "missing-main", "symlink-main", "symlink-dir", "off-dangling"]
+)
+def test_per_cell_capture_census_rejects_invalid_files_before_analysis(tmp_path, fault):
+    directory = tmp_path / "driver"
+    directory.mkdir()
+    trace = directory / "cuda-driver-123.jsonl"
+    trace.write_text("main capture")
+    if fault == "foreign-zero-call":
+        (directory / "cuda-driver-124.jsonl").write_text(
+            '{"stage":"cuda_driver_complete","pid":124,"calls":0,"complete":true}\n'
+        )
+    elif fault == "missing-main":
+        trace.unlink()
+    elif fault == "symlink-main":
+        target = tmp_path / "external.jsonl"
+        trace.rename(target)
+        trace.symlink_to(target)
+    elif fault == "symlink-dir":
+        target = tmp_path / "external-driver"
+        directory.rename(target)
+        directory.symlink_to(target, target_is_directory=True)
+    else:
+        trace.unlink()
+        directory.rmdir()
+        directory.symlink_to(tmp_path / "missing", target_is_directory=True)
+    with pytest.raises(ValueError, match="capture"):
+        observation.capture_file(tmp_path, "off" if fault == "off-dangling" else "on", 123)
+
+
+@pytest.mark.parametrize(
+    "fault", ["legacy-loader", "wrong-pid", "wrong-library", "wrong-sha", "off-loaded"]
+)
+def test_frozen_collector_activation_is_consumed(cohort, fault):
+    root, cp, native, contract = cohort
+    i = 0 if fault == "off-loaded" else 1
+    path = root / contract["cells"][i]["name"] / "bytes/RESULT.json"
+    value = json.loads(path.read_text())
+    if fault == "off-loaded":
+        value["driver_capture"] = {"loader": "explicit-dlopen"}
+    else:
+        field, changed = {
+            "legacy-loader": ("loader", "LD_PRELOAD"),
+            "wrong-pid": ("pid", 999),
+            "wrong-library": ("library", "/other/collector.so"),
+            "wrong-sha": ("sha256", "d" * 64),
+        }[fault]
+        value["driver_capture"][field] = changed
+    path.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match="activation"):
+        observation.collect(root, cp, native)
