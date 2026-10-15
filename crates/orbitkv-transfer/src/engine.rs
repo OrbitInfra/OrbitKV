@@ -56,6 +56,7 @@ static TRANSFER_METRICS: LazyLock<TransferMetrics> = LazyLock::new(|| {
 
 #[derive(Default)]
 struct BatchAdmission {
+    closed: bool,
     active: usize,
     retained: usize,
     request_bytes: usize,
@@ -83,7 +84,8 @@ impl BatchAdmission {
         let mut state = admission.lock().unwrap_or_else(|error| error.into_inner());
         let logical_bytes = state.logical_bytes.checked_add(bytes);
         let total_request_bytes = state.request_bytes.checked_add(request_bytes);
-        if state.active >= MAX_NATIVE_BATCHES
+        if state.closed
+            || state.active >= MAX_NATIVE_BATCHES
             || logical_bytes.is_none()
             || total_request_bytes.is_none_or(|total| total > MAX_NATIVE_REQUEST_BYTES)
         {
@@ -247,6 +249,49 @@ impl TransferEngine {
         Ok(fixed_c_string(&output))
     }
 
+    /// Permanently stop admission and await source CPU/TCP pointer handlers.
+    /// Device/RDMA paths and active requester batches cannot produce a receipt.
+    /// On any error the caller must retain registrations and allocation owners.
+    pub fn close_source(&self, timeout: Duration) -> Result<()> {
+        let deadline = Instant::now() + timeout.min(Duration::from_secs(5));
+        {
+            let mut admission = self.admission.lock().unwrap_or_else(|e| e.into_inner());
+            admission.closed = true;
+        }
+        let mut epoch = [0 as c_char; 33];
+        let mut active = u64::MAX;
+        let status = unsafe {
+            native::close_source(
+                self.native,
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .as_millis() as u64,
+                &mut epoch,
+                &mut active,
+            )
+        };
+        check("closeSource", status)?;
+        if active != 0
+            || epoch[32] != 0
+            || epoch[..32]
+                .iter()
+                .any(|c| !matches!(*c as u8, b'0'..=b'9' | b'a'..=b'f'))
+        {
+            return Err(MooncakeError::Operation {
+                operation: "closeSourceReceipt",
+                status: -1,
+            });
+        }
+        let admission = self.admission.lock().unwrap_or_else(|e| e.into_inner());
+        if admission.active != 0 {
+            return Err(MooncakeError::Operation {
+                operation: "closeSourceRequesterStillOwned",
+                status: 1,
+            });
+        }
+        Ok(())
+    }
+
     /// Register memory under a Mooncake topology location such as `cpu:0`.
     ///
     /// # Safety
@@ -258,6 +303,13 @@ impl TransferEngine {
         length: usize,
         location: &str,
     ) -> Result<()> {
+        let admission = self.admission.lock().unwrap_or_else(|e| e.into_inner());
+        if admission.closed {
+            return Err(MooncakeError::Operation {
+                operation: "registerSourceClosed",
+                status: 1,
+            });
+        }
         let location = CString::new(location)?;
         check("registerLocalMemory", unsafe {
             native::register_memory(

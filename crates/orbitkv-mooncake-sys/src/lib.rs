@@ -117,6 +117,7 @@ type CloseSegment = unsafe extern "C" fn(NativeEngine, SegmentId) -> c_int;
 type RegisterMemory =
     unsafe extern "C" fn(NativeEngine, *mut c_void, usize, *mut MemoryOptions) -> c_int;
 type UnregisterMemory = unsafe extern "C" fn(NativeEngine, *mut c_void, usize) -> c_int;
+type CloseSource = unsafe extern "C" fn(NativeEngine, u64, *mut c_char, *mut u64) -> c_int;
 type AllocateBatch = unsafe extern "C" fn(NativeEngine, usize) -> BatchId;
 type Submit = unsafe extern "C" fn(NativeEngine, BatchId, *mut TransferRequest, usize) -> c_int;
 type SubmitWithNotify = unsafe extern "C" fn(
@@ -150,6 +151,7 @@ struct Api {
     close_segment: CloseSegment,
     register_memory: RegisterMemory,
     unregister_memory: UnregisterMemory,
+    close_source: CloseSource,
     allocate_batch: AllocateBatch,
     submit: Submit,
     submit_with_notify: SubmitWithNotify,
@@ -243,6 +245,7 @@ unsafe fn load_api_from(directory: &Path) -> Result<Api, String> {
         close_segment: unsafe { symbol(&library, b"tent_close_segment\0")? },
         register_memory: unsafe { symbol(&library, b"tent_register_memory_ex\0")? },
         unregister_memory: unsafe { symbol(&library, b"tent_unregister_memory\0")? },
+        close_source: unsafe { symbol(&library, b"tent_close_source\0")? },
         allocate_batch: unsafe { symbol(&library, b"tent_allocate_batch\0")? },
         submit: unsafe { symbol(&library, b"tent_submit\0")? },
         submit_with_notify: unsafe { symbol(&library, b"tent_submit_notif\0")? },
@@ -367,6 +370,15 @@ pub unsafe fn unregister_memory(
     length: usize,
 ) -> c_int {
     unsafe { (api().unregister_memory)(engine, address, length) }
+}
+
+pub unsafe fn close_source(
+    engine: NativeEngine,
+    timeout_ms: u64,
+    epoch: &mut [c_char; 33],
+    active: &mut u64,
+) -> c_int {
+    unsafe { (api().close_source)(engine, timeout_ms, epoch.as_mut_ptr(), active) }
 }
 
 pub unsafe fn allocate_batch(engine: NativeEngine, batch_size: usize) -> BatchId {

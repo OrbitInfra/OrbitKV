@@ -39,7 +39,7 @@ fn main() {
 
     if let Some(prebuilt_dir) = env::var_os("ORBITKV_MOONCAKE_LIB_DIR") {
         println!(
-            "cargo:warning=prebuilt TENT override: caller must verify the merged upstream copy-status backport in its artifact provenance"
+            "cargo:warning=prebuilt TENT override: verify copy/context, worker ownership and source-admission candidate patches in artifact provenance; matching TCP wire and tent_close_source are required"
         );
         stage_prebuilt_libraries(Path::new(&prebuilt_dir), &runtime_dir);
         set_origin_runpaths(&runtime_dir);
@@ -68,6 +68,7 @@ fn main() {
     for name in [
         "tcp-copy-status-and-cuda-context.patch",
         "tcp-worker-terminal-owner.patch",
+        "tcp-source-admission-drain.patch",
     ] {
         let patch = manifest_dir.join("patches").join(name);
         println!("cargo:rerun-if-changed={}", patch.display());

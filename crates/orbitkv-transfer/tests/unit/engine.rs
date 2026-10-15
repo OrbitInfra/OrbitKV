@@ -98,6 +98,25 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
             .register_memory_owned(base, memory.len(), "cpu:0")
             .expect("register memory again")
     };
+    #[cfg(not(any(feature = "cuda-12", feature = "cuda-13")))]
+    {
+        engine
+            .close_source(Duration::from_secs(1))
+            .expect("physical CPU/TCP source receipt");
+        assert!(unsafe { engine.register_memory_owned(base, memory.len(), "cpu:0") }.is_err());
+        assert!(matches!(
+            engine.submit_and_wait(
+                TransferOp::Read,
+                &segment,
+                &slices,
+                Duration::from_millis(1)
+            ),
+            Err(MooncakeError::BatchAdmissionExhausted)
+        ));
+        engine
+            .close_source(Duration::ZERO)
+            .expect("idempotent closed source receipt");
+    }
     drop(engine);
     drop(registration);
     unsafe {

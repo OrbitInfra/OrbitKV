@@ -351,6 +351,49 @@ old-library failures are preserved. Independent acceptance, installed package
 and hardware qualification remain separate. Delayed batch/address reuse and
 physical termination are not established by this candidate.
 
+PR #237 is merged at `53e69620`: its accepted CPU/TCP counterexample proves
+that logical unregister can return while a previously admitted source copy
+still uses the address. The next candidate adds an irreversible native source
+admission gate and counts actual inbound handlers before pointer resolution.
+Only a CPU-only, TCP-only engine whose handlers have returned can report drain;
+the Rust pool owner also requires its local requester admission to be empty
+before unregistering. TCP requests carry a native engine epoch, and retries
+cannot silently switch to a restarted source epoch. This is whole-engine
+shutdown, not per-ticket orphan reclamation or allocation/page generation.
+The native packet epoch is captured at the first TENT segment lookup. It is
+not yet bound to the OrbitKV source authorization reply, so first submission
+of a stale grant after endpoint/address reuse remains an open generation gate.
+The focused native extension is an unreleased candidate on the fixed pin;
+matching peer/runtime packages are required. CUDA builds and other loaded
+transports return unsupported, retaining the engine, registration tokens and
+pool. Live and retained source pools share a process admission cap of 1,024
+pools and 1 TiB of registered backing, distinct from batch descriptors and
+per-query/export payload budgets. Independent `ACCEPTED_CODE_CPU_SCOPE` at
+`09b77062` covers source/dispatch drain and actual Rust-owner CPU boundaries;
+installed package, GPU/RDMA and adapter qualification remain open. Preserve
+all controls under `/root/orbitkv-artifacts/s3-source-read-drain-20261014/`.
+The first checkpoint `dd5589c5` was independently rejected for an unguarded
+Delegate pointer entry and an invalid close receipt on an unavailable engine.
+Its freeze and failing controls remain preserved. The correction refuses that
+unversioned delegate entry in the CPU/TCP receipt profile and validates native
+availability/epoch before touching receipt outputs. Native byte controls and
+test-only host-registration/C ABI controls of the actual Rust pool owner are
+separate from real CUDA registration, installed-package and GPU/RDMA gates.
+Further teardown review found queued global-executor callbacks and staging RPCs
+were not covered by server I/O shutdown. The current correction counts dispatch
+before offload, closes that admission, waits actual callback completion within
+the same source-close budget, and publishes readiness at the final successful
+constructor boundary. Pin/Unpin are refused in the CPU receipt profile. Existing
+failed checkpoints remain rejected. Independent exact rereview accepted
+`09b770623ff69248235d75b69abbedbd77c4ffd2`, tree `e2d96237`, and reran seven
+native source, three queued/running/throw dispatch and five actual-owner CPU
+controls. Every child exited zero with verified mappings and actual reap, with
+no forced cleanup. Review and verdict are under `independent-final09b-review/`
+in that artifact root; review SHA256 is
+`7753ed43fbeab8322eb5072b942c8fce4416c2932ac6163db367d17f51f23c66`.
+This accepts neither CUDA host registration nor device/RDMA termination,
+per-ticket reclamation, old-grant first submission, page reuse or adapters.
+
 The old three-host readiness quarantine is a separate, scoped audit case. Its
 query-source unregister succeeded; the client was deliberately closed before
 the missing metric exception, and partial cleanup then retried that closed
