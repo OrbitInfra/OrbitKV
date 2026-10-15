@@ -357,7 +357,11 @@ def test_pure_mla_collapses_storage_tp_but_stripes_saves_within_each_node():
 
 def test_scheduler_delegates_dense_shards_to_one_native_query_owner():
     client = MagicMock()
-    client.query_shards.return_value = ShardedQueryReady(2, (b"a" * 16, b"b" * 16), b"c" * 16)
+    response = MagicMock(spec=ShardedQueryReady)
+    response.num_hit_blocks = 2
+    response.leases = (b"a" * 16, b"b" * 16)
+    response.control_id = b"c" * 16
+    client.query_shards.return_value = response
     scheduler = SchedulerAdapter(_context(client=client))
     scheduler.query_handshake_ready = True
     probe = _QueryProbe(0, (b"h0", b"h1", b"h2"))

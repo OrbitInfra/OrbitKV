@@ -22,6 +22,9 @@ from orbitkv.vllm.worker import WorkerAdapter  # noqa: E402
 @pytest.fixture(autouse=True)
 def current_cuda_stream(monkeypatch):
     monkeypatch.setattr(
+        "orbitkv.vllm.worker.torch.cuda.Event", lambda *_args, **_kwargs: MagicMock()
+    )
+    monkeypatch.setattr(
         "orbitkv.vllm.worker.torch.cuda.current_stream",
         lambda _device=None: SimpleNamespace(cuda_stream=17, wait_event=MagicMock()),
     )
