@@ -8,7 +8,7 @@ use orbitkv_state::{AttentionRole, Scalar16, StorageFormat};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::cache::session::{SessionRegistry, SessionTopology};
-use crate::registry::RegistryHandle;
+use crate::registry::{ContextKey, RegistryHandle};
 
 pub(crate) struct SessionSpec {
     pub(crate) instance_id: String,
@@ -242,8 +242,12 @@ impl LifecycleService {
         let world_size = Self::usize_from_u32(req.world_size, "world_size")?;
 
         // Materialize tensors and collect data_ptr/size_bytes
-        let context_key =
-            Self::context_key(&req.instance_id, req.tp_rank, req.pp_rank, &req.device_uuid);
+        let context_key = ContextKey {
+            instance_id: req.instance_id.clone(),
+            tp_rank: req.tp_rank,
+            pp_rank: req.pp_rank,
+            device_uuid: req.device_uuid.clone(),
+        };
         // Materialize on the dedicated registry thread (GIL + CUDA IPC) and
         // await the result, so this RPC never blocks an async worker. Move
         // the (large) wrapper bytes over; clone the layer names since the
@@ -256,7 +260,7 @@ impl LifecycleService {
             .collect();
         let metadatas = self
             .registry
-            .register_layers(context_key.clone(), req.device_uuid, layers)
+            .register_layers(context_key.clone(), layers)
             .await
             .map_err(|message| {
                 ControlError::internal(format!("register tensor failed: {message}"))
@@ -367,7 +371,7 @@ impl LifecycleService {
             let removed = self.registry.drop_context(context_key.clone()).await;
             if removed > 0 {
                 warn!(
-                    "Rolled back {} CUDA tensor(s) for failed register_context_batch context {}",
+                    "Rolled back {} CUDA tensor(s) for failed register_context_batch context {:?}",
                     removed, context_key
                 );
             }
@@ -397,9 +401,6 @@ impl LifecycleService {
             ));
         }
         Ok(())
-    }
-    fn context_key(instance_id: &str, tp_rank: u32, pp_rank: u32, device_uuid: &str) -> String {
-        format!("{instance_id}:tp{tp_rank}:pp{pp_rank}:{device_uuid}")
     }
 
     fn map_engine_error(err: EngineError) -> ControlError {

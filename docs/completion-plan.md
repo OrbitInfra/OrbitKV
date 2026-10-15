@@ -462,9 +462,14 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   are under `/root/orbitkv-artifacts/s3-managed-restore-retention-20261015/`.
   Live Manager endpoint bytes, installed GPU/adapter faults and physical
   termination/reclaim remain open. Before adding registration generations,
-  fix the existing imported-context owner selection: instance cleanup must
-  compare the whole instance identity, not a string prefix shared by another
-  legal instance such as `a:b`.
+  the imported-context owner candidate now uses a structured instance/rank/GPU
+  UUID key; cleanup compares the whole instance identity, not a string prefix
+  shared by another legal instance such as `a:b`. The original selector fails
+  its CPU control; exact-key units and the actual registry actor preserve the
+  other context and its duplicate-registration guard. Independent acceptance
+  and actual CUDA mapping/lifetime qualification remain open; evidence is
+  under `/root/orbitkv-artifacts/s3-registration-owner-20261015/`. This does
+  not replace the remaining pickle wire or implement allocation/page generation.
 - Replace the remaining framework CUDA IPC pickle interpretation in the Manager
   with explicit validated registration data; remove the retired wire/API path.
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

@@ -284,7 +284,9 @@ existing local pending-query semantics.
 Standalone mode starts no gRPC listener. Distributed placement configuration
 enables the peer transfer-control listener. UDS and HTTP cleanup serialize
 instance lifecycle, close Manager GPU queues, drain their submitted work, and
-then release imported CUDA IPC mappings. The native client separately drains
+then release imported CUDA IPC mappings. Imported contexts use exact instance,
+TP/PP rank and GPU UUID keys; punctuation in a legal instance name cannot make
+cleanup select another instance that shares its prefix. The native client separately drains
 its engine-local operations. Manager cleanup cannot discard active local grant
 owners merely because the instance or UDS session has closed.
 
