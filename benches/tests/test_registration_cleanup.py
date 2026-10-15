@@ -102,3 +102,68 @@ def test_retired_harness_registration_releases_only_its_own_exporter_hold(
     assert (observed() is not None) == queued_hold
     del queued
     assert observed() is None
+
+
+@pytest.mark.parametrize(
+    ("failure", "queued_owner"),
+    [
+        pytest.param(None, None, id="normal"),
+        pytest.param(None, "source", id="queued-source"),
+        pytest.param(None, "consumer", id="queued-consumer"),
+        pytest.param("source-unregister", None, id="source-unregister-fails"),
+        pytest.param("consumer-unregister", None, id="consumer-unregister-fails"),
+        pytest.param("source-close", None, id="source-close-fails"),
+        pytest.param("consumer-close", None, id="consumer-close-fails"),
+        pytest.param("consumer-close", "source", id="partial-close-with-queued-source"),
+    ],
+)
+def test_distributed_fault_cleanup_retires_matching_registration(failure, queued_owner):
+    source = Path(os.environ.get("ORBITKV_CLEANUP_SOURCE_ROOT", Path(__file__).parents[1]))
+    path = source.parent / "python/tests/integration/test_distributed_cache.py"
+    module = ast.parse(path.read_text())
+    function = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd"
+    )
+    loops = sorted(
+        (node for node in ast.walk(function) if isinstance(node, ast.For)),
+        key=lambda node: node.lineno,
+    )
+    unregister = next(
+        node
+        for node in loops
+        if isinstance(node.iter, ast.Call)
+        and isinstance(node.iter.func, ast.Name)
+        and node.iter.func.id == "zip"
+        and any(
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "unregister_context"
+            for call in ast.walk(node)
+        )
+    )
+    close = next(node for node in loops if node.lineno == unregister.end_lineno + 1)
+    registrations = {node: Registration(Exporter()) for node in ("source", "consumer")}
+    exporters = {node: weakref.ref(owner.exporter) for node, owner in registrations.items()}
+    queued = registrations.get(queued_owner)
+    owner, _, stage = (failure or "").partition("-")
+    clients = [Client(stage if node == owner else None) for node in ("source", "consumer")]
+    namespace = {"clients": clients, "gpu_registrations": registrations}
+    body = compile(ast.Module(body=[unregister, close], type_ignores=[]), str(path), "exec")
+    if failure:
+        with pytest.raises((AssertionError, RuntimeError)):
+            exec(body, namespace)
+        remaining = {"consumer"} if failure == "consumer-close" else {"source", "consumer"}
+    else:
+        exec(body, namespace)
+        remaining = set()
+        assert all(client.calls == ["unregister", "close"] for client in clients)
+    assert set(registrations) == remaining
+    assert all(
+        (ref() is not None) == (node in remaining or node == queued_owner)
+        for node, ref in exporters.items()
+    )
+    del queued
+    assert all((ref() is not None) == (node in remaining) for node, ref in exporters.items())
