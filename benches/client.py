@@ -61,7 +61,7 @@ def main() -> None:
         torch.cuda.synchronize()
         hashes = [hashlib.sha256(str(index).encode()).digest() for index in range(1024)]
         try:
-            client.register_context_batch(
+            registration = client.register_context_batch(
                 "poll-bench",
                 "poll-bench",
                 0,
@@ -79,7 +79,7 @@ def main() -> None:
                 False,
                 tensors=[pages],
             )
-            client.save("poll-bench", 0, 0, 0, [("layer", list(range(1024)), hashes)])
+            client.save(registration, [("layer", list(range(1024)), hashes)])
             demand = BlockHashes(hashes)
             deadline = time.monotonic() + 10
             while True:

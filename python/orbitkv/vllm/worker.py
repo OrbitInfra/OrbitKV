@@ -43,6 +43,7 @@ if _LOAD_TIMEOUT_RAW < _LOAD_TIMEOUT_FLOOR_SECONDS:
 
 @dataclass
 class SaveTask:
+    registration: object
     metadata: OrbitKVConnectorMetadata
     request_ids: list[str]
     ready: torch.cuda.Event
@@ -237,6 +238,7 @@ class WorkerAdapter:
         self._layer_events: dict[str, torch.cuda.Event] = {}
 
         self._registered_layers: list[str] = []
+        self._registration = None
         # Page-first storage: all layers of a block in one host page, one slot
         # per tp_rank. Saves distribute by block stripe instead of by layer.
         self._page_first: bool = False
@@ -266,6 +268,7 @@ class WorkerAdapter:
                 logger.warning("[OrbitKVConnector] Unregister context failed: %s", message)
 
         self._registered_layers.clear()
+        self._registration = None
         self._layer_events.clear()
         self._restore = None
 
@@ -441,7 +444,7 @@ class WorkerAdapter:
             for name in layer_names
         ]
 
-        ok, message = self._ctx.client.register_context_batch(
+        self._registration = self._ctx.client.register_context_batch(
             self._ctx.instance_id,
             self._ctx.namespace,
             self._ctx.effective_tp_rank,
@@ -462,11 +465,6 @@ class WorkerAdapter:
             layer_formats=layer_formats,
             layer_attention=layer_attention,
         )
-
-        if not ok:
-            if "OrbitKV version mismatch" in message:
-                raise RuntimeError(f"Register context failed: {message}")
-            raise RuntimeError(f"Register context batch failed for layers {layer_names}: {message}")
 
         self._registered_layers = layer_names
         self._layer_events = {name: torch.cuda.Event(external=True) for name in layer_names}
@@ -716,6 +714,7 @@ class WorkerAdapter:
         if metadata.boundary_save_intents:
             self._save_queue.put(
                 SaveTask(
+                    registration=self._registration,
                     metadata=OrbitKVConnectorMetadata(
                         save_intents={
                             f"boundary:{job_id}": intent
@@ -755,6 +754,7 @@ class WorkerAdapter:
                 self._req_pending_save_tasks[req_id] = pending_tasks + 1
 
         return SaveTask(
+            registration=self._registration,
             metadata=OrbitKVConnectorMetadata(save_intents=save_intents),
             request_ids=request_ids,
             ready=ready,
@@ -851,13 +851,10 @@ class WorkerAdapter:
         success = False
 
         try:
-            ok, message = self._client.save(
-                self._ctx.instance_id,
-                self._ctx.effective_tp_rank,
-                self._ctx.pp_rank,
-                self._ctx.device_id,
-                saves_list,
-            )
+            registration = batch[0].registration
+            if registration is None or any(task.registration is not registration for task in batch):
+                raise RuntimeError("save batch spans different GPU registrations")
+            ok, message = self._client.save(registration, saves_list)
 
             if not ok:
                 logger.error(

@@ -30,7 +30,7 @@ branches at cutover. See [interface audit](engine-release-audit.md).
 | --- | --- | --- |
 | S0 | Complete | Handoff/skill migration merged in PR #190 |
 | S1 | Accepted at `ec3add9b` | Preserve external evidence and one queue |
-| S2 | Accepted implementation; full qualification open | Reviewed metadata contracts, the same-host four-owner baseline and one normal-SIGTERM three-host etcd process-only cohort are accepted. DRAM/SSD isolation FAIL; sixteen owners UNQUALIFIED; support stays four owners. Cross-host cache HA and independent etcd failure domains remain unqualified |
+| S2 | Complete for the accepted engineering scope | Reviewed metadata contracts, the same-host four-owner baseline and one normal-SIGTERM three-host etcd process-only cohort are accepted. DRAM/SSD isolation FAIL; sixteen owners UNQUALIFIED; support stays four owners. Cross-host cache HA and independent etcd failure domains remain unqualified |
 | S3 | Implementation partial; qualification open | Conservative native failure retention has limited code/CPU acceptance at `27f1cb1b`; physical termination proof, installed GPU/adapter gates, page generations, explicit registration and crash reclamation remain open |
 | S4 | Partial | Measured copy/SSD/control improvements exist; mixed contention, complete serving gains and S3-dependent faults remain open |
 | S5 | Partial | Official dense cache/restart and scoped deployment profiles accepted; public lifecycle, complete hybrid recovery, native P/D faults and broader topology remain open |
@@ -78,7 +78,7 @@ in the immutable plan.
 **Depends on:** S1. **Owners:** `orbitkv-server/src/cluster/`, `orbitkv-catalog/`,
 core inventory and metadata diagnostics.
 
-**Accepted engineering scope:** reviewed metadata contracts, the same-host
+**Complete for the accepted engineering scope (user closure, 2026-10-15):** reviewed metadata contracts, the same-host
 four-owner baseline and one normal-SIGTERM three-host etcd process-only cohort
 are handed off. Their
 acceptance does not mean every qualification criterion below passed.
@@ -104,7 +104,7 @@ dependent work.
   Three etcd processes on one machine prove process faults only. Include startup
   readiness, operational diagnosis and recovery instructions.
 
-**Full qualification acceptance (required before claiming completion):**
+**Full qualification acceptance (required before claiming full qualification):**
   no lost final puts/deletes after convergence, no stale incarnation
   authorization, bounded memory/queues, local cache still usable during metadata
   loss, and a repeatable capacity/recovery report. A fenced runtime restarts with
@@ -497,6 +497,17 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   review `da45664e6b0d47584a5c27b19c307410a2c05b8aa25447954e95e74f49266fc0`
   are under `/root/orbitkv-artifacts/s3-registration-generation-20261015/`.
   Installed GPU/adapter and allocation/page-generation qualification remain open.
+  The next implemented substage issues a native `GpuRegistration` at registration
+  and requires it for Publish. vLLM request/boundary tasks and SGLang offload
+  tasks capture it at producer handoff. Native validation preserves the old
+  generation across worker-lock waits and rejects retired/foreign-client input;
+  the authority retains exporters after unregister. Matching stubs, reusable
+  workloads and test callers consume the new API; the old Publish signature is
+  removed. This closes the pre-snapshot/late-callback code boundary pending
+  independent CPU/installed-import acceptance. It does not supply engine page
+  generations, physical termination or GPU/model qualification. New controls
+  and installation evidence are under
+  `/root/orbitkv-artifacts/s3-registration-authority-20261015/`.
 - Replace the remaining framework CUDA IPC pickle interpretation in the Manager
   with explicit validated registration data; remove the retired wire/API path.
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

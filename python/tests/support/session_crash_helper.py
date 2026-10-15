@@ -36,7 +36,7 @@ def main() -> int:
     kv_stride_bytes = stride[0] * element_size
     segments = 2
 
-    ok, msg = client.register_context_batch(
+    client.register_context_batch(
         instance_id,
         "test-ns",
         0,  # tp_rank
@@ -54,9 +54,6 @@ def main() -> int:
         False,
         tensors=[kv],
     )
-    if not ok:
-        print(f"register_context_batch failed: {msg}", file=sys.stderr)
-        return 1
 
     client.start_session_watcher(instance_id, "test-ns", 1, 1)
 

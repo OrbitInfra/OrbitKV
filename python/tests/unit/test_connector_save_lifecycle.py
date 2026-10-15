@@ -37,12 +37,15 @@ def make_worker() -> WorkerAdapter:
         client=MagicMock(),
     )
     with patch("orbitkv.vllm.worker.threading.Thread.start"):
-        return WorkerAdapter(
+        worker = WorkerAdapter(
             context,
             vllm_config=SimpleNamespace(
                 model_config=SimpleNamespace(get_head_size=lambda: 128), additional_config={}
             ),
         )
+
+    worker._registration = object()
+    return worker
 
 
 def enqueue_save(
@@ -107,7 +110,7 @@ def test_blocks_are_not_reused_until_every_save_task_completes():
     gpu_blocks = {1: b"first request block", 2: b"second request block"}
     stored_blocks: dict[bytes, bytes] = {}
 
-    def save(_instance, _tp_rank, _pp_rank, _device_id, saves):
+    def save(_registration, saves):
         for _layer, block_ids, block_hashes in saves:
             for block_id, block_hash in zip(block_ids, block_hashes, strict=True):
                 stored_blocks[block_hash] = gpu_blocks[block_id]
@@ -160,7 +163,7 @@ def test_boundary_state_saves_run_async_and_report_job_completion():
     worker._layer_to_group = {"attention": 0, "recurrent": 1}
     saved: list[tuple[str, list[int], list[bytes]]] = []
 
-    def save(_instance, _tp_rank, _pp_rank, _device_id, saves):
+    def save(_registration, saves):
         saved.extend(saves)
         return False, "store unavailable"
 
@@ -233,7 +236,7 @@ def test_save_uses_the_selected_data_plane():
 
     process_next_save(worker)
 
-    cache_client.save.assert_called_once_with("test", 0, 0, 0, [("layer", [1], [b"hash"])])
+    cache_client.save.assert_called_once_with(worker._registration, [("layer", [1], [b"hash"])])
     worker._ctx.client.save.assert_not_called()
 
 
@@ -292,7 +295,7 @@ def test_malformed_save_intent_is_skipped_and_still_completes():
 
     process_next_save(worker)
 
-    (_, _, _, _, saves), _ = worker._ctx.client.save.call_args
+    (_, saves), _ = worker._ctx.client.save.call_args
     assert saves == [("layer", [2], [b"h2"])]
     finished_sending = worker.get_transfer_results({"torn", "good"}).finished_sending
     assert finished_sending == {"torn", "good"}
@@ -339,3 +342,41 @@ def test_shutdown_publishes_pending_saves_before_unregistering():
     worker.shutdown()
     assert calls == ["save", "unregister"]
     assert worker._save_queue.unfinished_tasks == 0
+
+
+@pytest.mark.parametrize("boundary", [False, True], ids=["request", "boundary"])
+def test_queued_save_keeps_the_registration_captured_by_its_producer(boundary):
+    worker = make_worker()
+    worker._registered_layers = ["layer"]
+    original = worker._registration
+    worker._client.save.return_value = (True, "")
+    if boundary:
+        worker._cache_groups = SimpleNamespace(has_recurrent_state=True, group_count=2)
+        worker._layer_to_group = {"layer": 0}
+        worker._current_metadata = OrbitKVConnectorMetadata(
+            boundary_save_intents={
+                8: SaveIntent(block_ids_by_group=((1,),), block_hashes=(b"hash",))
+            }
+        )
+        worker.wait_for_save()
+    else:
+        enqueue_save(worker)
+    worker._registration = object()
+
+    process_next_save(worker)
+
+    worker._client.save.assert_called_once_with(original, [("layer", [1], [b"hash"])])
+
+
+def test_batch_with_two_registration_owners_is_rejected_before_publish(caplog):
+    worker = make_worker()
+    worker._registered_layers = ["layer"]
+    enqueue_save(worker, 1, b"one")
+    worker._registration = object()
+    completion = enqueue_save(worker, 2, b"two")
+
+    worker._process_save_batch([worker._save_queue.get_nowait() for _ in range(2)])
+
+    worker._client.save.assert_not_called()
+    assert "save batch spans different GPU registrations" in caplog.text
+    assert completion.is_set()

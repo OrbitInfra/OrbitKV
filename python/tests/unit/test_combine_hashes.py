@@ -357,13 +357,15 @@ def test_page_first_saves_all_layers_for_this_ranks_block_stripe():
         }
     )
     try:
-        worker._process_save_batch([SaveTask(metadata=meta, request_ids=["r1"], ready=MagicMock())])
+        worker._process_save_batch(
+            [SaveTask(registration=object(), metadata=meta, request_ids=["r1"], ready=MagicMock())]
+        )
     finally:
         worker._registered_layers = []  # skip mock unregister on shutdown
         worker.shutdown()
 
     ctx.client.save.assert_called_once()
-    saves_list = ctx.client.save.call_args.args[4]
+    saves_list = ctx.client.save.call_args.args[1]
     # Every layer is saved (the whole page)...
     assert {name for name, _ids, _hashes in saves_list} == {"a", "b", "c"}
     # ...but only rank 1's block stripe (odd block ids), hashes kept aligned.
@@ -398,13 +400,17 @@ def test_recurrent_save_omits_null_group_target():
 
     try:
         worker._process_save_batch(
-            [SaveTask(metadata=metadata, request_ids=["r1"], ready=MagicMock())]
+            [
+                SaveTask(
+                    registration=object(), metadata=metadata, request_ids=["r1"], ready=MagicMock()
+                )
+            ]
         )
     finally:
         worker._registered_layers = []
         worker.shutdown()
 
-    saves = ctx.client.save.call_args.args[4]
+    saves = ctx.client.save.call_args.args[1]
     assert saves == [("attention", [11], [b"h0"])]
 
 
@@ -437,13 +443,15 @@ def test_page_first_layer_split_saves_own_layers_for_all_blocks():
         }
     )
     try:
-        worker._process_save_batch([SaveTask(metadata=meta, request_ids=["r1"], ready=MagicMock())])
+        worker._process_save_batch(
+            [SaveTask(registration=object(), metadata=meta, request_ids=["r1"], ready=MagicMock())]
+        )
     finally:
         worker._registered_layers = []  # skip mock unregister on shutdown
         worker.shutdown()
 
     ctx.client.save.assert_called_once()
-    saves_list = ctx.client.save.call_args.args[4]
+    saves_list = ctx.client.save.call_args.args[1]
     # Only this rank's shard layers...
     assert {name for name, _ids, _hashes in saves_list} == {"b", "d"}
     # ...and every block (no striping), hashes kept aligned.

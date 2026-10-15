@@ -185,6 +185,25 @@ fn seconds(value: f64) -> PyResult<Duration> {
         .map_err(|_| PyValueError::new_err("timeout must be finite and non-negative"))
 }
 
+#[pyclass(name = "GpuRegistration", frozen)]
+pub(crate) struct PyGpuRegistration {
+    instance_id: String,
+    tp_rank: u32,
+    pp_rank: u32,
+    device_id: i32,
+    generation: [u8; 16],
+    owner: Weak<CacheClient>,
+    _tensors: Arc<Vec<Py<PyAny>>>,
+}
+
+#[pymethods]
+impl PyGpuRegistration {
+    #[getter]
+    fn generation(&self, py: Python<'_>) -> Py<PyBytes> {
+        PyBytes::new(py, &self.generation).unbind()
+    }
+}
+
 #[pyclass(name = "CacheManagerClient", frozen)]
 pub(crate) struct PyCacheManagerClient {
     inner: Arc<CacheClient>,
@@ -193,20 +212,28 @@ pub(crate) struct PyCacheManagerClient {
 }
 
 impl PyCacheManagerClient {
-    fn manager_registration(
+    fn registered_worker(
         &self,
-        instance_id: &str,
-        tp_rank: u32,
-        device_id: i32,
-    ) -> PyResult<(i32, [u8; 16])> {
+        registration: &PyGpuRegistration,
+    ) -> PyResult<Arc<LocalRestoreWorker>> {
+        if !Weak::ptr_eq(&Arc::downgrade(&self.inner), &registration.owner) {
+            return Err(PyValueError::new_err(
+                "GPU registration belongs to another client",
+            ));
+        }
         let local = self
             .local
             .lock()
             .map_err(|_| OrbitKVInternal::new_err("local executor lock poisoned"))?;
         local
-            .get(&(instance_id.to_string(), tp_rank, device_id))
-            .map(|worker| (worker.manager_device_id, worker.registration_generation))
-            .ok_or_else(|| PyValueError::new_err("GPU tensors must be registered before Publish"))
+            .get(&(
+                registration.instance_id.clone(),
+                registration.tp_rank,
+                registration.device_id,
+            ))
+            .filter(|worker| worker.registration_generation == registration.generation)
+            .cloned()
+            .ok_or_else(|| PyValueError::new_err("GPU registration is no longer active"))
     }
 
     fn lifecycle_call(
@@ -320,7 +347,7 @@ impl PyCacheManagerClient {
         layer_formats: Option<Vec<String>>,
         layer_attention: Option<Vec<(u32, String, u32, u32)>>,
         tensors: Vec<Py<PyAny>>,
-    ) -> PyResult<(bool, String)> {
+    ) -> PyResult<PyGpuRegistration> {
         let transfer_mode = match transfer_backend {
             "direct" => TransferMode::Direct,
             "kernel" => TransferMode::Kernel,
@@ -434,6 +461,8 @@ impl PyCacheManagerClient {
                 })
                 .collect(),
         };
+        let tensors = Arc::new(tensors);
+        let retained = Arc::clone(&tensors);
         py.detach(|| {
             let mut local = self
                 .local
@@ -530,8 +559,17 @@ impl PyCacheManagerClient {
                     return Err(error);
                 }
             };
-            local.insert(key, Arc::new(worker));
-            Ok((true, String::new()))
+            let generation = worker.registration_generation;
+            local.insert(key.clone(), Arc::new(worker));
+            Ok(PyGpuRegistration {
+                instance_id: key.0,
+                tp_rank,
+                pp_rank,
+                device_id,
+                generation,
+                owner: Arc::downgrade(&self.inner),
+                _tensors: retained,
+            })
         })
     }
 
@@ -885,50 +923,46 @@ impl PyCacheManagerClient {
     fn save(
         &self,
         py: Python<'_>,
-        instance_id: String,
-        tp_rank: u32,
-        pp_rank: u32,
-        device_id: i32,
+        registration: &PyGpuRegistration,
         saves: Vec<(String, Vec<u32>, Vec<Vec<u8>>)>,
     ) -> PyResult<(bool, String)> {
-        let (manager_device_id, registration_generation) =
-            py.detach(|| self.manager_registration(&instance_id, tp_rank, device_id))?;
-        let request = publish_request(
-            instance_id,
-            tp_rank,
-            pp_rank,
-            manager_device_id,
-            registration_generation,
-            saves,
-        );
-        py.detach(|| self.inner.publish(&request))
-            .map_err(client_error)?;
-        Ok((true, String::new()))
+        py.detach(|| {
+            let worker = self.registered_worker(registration)?;
+            let request = publish_request(
+                registration.instance_id.clone(),
+                registration.tp_rank,
+                registration.pp_rank,
+                worker.manager_device_id,
+                registration.generation,
+                saves,
+            );
+            self.inner.publish(&request).map_err(client_error)?;
+            Ok((true, String::new()))
+        })
     }
 
     fn save_diagnostic(
         &self,
         py: Python<'_>,
-        instance_id: String,
-        tp_rank: u32,
-        pp_rank: u32,
-        device_id: i32,
+        registration: &PyGpuRegistration,
         saves: Vec<(String, Vec<u32>, Vec<Vec<u8>>)>,
     ) -> PyResult<(bool, String, PyChannelCallObservation)> {
-        let (manager_device_id, registration_generation) =
-            py.detach(|| self.manager_registration(&instance_id, tp_rank, device_id))?;
-        let request = publish_request(
-            instance_id,
-            tp_rank,
-            pp_rank,
-            manager_device_id,
-            registration_generation,
-            saves,
-        );
-        let observation = py
-            .detach(|| self.inner.publish_observed(&request))
-            .map_err(client_error)?;
-        Ok((true, String::new(), PyChannelCallObservation(observation)))
+        py.detach(|| {
+            let worker = self.registered_worker(registration)?;
+            let request = publish_request(
+                registration.instance_id.clone(),
+                registration.tp_rank,
+                registration.pp_rank,
+                worker.manager_device_id,
+                registration.generation,
+                saves,
+            );
+            let observation = self
+                .inner
+                .publish_observed(&request)
+                .map_err(client_error)?;
+            Ok((true, String::new(), PyChannelCallObservation(observation)))
+        })
     }
 
     #[allow(
@@ -1075,3 +1109,7 @@ impl PyCacheManagerClient {
             .map_err(|error| OrbitKVError::new_err(error.to_string()))
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/client.rs"]
+mod tests;

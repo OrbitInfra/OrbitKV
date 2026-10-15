@@ -39,7 +39,7 @@ class FakeEngineClient:
     def __init__(self) -> None:
         self.fail_load_with_exception: Exception | None = None
         self.load_calls: list[tuple] = []
-        self.register_response: tuple[bool, str] = (True, "ok")
+        self.registration = object()
         self.register_exception: Exception | None = None
         self.register_calls: list[tuple] = []
         self.register_kwargs: list[dict] = []
@@ -78,12 +78,12 @@ class FakeEngineClient:
     def wait_restore(self, _handle, *, timeout):
         return RestoreStatus(done=True, success=True)
 
-    def register_context_batch(self, *args, **kwargs) -> tuple[bool, str]:
+    def register_context_batch(self, *args, **kwargs) -> object:
         self.register_calls.append(args)
         self.register_kwargs.append(kwargs)
         if self.register_exception is not None:
             raise self.register_exception
-        return self.register_response
+        return self.registration
 
     def health(self) -> tuple[bool, str]:
         return (True, "ok")
@@ -329,9 +329,8 @@ class FakeCudaIPCWrapper:
 
 def test_register_version_mismatch_raises_startup_error(monkeypatch):
     worker, client = _make_worker()
-    client.register_response = (
-        False,
-        "OrbitKV version mismatch: client=0.22.4 server=0.22.5",
+    client.register_exception = RuntimeError(
+        "OrbitKV version mismatch: client=0.22.4 server=0.22.5"
     )
 
     monkeypatch.setattr("orbitkv.client.gpu.CudaIPCWrapper", FakeCudaIPCWrapper)
@@ -351,7 +350,7 @@ def test_register_version_mismatch_raises_startup_error(monkeypatch):
 
 def test_register_non_version_failure_reports_batch_layers(monkeypatch):
     worker, client = _make_worker()
-    client.register_response = (False, "invalid tensor metadata")
+    client.register_exception = RuntimeError("invalid tensor metadata")
 
     monkeypatch.setattr("orbitkv.client.gpu.CudaIPCWrapper", FakeCudaIPCWrapper)
 
@@ -364,7 +363,7 @@ def test_register_non_version_failure_reports_batch_layers(monkeypatch):
         )
 
     message = str(exc_info.value)
-    assert "Register context batch failed for layers ['layer.0', 'layer.1']" in message
+    assert "invalid tensor metadata" in message
     assert "for layer.1" not in message
     assert len(client.register_calls) == 1
     assert client.register_calls[0][7] == ["layer.0", "layer.1"]

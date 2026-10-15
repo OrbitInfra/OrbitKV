@@ -227,6 +227,7 @@ def query_ready(client, native, instance, hashes, request, expected_blocks, time
 
 def sample(
     client,
+    registration,
     native,
     instance,
     device,
@@ -308,7 +309,7 @@ def sample(
             "ready_wait_process_cpu_ns": process_ended - process_submitted,
         }
     elif operation == "publish":
-        ok, message = client.save(instance, 0, 0, device, saves)
+        ok, message = client.save(registration, saves)
         ended = time.perf_counter_ns()
         process_ended = time.process_time_ns()
         thread_ended = time.thread_time_ns()
@@ -377,9 +378,9 @@ def cleanup_published(manager_url: str, timeout: float, *, wait_for_ssd: bool = 
         raise AssertionError("Publish cleanup still has referenced blocks")
 
 
-def populate(client, native, instance, device, layers, hashes, timeout) -> None:
+def populate(client, registration, native, instance, device, layers, hashes, timeout) -> None:
     ok, message = client.save(
-        instance, 0, 0, device, [(layer, list(range(len(hashes))), hashes) for layer in layers]
+        registration, [(layer, list(range(len(hashes))), hashes) for layer in layers]
     )
     if not ok:
         raise RuntimeError(f"Publish failed: {message}")
@@ -540,7 +541,7 @@ def main(argv: list[str] | None = None) -> None:
             pages[:, :, :count].copy_(expected)
             torch.cuda.synchronize()
             client.start_session_watcher(instance, instance, 1, 1)
-            ok, message = client.register_context_batch(
+            registration = client.register_context_batch(
                 instance,
                 instance,
                 0,
@@ -558,8 +559,6 @@ def main(argv: list[str] | None = None) -> None:
                 False,
                 tensors=[pages[index] for index in range(args.layers)],
             )
-            if not ok:
-                raise RuntimeError(f"registration failed: {message}")
             hashes = [
                 hashlib.sha256(f"communication-hit-{index}".encode()).digest()
                 for index in range(count)
@@ -570,7 +569,7 @@ def main(argv: list[str] | None = None) -> None:
             ]
             # Publish seals asynchronously: establish full residency before any
             # correctness or timed query demands an exact hit count.
-            populate(client, native, instance, device, layers, hashes, args.timeout)
+            populate(client, registration, native, instance, device, layers, hashes, args.timeout)
             if args.tier == "ssd":
                 cleanup_published(
                     f"http://127.0.0.1:{http}", args.timeout, wait_for_ssd=args.tier == "ssd"
@@ -597,6 +596,7 @@ def main(argv: list[str] | None = None) -> None:
                 torch.cuda.synchronize()
                 sample(
                     client,
+                    registration,
                     native,
                     instance,
                     device,
@@ -652,7 +652,16 @@ def main(argv: list[str] | None = None) -> None:
                         demand = miss_hashes if operation == "query_miss" else hit_hashes
                         prefix = f"r{repeat}-c{case_index}"
                         if operation in {"query_hit", "restore"}:
-                            populate(client, native, instance, device, layers, hashes, args.timeout)
+                            populate(
+                                client,
+                                registration,
+                                native,
+                                instance,
+                                device,
+                                layers,
+                                hashes,
+                                args.timeout,
+                            )
                         if operation == "publish":
                             cleanup_published(
                                 f"http://127.0.0.1:{http}",
@@ -674,6 +683,7 @@ def main(argv: list[str] | None = None) -> None:
                                 torch.cuda.synchronize()
                             sample(
                                 client,
+                                registration,
                                 native,
                                 instance,
                                 device,
@@ -727,6 +737,7 @@ def main(argv: list[str] | None = None) -> None:
                             rows.append(
                                 sample(
                                     client,
+                                    registration,
                                     native,
                                     instance,
                                     device,
