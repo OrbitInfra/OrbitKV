@@ -749,7 +749,7 @@ class Agent:
             hashlib.sha256(f"s2-etcd-local:{block}".encode()).digest() for block in range(pages)
         ]
         self.client.start_session_watcher("local", identity, 1, 1)
-        ok, message = self.client.register_context_batch(
+        self.registration = self.client.register_context_batch(
             "local",
             identity,
             0,
@@ -767,13 +767,8 @@ class Agent:
             False,
             tensors=[self.tensor],
         )
-        if not ok:
-            raise RuntimeError(message)
         ok, message = self.client.save(
-            "local",
-            0,
-            0,
-            resolve_device_id(),
+            self.registration,
             [("kv:0", list(range(pages)), self.hashes)],
         )
         if not ok:
@@ -816,7 +811,7 @@ class Agent:
         ]
         client = self.query_source_client
         client.start_session_watcher("query-source", identity, 1, 1)
-        ok, message = client.register_context_batch(
+        self.query_source_registration = client.register_context_batch(
             "query-source",
             identity,
             0,
@@ -834,13 +829,8 @@ class Agent:
             False,
             tensors=[self.query_source_tensor],
         )
-        if not ok:
-            raise RuntimeError(message)
         ok, message = client.save(
-            "query-source",
-            0,
-            0,
-            resolve_device_id(),
+            self.query_source_registration,
             [("kv:0", list(range(pages)), self.query_source_hashes)],
         )
         if not ok:
@@ -864,8 +854,6 @@ class Agent:
     def prepare_stale_source_query(self) -> dict:
         import torch
 
-        from orbitkv.client.gpu import resolve_device_id
-
         response = self.etcd_session.post(
             f"http://127.0.0.1:{self.manager.http_port}/cache/memory/cleanup",
             timeout=30,
@@ -877,10 +865,7 @@ class Agent:
         self.tensor.copy_(self.expected)
         torch.cuda.synchronize()
         ok, message = self.client.save(
-            "local",
-            0,
-            0,
-            resolve_device_id(),
+            self.registration,
             [("kv:0", list(range(len(self.hashes))), self.hashes)],
         )
         if not ok:

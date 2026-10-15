@@ -62,7 +62,7 @@ def main():
     }
     try:
         try:
-            ok, message = client.register_context_batch(
+            registration = client.register_context_batch(
                 "identity",
                 "gpu-identity",
                 0,
@@ -80,7 +80,6 @@ def main():
                 False,
                 tensors=tensors,
             )
-            assert ok, message
             registered = True
         except Exception as error:
             if not args.rejection or args.rejection not in str(error):
@@ -90,7 +89,7 @@ def main():
         else:
             assert not args.rejection, "Registration unexpectedly accepted a negative control"
             hashes = [hashlib.sha256(f"identity-{index}".encode()).digest() for index in range(8)]
-            assert client.save("identity", 0, 0, args.device, [("kv:0", list(range(8)), hashes)])[0]
+            assert client.save(registration, [("kv:0", list(range(8)), hashes)])[0]
             if args.medium == "ssd":
                 evict_dram_after_ssd_writes(args.http_port)
             before = fetch_orbitkv_metrics(args.http_port)
@@ -136,11 +135,9 @@ def main():
                     - before.get("orbitkv_ssd_prefetch_bytes_total", 0)
                     == tensor.numel()
                 ), result
-                assert (
-                    after["orbitkv_ssd_uring_read_operations_total"]
-                    - before.get("orbitkv_ssd_uring_read_operations_total", 0)
-                    == len(hashes)
-                ), result
+                assert after["orbitkv_ssd_uring_read_operations_total"] - before.get(
+                    "orbitkv_ssd_uring_read_operations_total", 0
+                ) == len(hashes), result
         args.output.with_suffix(".ready.json").write_text(json.dumps(result, indent=2) + "\n")
         deadline = time.monotonic() + 60
         while not args.output.with_suffix(".release").exists():

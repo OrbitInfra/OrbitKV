@@ -497,6 +497,17 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   review `da45664e6b0d47584a5c27b19c307410a2c05b8aa25447954e95e74f49266fc0`
   are under `/root/orbitkv-artifacts/s3-registration-generation-20261015/`.
   Installed GPU/adapter and allocation/page-generation qualification remain open.
+  The next implemented substage issues a native `GpuRegistration` at registration
+  and requires it for Publish. vLLM request/boundary tasks and SGLang offload
+  tasks capture it at producer handoff. Native validation preserves the old
+  generation across worker-lock waits and rejects retired/foreign-client input;
+  the authority retains exporters after unregister. Matching stubs, reusable
+  workloads and test callers consume the new API; the old Publish signature is
+  removed. This closes the pre-snapshot/late-callback code boundary pending
+  independent CPU/installed-import acceptance. It does not supply engine page
+  generations, physical termination or GPU/model qualification. New controls
+  and installation evidence are under
+  `/root/orbitkv-artifacts/s3-registration-authority-20261015/`.
 - Replace the remaining framework CUDA IPC pickle interpretation in the Manager
   with explicit validated registration data; remove the retired wire/API path.
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

@@ -95,7 +95,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
             wrappers = [
                 serialize_gpu_buffer(tensor) for pool in pools for tensor in pool.entry.kv_buffer
             ]
-            ok, message = self.client.register_context_batch(
+            self.registration = self.client.register_context_batch(
                 self.instance_id,
                 self.namespace,
                 0,
@@ -133,8 +133,6 @@ class OrbitKVLinker(UnifiedCacheLinker):
                     for tensor in pool.entry.kv_buffer
                 ],
             )
-            if not ok:
-                raise RuntimeError(f"OrbitKV GPU registration failed: {message}")
         except Exception:
             self.client.close()
             raise
@@ -536,7 +534,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
             saves.extend((layer, block_ids, hashes) for layer in pool.layer_names)
         ready = torch.cuda.Event()
         ready.record()
-        self._offload_queue.put((saves, ready))
+        self._offload_queue.put((self.registration, saves, ready))
         return True
 
     def _offload_worker(self) -> None:
@@ -545,13 +543,11 @@ class OrbitKVLinker(UnifiedCacheLinker):
             try:
                 if task is None:
                     return
-                saves, ready = task
+                registration, saves, ready = task
                 success = False
                 try:
                     ready.synchronize()
-                    success, message = self.client.save(
-                        self.instance_id, 0, 0, self.device_id, saves
-                    )
+                    success, message = self.client.save(registration, saves)
                     if not success:
                         logger.error("OrbitKV SGLang GPU offload failed: %s", message)
                 except Exception:

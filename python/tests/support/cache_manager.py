@@ -308,7 +308,7 @@ class ClientContext:
 
         # One batch per device, like the production worker: the engine seals
         # the instance topology once all world_size devices have registered.
-        ok, message = self.client.register_context_batch(
+        self.registration = self.client.register_context_batch(
             self.instance_id,
             self.namespace,
             0,  # tp_rank
@@ -336,9 +336,6 @@ class ClientContext:
                 for t in kv_caches.values()
             ],
         )
-
-        if not ok:
-            raise RuntimeError(f"Register context failed for {layer_names}: {message}")
 
         self._registered = True
 

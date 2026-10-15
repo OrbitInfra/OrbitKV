@@ -41,8 +41,13 @@ cache adapters and Manager peer-cache traffic through TENT.
 
 ## Native registration and Restore contract
 
-`register_context_batch(..., tensors=[...])` retains actual tensor/exporter
-objects in registration order. `start_restore(..., ready_stream=...)` supplies
+`register_context_batch(..., tensors=[...])` returns an opaque `GpuRegistration`
+that retains actual tensor/exporter objects in registration order.
+Use `save(registration, saves)` for Publish. Queued engine callbacks capture that
+registration when their producer hands off work; an inactive registration or a
+different native client is rejected before Publish. Keeping the object retains
+its exporters after unregister, but does not authorize old work or prove device
+completion. `start_restore(..., ready_stream=...)` supplies
 readiness for previous destination users. Both bundled adapters supply these
 arguments. Raw DRAM Restore executes in the engine through imported payload
 arenas; Publish and SSD/codec work execute in Manager workers.

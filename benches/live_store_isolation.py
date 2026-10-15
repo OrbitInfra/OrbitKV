@@ -374,7 +374,7 @@ def run(
         stack.callback(client.close)
         tensor = torch.empty(payload_bytes, dtype=torch.uint8, device="cuda")
         client.start_session_watcher("foreground", identity, 1, 1)
-        ok, message = client.register_context_batch(
+        registration = client.register_context_batch(
             "foreground",
             identity,
             0,
@@ -392,7 +392,6 @@ def run(
             False,
             tensors=[tensor],
         )
-        assert ok, message
 
         pressure, pressure_log, go, stop = _start_pressure_source(
             output,
@@ -472,7 +471,6 @@ def run(
         key_oracle = hashlib.sha256()
         resource_samples = (output / "resources.jsonl").open("w", buffering=1)
         stack.callback(resource_samples.close)
-        device = resolve_device_id()
 
         def foreground_round(
             round_id,
@@ -505,19 +503,13 @@ def run(
             save_channel = None
             if diagnostic_timeline_limit:
                 ok, message, observation = client.save_diagnostic(
-                    "foreground",
-                    0,
-                    0,
-                    device,
+                    registration,
                     [("kv:0", list(range(pages)), hashes)],
                 )
                 save_channel = _channel_observation(observation)
             else:
                 ok, message = client.save(
-                    "foreground",
-                    0,
-                    0,
-                    device,
+                    registration,
                     [("kv:0", list(range(pages)), hashes)],
                 )
             save_completed = time.monotonic_ns()

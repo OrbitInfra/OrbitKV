@@ -41,9 +41,9 @@ fn unknown_completion_keeps_pending_result_and_bounded_diagnostics() {
     assert!(restore.poll().is_err());
 }
 
-struct ProcessOwner {
+pub(crate) struct ProcessOwner {
     process: ProcessGuard,
-    client: CacheClient,
+    pub(crate) client: Arc<CacheClient>,
     handle: RestoreHandle,
 }
 
@@ -55,7 +55,7 @@ struct ProcessGuard {
 }
 
 impl ProcessOwner {
-    fn start(instance: &str) -> Self {
+    pub(crate) fn start(instance: &str) -> Self {
         use std::sync::atomic::AtomicU64;
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let directory = std::env::temp_dir().join(format!(
@@ -84,11 +84,13 @@ impl ProcessOwner {
             assert!(Instant::now() < process.deadline);
             std::thread::sleep(Duration::from_millis(1));
         }
-        let client = CacheClient::connect(
-            process.directory.join("cache.sock"),
-            orbitkv_channel::CallOptions::default(),
-        )
-        .unwrap();
+        let client = Arc::new(
+            CacheClient::connect(
+                process.directory.join("cache.sock"),
+                orbitkv_channel::CallOptions::default(),
+            )
+            .unwrap(),
+        );
         let handle = client
             .start_restore(&orbitkv_channel::RestoreRequest {
                 instance_id: instance.into(),
@@ -122,7 +124,7 @@ impl ProcessOwner {
         }
     }
 
-    fn stop(&mut self) {
+    pub(crate) fn stop(&mut self) {
         self.process.stop();
     }
 }
@@ -279,5 +281,21 @@ fn losing_claim_keeps_the_other_executors_active_source_owned() {
         println!(
             "actual_advance=1 cas_loser_retained=1 winner_active_before_own_drain=1 terminal_result=0"
         );
+    }
+}
+
+pub(crate) fn idle_registration_worker(generation: [u8; 16], device: i32) -> LocalRestoreWorker {
+    let (jobs, _receiver) = mpsc::sync_channel(1);
+    LocalRestoreWorker {
+        manager_device_id: device,
+        registration_generation: generation,
+        executor: Arc::new(Mutex::new(None)),
+        jobs,
+        admission: Arc::new(LocalCompletions::new().unwrap()),
+        pending: Arc::new(AtomicUsize::new(0)),
+        idle: Arc::new((Mutex::new(()), Condvar::new())),
+        arena_count: 0,
+        stopping: Arc::new(AtomicBool::new(false)),
+        released: Arc::new((Mutex::new(true), Condvar::new())),
     }
 }

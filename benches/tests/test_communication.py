@@ -88,6 +88,7 @@ def test_lease_setup_and_idle_are_outside_restore_timer_and_query_release_is_out
     )
     measured = sample(
         client,
+        object(),
         None,
         "instance",
         0,
@@ -131,6 +132,7 @@ def test_ambiguous_restore_never_releases_its_source_or_returns_a_timing(monkeyp
     with pytest.raises(TimeoutError, match="completion is unknown"):
         sample(
             client,
+            object(),
             None,
             "instance",
             0,
@@ -167,6 +169,7 @@ def test_failed_batch_acquisition_releases_prior_leases_before_any_restore(monke
     with pytest.raises(TimeoutError, match="third query failed"):
         sample(
             client,
+            object(),
             None,
             "instance",
             0,
@@ -291,6 +294,7 @@ def test_publish_uses_new_keys_per_sample_and_complete_matching_layer_sets():
     for request in ("first", "second"):
         sample(
             client,
+            object(),
             None,
             "instance",
             0,

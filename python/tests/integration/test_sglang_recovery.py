@@ -124,10 +124,7 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
         )
         torch.cuda.synchronize()
         saved, message = linker.client.save(
-            linker.instance_id,
-            0,
-            0,
-            linker.device_id,
+            linker.registration,
             [
                 (layer, orphan_blocks * 2, linker._hashes([orphan, keys[0]]))
                 for layer in orphan_pool.layer_names

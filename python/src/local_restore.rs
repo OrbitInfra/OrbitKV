@@ -263,7 +263,7 @@ impl LocalRestoreWorker {
     pub(crate) fn new(
         client: Arc<CacheClient>,
         executor: LocalRestoreExecutor,
-        tensors: Vec<Py<PyAny>>,
+        tensors: Arc<Vec<Py<PyAny>>>,
         completions: Arc<LocalCompletions>,
         arena_count: usize,
         manager_device_id: i32,
@@ -654,4 +654,4 @@ fn wait_for_updates(client: &CacheClient, admission: &LocalCompletions, pending:
 
 #[cfg(test)]
 #[path = "../tests/unit/local_restore.rs"]
-mod tests;
+pub(crate) mod tests;

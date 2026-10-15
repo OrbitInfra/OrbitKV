@@ -52,7 +52,7 @@ def worker(args: argparse.Namespace) -> None:
     client = CacheManagerClient(args.manager_socket)
     registered = False
     try:
-        ok, message = client.register_context_batch(
+        registration = client.register_context_batch(
             args.instance,
             args.namespace,
             0,
@@ -70,8 +70,6 @@ def worker(args: argparse.Namespace) -> None:
             False,
             tensors=tensors,
         )
-        if not ok:
-            raise RuntimeError(message)
         registered = True
         client.start_session_watcher(args.instance, args.namespace, 1, 1)
 
@@ -91,10 +89,7 @@ def worker(args: argparse.Namespace) -> None:
                             tensor.copy_(value)
                         torch.cuda.synchronize()
                         ok, message = client.save(
-                            args.instance,
-                            0,
-                            0,
-                            0,
+                            registration,
                             [(name, SOURCE_PAGES, source_hashes) for name in names],
                         )
                         if not ok:

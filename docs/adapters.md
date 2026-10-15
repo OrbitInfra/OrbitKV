@@ -291,6 +291,15 @@ page reuse. Unencoded DRAM copies execute in the native engine worker; their
 final local result follows DMA drain without waiting for Manager source reaping.
 vLLM uses layer waits in piecewise mode and coarser entry waits for supported
 full-graph layouts; SGLang installs external events before capture.
+Publish uses the opaque native `GpuRegistration` returned by successful
+registration. vLLM save and boundary tasks, and SGLang offload tasks, retain the
+original object when they enter the queue. The native client rejects a retired
+registration or a different client before submission. vLLM refuses a batch
+spanning registrations; it does not switch queued work to a new registration.
+The object retains exporters until the last queued/user reference is dropped.
+These checks bind registration lifetime; same-allocation page-slot reuse and
+physical failure drain still need their own proofs and hardware gates.
+
 See [layer consumption](engine-local-restore.md#layer-readiness-and-framework-consumption)
 for recurrent, packed-buffer and multi-part limits. Repeated registration of the same binding is rejected, and unregister
 or close drains accepted operations. Native calls release the GIL. A timeout

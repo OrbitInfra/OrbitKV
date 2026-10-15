@@ -83,11 +83,8 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(channel_server, channel_c
 
     block_hashes = [bytes([1]) * 32, bytes([2]) * 32]
     expected = channel_client_context.get_kv_cache()[:, 0:2].cpu().clone()
-    query_client.save(
-        channel_client_context.instance_id,
-        0,
-        0,
-        0,
+    channel_client_context.client.save(
+        channel_client_context.registration,
         [(channel_client_context._layer_names[0], [0, 1], block_hashes)],
     )
     channel_client_context.get_kv_cache().zero_()
@@ -180,7 +177,10 @@ def test_query_bytes_remain_owned_after_delivery_and_release_on_disconnect(
     other = CacheManagerClient(channel_server.bootstrap_socket)
     hashes = [b"budget-a" * 4, b"budget-b" * 4]
     try:
-        client.save(instance, 0, 0, 0, [(channel_client_context._layer_names[0], [0, 1], hashes)])
+        channel_client_context.client.save(
+            channel_client_context.registration,
+            [(channel_client_context._layer_names[0], [0, 1], hashes)],
+        )
         deadline = time.monotonic() + 5
         while True:
             first = client.query_prefetch(instance, BlockHashes(hashes[:1]), "first")
@@ -270,7 +270,7 @@ def test_layer_events_publish_new_data_before_final_restore_drain(channel_server
             torch.cuda.synchronize()
             key = bytes([generation + 1]) * 32
             ok, message = client.save(
-                identity, 0, 0, 0, [(name, [0], [key]) for name in ctx._layer_names]
+                ctx.registration, [(name, [0], [key]) for name in ctx._layer_names]
             )
             assert ok, message
             deadline = time.monotonic() + 10

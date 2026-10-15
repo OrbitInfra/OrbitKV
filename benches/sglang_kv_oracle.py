@@ -202,7 +202,7 @@ def run(args: argparse.Namespace) -> dict:
     primary_error = None
     try:
         client.start_session_watcher(instance, namespace, 1, 1)
-        ok, message = client.register_context_batch(
+        registration = client.register_context_batch(
             instance,
             namespace,
             0,
@@ -223,8 +223,6 @@ def run(args: argparse.Namespace) -> dict:
             layer_formats=["bf16"] * PLANES,
             layer_attention=group.attention_layouts(LAYERS, 0),
         )
-        if not ok:
-            raise RuntimeError(f"GPU registration failed: {message}")
         registered = True
         observed = args.samples is not None
         operations = args.warmup + args.samples if observed else 3
@@ -245,7 +243,7 @@ def run(args: argparse.Namespace) -> dict:
                 )
             torch.cuda.synchronize()
             ok, message = client.save(
-                instance, 0, 0, device, [(name, sources, hashes) for name in group.layer_names]
+                registration, [(name, sources, hashes) for name in group.layer_names]
             )
             if not ok:
                 raise RuntimeError(f"Native save failed: {message}")
