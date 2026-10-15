@@ -100,7 +100,7 @@ The Rust completion-owner controls in `python/tests/unit/local_restore.rs` run
 separately from pytest. For native Restore result or retention changes, build
 `cargo test -p orbitkv-channel --test completion_process --no-run` first, then
 set `ORBITKV_SHARED_COMPLETION_TEST_BINARY` to that test executable. Run
-`cargo test -p orbitkv-py --lib --no-default-features --features cuda-13,mooncake
+`cargo test -p orbitkv-py --lib --no-default-features --features cuda-13,mooncake,test-hooks
 local_restore::tests -- --include-ignored --nocapture` from the repository root.
 Choose an embedding-capable `PYO3_PYTHON`; when testing the extension crate on
 Debian Python 3.11, use
@@ -109,7 +109,9 @@ invocation. This link setting belongs only to the CPU test executable.
 The actual native `advance` path is exercised with an authenticated subprocess
 and shared completion records; its test executor owns no CUDA mapping and
 submits no device work. A pending diagnostic cannot consume the result or
-release the job. Actual GPU tensor ownership, managed DMA termination and
+release the job. The test-only thread-local claim pause stops after the state
+snapshot and before CAS, allowing another real claimant to win deterministically.
+A losing claimant cannot publish drain or a terminal result for that owner. Actual GPU tensor ownership, managed DMA termination and
 adapter page reuse remain separate installed hardware gates.
 
 ## Server Integration Gate

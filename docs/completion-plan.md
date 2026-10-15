@@ -442,7 +442,14 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   publishing a terminal failure. Pending diagnostics are bounded to 1 KiB per
   operation, with the existing 1,024-operation worker admission still charged;
   deadlines preserve ownership. Already drained local work and actual Manager
-  terminal publications retain their normal completion path. This is not a
+  terminal publications retain their normal completion path. The first
+  `e635284f` checkpoint is independently rejected: a generic claim error could
+  observe another claimant's `Active` state and incorrectly publish drain.
+  Its freeze, wheel and review remain preserved. The correction keeps every
+  generic claim error pending. Only the completion owner that won its own CAS
+  may mark a rejected plan as never submitted, before returning bytes to any
+  executor; deterministic competing-claim and old-branch mutation controls
+  exercise that boundary. This is not a
   physical-failure drain or reclamation primitive. Independent acceptance,
   final installed package and GPU/adapter fault gates remain open; controls
   belong under `/root/orbitkv-artifacts/s3-managed-restore-retention-20261015/`.

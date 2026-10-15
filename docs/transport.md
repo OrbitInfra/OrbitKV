@@ -209,6 +209,10 @@ job and registered tensors owned; it does not produce `RestoreStatus.done`.
 respects its deadline. Pending operation admission remains charged until a
 known completion or a proven never-submitted drain. This candidate does not
 provide a device/RDMA failure fence or reclaim orphaned pages.
+Generic claim errors cannot publish drain merely by observing `Active` or
+`ActiveMore`: another executor may own that transition. Only the completion
+owner that won the CAS can establish never-submitted work when it rejects a
+plan before returning its bytes. CAS loss and unknown failures remain pending.
 
 
 SSD, encoded, and mixed-source restores use a `Managed` execution state and

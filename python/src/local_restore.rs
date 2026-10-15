@@ -605,20 +605,7 @@ fn advance(
             }
         },
         Err(error) => {
-            // Decoding shared plan bytes can fail after Granted -> Active; no
-            // GPU work was submitted here, so publishing Drained is safe.
-            if matches!(
-                client.restore_completions().state(handle.operation_id),
-                Ok(GrantState::Active | GrantState::ActiveMore)
-            ) {
-                match client.finish_local_restore(handle, Err(error.to_string()), None) {
-                    Ok(true) => return Some((failed(error.to_string()), Some(handle))),
-                    Ok(false) => return None,
-                    Err(finish_error) => job.result.retain_unproven(finish_error.to_string()),
-                }
-            } else {
-                job.result.retain_unproven(error.to_string());
-            }
+            job.result.retain_unproven(error.to_string());
             None
         }
     }

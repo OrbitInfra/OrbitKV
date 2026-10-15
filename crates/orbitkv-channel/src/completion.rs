@@ -383,30 +383,46 @@ impl RestoreCompletions {
             GrantState::Acknowledged => return Err(CompletionError::Stale(id)),
             _ => return Ok(None),
         };
+        #[cfg(any(test, feature = "test-hooks"))]
+        crate::test_faults::pause_local_claim();
         self.transition(id, state, active)?;
-        let record = Self::offset(id)?;
-        let offset = self.word(record + 8).load(Ordering::Relaxed) as usize;
-        let len = self.word(record + 16).load(Ordering::Relaxed) as usize;
-        if len == 0
-            || !offset.is_multiple_of(8)
-            || len > RESTORE_PLAN_BYTES
-            || offset > RESTORE_PLAN_BYTES - len
-        {
-            return Err(CompletionError::InvalidPayload);
+        let plan = (|| {
+            let record = Self::offset(id)?;
+            let offset = self.word(record + 8).load(Ordering::Relaxed) as usize;
+            let len = self.word(record + 16).load(Ordering::Relaxed) as usize;
+            if len == 0
+                || !offset.is_multiple_of(8)
+                || len > RESTORE_PLAN_BYTES
+                || offset > RESTORE_PLAN_BYTES - len
+            {
+                return Err(CompletionError::InvalidPayload);
+            }
+            let mut plan = Vec::with_capacity(len.next_multiple_of(8));
+            for part in (0..len).step_by(8) {
+                plan.extend_from_slice(
+                    &self
+                        .word(PLAN_OFFSET + offset + part)
+                        .load(Ordering::Relaxed)
+                        .to_ne_bytes(),
+                );
+            }
+            plan.truncate(len);
+            self.word(record + 24).store(1, Ordering::Release);
+            self.dirty(id)?;
+            Ok(plan)
+        })();
+        match plan {
+            Ok(plan) => Ok(Some(plan)),
+            Err(error) => {
+                // This method won claim and has not returned a plan to an executor.
+                self.drained(
+                    id,
+                    Err(format!("Restore plan rejected before execution: {error}")),
+                    None,
+                )?;
+                Err(error)
+            }
         }
-        let mut plan = Vec::with_capacity(len.next_multiple_of(8));
-        for part in (0..len).step_by(8) {
-            plan.extend_from_slice(
-                &self
-                    .word(PLAN_OFFSET + offset + part)
-                    .load(Ordering::Relaxed)
-                    .to_ne_bytes(),
-            );
-        }
-        plan.truncate(len);
-        self.word(record + 24).store(1, Ordering::Release);
-        self.dirty(id)?;
-        Ok(Some(plan))
     }
 
     fn dirty(&self, id: u64) -> Result<(), CompletionError> {

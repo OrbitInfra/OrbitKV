@@ -18,6 +18,7 @@ name = "orbitkv-cache-manager-py"
 path = "src/bin/cache_manager.rs"
 
 [features]
+test-hooks = ["orbitkv-channel/test-hooks"]
 default = ["cuda-12", "mooncake"]
 cuda-12 = ["orbitkv-core/cuda-12", "orbitkv-server/cuda-12", "orbitkv-transfer?/cuda-12"]
 cuda-13 = ["orbitkv-core/cuda-13", "orbitkv-server/cuda-13", "orbitkv-transfer?/cuda-13"]

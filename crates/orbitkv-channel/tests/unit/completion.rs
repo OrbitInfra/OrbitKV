@@ -473,3 +473,87 @@ fn multiple_parts_keep_one_pending_operation_until_final_drain() {
         assert!(records.plans.lock().unwrap().is_empty());
     }
 }
+
+#[test]
+fn losing_claim_cannot_drain_the_actual_winner() {
+    use std::sync::mpsc;
+    for more in [false, true] {
+        let records = records();
+        let loser = independent(&records);
+        let winner = independent(&records);
+        let id = records.reserve().unwrap();
+        records.claim(id).unwrap();
+        records
+            .publish_local(id, b"winner retains this source", more)
+            .unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (resume_tx, resume_rx) = mpsc::channel();
+        thread::scope(|scope| {
+            let losing = scope.spawn(move || {
+                crate::test_faults::pause_next_claim(entered_tx, resume_rx);
+                loser.claim_local(id)
+            });
+            entered_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            assert_eq!(
+                winner.claim_local(id).unwrap().unwrap(),
+                b"winner retains this source"
+            );
+            resume_tx.send(()).unwrap();
+            assert!(
+                matches!(losing.join().unwrap(), Err(CompletionError::Stale(value)) if value == id)
+            );
+        });
+        let active = if more {
+            GrantState::ActiveMore
+        } else {
+            GrantState::Active
+        };
+        assert_eq!(records.state(id).unwrap(), active);
+        assert!(records.reap(id).is_err());
+        assert_eq!(records.poll(id).unwrap().state, RestoreState::Pending);
+        winner
+            .drained(
+                id,
+                Err("CPU winner returned without submitting DMA".into()),
+                None,
+            )
+            .unwrap();
+        records.release_plan(id).unwrap();
+        records.reap(id).unwrap();
+        assert_eq!(records.poll(id).unwrap().state, RestoreState::Failed);
+    }
+}
+
+#[test]
+fn claimed_invalid_plan_has_no_submit_proof_before_bytes_escape() {
+    for (more, offset, len) in [
+        (false, 0, 0),
+        (true, 0, 0),
+        (false, 1, 8),
+        (false, 0, RESTORE_PLAN_BYTES as u64 + 1),
+    ] {
+        let records = records();
+        let engine = independent(&records);
+        let id = records.reserve().unwrap();
+        records.claim(id).unwrap();
+        records
+            .publish_local(id, b"not handed to an executor", more)
+            .unwrap();
+        let record = RestoreCompletions::offset(id).unwrap();
+        records.word(record + 8).store(offset, Ordering::Relaxed);
+        records.word(record + 16).store(len, Ordering::Relaxed);
+        assert!(matches!(
+            engine.claim_local(id),
+            Err(CompletionError::InvalidPayload)
+        ));
+        assert_eq!(records.state(id).unwrap(), GrantState::Drained);
+        assert!(!records.drain_succeeded(id).unwrap());
+        records.release_plan(id).unwrap();
+        records.reap(id).unwrap();
+        let response = engine.poll(id).unwrap();
+        assert_eq!(response.state, RestoreState::Failed);
+        assert!(response.message.contains("before execution"));
+    }
+}
