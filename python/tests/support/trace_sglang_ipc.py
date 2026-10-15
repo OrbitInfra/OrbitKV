@@ -22,14 +22,12 @@ def install_trace() -> None:
     import atexit
     import json
     import os
-    import pickle
     import time
 
     import orbitkv.sglang.linker as linker_module
 
     trace = Path(os.environ["ORBITKV_CLOSE_TRACE_DIRECTORY"])
     exports = []
-    original_serialize = linker_module.serialize_gpu_buffer
     original_close = linker_module.OrbitKVLinker.close
 
     def emit(stage, **details):
@@ -55,14 +53,11 @@ def install_trace() -> None:
                 readings.append({"file": name, "offset": offset, "error": str(error)})
         return readings
 
-    def serialize(tensor):
-        payload = original_serialize(tensor)
-        handle = pickle.loads(payload).handle
-        name = handle[4].decode() if isinstance(handle[4], bytes) else handle[4]
-        exports.append((name, handle[5]))
-        return payload
-
     def close(self):
+        for name, offset in self.registration.ipc_counters:
+            value = name.decode() if isinstance(name, bytes) else name
+            if (value, offset) not in exports:
+                exports.append((value, offset))
         emit("linker_close_start", instance_id=self.instance_id, counters=counters())
         try:
             result = original_close(self)
@@ -72,7 +67,6 @@ def install_trace() -> None:
         emit("linker_close_return", instance_id=self.instance_id, counters=counters())
         return result
 
-    linker_module.serialize_gpu_buffer = serialize
     linker_module.OrbitKVLinker.close = close
     atexit.register(lambda: emit("python_atexit", exports=len(exports), counters=counters()))
 

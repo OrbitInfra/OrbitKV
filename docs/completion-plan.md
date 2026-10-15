@@ -528,6 +528,18 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   or S3. Original failures and native IPC/helper-exit limits remain preserved.
 - Replace the remaining framework CUDA IPC pickle interpretation in the Manager
   with explicit validated registration data; remove the retired wire/API path.
+  This coherent candidate is in progress on the isolated
+  `fix/s3-explicit-registration-20261016` branch from main `98f8faf9`.
+  Protobuf storage/view metadata and retained native tensor export replace
+  wrapper bytes; lifecycle 9 rejects the retired format. Manager validation
+  occurs before device discovery/import. The client and both adapters consume
+  the new call shape; exporter diagnostics use explicit counter identity.
+  Protocol/registry CPU rejection, source-only and native check/Clippy gates
+  pass. Export-credit failure ownership, final installed/native GPU bytes and
+  independent acceptance remain open. This does not close true allocation/page
+  generation, live Publish stalls or physical orphan reclamation. New evidence
+  is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
+
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
   without a control RPC or taking a blocked Publish/lifecycle lock. Restore
   readiness and pending-result checks consume that observation. A live stalled

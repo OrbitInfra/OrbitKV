@@ -24,7 +24,7 @@ from orbitkv import (
     QueryReady,
     RecoveryContract,
 )
-from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+from orbitkv.client.gpu import resolve_device_id
 from orbitkv.logging_utils import TRANSFER_TRACING, trace_transfer
 
 from .config import derive_namespace, resolve_static_loras, resolve_transfer_backend
@@ -95,9 +95,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
             self.client.start_session_watcher(self.instance_id, self.namespace, 1, 1)
             pools = list(self.layout.pools.values())
             self._torch_device = pools[0].entry.kv_buffer[0].device
-            wrappers = [
-                serialize_gpu_buffer(tensor) for pool in pools for tensor in pool.entry.kv_buffer
-            ]
+            tensor_count = sum(len(pool.entry.kv_buffer) for pool in pools)
             self.registration = self.client.register_context_batch(
                 self.instance_id,
                 self.namespace,
@@ -107,11 +105,10 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 1,
                 self.device_id,
                 [name for pool in pools for name in pool.layer_names],
-                wrappers,
                 [count for pool in pools for count in pool.num_blocks],
                 [size for pool in pools for size in pool.block_bytes],
-                [0] * len(wrappers),
-                [1] * len(wrappers),
+                [0] * tensor_count,
+                [1] * tensor_count,
                 transfer_backend,
                 False,
                 tensors=[tensor for pool in pools for tensor in pool.entry.kv_buffer],

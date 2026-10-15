@@ -13,7 +13,6 @@ import torch
 from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorTransferResults
 
 from orbitkv import RestoreHandle
-from orbitkv.client.gpu import serialize_gpu_buffer
 from orbitkv.logging_utils import TRANSFER_TRACING, get_connector_logger, trace_transfer
 from orbitkv.vllm.config import ConnectorContext, parse_env_int
 from orbitkv.vllm.layout import CacheGroupLayout
@@ -326,7 +325,6 @@ class WorkerAdapter:
         layout = "unknown"
 
         layer_names = []
-        buffer_registrations = []
         registration_tensors = []
         layer_num_blocks = []
         layer_bytes_per_block = []
@@ -359,8 +357,6 @@ class WorkerAdapter:
                     registration_tensor.storage_offset(),
                 )
 
-            wrapper_bytes = serialize_gpu_buffer(registration_tensor)
-
             registration = _infer_kv_cache_registration(
                 registration_tensor,
                 self._ctx.block_size,
@@ -370,7 +366,6 @@ class WorkerAdapter:
             layout = registration.layout
 
             layer_names.append(layer_name)
-            buffer_registrations.append(wrapper_bytes)
             registration_tensors.append(registration_tensor)
             layer_num_blocks.append(registration.num_blocks)
             layer_bytes_per_block.append(registration.bytes_per_block)
@@ -454,7 +449,6 @@ class WorkerAdapter:
             self._ctx.effective_world_size,
             self._ctx.device_id,
             layer_names,
-            buffer_registrations,
             layer_num_blocks,
             layer_bytes_per_block,
             layer_kv_stride_bytes,

@@ -146,7 +146,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
 
     torch = pytest.importorskip("torch")
     from orbitkv import CacheManagerClient, QueryLoading, QueryReady
-    from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+    from orbitkv.client.gpu import resolve_device_id
     from orbitkv.sglang.events import _LayerDoneCounter
     from orbitkv.sglang.linker import OrbitKVLinker, _Load
 
@@ -178,7 +178,6 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
     client = CacheManagerClient(channel_server.bootstrap_socket)
     try:
         client.start_session_watcher(instance, namespace, 1, 1)
-        wrappers = [serialize_gpu_buffer(tensor) for tensor in tensors]
         block_bytes = page_size * tensors[0].stride(0) * tensors[0].element_size()
         registration = client.register_context_batch(
             instance,
@@ -189,7 +188,6 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             1,
             resolve_device_id(),
             names,
-            wrappers,
             [num_blocks] * layer_count,
             [block_bytes] * layer_count,
             [0] * layer_count,

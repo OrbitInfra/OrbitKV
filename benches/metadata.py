@@ -151,7 +151,7 @@ def run(tmp_path: Path, profile: str):
     assert torch.cuda.is_available()
     import orbitkv.orbitkv as native
     from orbitkv import BlockHashes, CacheManagerClient, QueryReady
-    from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+    from orbitkv.client.gpu import resolve_device_id
 
     artifact_paths = {
         "manager": os.environ["ORBITKV_CACHE_MANAGER_BINARY"],
@@ -245,7 +245,6 @@ def run(tmp_path: Path, profile: str):
                 1,
                 device,
                 ["kv:0"],
-                [serialize_gpu_buffer(target)],
                 [pages],
                 [block_bytes],
                 [0],

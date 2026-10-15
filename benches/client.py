@@ -24,7 +24,6 @@ def main() -> None:
     import torch
 
     from orbitkv import BlockHashes, CacheManagerClient, QueryLoading, QueryReady
-    from orbitkv.client.gpu import serialize_gpu_buffer
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=external_path, required=True)
@@ -70,7 +69,6 @@ def main() -> None:
                 1,
                 0,
                 ["layer"],
-                [serialize_gpu_buffer(pages)],
                 [1024],
                 [32768],
                 [32 * 1024**2],

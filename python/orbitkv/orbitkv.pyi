@@ -155,6 +155,10 @@ class GpuRegistration:
 
     @property
     def generation(self) -> bytes: ...
+    @property
+    def export_owner_generation(self) -> bytes: ...
+    @property
+    def ipc_counters(self) -> list[tuple[bytes, int]]: ...
 
 class CacheManagerClient:
     """Native owner of query, publish and restore lifetimes."""
@@ -197,7 +201,6 @@ class CacheManagerClient:
         world_size: int,
         device_id: int,
         layer_names: list[str],
-        wrapper_bytes_list: list[bytes],
         num_blocks_list: list[int],
         bytes_per_block_list: list[int],
         kv_stride_bytes_list: list[int],

@@ -8,6 +8,8 @@ fn registration(client: &PyCacheManagerClient, generation: [u8; 16]) -> PyGpuReg
         pp_rank: 2,
         device_id: 3,
         generation,
+        export_owner_generation: [4; 16],
+        ipc_counters: Vec::new(),
         owner: Arc::downgrade(&client.inner),
         _tensors: Arc::new(Vec::new()),
     }
@@ -137,6 +139,8 @@ fn registration_keeps_exporters_until_the_last_authority_is_dropped() {
             pp_rank: 0,
             device_id: 0,
             generation: [1; 16],
+            export_owner_generation: [4; 16],
+            ipc_counters: Vec::new(),
             owner: Weak::new(),
             _tensors: retained,
         };

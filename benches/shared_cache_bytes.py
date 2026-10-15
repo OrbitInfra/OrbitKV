@@ -30,7 +30,6 @@ def worker(args: argparse.Namespace) -> None:
     import torch
 
     from orbitkv import BlockHashes, CacheManagerClient, QueryLoading
-    from orbitkv.client.gpu import serialize_gpu_buffer
 
     segment_bytes = args.segment_bytes
     payload_bytes = LAYERS * 2 * len(SOURCE_PAGES) * segment_bytes
@@ -61,7 +60,6 @@ def worker(args: argparse.Namespace) -> None:
             1,
             0,
             names,
-            [serialize_gpu_buffer(tensor) for tensor in tensors],
             [BLOCKS] * LAYERS,
             [segment_bytes] * LAYERS,
             [BLOCKS * segment_bytes] * LAYERS,

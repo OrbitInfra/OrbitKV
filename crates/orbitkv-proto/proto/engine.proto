@@ -20,8 +20,8 @@ enum TransferMode {
 // workers have registered. Fields 7 (num_layers) and 16 (layer_ids) carried
 // the connector-guessed topology and are retired.
 message RegisterContextRequest {
-  reserved 7, 16;
-  reserved "num_layers", "layer_ids";
+  reserved 7, 9, 16;
+  reserved "num_layers", "wrapper_bytes", "layer_ids";
 
   string instance_id = 1;
   string namespace = 2;
@@ -31,7 +31,6 @@ message RegisterContextRequest {
   // Sender-local CUDA ordinal; data commands use the resolved Manager ordinal.
   int32 device_id = 6;
   repeated string layer_names = 8;
-  repeated bytes wrapper_bytes = 9;
   repeated uint64 num_blocks = 10;
   repeated uint64 bytes_per_block = 11;
   repeated uint64 kv_stride_bytes = 12;
@@ -60,6 +59,29 @@ message RegisterContextRequest {
   repeated AttentionStorageLayout layer_attention = 21;
   // Stable identity of every tensor, independent of process visibility/order.
   string device_uuid = 22;
+  repeated CudaIpcTensorRegistration gpu_tensors = 23;
+}
+
+// Explicit PyTorch CUDA storage export. Storage extents may be suballocations
+// of a larger CUDA IPC allocation; both offsets must remain separate.
+message CudaIpcTensorRegistration {
+  uint32 format_version = 1;
+  string allocation_kind = 2;
+  bytes allocation_handle = 3;
+  string device_uuid = 4;
+  uint64 storage_size_bytes = 5;
+  uint64 storage_allocation_offset_bytes = 6;
+  uint64 view_offset_bytes = 7;
+  repeated uint64 shape = 8;
+  repeated uint64 strides = 9;
+  string dtype = 10;
+  uint64 element_size = 11;
+  bytes ref_counter_handle = 12;
+  uint64 ref_counter_offset = 13;
+  bytes event_handle = 14;
+  bool event_sync_required = 15;
+  // Issued by the retained native exporter owner, not an engine page-slot ID.
+  bytes export_owner_generation = 16;
 }
 
 message UnregisterRequest {

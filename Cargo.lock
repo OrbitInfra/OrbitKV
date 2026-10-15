@@ -2125,6 +2125,7 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
+ "uuid",
 ]
 
 [[package]]
@@ -2144,6 +2145,7 @@ dependencies = [
  "pyo3",
  "serde_json",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

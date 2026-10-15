@@ -68,7 +68,7 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
 
     import orbitkv.orbitkv as native
     from orbitkv import CacheManagerClient
-    from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+    from orbitkv.client.gpu import resolve_device_id
 
     assert torch.cuda.is_available()
     os.environ["MC_FORCE_TCP"] = "1"
@@ -198,7 +198,6 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
                     1,
                     resolve_device_id(),
                     ["kv:0"],
-                    [serialize_gpu_buffer(tensor)],
                     [pages],
                     [block_bytes],
                     [0],

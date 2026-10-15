@@ -17,7 +17,7 @@ peer address, etcd endpoints, a unique stable node ID and the same cluster name.
 
 Client and Manager CUDA ordinals may differ. Registration joins the tensor's full
 GPU UUID to the Manager-visible device and retains that route for Publish/Restore;
-use matching lifecycle-protocol-8 artifacts. NUMA selection uses those visible
+use matching lifecycle-protocol-9 artifacts. NUMA selection uses those visible
 UUIDs. Known payload placement uses `mbind` before first touch and requires the
 selected memory node in the process's allowed nodes. CPU affinity alone cannot
 override an inherited interleave memory policy; inspect actual resident pages.

@@ -227,7 +227,7 @@ def _discover_storage_namespaces(
     import torch
 
     from orbitkv import CacheManagerClient
-    from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+    from orbitkv.client.gpu import resolve_device_id
 
     port = find_available_port()
     manager = CacheManagerProcess(
@@ -259,7 +259,6 @@ def _discover_storage_namespaces(
                 1,
                 resolve_device_id(),
                 ["kv:0"],
-                [serialize_gpu_buffer(tensor)],
                 [pages],
                 [block_bytes],
                 [0],
@@ -295,7 +294,7 @@ def test_manager_graceful_shutdown_fences_inventory_and_restarts_node(tmp_path, 
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required")
     from orbitkv import CacheManagerClient
-    from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+    from orbitkv.client.gpu import resolve_device_id
 
     monkeypatch.setenv("MC_FORCE_TCP", "1")
     pages, block_bytes = 8, 4096
@@ -355,7 +354,6 @@ def test_manager_graceful_shutdown_fences_inventory_and_restarts_node(tmp_path, 
                 1,
                 resolve_device_id(),
                 ["kv:0"],
-                [serialize_gpu_buffer(tensor)],
                 [pages],
                 [block_bytes],
                 [0],
@@ -437,7 +435,7 @@ def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, m
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required")
     from orbitkv import CacheManagerClient
-    from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+    from orbitkv.client.gpu import resolve_device_id
 
     monkeypatch.setenv("MC_FORCE_TCP", "1")
     pages, block_bytes = 8, 4096
@@ -516,7 +514,6 @@ def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, m
                 1,
                 resolve_device_id(),
                 ["kv:0"],
-                [serialize_gpu_buffer(tensor)],
                 [pages],
                 [block_bytes],
                 [0],
@@ -733,7 +730,7 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required")
     from orbitkv import CacheManagerClient
-    from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+    from orbitkv.client.gpu import resolve_device_id
 
     monkeypatch.setenv("MC_FORCE_TCP", "1")
     pages, block_bytes = 8, 4096
@@ -812,7 +809,6 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
                     1,
                     resolve_device_id(),
                     ["kv:0"],
-                    [serialize_gpu_buffer(tensor)],
                     [pages],
                     [block_bytes],
                     [0],

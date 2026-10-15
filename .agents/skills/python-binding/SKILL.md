@@ -26,7 +26,7 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   Resolve their full physical GPU UUIDs; the native owner retains the Manager's
   resolved ordinal for Publish/Restore. Do not reuse the client's ordinal on the
   Manager or convert a UUID into an ordinal with physical `nvidia-smi` ordering.
-  Lifecycle protocol 8 requires matching installed client and Manager artifacts.
+  Lifecycle protocol 9 requires matching installed client and Manager artifacts.
 
 Use the gate table in `AGENTS.md`: default Python tests must remain source-only;
 native lifecycle changes need process integration, and consumed adapter changes

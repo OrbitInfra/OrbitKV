@@ -267,7 +267,6 @@ class ClientContext:
 
     def register_kv_caches(self) -> None:
         """Register KV cache tensors with the engine server (like WorkerAdapter.register_kv_caches)."""
-        from orbitkv.client.gpu import serialize_gpu_buffer
 
         if self._registered:
             return
@@ -275,15 +274,12 @@ class ClientContext:
         kv_caches = {name: self.gpu_kv_caches[i] for i, name in enumerate(self._layer_names)}
 
         layer_names: list[str] = []
-        wrapper_bytes_list: list[bytes] = []
         num_blocks_list: list[int] = []
         bytes_per_block_list: list[int] = []
         kv_stride_bytes_list: list[int] = []
         segments_list: list[int] = []
 
         for layer_name, kv_cache in kv_caches.items():
-            wrapper_bytes = serialize_gpu_buffer(kv_cache)
-
             shape = tuple(kv_cache.shape)
             stride = tuple(kv_cache.stride())
             element_size = kv_cache.element_size()
@@ -300,7 +296,6 @@ class ClientContext:
                 segments = 1
 
             layer_names.append(layer_name)
-            wrapper_bytes_list.append(wrapper_bytes)
             num_blocks_list.append(num_blocks)
             bytes_per_block_list.append(bytes_per_block)
             kv_stride_bytes_list.append(kv_stride_bytes)
@@ -317,7 +312,6 @@ class ClientContext:
             1,  # world_size
             self.device_id,
             layer_names,
-            wrapper_bytes_list,
             num_blocks_list,
             bytes_per_block_list,
             kv_stride_bytes_list,

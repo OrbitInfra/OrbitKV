@@ -38,9 +38,7 @@ from types import ModuleType
 
 linker = ModuleType("orbitkv.sglang.linker")
 original_close = lambda self: None
-original_serialize = lambda tensor: b"payload"
 linker.OrbitKVLinker = type("Linker", (), {"close": original_close})
-linker.serialize_gpu_buffer = original_serialize
 package = ModuleType("orbitkv")
 package.__path__ = []
 sglang = ModuleType("orbitkv.sglang")
@@ -51,7 +49,6 @@ sys.modules.update({"orbitkv": package, "orbitkv.sglang": sglang, "orbitkv.sglan
 os.environ["ORBITKV_CLOSE_TRACE_DIRECTORY"] = sys.argv[2]
 runpy.run_path(sys.argv[1], run_name="__mp_main__")
 assert linker.OrbitKVLinker.close is not original_close
-assert linker.serialize_gpu_buffer is not original_serialize
 """
     result = subprocess.run(
         [sys.executable, "-I", "-c", script, str(helper), str(tmp_path)],

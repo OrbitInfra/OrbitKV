@@ -325,18 +325,11 @@ class FakeTensor:
         return 2
 
 
-class FakeCudaIPCWrapper:
-    def __init__(self, _tensor) -> None:
-        pass
-
-
 def test_register_version_mismatch_raises_startup_error(monkeypatch):
     worker, client = _make_worker()
     client.register_exception = RuntimeError(
         "OrbitKV version mismatch: client=0.22.4 server=0.22.5"
     )
-
-    monkeypatch.setattr("orbitkv.client.gpu.CudaIPCWrapper", FakeCudaIPCWrapper)
 
     with pytest.raises(RuntimeError, match="OrbitKV version mismatch") as exc_info:
         worker.register_kv_caches({"layer.0": FakeTensor()})
@@ -354,8 +347,6 @@ def test_register_version_mismatch_raises_startup_error(monkeypatch):
 def test_register_non_version_failure_reports_batch_layers(monkeypatch):
     worker, client = _make_worker()
     client.register_exception = RuntimeError("invalid tensor metadata")
-
-    monkeypatch.setattr("orbitkv.client.gpu.CudaIPCWrapper", FakeCudaIPCWrapper)
 
     with pytest.raises(RuntimeError, match="invalid tensor metadata") as exc_info:
         worker.register_kv_caches(
@@ -385,8 +376,6 @@ def test_register_kv_caches_ignores_shared_by_without_layer_split_opt_in(monkeyp
     worker, client = _make_worker(
         kv_cache_config=kv_cache_config,
     )
-
-    monkeypatch.setattr("orbitkv.client.gpu.CudaIPCWrapper", FakeCudaIPCWrapper)
 
     worker.register_kv_caches(
         {
@@ -425,8 +414,6 @@ def test_register_kv_caches_uses_layer_split_shared_by_plan(monkeypatch):
         is_mla=True,
     )
 
-    monkeypatch.setattr("orbitkv.client.gpu.CudaIPCWrapper", FakeCudaIPCWrapper)
-
     worker.register_kv_caches(
         {
             "layer.0": MlaTensor(),
@@ -452,8 +439,6 @@ def test_register_kv_caches_requires_shared_by_layers(monkeypatch):
         is_mla=True,
     )
 
-    monkeypatch.setattr("orbitkv.client.gpu.CudaIPCWrapper", FakeCudaIPCWrapper)
-
     with pytest.raises(RuntimeError, match="missing layers"):
         worker.register_kv_caches({"layer.0": FakeTensor()})
 
@@ -462,8 +447,6 @@ def test_register_kv_caches_requires_shared_by_layers(monkeypatch):
 
 def test_cross_layer_registration_uses_pp_suffixed_name(monkeypatch):
     worker, client = _make_worker(pp_rank=1, pp_size=4)
-
-    monkeypatch.setattr("orbitkv.client.gpu.CudaIPCWrapper", FakeCudaIPCWrapper)
 
     worker.register_cross_layers_kv_cache(FakeTensor(), attn_backend=object())
 
@@ -479,8 +462,6 @@ def test_register_version_mismatch_rpc_error_stops_startup(monkeypatch):
         "register_context_batch RPC failed: status: FailedPrecondition, "
         'message: "OrbitKV version mismatch: client=0.22.4 server=0.22.5"'
     )
-
-    monkeypatch.setattr("orbitkv.client.gpu.CudaIPCWrapper", FakeCudaIPCWrapper)
 
     with pytest.raises(RuntimeError, match="OrbitKV version mismatch") as exc_info:
         worker.register_kv_caches({"layer.0": FakeTensor()})

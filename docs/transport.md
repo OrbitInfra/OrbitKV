@@ -29,7 +29,7 @@ lookup. Both adapters capture it when queuing their producing step. The native
 client validates the original client and generation after acquiring its worker
 lock, so a wait or late callback cannot bind a replacement registration. Each
 Publish chunk carries the captured generation; the Core owner rechecks the same
-retained instance before topology or GPU pointer binding. Matching lifecycle 8
+retained instance before topology or GPU pointer binding. Matching lifecycle 9
 and cache schema 10 artifacts remain required; retired schemas are rejected.
 
 This is registration lifetime fencing, not allocation/page generation or a
@@ -42,6 +42,18 @@ and Core/lifecycle controls. The new producer-bound authority is implemented
 pending independent acceptance and actual installed GPU/adapter lifetime gates.
 CPU authority controls use an authenticated process fixture and an idle worker
 with no CUDA executor; they do not register, compute or submit device DMA.
+
+The explicit-registration candidate replaces the framework pickle payload with
+versioned protobuf storage/view metadata. The native client exports retained
+tensors directly; Manager validation precedes CUDA device discovery/import.
+Storage suballocation and tensor view offsets are separate; dtype/element size,
+shape/stride extent, handles, ref-counter and readiness event are checked.
+A native exporter-owner generation is distinct from the Manager registration
+and engine page-slot generations. The importer still uses the pinned PyTorch
+storage IPC primitive and holds the resulting tensor mapping until its owner
+retires. The old wrapper-byte field and helper/API are removed in this candidate.
+Source/CPU checks exist; IPC-credit errors, final installed GPU bytes and both
+adapter lifecycles require independent acceptance before promotion.
 
 ## Process channel
 

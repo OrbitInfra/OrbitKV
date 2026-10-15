@@ -149,7 +149,7 @@ def run(args: argparse.Namespace) -> dict:
 
     import orbitkv
     from orbitkv import BlockHashes, CacheManagerClient, QueryLoading, QueryReady
-    from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+    from orbitkv.client.gpu import resolve_device_id
     from orbitkv.sglang.events import _LayerDoneCounter
     from orbitkv.sglang.layout import GpuLayout
 
@@ -211,7 +211,6 @@ def run(args: argparse.Namespace) -> dict:
             1,
             device,
             group.layer_names,
-            [serialize_gpu_buffer(tensor) for tensor in tensors],
             group.num_blocks,
             group.block_bytes,
             [0] * PLANES,
