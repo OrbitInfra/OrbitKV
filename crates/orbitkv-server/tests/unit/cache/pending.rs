@@ -138,6 +138,7 @@ fn manager_validates_complete_demand_and_never_leases_a_partial_selected_group()
         engine
             .batch_save_kv_blocks_from_ipc(
                 "model",
+                engine.registration_generation("model").unwrap_or_default(),
                 0,
                 0,
                 0,

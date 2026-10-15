@@ -22,6 +22,18 @@ Unix socket fails fast.
 Registration, health, session watching, and unregistration use the
 authenticated bootstrap UDS for both adapters.
 
+The registration-generation candidate returns the existing InstanceContext
+owner generation with the resolved GPU ordinal. Both adapters' native client
+retains it and carries it in every Publish wire chunk. The actual Core Publish
+owner rejects stale/nil generations before topology or GPU pointer binding;
+it checks the same retained instance it then uses. A delayed accepted request
+cannot act on a same-named replacement registration. Matching lifecycle 8 and
+cache schema 10 artifacts are required; retired schemas are rejected.
+This is registration lifetime fencing, not allocation/page generation or a
+physical termination receipt. Restore query leases already bind the registered
+owner generation and retain their existing checks. Independent acceptance and
+actual installed GPU/adapter gates remain open.
+
 ## Process channel
 
 ### Native TENT failure retention

@@ -47,6 +47,7 @@ fn start_endpoint() -> (ProcessEndpoint, PathBuf, Arc<Notify>) {
 fn empty_publish(instance_id: &str) -> PublishRequest {
     PublishRequest {
         instance_id: instance_id.into(),
+        registration_generation: [1; 16],
         tp_rank: 0,
         pp_rank: 0,
         device_id: 0,

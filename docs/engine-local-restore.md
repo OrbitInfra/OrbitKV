@@ -54,7 +54,7 @@ qualification remain open. Correctness alone does not establish a serving speedu
    the same arena and allocation identity/bounds. Global destination-overlap
    validation still runs before consuming leases. This reduces descriptors
    before encoding and shared-memory transport. Raw plan version 2 marks each
-   layer's final range across all parts; cache schema 9 rejects mismatched clients.
+   layer's final range across all parts; cache schema 10 rejects mismatched clients.
 5. The Manager installs the grant owner before publishing `Granted`. The native
    worker wins `Granted → Active`, copies the plan locally, validates source
    and destination ranges, and submits through the existing memcpy or mapped

@@ -541,6 +541,7 @@ fn blocked_publish_does_not_serialize_query_or_restore() {
         let publish = scope.spawn(|| {
             client.publish(&PublishRequest {
                 instance_id: "m".into(),
+                registration_generation: [1; 16],
                 tp_rank: 0,
                 pp_rank: 0,
                 device_id: 0,
@@ -558,6 +559,7 @@ fn blocked_publish_does_not_serialize_query_or_restore() {
         client
             .publish(&PublishRequest {
                 instance_id: "m".into(),
+                registration_generation: [1; 16],
                 tp_rank: 0,
                 pp_rank: 0,
                 device_id: 0,
@@ -580,6 +582,7 @@ fn observed_publish_and_query_share_the_manager_session_and_bound_the_call() {
     let publish = client
         .publish_observed(&PublishRequest {
             instance_id: "m".into(),
+            registration_generation: [1; 16],
             tp_rank: 0,
             pp_rank: 0,
             device_id: 0,

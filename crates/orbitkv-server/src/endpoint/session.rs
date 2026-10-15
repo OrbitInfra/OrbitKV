@@ -173,11 +173,12 @@ async fn dispatch(
                     "payload arena count exceeds session limit",
                 ));
             }
-            let manager_device_id = lifecycle
+            let (manager_device_id, registration_generation) = lifecycle
                 .register(crate::wire::registration(request))
                 .await?;
-            let mut body = Vec::with_capacity(4 + arenas.len() * 16);
+            let mut body = Vec::with_capacity(20 + arenas.len() * 16);
             body.extend_from_slice(&manager_device_id.to_le_bytes());
+            body.extend_from_slice(&registration_generation);
             for arena in &arenas {
                 body.extend_from_slice(&arena.id.to_le_bytes());
                 body.extend_from_slice(&arena.size.to_le_bytes());

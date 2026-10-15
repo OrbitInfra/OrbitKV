@@ -61,6 +61,7 @@ pub(crate) struct PublishLayerInput {
 #[derive(Clone, Debug)]
 pub(crate) struct PublishInput {
     pub instance_id: String,
+    pub registration_generation: [u8; 16],
     pub tp_rank: u32,
     pub pp_rank: u32,
     pub device_id: i32,
@@ -166,6 +167,7 @@ pub(crate) async fn execute_publish(
             engine
                 .batch_save_kv_blocks_from_ipc_diagnostic(
                     &input.instance_id,
+                    input.registration_generation,
                     tp_rank,
                     pp_rank,
                     input.device_id,
@@ -178,6 +180,7 @@ pub(crate) async fn execute_publish(
             engine
                 .batch_save_kv_blocks_from_ipc(
                     &input.instance_id,
+                    input.registration_generation,
                     tp_rank,
                     pp_rank,
                     input.device_id,

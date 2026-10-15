@@ -343,6 +343,7 @@ fn release_request_round_trip_and_empty_rejection() {
 fn publish_request_round_trip_and_shape_validation() {
     let request = PublishRequest {
         instance_id: "model-a".to_string(),
+        registration_generation: [1; 16],
         tp_rank: 2,
         pp_rank: 1,
         device_id: 3,
@@ -455,4 +456,46 @@ fn shard_response_checks_all_leases_and_control_before_decode_allocation() {
     let mut extra = encoded;
     extra.push(0);
     assert!(ShardQueryResponse::decode(&extra).is_err());
+}
+
+#[test]
+fn publish_generation_is_required_and_preserved_in_every_wire_chunk() {
+    let mut request = PublishRequest {
+        instance_id: "a:b".into(),
+        registration_generation: [7; 16],
+        tp_rank: 0,
+        pp_rank: 0,
+        device_id: 0,
+        layers: vec![PublishLayer {
+            layer_name: "layer".into(),
+            block_ids: vec![0, 1],
+            block_hashes: vec![vec![1; 8], vec![2; 8]],
+        }],
+    };
+    let encoded = request.encode().unwrap();
+    assert_eq!(PublishRequest::decode(&encoded).unwrap(), request);
+    let chunk = request.encode_range(Some(1..2)).unwrap();
+    assert_eq!(
+        PublishRequest::decode(&chunk)
+            .unwrap()
+            .registration_generation,
+        [7; 16]
+    );
+    let mut missing = encoded.clone();
+    missing[28..44].fill(0);
+    assert!(matches!(
+        PublishRequest::decode(&missing),
+        Err(CacheProtocolError::InvalidRegistrationGeneration)
+    ));
+    let mut legacy = encoded;
+    legacy[4..6].copy_from_slice(&9u16.to_le_bytes());
+    assert!(matches!(
+        PublishRequest::decode(&legacy),
+        Err(CacheProtocolError::UnsupportedVersion(9))
+    ));
+    request.registration_generation = [0; 16];
+    assert!(matches!(
+        request.encode(),
+        Err(CacheProtocolError::InvalidRegistrationGeneration)
+    ));
 }

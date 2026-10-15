@@ -880,6 +880,7 @@ fn dispatch_publish(
             &engine,
             PublishInput {
                 instance_id: request.instance_id,
+                registration_generation: request.registration_generation,
                 tp_rank: request.tp_rank,
                 pp_rank: request.pp_rank,
                 device_id: request.device_id,

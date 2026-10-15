@@ -5,6 +5,7 @@ use crate::PublishLayer;
 fn publish_chunks_preserve_all_layers_and_pages_within_the_slot_limit() {
     let request = PublishRequest {
         instance_id: "qwen3-8b".to_string(),
+        registration_generation: [1; 16],
         tp_rank: 2,
         pp_rank: 1,
         device_id: 3,
@@ -48,6 +49,7 @@ fn publish_chunks_preserve_all_layers_and_pages_within_the_slot_limit() {
 fn publish_chunks_preserve_ragged_cache_groups() {
     let request = PublishRequest {
         instance_id: "hybrid".to_string(),
+        registration_generation: [1; 16],
         tp_rank: 0,
         pp_rank: 0,
         device_id: 0,
@@ -85,6 +87,7 @@ fn publish_chunks_preserve_ragged_cache_groups() {
 fn publish_chunk_boundaries_include_variable_hashes_and_only_active_layers() {
     let request = PublishRequest {
         instance_id: "m".into(),
+        registration_generation: [1; 16],
         tp_rank: 1,
         pp_rank: 2,
         device_id: 3,
@@ -107,7 +110,7 @@ fn publish_chunk_boundaries_include_variable_hashes_and_only_active_layers() {
         ],
     };
 
-    for (capacity, first_count) in [(111, 2), (110, 1)] {
+    for (capacity, first_count) in [(127, 2), (126, 1)] {
         let payloads = publish_payloads(&request, capacity).unwrap();
         assert_eq!(payloads.len(), 2);
         let chunks = payloads
@@ -151,11 +154,11 @@ fn publish_chunk_boundaries_include_variable_hashes_and_only_active_layers() {
     let full = request.encode().unwrap();
     assert_eq!(publish_payloads(&request, full.len()).unwrap(), vec![full]);
     assert!(matches!(
-        publish_payloads(&request, 66),
+        publish_payloads(&request, 82),
         Err(ChannelError::Bootstrap(BootstrapError::Arena(
             crate::ArenaError::PayloadTooLarge {
-                len: 67,
-                capacity: 66
+                len: 83,
+                capacity: 82
             }
         )))
     ));

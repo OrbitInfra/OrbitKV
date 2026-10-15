@@ -18,6 +18,9 @@ async fn save_rejects_mismatched_block_id_and_hash_lengths() {
         .engine
         .batch_save_kv_blocks_from_ipc(
             &env.instance_id,
+            env.engine
+                .registration_generation(&env.instance_id)
+                .unwrap_or_default(),
             0,
             0,
             0,
@@ -51,6 +54,9 @@ async fn save_rejects_device_group_mismatch() {
     env.engine
         .batch_save_kv_blocks_from_ipc(
             &env.instance_id,
+            env.engine
+                .registration_generation(&env.instance_id)
+                .unwrap_or_default(),
             0,
             0,
             0,
@@ -67,6 +73,9 @@ async fn save_rejects_device_group_mismatch() {
         .engine
         .batch_save_kv_blocks_from_ipc(
             &env.instance_id,
+            env.engine
+                .registration_generation(&env.instance_id)
+                .unwrap_or_default(),
             0,
             1,
             0,

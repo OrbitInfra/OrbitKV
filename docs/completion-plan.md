@@ -476,6 +476,16 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   are under `/root/orbitkv-artifacts/s3-registration-owner-20261015/`.
   Actual CUDA mapping/lifetime qualification remains open. This does not
   replace the remaining pickle wire or implement allocation/page generation.
+- The next registration-generation candidate reuses InstanceContext's existing
+  owner generation. GPU registration returns it with the Manager-local ordinal;
+  the actual native client used by both adapters carries it through every
+  Publish chunk into the retained Core owner check before GPU pointer binding.
+  Same-name unregister/re-register rejects delayed old Publish input, while
+  Restore keeps its existing generation-bound query leases. Lifecycle 8/cache
+  schema 10 require matching artifacts. CPU memfd/host-registration-shim and
+  field-loss controls are code evidence only; installed GPU and adapter
+  qualification remain open. This is not allocation/page generation.
+  Evidence belongs under `/root/orbitkv-artifacts/s3-registration-generation-20261015/`.
 - Replace the remaining framework CUDA IPC pickle interpretation in the Manager
   with explicit validated registration data; remove the retired wire/API path.
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

@@ -61,10 +61,12 @@ fn publish_request(
     tp_rank: u32,
     pp_rank: u32,
     device_id: i32,
+    registration_generation: [u8; 16],
     saves: Vec<(String, Vec<u32>, Vec<Vec<u8>>)>,
 ) -> PublishRequest {
     PublishRequest {
         instance_id,
+        registration_generation,
         tp_rank,
         pp_rank,
         device_id,
@@ -191,14 +193,19 @@ pub(crate) struct PyCacheManagerClient {
 }
 
 impl PyCacheManagerClient {
-    fn manager_device_id(&self, instance_id: &str, tp_rank: u32, device_id: i32) -> PyResult<i32> {
+    fn manager_registration(
+        &self,
+        instance_id: &str,
+        tp_rank: u32,
+        device_id: i32,
+    ) -> PyResult<(i32, [u8; 16])> {
         let local = self
             .local
             .lock()
             .map_err(|_| OrbitKVInternal::new_err("local executor lock poisoned"))?;
         local
             .get(&(instance_id.to_string(), tp_rank, device_id))
-            .map(|worker| worker.manager_device_id)
+            .map(|worker| (worker.manager_device_id, worker.registration_generation))
             .ok_or_else(|| PyValueError::new_err("GPU tensors must be registered before Publish"))
     }
 
@@ -443,7 +450,7 @@ impl PyCacheManagerClient {
                 .lifecycle(LifecycleCommand::Register, &request.encode_to_vec())
                 .map_err(client_error)?;
             let worker = (|| -> PyResult<LocalRestoreWorker> {
-                if reply.payload.len() != 4 + reply.fds.len() * 16 {
+                if reply.payload.len() != 20 + reply.fds.len() * 16 {
                     return Err(OrbitKVInternal::new_err(
                         "invalid payload arena registration reply",
                     ));
@@ -452,6 +459,14 @@ impl PyCacheManagerClient {
                     i32::from_le_bytes(reply.payload[..4].try_into().map_err(|_| {
                         OrbitKVInternal::new_err("invalid Manager device identity")
                     })?);
+                let registration_generation: [u8; 16] = reply.payload[4..20]
+                    .try_into()
+                    .map_err(|_| OrbitKVInternal::new_err("invalid GPU registration generation"))?;
+                if registration_generation == [0; 16] {
+                    return Err(OrbitKVInternal::new_err(
+                        "empty GPU registration generation",
+                    ));
+                }
                 if manager_device_id < 0 {
                     return Err(OrbitKVInternal::new_err("negative Manager device ordinal"));
                 }
@@ -467,7 +482,7 @@ impl PyCacheManagerClient {
                     ));
                 }
                 let mut arenas = Vec::with_capacity(reply.fds.len());
-                for (metadata, fd) in reply.payload[4..].chunks_exact(16).zip(reply.fds) {
+                for (metadata, fd) in reply.payload[20..].chunks_exact(16).zip(reply.fds) {
                     let id = u64::from_le_bytes(
                         metadata[..8]
                             .try_into()
@@ -494,6 +509,7 @@ impl PyCacheManagerClient {
                     Arc::clone(&self.completions),
                     arena_count,
                     manager_device_id,
+                    registration_generation,
                 )
                 .map_err(OrbitKVInternal::new_err)
             })();
@@ -875,9 +891,16 @@ impl PyCacheManagerClient {
         device_id: i32,
         saves: Vec<(String, Vec<u32>, Vec<Vec<u8>>)>,
     ) -> PyResult<(bool, String)> {
-        let manager_device_id =
-            py.detach(|| self.manager_device_id(&instance_id, tp_rank, device_id))?;
-        let request = publish_request(instance_id, tp_rank, pp_rank, manager_device_id, saves);
+        let (manager_device_id, registration_generation) =
+            py.detach(|| self.manager_registration(&instance_id, tp_rank, device_id))?;
+        let request = publish_request(
+            instance_id,
+            tp_rank,
+            pp_rank,
+            manager_device_id,
+            registration_generation,
+            saves,
+        );
         py.detach(|| self.inner.publish(&request))
             .map_err(client_error)?;
         Ok((true, String::new()))
@@ -892,9 +915,16 @@ impl PyCacheManagerClient {
         device_id: i32,
         saves: Vec<(String, Vec<u32>, Vec<Vec<u8>>)>,
     ) -> PyResult<(bool, String, PyChannelCallObservation)> {
-        let manager_device_id =
-            py.detach(|| self.manager_device_id(&instance_id, tp_rank, device_id))?;
-        let request = publish_request(instance_id, tp_rank, pp_rank, manager_device_id, saves);
+        let (manager_device_id, registration_generation) =
+            py.detach(|| self.manager_registration(&instance_id, tp_rank, device_id))?;
+        let request = publish_request(
+            instance_id,
+            tp_rank,
+            pp_rank,
+            manager_device_id,
+            registration_generation,
+            saves,
+        );
         let observation = py
             .detach(|| self.inner.publish_observed(&request))
             .map_err(client_error)?;

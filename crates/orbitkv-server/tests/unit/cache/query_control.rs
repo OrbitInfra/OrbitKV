@@ -325,6 +325,9 @@ async fn real_query_control_replays_claims_and_fences_replaced_registrations() {
             engine
                 .batch_save_kv_blocks_from_ipc(
                     "registered",
+                    engine
+                        .registration_generation("registered")
+                        .unwrap_or_default(),
                     0,
                     0,
                     0,
