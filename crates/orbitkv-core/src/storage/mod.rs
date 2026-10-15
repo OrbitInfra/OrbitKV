@@ -465,6 +465,13 @@ impl Storage {
             .as_ref()
             .map(|transport| transport.transfer_endpoint())
     }
+
+    #[cfg(feature = "mooncake")]
+    pub(crate) fn transfer_source_epoch(&self) -> Option<&str> {
+        self.mooncake_transport
+            .as_ref()
+            .map(|transport| transport.engine().source_epoch())
+    }
 }
 
 #[cfg(test)]

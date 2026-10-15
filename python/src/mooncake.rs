@@ -329,8 +329,9 @@ impl PyMooncakeTransferEngine {
                     &slices,
                     timeout,
                     notification,
+                    None,
                 ),
-                None => engine.submit_and_wait(operation, &remote_endpoint, &slices, timeout),
+                None => engine.submit_and_wait(operation, &remote_endpoint, &slices, timeout, None),
             }
             .map_err(|error| transfer_error("Mooncake TENT transfer failed", error))
         })

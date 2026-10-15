@@ -63,6 +63,24 @@ pub(super) struct AuthorizedSegment {
     route_observation: Observation,
 }
 
+fn valid_transfer_authorization(
+    response: &QueryBlocksForTransferResponse,
+    records: &[orbitkv_state::InventoryRecord],
+) -> bool {
+    !response.transfer_endpoint.is_empty()
+        && response.native_source_epoch.len() == 32
+        && response
+            .native_source_epoch
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        && response.blocks.len() == records.len()
+        && response
+            .blocks
+            .iter()
+            .zip(records)
+            .all(|(block, record)| block.block_hash == record.key.hash)
+}
+
 #[tonic::async_trait]
 impl SegmentFetcher for PeerReader {
     type Grant = AuthorizedSegment;
@@ -174,14 +192,7 @@ impl SegmentFetcher for PeerReader {
 
         // The guard moves into the blocking transfer with the destination buffers.
         // Cancelling this future cannot release either while the READ is running.
-        if response.transfer_endpoint.is_empty()
-            || response.blocks.len() != segment.records.len()
-            || response
-                .blocks
-                .iter()
-                .zip(&segment.records)
-                .any(|(block, record)| block.block_hash != record.key.hash)
-        {
+        if !valid_transfer_authorization(&response, &segment.records) {
             route_observation.finish(Outcome::Failed, None);
             warn!("Remote query to {remote_addr} returned invalid transfer authorization");
             drop(lock_guard);
@@ -234,6 +245,7 @@ impl SegmentFetcher for PeerReader {
             &self.allocate_fn,
             namespace,
             &response.transfer_endpoint,
+            &response.native_source_epoch,
             &blocks,
             destination_nodes,
             transfer_timeout,
@@ -404,6 +416,7 @@ async fn fetch_blocks_via_mooncake(
     allocate_fn: &AllocateFn,
     namespace: &str,
     transfer_endpoint: &str,
+    native_source_epoch: &str,
     blocks: &[TransferBlockInfo],
     destination_nodes: &[NumaNode],
     transfer_timeout: Duration,
@@ -535,6 +548,7 @@ async fn fetch_blocks_via_mooncake(
     );
     let transfer = Arc::clone(transfer);
     let transfer_endpoint = transfer_endpoint.to_string();
+    let native_source_epoch = native_source_epoch.to_string();
     let (block_allocs, transferred) = lock_guard
         .run_with_buffers(block_allocs, move || {
             observation.admitted();
@@ -544,6 +558,7 @@ async fn fetch_blocks_via_mooncake(
                 &transfer_endpoint,
                 &all_descs,
                 transfer_timeout,
+                Some(&native_source_epoch),
             );
             let (outcome, actual_bytes) = match &result {
                 Ok(bytes) if *bytes as u64 == stored_bytes => {
