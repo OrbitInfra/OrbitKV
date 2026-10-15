@@ -405,6 +405,41 @@ their reviewed scopes. CUDA sources live in separate files. Rejected descriptor
 reuse, READV merging and TENT RPC-thread/lane candidates remain rejected;
 correct bytes do not override a performance regression.
 
+**Scoped H20 functional acceptance (2026-10-14):** engine-local raw H2D
+captures carry Linux thread identity and monotonic submission/part-drain windows.
+The installed-wheel SGLang 0.5.21 page-pool gate passed three generations of full
+payload/sentinel checking, including partial destinations and deliberate
+corruption. Independent replay consumed the production descriptor compiler and
+matched 384 batches / 22,144 H2D calls; all native owners exited normally and
+installed-file hashes were unchanged. This does not infer packing cost,
+first-layer readiness, physical fault reclamation or serving gains; matched
+observation-overhead and inference-contention gates remain required. The frozen
+one-cell evidence and preceding invalid CLI attempt are preserved with
+[PR #238](https://github.com/feichai0017/orbitkv/pull/238).
+
+**Observation-overhead pilot (2026-10-15): implemented; qualification open.**
+The matched byte oracle and analyzer were independently accepted at `35dd3e2c`;
+all 13 exact-head CI checks passed. The single reviewed eight-cell H20 pilot
+stopped after five completed cells because each on-cell directory contained an
+unexpected child-process CUPTI capture. The final analyzer rejects this exact
+inventory; the external controller's per-cell check missed it and allowed later
+cells to run before the stop. Preserve both main and child captures, the normal
+native waits and the unchanged runtime; do not treat the five-cell timings as an
+overhead PASS or FAIL. Fifteen complete restores passed payload/sentinel and
+corruption controls, with SDK/Manager exit zero and explicit native release.
+No retry or replacement cell ran; GPU1 was released normally and GPU0's prior
+failed-run reservation remains untouched. The invalid cohort and reviews are
+preserved outside the checkout with [PR #238](https://github.com/feichai0017/orbitkv/pull/238).
+
+**Next bounded delivery:** establish the collector's child-process scope and
+make the exact capture inventory a per-cell admission gate, then independently
+review a new freeze. Keep the four independent off/on pairs, one warm-up and two
+measured full 4K restores, unchanged capture caps and the 5% median/independent-
+pair CI guard. A new cohort must retain all failures and establish successful
+physical drain before cleanup. Inference contention and kernel/default promotion
+remain blocked by this observation gate; a pool-only pilot does not qualify p99,
+model output or serving gains.
+
 - Profile actual adapter hashing/conversions, destination checks, fragmentation,
   dispatch, scratch allocation and repeated shared-prefix H2D before selecting
   the next bottleneck. Keep GIL/observer timing separate from native execution.
@@ -470,6 +505,36 @@ H20 acceptance. Broader graph shapes, models, ranks and fault profiles remain op
 keep cold/native-HBM/full/partial/restart/failure controls, exact outputs, actual
 restore bytes, installed-file integrity and truthful process cleanup. Remove
 obsolete code only after its replacement is consumed and passes the same contract.
+
+**Scoped installed-wheel acceptance (2026-10-14):** SGLang
+pending-query admission consumes authenticated native `peer_alive()`, without a
+health RPC or using peer death as a DMA fence. Peer failure preserves the query
+owner and fails explicitly. Ready dense lookups reuse leased recovery boundaries
+until their keys or absolute origin change. Native HBM/no-pending admission adds
+no peer probe. The final wheel from `f6d4bff2` passes the official SGLang 0.5.21
+Qwen3-8B TP=1/PP=1 DRAM and io_uring model controls: restore after flush, concurrent
+shared prefixes, restart, changed-identity misses and same-engine output checks.
+Independent review accepts both cases, unchanged installed/model hashes and eight
+normal service receipts. Failed-peer behavior has software coverage; no GPU
+peer-failure injection ran. Six official internal helper SIGKILL exits and CUDA
+IPC producer warnings remain explicit S3 limits. Public callbacks, physical
+faults and end-to-end performance retain their separate gates. Frozen evidence
+and preceding launch failures are preserved with
+[PR #238](https://github.com/feichai0017/orbitkv/pull/238).
+
+**vLLM final-wheel controls; native shutdown rejected (2026-10-14):** the
+official 0.31.0 Qwen3-8B dense DRAM gate consumes actual save/restart recovery,
+same-engine outputs and zero RPC/load-failure assertions: six checks pass and
+the unsupported hybrid assertion skips. Four services exit zero without test
+forcing. The stricter frozen drain profile still fails because the native Noop
+baseline logs `AsyncLLM output_handler failed` / `EngineDeadError` during
+intentional shutdown. This matches the released teardown ordering described in
+[vLLM #48745](https://github.com/vllm-project/vllm/issues/48745); the associated
+[fix #49000](https://github.com/vllm-project/vllm/pull/49000) remains unmerged.
+The failed contract and quarantine are preserved with PR #238; functional
+assertions do not turn that cohort into a pass or qualify S3 physical lifetime.
+The earlier missing-Manager-binary attempt also remains failed. No fork patch
+or relaxed log rule is installed, and the support matrix is unchanged.
 
 ### S5.3 — Public lifecycle and hybrid-state contracts
 

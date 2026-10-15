@@ -58,6 +58,40 @@ are open and unmerged. No dependent Hook removal or support expansion is
 authorized by this recheck. Primary API snapshots are preserved with
 `/root/orbitkv-artifacts/s5-budget-peaks-20261008/`.
 
+## 2026-10-14 upstream recheck
+
+The latest official non-prerelease versions remain vLLM 0.31.0 and SGLang 0.5.21.
+[SGLang #40896](https://github.com/sgl-project/sglang/pull/40896) merged on
+2026-10-12 as `f92199b5`; it is not part of the selected 0.5.21 release.
+[SGLang #40595](https://github.com/sgl-project/sglang/pull/40595) and
+[vLLM #59410](https://github.com/vllm-project/vllm/pull/59410) remain open.
+These facts do not authorize private-Hook removal, fork runtime dependencies or
+hybrid/P-D support expansion. SGLang pending admission now consumes the native
+authenticated peer observation; that observation preserves held ownership on
+failure and does not establish physical transfer termination.
+
+The final installed wheel from `f6d4bff2` passes the official SGLang 0.5.21
+Qwen3-8B dense TP=1/PP=1 DRAM/io_uring model gate. Independent review accepts
+flush/restart recovery, concurrent shared prefixes, identity isolation and exact
+text/token-count plus bounded finite-logprob controls against the same-engine
+cold profile. Eight service receipts and installed/model hashes are verified.
+The six official internal helper SIGKILL exits and CUDA IPC producer warnings
+remain S3 limits; software failed-peer controls do not qualify GPU peer-failure
+handling. Raw HTTP response/metric bodies were not separately archived, so no
+numeric counter or performance claim is derived from this assertion-based gate.
+Evidence is preserved outside the checkout with
+[PR #238](https://github.com/feichai0017/orbitkv/pull/238).
+
+The same-wheel vLLM model checks pass six assertions with one explicit hybrid
+skip, but their separate native shutdown contract is rejected. An official
+Noop baseline emits `EngineDeadError` after intentional teardown; the selected
+release closes the engine before cancelling its output handler. Existing
+[issue #48745](https://github.com/vllm-project/vllm/issues/48745) and unmerged
+[PR #49000](https://github.com/vllm-project/vllm/pull/49000) track this race.
+The frozen `--shutdown-timeout 30` gate retains its failure and quarantine;
+normal API exits do not qualify physical drain. No expected-error filter,
+upstream runtime patch or new support claim is applied.
+
 ## Released integration boundaries
 
 | Engine | Consumed interface | Ownership |

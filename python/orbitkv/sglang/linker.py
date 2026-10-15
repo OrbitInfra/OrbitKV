@@ -191,6 +191,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
 
     def query_state(self, rid: str) -> int:
         pending = self._pending_queries.get(rid)
+        if pending is not None and not self.client.peer_alive():
+            raise RuntimeError("OrbitKV Cache Manager exited during a pending cache query")
         if rid in self._expired_queries or (
             pending is not None and time.monotonic() - pending[1] >= self._QUERY_WAIT_SECONDS
         ):
@@ -238,15 +240,24 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 if result.num_hit_blocks and not result.lease:
                     raise RuntimeError("OrbitKV reported state hits without a restore lease")
             self._pending_queries.pop(rid, None)
-            count = lookup.groups[PoolName.KV].num_hit_blocks
-            lookup.boundaries = tuple(
-                self.recovery.restorable_boundaries(
-                    self.namespace,
-                    origin,
-                    origin + count * self.page_size,
-                    [(0, [origin + (position + 1) * self.page_size for position in range(count)])],
+            if not lookup.boundaries:
+                count = lookup.groups[PoolName.KV].num_hit_blocks
+                lookup.boundaries = tuple(
+                    self.recovery.restorable_boundaries(
+                        self.namespace,
+                        origin,
+                        origin + count * self.page_size,
+                        [
+                            (
+                                0,
+                                [
+                                    origin + (position + 1) * self.page_size
+                                    for position in range(count)
+                                ],
+                            )
+                        ],
+                    )
                 )
-            )
         except Exception:
             self.cancel_query(rid)
             raise

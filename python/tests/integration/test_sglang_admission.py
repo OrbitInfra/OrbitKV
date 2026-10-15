@@ -23,6 +23,7 @@ def linker(monkeypatch):
     from orbitkv import RecoveryContract
 
     result.instance_id = "admission"
+    result._static_lora_ids = frozenset()
     result.namespace = "test-model-state"
     result.layout = SimpleNamespace(
         pools={"kv": SimpleNamespace(group_id=0, kind="attention", window=0)}
@@ -350,6 +351,49 @@ def test_changed_keys_cancel_old_query_and_deadline_stops_restarting_io(linker):
     assert linker.client.cancel_query.call_count == 2
     linker.cancel_queued_load("req")
     assert linker.query_state("req") == 0
+
+
+@pytest.mark.parametrize("observation", [False, OSError("invalid peer descriptor")])
+def test_pending_peer_failure_preserves_query_ownership(linker, observation):
+    from orbitkv import QueryLoading
+
+    linker.client.query_prefetch.return_value = QueryLoading()
+    assert linker.lookup("req", transfer(["pending"])) == []
+    lookup = linker._lookups["req"]
+    linker._QUERY_WAIT_SECONDS = 0
+    if isinstance(observation, Exception):
+        linker.client.peer_alive.side_effect = observation
+    else:
+        linker.client.peer_alive.return_value = observation
+    with pytest.raises((RuntimeError, OSError), match="exited|descriptor"):
+        linker.query_state("req")
+    assert linker._lookups["req"] is lookup
+    assert "req" in linker._pending_queries
+    assert "req" not in linker._expired_queries
+    linker.client.release.assert_not_called()
+    linker.client.cancel_query.assert_not_called()
+    linker.client.health.assert_not_called()
+
+
+def test_ready_lookup_reuses_boundaries_until_keys_or_origin_change(linker):
+    from orbitkv import QueryReady
+
+    linker.client.query_prefetch.return_value = QueryReady(2, b"lease")
+    linker.recovery = MagicMock(wraps=linker.recovery)
+    for _ in range(3):
+        assert linker.lookup("req", transfer(["a", "b"])) == [1, 2]
+        assert linker.query_state("req") == 0
+    assert linker.recovery.restorable_boundaries.call_count == 1
+    assert linker.client.query_prefetch.call_count == 1
+    linker.client.peer_alive.assert_not_called()
+
+    linker._origins["req"] = 64
+    assert linker.lookup("req", transfer(["a", "b"])) == [1, 2]
+    assert linker.recovery.restorable_boundaries.call_count == 2
+    assert linker.lookup("req", transfer(["c", "d"])) == [1, 2]
+    assert linker.recovery.restorable_boundaries.call_count == 3
+    assert linker.client.cancel_query.call_count == 2
+    assert linker.client.release.call_count == 2
 
 
 @pytest.mark.parametrize(

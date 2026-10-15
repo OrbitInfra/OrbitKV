@@ -118,6 +118,15 @@ fn captures_actual_submitted_order_and_one_shared_part_drain() {
     assert_eq!(values[1]["copies"][0]["source_allocation_bytes"], 16384);
     assert_eq!(values[1]["copies"][0]["registered_device_bytes"], 65536);
     assert_eq!(values[1]["dma_ranges"], 1);
+    assert_eq!(values[0]["clock"], "CLOCK_MONOTONIC");
+    assert_eq!(values[1]["tid"], values[2]["tid"]);
+    for batch in &values[1..3] {
+        let begin = batch["begin_ns"].as_u64().unwrap();
+        let submitted = batch["submitted_ns"].as_u64().unwrap();
+        let drained = values[3]["drained_ns"].as_u64().unwrap();
+        assert!(batch["tid"].as_u64().unwrap() > 0);
+        assert!(begin > 0 && begin <= submitted && submitted <= drained);
+    }
     assert!(values[1].get("host_drain_ns").is_none());
     assert_eq!(values[3]["host_drain_ns"], 31);
     assert_eq!(values[4]["descriptors"], 2);

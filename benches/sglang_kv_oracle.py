@@ -225,7 +225,10 @@ def run(args: argparse.Namespace) -> dict:
         if not ok:
             raise RuntimeError(f"GPU registration failed: {message}")
         registered = True
-        for generation in range(3):
+        observed = args.samples is not None
+        operations = args.warmup + args.samples if observed else 3
+        for operation in range(operations):
+            generation = 0 if observed else operation
             sources, targets = page_maps(args.length, generation)
             seed = args.seed + generation
             hashes = [
@@ -245,7 +248,7 @@ def run(args: argparse.Namespace) -> dict:
             )
             if not ok:
                 raise RuntimeError(f"Native save failed: {message}")
-            request = f"generation-{generation}"
+            request = f"operation-{operation}" if observed else f"generation-{generation}"
             deadline = time.monotonic() + 120
             while True:
                 ready = client.query_prefetch(instance, native_hashes, request)
@@ -262,6 +265,9 @@ def run(args: argparse.Namespace) -> dict:
             before = metrics(args.manager_url)
             for tensor in tensors:
                 tensor.view(torch.uint8).fill_(SENTINEL)
+            if observed:
+                torch.cuda.synchronize()
+                started_ns = time.monotonic_ns()
             inflight = True
             handle = client.start_restore(
                 instance,
@@ -274,9 +280,13 @@ def run(args: argparse.Namespace) -> dict:
             )
             unsubmitted_lease = None
             client.wait_restore_enqueued(handle, timeout=120)
+            if observed:
+                enqueued_ns = time.monotonic_ns()
             for layer in range(LAYERS):
                 counter.wait_until(layer)
             status = client.wait_restore(handle, timeout=120)
+            if observed:
+                drained_ns = time.monotonic_ns()
             if not status.done:
                 raise RuntimeError("Native terminal drain was not returned")
             inflight = False
@@ -331,7 +341,24 @@ def run(args: argparse.Namespace) -> dict:
                 "manager_restored_bytes": restored,
                 "manager_after": after,
             }
-            _write(args.output / f"generation-{generation}.json", row)
+            if observed:
+                row["observation"] = {
+                    "operation": operation,
+                    "phase": "warmup" if operation < args.warmup else "measured",
+                    "clock": "CLOCK_MONOTONIC",
+                    "started_ns": started_ns,
+                    "enqueued_ns": enqueued_ns,
+                    "drained_ns": drained_ns,
+                    "terminal_done": status.done,
+                    "terminal_success": status.success,
+                    "session_epoch": handle.session_epoch,
+                    "operation_id": handle.operation_id,
+                    "operation_key": handle.key,
+                }
+            filename = (
+                f"operation-{operation}.json" if observed else f"generation-{generation}.json"
+            )
+            _write(args.output / filename, row)
             rounds.append(row)
     except BaseException as error:
         primary_error = error
@@ -371,7 +398,7 @@ def run(args: argparse.Namespace) -> dict:
                         file=sys.stderr,
                     )
     return {
-        "status": "VALID_FULL_LAYOUT_BYTES",
+        "status": "VALID_FULL_LAYOUT_OBSERVATION" if observed else "VALID_FULL_LAYOUT_BYTES",
         "backend": args.backend,
         "length": args.length,
         "gpu_uuid": gpu_uuid,
@@ -384,9 +411,16 @@ def run(args: argparse.Namespace) -> dict:
         "pages_per_plane": PAGES,
         "bytes_per_page_per_plane": PAGE_BYTES,
         "rounds": rounds,
+        "observation_design": {"warmup": args.warmup, "samples": args.samples}
+        if observed
+        else None,
         "unregistered": True,
         "client_closed": True,
-        "scope": "Actual released pool/native transfer full-byte control, not computed model KV, timing, native IPC retirement or S3 fault proof",
+        "scope": (
+            "Full-byte native restore and complete-operation host wall observation, including Python/native return boundaries; not device-only time, model serving or physical fault reclamation"
+            if observed
+            else "Actual released pool/native transfer full-byte control, not computed model KV, timing, native IPC retirement or S3 fault proof"
+        ),
     }
 
 
@@ -399,10 +433,16 @@ def main() -> None:
     parser.add_argument("--manager-url", required=True)
     parser.add_argument("--gpu-uuid", required=True)
     parser.add_argument("--seed", type=int, default=20260920)
+    parser.add_argument("--warmup", type=int)
+    parser.add_argument("--samples", type=int)
     parser.add_argument("--output", type=external_path, required=True)
     args = parser.parse_args()
     if not __debug__ or os.environ.get("PYTHONOPTIMIZE"):
         raise RuntimeError("Optimized oracle execution is forbidden")
+    if (args.warmup is None) != (args.samples is None) or (
+        args.samples is not None and (args.warmup < 1 or not 1 <= args.samples <= 16)
+    ):
+        parser.error("Observation requires both --warmup >= 1 and --samples between 1 and 16")
     if not 0 <= args.seed < 2**64 - 2:
         raise ValueError("Oracle seed must fit all three u64 generations")
     validate_model(json.loads(args.model_config.read_text()))

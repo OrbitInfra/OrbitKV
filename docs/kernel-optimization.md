@@ -519,3 +519,113 @@ particular, lower CPU submission time does not establish lower complete restore
 latency. Preserve this capture while evaluating matched unprofiled controls and
 the consumed engine path. The [private archive](benchmark-evidence.md#native-driver-capture-archive)
 retains frozen inputs, rejected launch controls and raw outputs.
+
+
+## Consumed engine driver attribution
+
+Engine-local raw H2D geometry records additionally carry `CLOCK_MONOTONIC`, Linux
+thread IDs and batch submission windows; each physically drained part supplies
+one shared drain timestamp. They are emitted only by the existing opt-in bounded
+capture. Transfer backends, CUDA kernels, readiness and allocation owners are
+unchanged. Instrumentation overhead remains a separate gate.
+
+After an independently reviewed capture, join one process's driver trace to its
+actual engine batches through the existing production geometry validator:
+
+```bash
+python -m benches.cuda_submission \
+  --trace /external/capture/cuda-driver-PID.jsonl \
+  --engine-log /external/capture/engine.log \
+  --native-fixture /path/to/native_copy_layout
+```
+
+The analyzer validates the clock on every part header and requires copy/launch
+API families matching the consumed backend and direction. A 2D API name alone
+does not attest its arguments; the production geometry and exact-byte controls
+remain required. It rejects incomplete records, mismatched clocks/processes/threads,
+wrong copy/launch counts, calls crossing batch boundaries and submissions after
+their declared part drain. Its driver union includes callback overhead; remaining
+host time is unattributed. Device identity, exact GPU bytes/model output, normal
+owned-process cleanup and matched overhead controls require their own receipts.
+The collector's inherited-fork and simultaneous-profiler restrictions still apply.
+A successful CPU compiler replay does not qualify GPU capture or a kernel default.
+
+
+The 2026-10-14 H20 functional cell uses the final installed wheel built from
+`f6d4bff2`, official SGLang 0.5.21 and fixed Qwen3-32B pool geometry without a
+model forward. Three sequential parts verify 12,935,233,536 total pool bytes,
+including 2,902,458,368 restored bytes, sentinel pages and corruption controls.
+Independent reconstruction matches every plane hash; replay validates all 384
+batches and 22,144 `cuMemcpyHtoDAsync_v2` calls against the native compiler and
+same-thread monotonic windows. The complete collector contains 42,224 calls,
+including operations outside those restoration windows. Oracle, Manager and
+controller all exit zero without forced cleanup; input/runtime hashes remain
+unchanged. This is functional attribution, with no overhead or performance
+promotion. Full traces, controls, preceding invalid CLI launch and independent
+reviews remain outside the checkout at
+`/root/orbitkv-artifacts/s4-s5-runtime-completion-20261014/`, linked from
+[PR #238](https://github.com/feichai0017/orbitkv/pull/238).
+
+
+## Matched observation overhead pilot
+
+The next bounded S4 gate uses the maintained installed-wheel byte oracle with
+`--warmup 1 --samples 2`. This optional mode repeats the same full 4K restore
+geometry and deterministic payload; the default three-generation byte gate
+retains its full/partial coverage. The three full restores consume 48,387
+trace-accounted records under the unchanged 65,536 cap; independent prelaunch
+review rejected the original five-restore proposal. Each operation checks every payload/sentinel
+byte and corruption control, with distinct native session/operation identities.
+
+Symmetric host monotonic observations begin after target initialization and
+synchronization, record all-enqueued acknowledgement, and finish after successful
+terminal `wait_restore`. Full byte checks and Manager metric requests occur
+outside this interval. It includes Python/native return boundaries and does not
+measure device-only time or first-layer readiness.
+
+Freeze four fresh off/on process pairs in alternating order, keeping the runtime,
+geometry, payload, CPU placement and Manager budgets equal. On cells enable both
+raw geometry and the CUPTI collector; off cells enable neither. Validate complete
+captures against the actual compiler, PID and operation windows, and require
+explicit unregistration/close plus normal component and Manager waits. Keep
+every slow sample and failed cell.
+
+```bash
+python -m benches.sglang_kv_oracle --model-config /path/to/frozen-config.json \
+  --length 4096 --backend direct --warmup 1 --samples 2 \
+  --manager-socket /path/to/owned.sock --manager-url http://127.0.0.1:20642 \
+  --gpu-uuid GPU-full-physical-uuid --output /external/pilot/cell/bytes
+python -m benches.copy_observation --contract /external/pilot/contract.json \
+  --directory /external/pilot/cells --native-fixture /path/to/frozen-validator
+```
+
+Every pair median ratio and the independent-pair bootstrap 95% upper bound must
+be at most 1.05 before a separate inference-contention contract can open. Warm-up
+samples remain archived and are explicitly excluded from the two measured
+samples. Requests are not bootstrap replicates. A failed overhead guard blocks
+further diagnosis; this small pilot cannot qualify p99, serving gains, fault
+reclamation or a new backend default. GPU0's failed-run reservation remains
+untouched, and a new card needs an independent launch/resource review.
+
+
+The single reviewed H20 pilot on 2026-10-15 stopped after five of eight cells.
+Each completed cell passed its three full payload/sentinel/corruption checks,
+explicit native unregistration/close and normal SDK/Manager waits. However, both
+on-cell directories also contain an unexpected child-process capture. Their
+complete zero-call footers do not establish the children's launch lineage or
+satisfy the frozen exact inventory. The external controller validated only the
+main file before marking each cell complete, so this admission check also needs
+repair. The final maintained analyzer rejects the foreign file.
+
+The cohort is `INVALID_COHORT_FAIL_STOP`, with observation overhead
+`NOT_EVALUATED_INVALID_COHORT`; no pair ratio, CI, p99 or performance acceptance is
+published. All main/child captures are preserved; cells 05–07 did not launch.
+The external handoff remains at
+`/root/orbitkv-artifacts/s4-copy-observation-overhead-20261014/`.
+GPU1 was released after explicit terminal native work and normal process waits;
+no forced native cleanup or retry occurred. The independently observed unreaped
+CPU-only supervisor zombie remains explicit in the postflight evidence; cleanup
+acceptance covers the successfully drained native owners. A new freeze needs an independently
+reviewed process-scope and per-cell inventory fix before another cohort. The
+runtime, installed wheel, descriptor compiler and collector were not changed by
+this pilot, and it promotes no backend or kernel.
