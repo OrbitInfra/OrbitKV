@@ -692,3 +692,45 @@ def test_native_only_consumes_absolute_part_completion_from_real_parser(cohort, 
     else:
         with pytest.raises(ValueError, match="clock|windows|drained_ns"):
             observation.validate_capture(path, data, wait, contract, native, "native")
+
+
+@pytest.mark.parametrize(
+    "fault", ["extra-directory", "extra-file", "extra-symlink", "cell-symlink", "root-symlink"]
+)
+def test_cell_census_rejects_foreign_or_linked_entries_before_replay(cohort, monkeypatch, fault):
+    root, cp, native, contract = cohort
+    if fault == "extra-directory":
+        (root / "foreign").mkdir()
+    elif fault == "extra-file":
+        (root / "foreign").write_text("unlisted evidence")
+    elif fault == "extra-symlink":
+        (root / "foreign").symlink_to(root / "missing")
+    elif fault == "cell-symlink":
+        cell = root / contract["cells"][0]["name"]
+        target = root.parent / "moved-cell"
+        cell.rename(target)
+        cell.symlink_to(target, target_is_directory=True)
+    else:
+        target = root.parent / "moved-cohort"
+        root.rename(target)
+        root.symlink_to(target, target_is_directory=True)
+
+    def unexpected_replay(*args, **kwargs):
+        pytest.fail("Native replay ran before cell census was validated")
+
+    monkeypatch.setattr(observation, "validate_capture", unexpected_replay)
+    with pytest.raises(ValueError, match="cell directory"):
+        observation.collect(root, cp, native)
+
+
+def test_cell_added_during_replay_cannot_qualify(cohort, monkeypatch):
+    root, cp, native, _ = cohort
+    original = observation.validate_capture
+
+    def add_cell(*args, **kwargs):
+        (root / "foreign").mkdir(exist_ok=True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(observation, "validate_capture", add_cell)
+    with pytest.raises(ValueError, match="cell directory inventory"):
+        observation.collect(root, cp, native)

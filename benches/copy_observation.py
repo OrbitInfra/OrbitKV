@@ -299,6 +299,16 @@ def validate_capture(
     return capture
 
 
+def _cell_census(directory: Path, names: set[str]) -> None:
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError("Missing regular observation cell directory")
+    entries = list(directory.iterdir())
+    if {entry.name for entry in entries} != names or any(
+        entry.is_symlink() or not entry.is_dir() for entry in entries
+    ):
+        raise ValueError("Observation cell directory inventory differs from the frozen contract")
+
+
 def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
     if contract_path.is_symlink() or not contract_path.is_file():
         raise ValueError("Missing regular observation contract")
@@ -358,6 +368,9 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
         names.add(name)
         path = directory / name
         paths.append(path)
+    _cell_census(directory, names)
+    for cell, path in zip(contract["cells"], paths, strict=True):
+        mode = cell["mode"]
         for file in (
             "CELL.json",
             "ORACLE-WAIT.json",
@@ -456,6 +469,7 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
             raise ValueError(
                 "Diagnostic directory inventory changed during cohort analysis"
             ) from error
+    _cell_census(directory, names)
     if any(_sha256(path) != expected for path, expected in inputs.items()):
         raise ValueError("Consumed observation evidence changed during cohort analysis")
     return {
