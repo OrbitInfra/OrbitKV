@@ -756,3 +756,53 @@ are retained under `/root/orbitkv-artifacts/s4-observation-cost-20261015/`, with
 reviews and reproduction context in
 [PR #247](https://github.com/feichai0017/orbitkv/pull/247). This does not qualify
 p99, device-only time, model output/serving, fault reclamation or a copy default.
+
+
+## Native trace CPU profile
+
+The explicit profile at `513ee7aa` replays the preceding H20 capture through the
+actual private Rust trace owner on an Intel Xeon Platinum 8457C CPU, pinned to
+CPU 0. Five independently restarted staged/whole pairs retain four warm-up and
+eight measured sequences per process; each sequence contains three captured
+restores of 128 batches and 8,064 descriptors. All ten processes exit zero.
+The external controller verifies all 47,160 emitted records and 2,903,040
+geometry entries against the input, binding waited PIDs, trace identities,
+cumulative budgets and ordered clocks. This is 360 CPU replays, including 240
+measured and 120 warm-up restores, without CUDA calls or address dereferences.
+Independent acceptance and provenance are recorded with the linked PR and
+external review evidence.
+
+The following values are medians of five independent process medians. They
+identify work inside this CPU replay; they are not GPU restore or serving times.
+
+| Observed work | Median per replay |
+| --- | --- |
+| Geometry insertion | 0.221 ms |
+| Batch capture and shape recording | 0.458 ms |
+| JSON encoding | 2.992 ms |
+| Synchronous log publication and String release | 2.332 ms |
+| Explicit logger flush | 0.00031 ms |
+
+Encoding and publication account for 86.8%–89.4% of each staged process's
+median total. The whole-path process medians range from 5.773 to 7.812 ms;
+paired staged/whole ratios range from 0.787 to 1.359. This variation prevents an
+exact overhead estimate or causal extrapolation to H20. The small clock-control
+estimate excludes other instrumentation, allocation and scheduling effects.
+`finish_ns` includes record assembly, encoding and publication: its nested
+encoding/publication fields must not be added as exclusive stages. The replay
+log's `cpu_submit_ns` and `host_drain_ns` are copied input metadata, not newly
+measured GPU intervals.
+
+The next candidate should reduce trace encoding/output volume without losing
+geometry, inside the existing bounded owner. Preserve per-record publication
+order, cumulative caps, all completion/clock evidence and synchronous flush
+before return. This profile does not implement that candidate or qualify a
+transfer/default change. A candidate still needs independent review and the
+unchanged full-byte H20 component cohort and 5% observation guard before
+inference contention or further kernel promotion.
+
+See [CPU reproduction](../benches/README.md#native-trace-cpu-profile) and
+[PR #248](https://github.com/feichai0017/orbitkv/pull/248). The complete raw
+profile, frozen executable, exact source, input copy and immutable indexes live
+outside the checkout at
+`/root/orbitkv-artifacts/s4-native-trace-profile-20261015/`.

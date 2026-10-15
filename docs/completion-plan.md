@@ -610,13 +610,23 @@ the complete runtime closure are archived outside the checkout with
 [PR #247](https://github.com/feichai0017/orbitkv/pull/247). See the
 [component result](kernel-optimization.md#component-cohort-result).
 
-**Next bounded delivery:** profile native geometry capture, encoding and
-synchronous publication/flush separately before selecting another observation-cost
-change. Retain complete capture/byte/drain controls, four balanced component blocks,
-one warm-up and two measured full 4K restores, unchanged caps and the 5% guard.
-Require independent code/runtime/launch review for a new candidate and cohort.
-Inference contention and further kernel/default promotion remain blocked by this
-observation gate; S3/S4/S5 qualification limits are unchanged.
+**Native trace CPU profile (2026-10-15): implemented and collected; CPU scope only.**
+The actual private trace owner replays the preceding complete H20 geometry in
+five independent staged/whole process pairs. All ten processes and 360 CPU
+replays pass full output, identity, clock and cap checks. Encoding and synchronous
+publication dominate every staged process; process variability remains explicit,
+and this CPU profile does not establish H20 latency or a production speedup.
+See the [CPU profile and limits](kernel-optimization.md#native-trace-cpu-profile)
+and [PR #248](https://github.com/feichai0017/orbitkv/pull/248).
+
+**Next bounded delivery:** evaluate a lossless trace encoding/output-volume
+reduction inside the existing owner, preserving every geometry field, record
+order, cumulative cap and synchronous publication/flush. Retain complete
+capture/byte/drain controls, four balanced component blocks, one warm-up and two
+measured full 4K restores, unchanged caps and the 5% guard. Require independent
+code/runtime/launch review for a new candidate and cohort. Inference contention
+and further kernel/default promotion remain blocked by this observation gate;
+S3/S4/S5 qualification limits are unchanged.
 
 - Profile actual adapter hashing/conversions, destination checks, fragmentation,
   dispatch, scratch allocation and repeated shared-prefix H2D before selecting

@@ -1400,5 +1400,8 @@ and publication; its nested fields are not additional exclusive stages.
 The external controller must compare every stable output field, record count
 and cumulative cap against the input after each process exits, symmetrically
 for both modes. No JSON parsing or validation runs between timed parts. Reconstruction follows submission order,
-which need not equal original plan construction order. These staged CPU costs
+which need not equal original plan construction order. Replay-log
+`cpu_submit_ns` and `host_drain_ns` retain original input metadata, while the
+profile JSON contains the newly measured CPU intervals. These staged CPU costs
 cannot be added to infer GPU restore overhead or promote a transfer backend.
+See the [profile result and limits](../docs/kernel-optimization.md#native-trace-cpu-profile).
