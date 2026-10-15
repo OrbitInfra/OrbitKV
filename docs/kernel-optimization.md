@@ -665,5 +665,18 @@ real exec child: explicit loading emits one main capture; the matched inherited-
 preload control emits main and child captures. These tests do not initialize
 CUDA or qualify hardware/descendant work. Collector C++, native wheel, production
 copy paths, ownership and the original capture/5% overhead guards are unchanged.
-A new independently reviewed runtime freeze is required before another GPU pilot;
-S4/S5 remain Partial.
+The fresh H20 v2 cohort at `7601af23` completes all eight cells with exact
+main-process captures, production-compiler replay and normal native/Manager
+release. The frozen 5% overhead guard fails in every pair: the pair-geometric
+ratio is 1.4133, with independent-pair 95% interval [1.4036, 1.4231]. This is the
+combined tracing/collector overhead, not an attribution to either component.
+Further inference contention and kernel/default promotion remain blocked; the
+next bounded delivery is in [S4](completion-plan.md#s4--finish-communication-execution-and-demonstrate-gains).
+
+The complete run is archived outside the checkout at
+`/root/orbitkv-artifacts/s4-h20-observation-7601af23-r3-20261015/remote-run/`.
+Its immutable run manifest SHA256 is
+`a9c8a4c86f93314ba1564b320c8731b375b9fa2e29fa46db2b3a74d015c78746`.
+The invalid first cohort, rejected prelaunch freezes and failed controls remain
+preserved separately. S3/S4/S5 remain Partial; no serving, p99 or default
+qualification follows from this pool-only result.

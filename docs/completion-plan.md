@@ -555,7 +555,7 @@ No retry or replacement cell ran; GPU1 was released normally and GPU0's prior
 failed-run reservation remains untouched. The invalid cohort and reviews are
 preserved outside the checkout with [PR #238](https://github.com/feichai0017/orbitkv/pull/238).
 
-**Capture-scope repair (2026-10-15): implemented; hardware qualification open.**
+**Capture-scope repair (2026-10-15): implemented; matched overhead FAIL.**
 The oracle explicitly loads the frozen collector in its own process before
 Torch/engine/native imports and retains it through completion. It rejects
 inherited preloads and ambiguous trace directories. CPU-only controls using the
@@ -570,13 +570,24 @@ after replay. The controller also rejects changed byte-result evidence before
 accepting a cell. No production wheel, collector C++, backend or ownership policy
 changes; the original invalid cohort stays invalid.
 
-**Next bounded delivery:** independently review the repaired source and a fresh
-runtime/resource freeze before a new H20 cohort. Retain four independent off/on
-pairs, one warm-up and two measured full 4K restores, unchanged capture caps and
-the 5% median/independent-pair CI guard. Preserve all failures and successful
-physical drain receipts. Inference contention and kernel/default promotion
-remain blocked by this observation gate; a pool-only pilot does not qualify p99,
-model output or serving gains.
+**Completed H20 v2 cohort (2026-10-15):** the fresh `7601af23` runtime uses
+matching lifecycle-8/cache-10 artifacts. All eight cells and 24 full-layout
+restores pass payload/sentinel and corruption controls, with native release, normal
+SDK/Manager/controller waits and unchanged installed files. The four main-only
+captures pass exact inventory and production-compiler replay. The cohort is valid
+but `PILOT_OVERHEAD_FAIL`: all four pair ratios exceed 1.05; the pair-geometric
+ratio is 1.4133, with independent-pair 95% interval [1.4036, 1.4231]. This measures
+combined diagnostic overhead; the small pool-only pilot does not qualify p99,
+model output or serving gains. The original invalid cohort and two rejected
+zero-GPU prelaunch freezes remain preserved. See
+[matched overhead methodology](kernel-optimization.md#matched-observation-overhead-pilot).
+
+**Next bounded delivery:** reduce observation cost before another independently
+reviewed freeze; retain complete capture/byte/drain controls, four off/on pairs,
+one warm-up and two measured full 4K restores, unchanged caps and the 5% guard.
+Separate native tracing and driver-callback costs before attributing the
+regression. Inference contention and further kernel/default promotion remain
+blocked by this observation gate; S3/S4/S5 qualification limits are unchanged.
 
 - Profile actual adapter hashing/conversions, destination checks, fragmentation,
   dispatch, scratch allocation and repeated shared-prefix H2D before selecting
