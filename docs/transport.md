@@ -173,7 +173,7 @@ checks after process exit, while Active/ActiveMore local DMA stays pending until
 the engine reports its drain. It neither reconnects nor changes generations.
 
 `ObserveCompletion` carries bounded P/D completion and decode-resource evidence,
-without request IDs or state keys. Cache schema **8** combines these observations
+without request IDs or state keys. Cache schema **10** combines these observations
 with the engine-local Restore grant protocol; older schemas are rejected.
 
 ### Restore and source ownership
@@ -272,7 +272,7 @@ once per lookup; views share its allocation and native pending-query identity
 checks avoid repeated per-page conversion. Submission, revision, polling, and
 cancellation remain native, and blocking calls release the GIL.
 
-Cache schema 8 distinguishes metadata-only candidates from leased reads.
+Cache schema 10 distinguishes metadata-only candidates from leased reads.
 Discovery returns `Candidates`, never a Restore lease, and does not reserve
 payload bytes. `read_recovery` translates compiled demand into exact hash views
 and validates complete leased coverage. The warmup flag prepares pages without
