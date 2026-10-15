@@ -22,6 +22,7 @@ struct LayerTensor {
     )]
     tensor: Py<PyAny>,
     metadata: TensorMetadata,
+    credit_identity: (Vec<u8>, u64),
 }
 
 // Note: No custom Drop impl needed for LayerTensor.
@@ -99,6 +100,26 @@ impl CudaTensorRegistry {
         }
 
         let device_uuid = &context_key.device_uuid;
+        let mut credits: HashSet<(Vec<u8>, u64)> = self
+            .contexts
+            .values()
+            .flat_map(|context| {
+                context
+                    .tensors
+                    .values()
+                    .map(|tensor| tensor.credit_identity.clone())
+            })
+            .collect();
+        for (_, registration) in &layers {
+            if !credits.insert((
+                registration.ref_counter_handle.clone(),
+                registration.ref_counter_offset,
+            )) {
+                return Err(PyValueError::new_err(
+                    "CUDA IPC export credit already has an importer owner",
+                ));
+            }
+        }
         let export_owner_generation = layers
             .first()
             .map(|(_, tensor)| &tensor.export_owner_generation);
@@ -269,6 +290,10 @@ impl CudaTensorRegistry {
                 .and_then(|size| usize::try_from(size).ok())
                 .ok_or_else(|| PyValueError::new_err("CUDA registration view size overflow"))?;
             Ok(LayerTensor {
+                credit_identity: (
+                    registration.ref_counter_handle.clone(),
+                    registration.ref_counter_offset,
+                ),
                 tensor: tensor.unbind(),
                 metadata: TensorMetadata {
                     dtype: format!("torch.{}", registration.dtype),

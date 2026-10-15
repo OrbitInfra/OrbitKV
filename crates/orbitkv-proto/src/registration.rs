@@ -23,7 +23,7 @@ impl CudaIpcTensorRegistration {
             || self.ref_counter_handle.is_empty()
             || self.ref_counter_handle.len() > 255
             || self.ref_counter_handle.contains(&0)
-            || self.ref_counter_offset > usize::MAX as u64
+            || self.ref_counter_offset >= 10_000
             || (!self.event_handle.is_empty() && self.event_handle.len() != 64)
             || (self.event_sync_required && self.event_handle.len() != 64)
         {
@@ -48,6 +48,9 @@ impl CudaIpcTensorRegistration {
             || self.shape.len() != self.strides.len()
             || self.shape.contains(&0)
             || self.strides.contains(&0)
+            || self.shape.iter().any(|n| *n > i64::MAX as u64)
+            || self.strides.iter().any(|n| *n > i64::MAX as u64)
+            || self.view_offset_bytes / width > i64::MAX as u64
         {
             return Err("invalid CUDA registration dtype, storage or tensor layout".into());
         }

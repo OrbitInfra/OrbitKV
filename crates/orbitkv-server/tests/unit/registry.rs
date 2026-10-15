@@ -130,10 +130,48 @@ fn explicit_export_batch_cannot_mix_retained_owner_generations() {
     };
     let mut second = first.clone();
     second.export_owner_generation = vec![2; 16];
+    second.ref_counter_offset = 1;
     let error = registry
         .register_layers(&context, vec![("k".into(), first), ("v".into(), second)])
         .unwrap_err();
     let message = Python::attach(|py| error.value(py).to_string());
     assert!(message.contains("different owners"), "{message}");
+    assert!(registry.contexts.is_empty());
+}
+
+#[test]
+fn one_export_credit_cannot_create_two_importer_owners() {
+    let mut registry = CudaTensorRegistry::empty();
+    let context = key(
+        "duplicate-credit",
+        0,
+        0,
+        "GPU-c4930667-4d65-aae5-8205-fe785c3654be",
+    );
+    let first = CudaIpcTensorRegistration {
+        format_version: 1,
+        allocation_kind: "torch-cuda-ipc-storage".into(),
+        allocation_handle: vec![1; 64],
+        device_uuid: context.device_uuid.clone(),
+        storage_size_bytes: 64,
+        shape: vec![8],
+        strides: vec![1],
+        dtype: "float16".into(),
+        element_size: 2,
+        ref_counter_handle: b"/torch-counter".to_vec(),
+        export_owner_generation: vec![1; 16],
+        ..Default::default()
+    };
+    let error = registry
+        .register_layers(
+            &context,
+            vec![("k".into(), first.clone()), ("v".into(), first)],
+        )
+        .unwrap_err();
+    let message = Python::attach(|py| error.value(py).to_string());
+    assert!(
+        message.contains("already has an importer owner"),
+        "{message}"
+    );
     assert!(registry.contexts.is_empty());
 }
