@@ -45,8 +45,16 @@ impl ContextState {
     }
 }
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct ContextKey {
+    pub(crate) instance_id: String,
+    pub(crate) tp_rank: u32,
+    pub(crate) pp_rank: u32,
+    pub(crate) device_uuid: String,
+}
+
 pub struct CudaTensorRegistry {
-    contexts: HashMap<String, ContextState>,
+    contexts: HashMap<ContextKey, ContextState>,
 }
 
 impl CudaTensorRegistry {
@@ -69,13 +77,12 @@ impl CudaTensorRegistry {
 
     fn register_layers(
         &mut self,
-        context_key: &str,
-        device_uuid: &str,
+        context_key: &ContextKey,
         layers: Vec<(String, Vec<u8>)>,
     ) -> PyResult<Vec<TensorMetadata>> {
         if self.contexts.contains_key(context_key) {
             return Err(PyValueError::new_err(format!(
-                "context {context_key} is already registered"
+                "context {context_key:?} is already registered"
             )));
         }
 
@@ -83,11 +90,12 @@ impl CudaTensorRegistry {
         for (layer_name, _) in &layers {
             if !seen_layers.insert(layer_name.as_str()) {
                 return Err(PyValueError::new_err(format!(
-                    "layer {layer_name} appears more than once in context {context_key}"
+                    "layer {layer_name} appears more than once in context {context_key:?}"
                 )));
             }
         }
 
+        let device_uuid = &context_key.device_uuid;
         let device_id = Python::attach(|py| {
             py.import("orbitkv.client.gpu")?
                 .getattr("CudaIPCWrapper")?
@@ -102,7 +110,7 @@ impl CudaTensorRegistry {
 
             if context.device_id != metadata.device_id {
                 return Err(PyValueError::new_err(format!(
-                    "context {context_key} is pinned to device {} but got {}",
+                    "context {context_key:?} is pinned to device {} but got {}",
                     context.device_id, metadata.device_id
                 )));
             }
@@ -111,20 +119,19 @@ impl CudaTensorRegistry {
             metadatas.push(metadata);
         }
 
-        self.contexts.insert(context_key.to_string(), context);
+        self.contexts.insert(context_key.clone(), context);
         Ok(metadatas)
     }
 
-    fn drop_context(&mut self, context_key: &str) -> usize {
-        self.release_contexts(vec![context_key.to_string()])
+    fn drop_context(&mut self, context_key: &ContextKey) -> usize {
+        self.release_contexts(vec![context_key.clone()])
     }
 
     fn drop_instance(&mut self, instance_id: &str) -> usize {
-        let prefix = format!("{instance_id}:");
-        let keys: Vec<String> = self
+        let keys: Vec<ContextKey> = self
             .contexts
             .keys()
-            .filter(|key| key.starts_with(&prefix))
+            .filter(|key| key.instance_id == instance_id)
             .cloned()
             .collect();
         self.release_contexts(keys)
@@ -132,7 +139,7 @@ impl CudaTensorRegistry {
 
     /// Clear all contexts and return the total number of tensors removed.
     fn clear_and_count(&mut self) -> usize {
-        let keys: Vec<String> = self.contexts.keys().cloned().collect();
+        let keys: Vec<ContextKey> = self.contexts.keys().cloned().collect();
         self.release_contexts(keys)
     }
 
@@ -145,7 +152,7 @@ impl CudaTensorRegistry {
     /// removed contexts actually hold live tensors. Dropping empty contexts is
     /// pure Rust, so an idle/empty registry never forces a CUDA device sync —
     /// which would block forever on a wedged GPU.
-    fn release_contexts(&mut self, keys: Vec<String>) -> usize {
+    fn release_contexts(&mut self, keys: Vec<ContextKey>) -> usize {
         let tensor_count: usize = keys
             .iter()
             .filter_map(|key| self.contexts.get(key))
@@ -242,8 +249,7 @@ impl CudaTensorRegistry {
 /// the actor uses to hand the result back to the awaiting caller.
 enum RegistryCommand {
     RegisterLayers {
-        context_key: String,
-        device_uuid: String,
+        context_key: ContextKey,
         /// `(layer_name, wrapper_bytes)` for each layer in the batch.
         layers: Vec<(String, Vec<u8>)>,
         // The `PyErr` is stringified on the actor thread (which holds the GIL),
@@ -255,7 +261,7 @@ enum RegistryCommand {
         reply: oneshot::Sender<usize>,
     },
     DropContext {
-        context_key: String,
+        context_key: ContextKey,
         reply: oneshot::Sender<usize>,
     },
     Clear {
@@ -298,16 +304,14 @@ impl RegistryHandle {
     /// respect to the registry: an existing context is rejected before any
     /// tensor is materialized, and a materialization failure does not publish a
     /// partial context.
-    pub async fn register_layers(
+    pub(crate) async fn register_layers(
         &self,
-        context_key: String,
-        device_uuid: String,
+        context_key: ContextKey,
         layers: Vec<(String, Vec<u8>)>,
     ) -> Result<Vec<TensorMetadata>, String> {
         let (reply, rx) = oneshot::channel();
         self.dispatch(RegistryCommand::RegisterLayers {
             context_key,
-            device_uuid,
             layers,
             reply,
         })
@@ -325,7 +329,7 @@ impl RegistryHandle {
     }
 
     /// Drop exactly one context; returns the number of CUDA tensors released.
-    pub async fn drop_context(&self, context_key: String) -> usize {
+    pub(crate) async fn drop_context(&self, context_key: ContextKey) -> usize {
         let (reply, rx) = oneshot::channel();
         self.dispatch(RegistryCommand::DropContext { context_key, reply })
             .await;
@@ -354,12 +358,11 @@ fn registry_actor(mut registry: CudaTensorRegistry, mut rx: mpsc::Receiver<Regis
         match cmd {
             RegistryCommand::RegisterLayers {
                 context_key,
-                device_uuid,
                 layers,
                 reply,
             } => {
                 let result = registry
-                    .register_layers(&context_key, &device_uuid, layers)
+                    .register_layers(&context_key, layers)
                     // Stringify here, on the GIL-owning thread, so the gRPC
                     // handler never needs `Python::attach` just to read the message.
                     .map_err(|err| Python::attach(|py| err.value(py).to_string()));
