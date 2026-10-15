@@ -339,7 +339,7 @@ class ClientContext:
 
         self._registered = True
 
-    def unregister_context(self) -> None:
+    def unregister_context(self, *, strict: bool = False) -> None:
         """Unregister context from server (like WorkerAdapter.unregister_context)."""
         if not self._registered:
             return
@@ -347,8 +347,12 @@ class ClientContext:
         try:
             ok, message = self.client.unregister_context(self.instance_id)
             if not ok:
+                if strict:
+                    raise RuntimeError(f"Unregister context failed: {message}")
                 logger.warning(f"Unregister context failed: {message}")
         except Exception as e:
+            if strict:
+                raise
             logger.warning(f"Unregister context exception: {e}")
 
         self._registered = False
@@ -543,6 +547,26 @@ class CacheManagerProcess:
             self._close_log()
             return
         process = self.process
+        if os.environ.get("ORBITKV_TEST_STRICT_SHUTDOWN") == "1":
+            record = self.stop_without_kill(timeout=30)
+            members, errors = identity_group_members(process.pid)
+            cleanup = {
+                "pid": process.pid,
+                "start_ticks": int(record["start_ticks"]) if record["start_ticks"] else None,
+                "exit_code": process.returncode,
+                "forced_kill": False,
+                "reaped": record["reaped"],
+                "remaining_processes": members,
+                "inspection_errors": errors,
+                "status": record["status"],
+            }
+            if self._configured_log_path is not None:
+                Path(str(self._configured_log_path) + ".cleanup.json").write_text(
+                    json.dumps(cleanup, indent=2) + "\n"
+                )
+            if record["status"] != "exited" or process.returncode != 0 or members or errors:
+                raise RuntimeError(f"Strict Manager shutdown failed; owner retained: {cleanup}")
+            return
         forced_kill = False
         try:
             if self.process.poll() is None:
@@ -641,6 +665,17 @@ class CacheManagerProcess:
             record["error"] = repr(error)
             return record
 
+        members, errors = identity_group_members(pid)
+        if members or errors:
+            record.update(
+                status="quarantined",
+                reason="process_group_not_drained",
+                reaped=True,
+                returncode=returncode,
+                remaining_processes=members,
+                inspection_errors=errors,
+            )
+            return record
         self.process = None
         self._graceful_shutdown_timed_out = False
         self._close_log()

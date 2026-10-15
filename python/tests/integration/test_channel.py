@@ -1,10 +1,12 @@
 """Process-boundary integration for the node-local iceoryx2 client."""
 
 import importlib
+import json
 import os
 import select
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -48,7 +50,7 @@ def test_channel_lifecycle_runs_with_no_grpc_listener(channel_server):
 
 @pytest.mark.parametrize("diagnostic", [False, True], ids=["save", "save-diagnostic"])
 def test_query_bundle_uses_bootstrapped_arena_and_core(
-    channel_server, channel_client_context, request, diagnostic
+    channel_server, channel_client_context, request, diagnostic, tmp_path
 ):
     orbitkv_native = importlib.import_module("orbitkv.orbitkv")
     torch = pytest.importorskip("torch")
@@ -178,6 +180,27 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(
     query_client.release(third.lease)
     with pytest.raises(orbitkv_native.OrbitKVError, match="Invalid"):
         query_client.release(third.lease)
+    session_epoch = query_client.session_epoch
+    query_client.close()
+    with pytest.raises(orbitkv_native.OrbitKVError, match="reconnect"):
+        query_client.health()
+    (tmp_path / "query.native-release.json").write_text(
+        json.dumps(
+            {
+                "stage": "query-close",
+                "pid": os.getpid(),
+                "start_ticks": int(
+                    Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]
+                ),
+                "instance_id": channel_client_context.instance_id,
+                "session_epoch": session_epoch,
+                "closed": True,
+                "completed_mono_ns": time.monotonic_ns(),
+            },
+            indent=2,
+        )
+        + "\n"
+    )
 
 
 @pytest.mark.parametrize("channel_server", ["budget"], indirect=True)

@@ -248,12 +248,20 @@ class VLLMServer:
                 pass_fds=inherited_gpu_lock_fds(),
             )
 
+        self._process_start_ticks = int(
+            Path(f"/proc/{self.process.pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+        )
         self._wait_for_ready(timeout=self.startup_timeout)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Stop the API owner and require its engine workers to drain."""
-        from tests.support.installed_serving import process_group_members
+
+        def members():
+            found, errors = identity_group_members(process.pid)
+            if errors:
+                raise RuntimeError(f"Native process-group ownership is unknown: {errors}")
+            return found
 
         if self.process:
             process = self.process
@@ -262,19 +270,41 @@ class VLLMServer:
             deadline = time.monotonic() + 90
             while time.monotonic() < deadline:
                 process.poll()
-                if not process_group_members(process.pid):
+                if not members():
                     break
                 time.sleep(0.1)
-            remaining = process_group_members(process.pid)
+            remaining = members()
+            strict = os.environ.get("ORBITKV_TEST_STRICT_SHUTDOWN") == "1"
+            if remaining and strict:
+                cleanup = {
+                    "pid": process.pid,
+                    "start_ticks": self._process_start_ticks,
+                    "exit_code": process.returncode,
+                    "forced_kill": False,
+                    "reaped": process.returncode is not None,
+                    "remaining_processes": remaining,
+                    "status": "quarantined",
+                }
+                if self.log_file:
+                    Path(str(self.log_file) + ".cleanup.json").write_text(
+                        json.dumps(cleanup, indent=2) + "\n"
+                    )
+                error = RuntimeError(f"Strict vLLM shutdown failed; owner retained: {cleanup}")
+                if exc_val is not None:
+                    raise exc_val from error
+                raise error
             if remaining:
                 with suppress(ProcessLookupError):
                     os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=10)
             cleanup = {
                 "pid": process.pid,
+                "start_ticks": self._process_start_ticks,
                 "exit_code": process.returncode,
+                "reaped": True,
                 "forced_kill": bool(remaining),
-                "remaining_processes": process_group_members(process.pid),
+                "remaining_processes": members(),
+                "inspection_errors": [],
             }
             if self.log_file:
                 Path(str(self.log_file) + ".cleanup.json").write_text(
@@ -436,6 +466,9 @@ class CacheManager:
                 pass_fds=inherited_gpu_lock_fds(),
             )
 
+        self._process_start_ticks = int(
+            Path(f"/proc/{self.process.pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+        )
         self._wait_for_ready()
         return self
 
@@ -467,7 +500,7 @@ class CacheManager:
                     os.killpg(process.pid, signal.SIGTERM)
                 process.wait(timeout=30)
             except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
-                if process.poll() is None:
+                if process.poll() is None and os.environ.get("ORBITKV_TEST_STRICT_SHUTDOWN") != "1":
                     forced_kill = True
                     with suppress(ProcessLookupError, OSError):
                         os.killpg(process.pid, signal.SIGKILL)
@@ -478,7 +511,9 @@ class CacheManager:
             members, errors = identity_group_members(process.pid)
             cleanup = {
                 "pid": process.pid,
+                "start_ticks": self._process_start_ticks,
                 "exit_code": process.returncode,
+                "reaped": process.returncode is not None,
                 "forced_kill": forced_kill,
                 "remaining_processes": members,
                 "inspection_errors": errors,
@@ -487,6 +522,13 @@ class CacheManager:
                 Path(str(self.log_file) + ".cleanup.json").write_text(
                     json.dumps(cleanup, indent=2) + "\n"
                 )
+            if os.environ.get("ORBITKV_TEST_STRICT_SHUTDOWN") == "1" and (
+                process.returncode != 0 or members or errors
+            ):
+                error = RuntimeError(f"Strict Manager shutdown failed; owner retained: {cleanup}")
+                if exc_val is not None:
+                    raise exc_val from error
+                raise error
             print("Cache Manager stopped.\n")
         if self.log_handle:
             self.log_handle.close()
