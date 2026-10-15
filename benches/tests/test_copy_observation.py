@@ -219,6 +219,7 @@ def cohort(tmp_path, monkeypatch, request):
         calls = [
             {
                 "name": "cuMemcpyHtoDAsync_v2",
+                "result": 0,
                 "begin_ns": row["observation"]["started_ns"] + 10,
                 "end_ns": row["observation"]["started_ns"] + 100,
             }
@@ -489,7 +490,15 @@ def test_frozen_collector_activation_is_consumed(cohort, fault):
 @pytest.mark.parametrize("cohort", ["components"], indirect=True)
 @pytest.mark.parametrize(
     "fault",
-    ["native_pid", "driver_pid", "driver_window", "missing_operation", "native_when_disabled"],
+    [
+        "native_pid",
+        "driver_pid",
+        "driver_window",
+        "driver_result",
+        "driver_direction",
+        "missing_operation",
+        "native_when_disabled",
+    ],
 )
 def test_component_cost_requires_actual_mode_and_operation_coverage(cohort, monkeypatch, fault):
     root, cp, native, contract = cohort
@@ -514,6 +523,10 @@ def test_component_cost_requires_actual_mode_and_operation_coverage(cohort, monk
                 pid += 1
             elif fault == "driver_window":
                 threads[7][0]["begin_ns"] = 1
+            elif fault == "driver_result":
+                threads[7][0]["result"] = 1
+            elif fault == "driver_direction":
+                threads[7][0]["name"] = "cuMemcpyDtoHAsync_v2"
             else:
                 threads[7].pop()
             return pid, calls, threads

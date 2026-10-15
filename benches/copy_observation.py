@@ -363,19 +363,25 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
                 for event in events
             ):
                 raise ValueError(f"Foreign driver-only process/window: {name}")
-            operation_calls = [
-                sum(
-                    event["name"].startswith("cuMemcpy")
-                    and row["observation"]["started_ns"]
+            operation_calls = []
+            for row in result["rounds"]:
+                clocks = row["observation"]
+                copies = [
+                    event
+                    for event in events
+                    if event["name"].startswith("cuMemcpy")
+                    and clocks["started_ns"]
                     <= event["begin_ns"]
                     <= event["end_ns"]
-                    <= row["observation"]["drained_ns"]
-                    for event in events
-                )
-                for row in result["rounds"]
-            ]
-            if not all(operation_calls):
-                raise ValueError(f"Missing driver-only operation capture: {name}")
+                    <= clocks["drained_ns"]
+                ]
+                if not copies or any(
+                    event["name"] not in {"cuMemcpyHtoDAsync_v2", "cuMemcpy2DAsync_v2"}
+                    or event["result"] != 0
+                    for event in copies
+                ):
+                    raise ValueError(f"Missing or failed driver-only operation capture: {name}")
+                operation_calls.append(len(copies))
             capture = {
                 "pid": pid,
                 "captured_driver_calls": calls,
