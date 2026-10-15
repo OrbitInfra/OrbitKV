@@ -113,6 +113,19 @@ separately from pytest. For native Restore result or retention changes, build
 set `ORBITKV_SHARED_COMPLETION_TEST_BINARY` to that test executable. Run
 `cargo test -p orbitkv-py --lib --no-default-features --features cuda-13,mooncake,test-hooks
 local_restore::tests -- --include-ignored --nocapture` from the repository root.
+For producer-bound Publish registration changes, run `client::tests` with the
+same fixture and embedding environment. These controls pause a real native
+worker-lock lookup, replace the registration, and check stale/foreign-client
+rejection through both save entry points. The idle worker owns no CUDA executor;
+its positive result validates the retained Manager route, not GPU bytes.
+The exporter weak-reference control checks that dropping a worker's hold cannot
+release tensors still referenced by a registration authority. vLLM's source-only
+save-lifecycle gate checks request/boundary queue capture and mixed-owner refusal;
+SGLang's corresponding released-API control is
+`pytest -m integration tests/integration/test_sglang_admission.py -k offload_keeps`.
+It mocks CUDA readiness and native save, so it remains a queue/response contract,
+not a device-copy or engine lifetime gate.
+
 Choose an embedding-capable `PYO3_PYTHON`; when testing the extension crate on
 Debian Python 3.11, use
 `RUSTFLAGS='-C link-arg=/usr/lib/x86_64-linux-gnu/libpython3.11.so'` for that
