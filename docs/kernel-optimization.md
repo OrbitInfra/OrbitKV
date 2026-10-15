@@ -825,6 +825,33 @@ named geometry and applies the existing full span, shape, generation, cumulative
 budget and production DMA-compiler checks. It retains schema-2 input for archived
 captures, and rejects a schema change within an executor. The CPU replay accepts
 both input formats. Opening-before-submit, drained-part publication, synchronous
-logging/flush and failure semantics are unchanged. This candidate's CPU controls
-do not establish H20 overhead or a serving gain; the complete unchanged component
-cohort remains required before dependent contention work.
+logging/flush and failure semantics are unchanged.
+
+The ten-process CPU replay verifies every emitted field, order, clock, identity
+and cap. For identical actual emitted scalar values, the compact JSON contains
+51,087,291 bytes against 128,588,271 bytes with repeated field names: a 60.27%
+reduction in payload bytes. This same-values comparison does not establish a
+matched old/new timing gain, H20 latency or model-serving improvement.
+
+The single fresh H20 cohort uses source and harness `d3624cc2` with installed
+wheel SHA256 `8182e63993c3891b67265ce5e4a57ccb2b36162cd2ad0bf5ce8bb20fc179cd25`.
+All 16 balanced component cells, 48 complete restores and 96 corruption controls
+pass. The combined/off geometric ratio is 1.0729 [1.0690, 1.0765], with all four
+pairs exceeding the frozen 1.05 guard: `PILOT_OVERHEAD_FAIL`. Native/off is
+1.0758 [1.0693, 1.0848]; driver/off is 0.9988 [0.9946, 1.0050]. These are
+independent process-pair contrasts, without additive attribution or matched
+comparison to an earlier cohort. The remaining native observation bundle still
+needs lower-cost encoding/publication before dependent inference-contention work.
+
+The maintained reader and production CPU geometry compiler reproduce the complete
+remote analysis from archived raw inputs. Native unregister/client-close,
+SDK/Manager/controller/supervisor/SSH waits, empty GPU1 occupancy and release of
+its original lease are recorded; GPU0's protected reservation stays unchanged.
+All frozen input and installed-file hashes match. No retry, replacement cell,
+second cohort or forced cleanup ran. The 422-file raw manifest, CPU profile and
+full runtime closure live under
+`/root/orbitkv-artifacts/pr-merge-and-compact-trace-20261015/`, with review and
+reproduction context in [PR #249](https://github.com/feichai0017/orbitkv/pull/249).
+The previous failed and invalid cohorts retain their original decisions.
+This is a complete-restoration observation pilot, not p99, device-only time,
+model output/serving, physical-fault reclamation or a backend/default qualification.

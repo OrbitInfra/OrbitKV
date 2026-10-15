@@ -619,7 +619,7 @@ and this CPU profile does not establish H20 latency or a production speedup.
 See the [CPU profile and limits](kernel-optimization.md#native-trace-cpu-profile)
 and [PR #248](https://github.com/feichai0017/orbitkv/pull/248).
 
-**Compact trace candidate (2026-10-15): implemented; hardware qualification pending.**
+**Compact trace delivery (2026-10-15): implemented; matched overhead FAIL.**
 Schema-3 descriptors contain the same fifteen unsigned geometry values in a
 fixed order declared by every opening record. The reader restores named geometry
 before all existing validation; archived schema-2 captures remain readable and
@@ -628,14 +628,25 @@ and synchronous publication/flush are unchanged. CPU controls cover both formats
 unsigned extremes, malformed rows and the real buffered immediate-exit boundary.
 This is an observation-format change, not a copy backend or ownership change.
 
-**Next bounded delivery:** evaluate this lossless trace encoding/output-volume
-reduction inside the existing owner, preserving every geometry field, record
-order, cumulative cap and synchronous publication/flush. Retain complete
-capture/byte/drain controls, four balanced component blocks, one warm-up and two
-measured full 4K restores, unchanged caps and the 5% guard. Require independent
-code/runtime/launch review for a new candidate and cohort. Inference contention
-and further kernel/default promotion remain blocked by this observation gate;
-S3/S4/S5 qualification limits are unchanged.
+The ten-process CPU replay preserves every scalar value and record boundary.
+For identical emitted values, compact JSON uses 60.27% fewer bytes than named
+geometry; this is a representation comparison, not a matched timing gain.
+The single fresh H20 cohort at `d3624cc2` completes all 16 cells, 48 full-layout
+restores and 96 corruption controls with normal native/Manager/process waits,
+unchanged runtime hashes and released GPU1 ownership. Its combined/off
+pair-geometric ratio is 1.0729, with independent-pair 95% interval
+[1.0690, 1.0765]; every pair remains above 1.05: `PILOT_OVERHEAD_FAIL`.
+Complete raw evidence and the runtime closure are retained outside Git with
+[PR #249](https://github.com/feichai0017/orbitkv/pull/249). This does not promote
+inference contention, a copy default, serving performance or S3 lifetime.
+
+**Next bounded delivery:** reduce the remaining native encoding/publication cost
+inside the existing owner with a lossless representation. Preserve every scalar,
+record order, cumulative cap, completion clock and synchronous flush; retain the
+same complete byte/capture/drain controls and 5% guard. Any new candidate needs
+independent code/runtime/launch review and a newly frozen cohort; this completed
+cohort is not retried or replaced. Inference contention and further kernel/default
+promotion remain blocked by the observation gate; S3/S4/S5 limits are unchanged.
 
 - Profile actual adapter hashing/conversions, destination checks, fragmentation,
   dispatch, scratch allocation and repeated shared-prefix H2D before selecting
