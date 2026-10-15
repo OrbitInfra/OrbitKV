@@ -26,20 +26,6 @@ fn number(value: &Value, field: &str) -> u64 {
         .unwrap_or_else(|| panic!("invalid {field}"))
 }
 
-fn stable(mut value: Value) -> Value {
-    for field in [
-        "pid",
-        "trace_id",
-        "tid",
-        "begin_ns",
-        "submitted_ns",
-        "drained_ns",
-    ] {
-        value.as_object_mut().unwrap().remove(field);
-    }
-    value
-}
-
 fn load(path: &str) -> Vec<InputPart> {
     let text = std::fs::read_to_string(path).unwrap();
     assert!(text.len() <= 64 * 1024 * 1024);
@@ -149,13 +135,18 @@ fn captured_geometry_profile() {
             let footer = &part.records[part.records.len() - 2];
             let planned = number(footer, "planned_descriptors") as usize;
             let final_part = footer["final_part"].as_bool().unwrap();
-            let mut encoded = Vec::with_capacity(part.records.len());
             let mut encoding_ns = 0_u64;
+            let mut publish_ns = 0_u64;
+            let mut encoded_bytes = 0_usize;
             let mut encode = |record: TraceRecord<'_>| {
                 let started = Instant::now();
                 let fields = serde_json::to_string(&record).unwrap();
                 encoding_ns += started.elapsed().as_nanos() as u64;
-                encoded.push(fields);
+                encoded_bytes += fields.len();
+                let started = Instant::now();
+                log::info!(target: "orbitkv_core::transfer::local::trace", "local_raw_copy {fields}");
+                drop(fields);
+                publish_ns += started.elapsed().as_nanos() as u64;
             };
             let total_started = Instant::now();
             let started = Instant::now();
@@ -196,34 +187,18 @@ fn captured_geometry_profile() {
             let finish_ns = started.elapsed().as_nanos() as u64;
             let started = Instant::now();
             if mode == "staged" {
-                for fields in &encoded {
-                    log::info!(target: "orbitkv_core::transfer::local::trace", "local_raw_copy {fields}");
-                }
-            }
-            let publish_ns = started.elapsed().as_nanos() as u64;
-            let started = Instant::now();
-            if mode == "staged" {
                 log::logger().flush();
             }
             let flush_ns = started.elapsed().as_nanos() as u64;
             let total_ns = total_started.elapsed().as_nanos() as u64;
             assert!(trace.invalid.is_none());
-            if mode == "staged" {
-                assert_eq!(encoded.len(), part.records.len());
-                for (fields, expected) in encoded.iter().zip(&part.records) {
-                    assert_eq!(
-                        stable(serde_json::from_str(fields).unwrap()),
-                        stable(expected.clone())
-                    );
-                }
-            }
             samples.push(json!({
                 "sequence": sequence, "warmup": sequence < 4, "part": index,
                 "open_ns": open_ns, "geometry_ns": geometry_ns,
                 "batch_capture_ns": batch_capture_ns, "finish_ns": finish_ns,
                 "encoding_ns": encoding_ns, "publish_ns": publish_ns, "flush_ns": flush_ns,
                 "total_ns": total_ns, "records": part.records.len(), "descriptors": planned,
-                "encoded_bytes": encoded.iter().map(String::len).sum::<usize>(),
+                "encoded_bytes": encoded_bytes,
             }));
         }
     }

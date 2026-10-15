@@ -1392,10 +1392,13 @@ Run the already-built test executable directly for matched profiles; compilation
 is outside the measurement. Alternate independent `staged`/`whole` processes on
 the same CPU. Each process uses four warm-up and eight measured sequences of all
 input parts, with a new executor budget per sequence. `staged` measures geometry
-insertion, batch capture, drained record assembly/encoding, pre-encoded log
-publication and synchronous flush. Nested encoding timers include a separate
-clock control; report their overhead and the separate unmodified `whole` path.
-Compare every stable output field, record count and cumulative cap against the
-input outside the timed intervals. Reconstruction follows submission order,
+insertion, batch capture, drained record assembly/encoding, per-record log publication and synchronous flush. Every record is encoded,
+published and released in its normal order. Nested encoding/publication timers
+include a separate clock control; report their overhead and the separate
+unmodified `whole` path. `finish_ns` includes drained record assembly, encoding
+and publication; its nested fields are not additional exclusive stages.
+The external controller must compare every stable output field, record count
+and cumulative cap against the input after each process exits, symmetrically
+for both modes. No JSON parsing or validation runs between timed parts. Reconstruction follows submission order,
 which need not equal original plan construction order. These staged CPU costs
 cannot be added to infer GPU restore overhead or promote a transfer backend.
