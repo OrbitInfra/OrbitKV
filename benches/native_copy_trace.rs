@@ -35,8 +35,34 @@ fn load(path: &str) -> Vec<InputPart> {
         let Some((_, fields)) = line.split_once("local_raw_copy ") else {
             continue;
         };
-        let value: Value = serde_json::from_str(fields).unwrap();
-        assert_eq!(value["schema"], 2);
+        let mut value: Value = serde_json::from_str(fields).unwrap();
+        assert!(value["schema"] == 2 || value["schema"] == 3);
+        if value["schema"] == 3 {
+            if value["stage"] == "local_raw_copy_open" {
+                assert_eq!(value["copy_fields"], json!(COPY_FIELDS));
+            } else if value["stage"] == "local_raw_copy_batch" {
+                let copies = value["copies"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|row| {
+                        let row = row.as_array().unwrap();
+                        assert_eq!(row.len(), COPY_FIELDS.len());
+                        Value::Object(
+                            COPY_FIELDS
+                                .iter()
+                                .zip(row)
+                                .map(|(field, value)| {
+                                    assert!(value.as_u64().is_some());
+                                    ((*field).to_owned(), value.clone())
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect();
+                value["copies"] = Value::Array(copies);
+            }
+        }
         assert_eq!(value["clock"], "CLOCK_MONOTONIC");
         let complete = value["stage"] == "local_raw_copy_complete";
         records.push(value);

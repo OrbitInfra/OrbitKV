@@ -1371,7 +1371,7 @@ the benchmark or treat a CPU protocol check as a repaired hardware lifecycle.
 
 ### Native trace CPU profile
 
-This ignored Rust test replays a complete schema-2 native capture through the
+This ignored Rust test replays a complete schema-2 or schema-3 native capture through the
 actual private trace owner. It never dereferences captured addresses or calls
 CUDA. It does not measure DMA or engine restoration. Use a reviewed capture,
 record its digest and CPU topology/affinity, and select fresh external paths:
@@ -1405,3 +1405,13 @@ which need not equal original plan construction order. Replay-log
 profile JSON contains the newly measured CPU intervals. These staged CPU costs
 cannot be added to infer GPU restore overhead or promote a transfer backend.
 See the [profile result and limits](../docs/kernel-optimization.md#native-trace-cpu-profile).
+
+
+Schema-3 engine-local captures store each copy as fifteen unsigned integers in
+the `copy_fields` order declared by its opening record. `benches.local_restore_shapes`
+validates that order and row width before restoring the named geometry consumed
+by the production compiler. Archived schema-2 captures remain readable; mixing
+formats within an executor is invalid. The format change preserves every value,
+submission order, cumulative capture budget and synchronous publication/flush.
+Use the same complete byte, drain and observation-overhead gates described above;
+smaller output alone does not qualify application performance.

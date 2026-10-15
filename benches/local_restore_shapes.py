@@ -11,6 +11,33 @@ from pathlib import Path
 
 from .raw_copy_shapes import SIZE_LIMITS, _integer, _validate_shape
 
+COPY_FIELDS = (
+    "device",
+    "host",
+    "host_device",
+    "size",
+    "device_allocation",
+    "host_registration",
+    "registered_device_start",
+    "registered_device_bytes",
+    "destination_offset",
+    "arena_id",
+    "arena_bytes",
+    "source_allocation_id",
+    "source_allocation_offset",
+    "source_allocation_bytes",
+    "source_offset",
+)
+
+
+def _decode_copies(batch: dict) -> None:
+    copies = batch.get("copies")
+    if not isinstance(copies, list) or len(copies) != batch["descriptors"]:
+        raise ValueError("Missing local H2D descriptor geometry")
+    if any(not isinstance(row, list) or len(row) != len(COPY_FIELDS) for row in copies):
+        raise ValueError("Malformed compact local H2D descriptor")
+    batch["copies"] = [dict(zip(COPY_FIELDS, row, strict=True)) for row in copies]
+
 
 def _geometry(batch: dict) -> None:
     copies = batch.get("copies")
@@ -113,7 +140,7 @@ def _collect(log_path: Path) -> dict:
         if (
             not isinstance(event, dict)
             or type(event.get("schema")) is not int
-            or event["schema"] != 2
+            or event["schema"] not in (2, 3)
         ):
             raise ValueError("Unknown local H2D observation schema")
         key = _integer(event, "pid", 1), _integer(event, "trace_id", 1)
@@ -121,6 +148,8 @@ def _collect(log_path: Path) -> dict:
         sequence = _integer(event, "sequence")
         stage = event.get("stage")
         if stage == "local_raw_copy_open":
+            if event["schema"] == 3 and event.get("copy_fields") != list(COPY_FIELDS):
+                raise ValueError("Unknown compact local H2D descriptor order")
             if not 1 <= _integer(event, "limit") <= 65536:
                 raise ValueError("Invalid local H2D capture budget")
             _integer(event, "max_pitch", 1)
@@ -146,7 +175,7 @@ def _collect(log_path: Path) -> dict:
                 or records_before != trace["complete"]["records_reserved"]
                 or any(
                     event[field] != trace["header"][field]
-                    for field in ("device", "limit", "max_pitch")
+                    for field in ("schema", "device", "limit", "max_pitch")
                 )
             ):
                 raise ValueError("Noncontiguous or inconsistent local H2D part opening")
@@ -160,6 +189,7 @@ def _collect(log_path: Path) -> dict:
             or trace["pending_header"] is None
             or sequence != trace["pending_header"]["sequence"]
             or device != trace["header"]["device"]
+            or event["schema"] != trace["header"]["schema"]
         ):
             raise ValueError("Local H2D record outside an open matching trace")
         if stage == "local_raw_copy_batch":
@@ -174,6 +204,8 @@ def _collect(log_path: Path) -> dict:
             retained = sum(batch["descriptors"] for batch in trace["batches"])
             if retained + event["descriptors"] > trace["header"]["limit"]:
                 raise ValueError("Local H2D geometry exceeds capture budget")
+            if event["schema"] == 3:
+                _decode_copies(event)
             _geometry(event)
             trace["batches"].append(event)
         elif stage == "local_raw_copy_part":

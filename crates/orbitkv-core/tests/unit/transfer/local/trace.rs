@@ -117,15 +117,15 @@ fn captures_actual_submitted_order_and_one_shared_part_drain() {
         values.push(serde_json::to_value(event).unwrap());
     });
     assert_eq!(values.len(), 5);
-    assert_eq!(values[1]["copies"][0]["destination_offset"], 4096);
-    assert_eq!(values[2]["copies"][0]["source_offset"], 256);
-    assert_eq!(values[1]["copies"][0]["source_allocation_bytes"], 16384);
-    assert_eq!(values[1]["copies"][0]["registered_device_bytes"], 65536);
+    assert_eq!(values[1]["copies"][0][8], 4096);
+    assert_eq!(values[2]["copies"][0][14], 256);
+    assert_eq!(values[1]["copies"][0][13], 16384);
+    assert_eq!(values[1]["copies"][0][7], 65536);
     assert_eq!(values[1]["dma_ranges"], 1);
     assert_eq!(
         values[1],
         serde_json::json!({
-            "schema": 2,
+            "schema": 3,
             "pid": std::process::id(),
             "trace_id": trace.id,
             "device": 0,
@@ -148,23 +148,10 @@ fn captures_actual_submitted_order_and_one_shared_part_drain() {
             "begin_ns": values[1]["begin_ns"],
             "submitted_ns": values[1]["submitted_ns"],
             "success": true,
-            "copies": [{
-                "device": 0x11000,
-                "host": 0x101100,
-                "host_device": 0x201100,
-                "size": 4096,
-                "device_allocation": 7,
-                "host_registration": 0x100000,
-                "registered_device_start": 0x10000,
-                "registered_device_bytes": 65536,
-                "destination_offset": 4096,
-                "arena_id": 2,
-                "arena_bytes": 65536,
-                "source_allocation_id": 3,
-                "source_allocation_offset": 256,
-                "source_allocation_bytes": 16384,
-                "source_offset": 4352,
-            }],
+            "copies": [[
+                0x11000, 0x101100, 0x201100, 4096, 7, 0x100000,
+                0x10000, 65536, 4096, 2, 65536, 3, 256, 16384, 4352,
+            ]],
         })
     );
     assert!(values[4].get("invalid_reason").unwrap().is_null());
@@ -268,4 +255,72 @@ fn publishing_a_part_does_not_replenish_the_executor_budget() {
         values.push(serde_json::to_value(event).unwrap());
     });
     assert_eq!(values.len(), count);
+}
+
+#[test]
+fn compact_geometry_preserves_unsigned_values_and_declares_every_field() {
+    let geometry = Geometry {
+        device: u64::MAX,
+        host: u64::MAX - 1,
+        host_device: u64::MAX - 2,
+        size: usize::MAX,
+        device_allocation: usize::MAX - 1,
+        host_registration: usize::MAX - 2,
+        registered_device_start: u64::MAX - 3,
+        registered_device_bytes: usize::MAX - 3,
+        destination_offset: u64::MAX - 4,
+        arena_id: u64::MAX - 5,
+        arena_bytes: usize::MAX - 4,
+        source_allocation_id: u64::MAX - 6,
+        source_allocation_offset: u64::MAX - 7,
+        source_allocation_bytes: u64::MAX - 8,
+        source_offset: u64::MAX - 9,
+    };
+    let encoded = serde_json::to_string(&geometry).unwrap();
+    let decoded: Vec<u64> = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(
+        decoded,
+        [
+            u64::MAX,
+            u64::MAX - 1,
+            u64::MAX - 2,
+            usize::MAX as u64,
+            (usize::MAX - 1) as u64,
+            (usize::MAX - 2) as u64,
+            u64::MAX - 3,
+            (usize::MAX - 3) as u64,
+            u64::MAX - 4,
+            u64::MAX - 5,
+            (usize::MAX - 4) as u64,
+            u64::MAX - 6,
+            u64::MAX - 7,
+            u64::MAX - 8,
+            u64::MAX - 9,
+        ]
+    );
+    let mut trace = LocalCopyTrace::new(0, Ok(usize::MAX), 100);
+    trace.begin_part_with(0, true, |event| {
+        let header = serde_json::to_value(event).unwrap();
+        assert_eq!(header["schema"], 3);
+        assert_eq!(
+            header["copy_fields"],
+            serde_json::json!([
+                "device",
+                "host",
+                "host_device",
+                "size",
+                "device_allocation",
+                "host_registration",
+                "registered_device_start",
+                "registered_device_bytes",
+                "destination_offset",
+                "arena_id",
+                "arena_bytes",
+                "source_allocation_id",
+                "source_allocation_offset",
+                "source_allocation_bytes",
+                "source_offset",
+            ])
+        );
+    });
 }
