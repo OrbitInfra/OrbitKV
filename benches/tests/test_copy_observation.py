@@ -420,7 +420,12 @@ def test_initial_compiler_binding_and_disabled_inventory_survive_analysis(
             return original(*args)
 
         monkeypatch.setattr(observation, "analyze_engine", add_capture)
-    with pytest.raises(ValueError, match="changed during cohort analysis"):
+    message = (
+        "compiler differs from frozen profile"
+        if fault == "compiler_after_first_hash"
+        else "changed during cohort analysis"
+    )
+    with pytest.raises(ValueError, match=message):
         observation.collect(root, cp, native)
 
 
@@ -570,3 +575,36 @@ def test_component_contrasts_do_not_gate_on_a_single_faster_component(cohort):
     assert data["component_contrasts"]["native"]["geometric_mean_ratio"] == pytest.approx(1.01)
     assert data["component_contrasts"]["driver"]["geometric_mean_ratio"] == pytest.approx(1.20)
     assert data["pairs"]["geometric_mean_ratio"] == pytest.approx(1.22)
+
+
+@pytest.mark.parametrize("cohort", ["components"], indirect=True)
+@pytest.mark.parametrize("fault", ["native_log", "driver_trace", "combined_trace", "compiler"])
+def test_live_cell_capture_cannot_change_before_next_admission(cohort, monkeypatch, fault):
+    root, cp, native, contract = cohort
+    mode, owner = {
+        "native_log": ("native", "collect_native"),
+        "driver_trace": ("driver", "_driver_capture"),
+        "combined_trace": ("on", "analyze_engine"),
+        "compiler": ("native", "collect_native"),
+    }[fault]
+    cell = next(cell for cell in contract["cells"] if cell["mode"] == mode)
+    path = root / cell["name"]
+    wait = json.loads((path / "ORACLE-WAIT.json").read_text())
+    data = json.loads((path / "bytes/RESULT.json").read_text())
+    changed = (
+        native
+        if fault == "compiler"
+        else path / "oracle.stderr"
+        if fault == "native_log"
+        else path / "driver" / f"cuda-driver-{wait['pid']}.jsonl"
+    )
+    original = getattr(observation, owner)
+
+    def modify_after_parse(*args):
+        value = original(*args)
+        changed.write_bytes(b"changed after actual parser return")
+        return value
+
+    monkeypatch.setattr(observation, owner, modify_after_parse)
+    with pytest.raises(ValueError, match="changed during cell validation"):
+        observation.validate_capture(path, data, wait, contract, native, mode)

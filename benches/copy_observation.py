@@ -187,7 +187,15 @@ def validate_capture(
 ) -> dict | None:
     """Reject an invalid mode capture before admitting another hardware cell."""
     name = path.name
-    capture_file(path, mode, wait.get("pid"))
+    driver = capture_file(path, mode, wait.get("pid"))
+    inputs = {
+        path / "oracle.stderr": _sha256(path / "oracle.stderr"),
+        native_fixture: _sha256(native_fixture),
+    }
+    if inputs[native_fixture] != contract["native_fixture_sha256"]:
+        raise ValueError("Native capture compiler differs from frozen profile")
+    if driver is not None:
+        inputs[driver] = _sha256(driver)
     validate_activation(result, contract, mode, wait["pid"])
     capture = None
     if VARIANTS[mode]["trace"]:
@@ -282,6 +290,8 @@ def validate_capture(
             "operation_copy_calls": operation_calls,
         }
     capture_file(path, mode, wait["pid"])
+    if any(_sha256(file) != expected for file, expected in inputs.items()):
+        raise ValueError("Consumed capture evidence changed during cell validation")
     return capture
 
 
