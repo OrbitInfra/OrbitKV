@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import contextlib
 import hashlib
 import json
 import os
@@ -129,6 +128,7 @@ def run(
         managers = []
         clients = {}
         tensors = {}
+        gpu_registrations = {}
         for node in ("source", "observer"):
             source = node == "source"
             port = source_backend if source else find_available_port()
@@ -178,7 +178,7 @@ def run(
                 tensor = torch.empty(payload_bytes, dtype=torch.uint8, device="cuda")
                 tensors[(node, index)] = tensor
                 client.start_session_watcher(instance, identity, 1, 1)
-                ok, message = client.register_context_batch(
+                gpu_registrations[(node, index)] = client.register_context_batch(
                     instance,
                     identity,
                     0,
@@ -196,10 +196,8 @@ def run(
                     False,
                     tensors=[tensor],
                 )
-                assert ok, message
 
         source_manager, observer_manager = managers
-        device = resolve_device_id()
 
         def save_all(round_id):
             round_hashes = hashes_for_round(round_id)
@@ -212,10 +210,7 @@ def run(
                 tensor.copy_((payload + round_id) % 251)
                 torch.cuda.synchronize()
                 ok, message = clients[("source", index)].save(
-                    f"source-{index}",
-                    0,
-                    0,
-                    device,
+                    gpu_registrations[("source", index)],
                     [("kv:0", list(range(pages)), round_hashes)],
                 )
                 assert ok, message
@@ -280,8 +275,9 @@ def run(
             if cycle % 2 == 0:
                 expected = sequence_before + pages * namespace_count
                 _until(
-                    lambda expected=expected: _metadata(source_manager)["inventory_sequence"]
-                    >= expected,
+                    lambda expected=expected: (
+                        _metadata(source_manager)["inventory_sequence"] >= expected
+                    ),
                     managers,
                 )
                 target = _metadata(source_manager)["inventory_sequence"]
@@ -390,7 +386,7 @@ def run(
                     outside.copy_(outside_payload)
                     torch.cuda.synchronize()
                     ok, message = clients[("observer", 1)].save(
-                        "observer-1", 0, 0, device, [("kv:0", list(range(pages)), hashes)]
+                        gpu_registrations[("observer", 1)], [("kv:0", list(range(pages)), hashes)]
                     )
                     assert ok, message
                     _restore(
@@ -598,9 +594,10 @@ def run(
         assert not observer_metrics.get("orbitkv_transfer_completion_outstanding", 0)
         (output / "scoped-result.json").write_text(json.dumps(result, indent=2) + "\n")
         for (node, index), client in clients.items():
-            with contextlib.suppress(Exception):
-                client.unregister_context(f"{node}-{index}")
+            ok, message = client.unregister_context(f"{node}-{index}")
+            assert ok, message
             client.close()
+            gpu_registrations.pop((node, index))
         tensor = outside = local_tensor = None
         expected_payload = local_expected = final_payload = outside_payload = None
         payloads.clear()

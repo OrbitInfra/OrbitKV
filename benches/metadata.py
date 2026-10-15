@@ -230,12 +230,13 @@ def run(tmp_path: Path, profile: str):
         tensor.copy_(payload)
         torch.cuda.synchronize()
         device = resolve_device_id()
-        for client, manager, instance, target in (
+        registrations = {}
+        for client, _manager, instance, target in (
             (source_client, source_manager, "source", tensor),
             (observer_client, observer_manager, "observer", observer_tensor),
         ):
             client.start_session_watcher(instance, namespace, 1, 1)
-            ok, message = client.register_context_batch(
+            registrations[instance] = client.register_context_batch(
                 instance,
                 namespace,
                 0,
@@ -253,12 +254,12 @@ def run(tmp_path: Path, profile: str):
                 False,
                 tensors=[target],
             )
-            assert ok, (manager.read_logs(), message)
 
         def unregister_on_exit():
             for client, instance in ((observer_client, "observer"), (source_client, "source")):
-                with contextlib.suppress(Exception):
-                    client.unregister_context(instance)
+                if instance in registrations:
+                    with contextlib.suppress(Exception):
+                        client.unregister_context(instance)
 
         stack.callback(unregister_on_exit)
         _until(
@@ -266,7 +267,7 @@ def run(tmp_path: Path, profile: str):
             managers,
         )
         ok, message = source_client.save(
-            "source", 0, 0, device, [("kv:0", list(range(pages)), hashes)]
+            registrations["source"], [("kv:0", list(range(pages)), hashes)]
         )
         assert ok, message
         initial_fence = _sync(source_manager)
@@ -301,7 +302,7 @@ def run(tmp_path: Path, profile: str):
             cleanup_ms.append((time.monotonic() - started) * 1000)
             started = time.monotonic()
             ok, message = source_client.save(
-                "source", 0, 0, device, [("kv:0", list(range(pages)), hashes)]
+                registrations["source"], [("kv:0", list(range(pages)), hashes)]
             )
             save_ms.append((time.monotonic() - started) * 1000)
             assert ok, message
@@ -363,7 +364,7 @@ def run(tmp_path: Path, profile: str):
 
             started = time.monotonic()
             ok, message = source_client.save(
-                "source", 0, 0, device, [("kv:0", list(range(pages)), hashes)]
+                registrations["source"], [("kv:0", list(range(pages)), hashes)]
             )
             assert ok, message
             immediate = observer_client.query_prefetch(
@@ -503,6 +504,8 @@ def run(tmp_path: Path, profile: str):
         for client, instance in ((observer_client, "observer"), (source_client, "source")):
             ok, message = client.unregister_context(instance)
             assert ok, message
+            client.close()
+            registrations.pop(instance)
         tensor = observer_tensor = None
         torch.cuda.synchronize()
         torch.cuda.ipc_collect()

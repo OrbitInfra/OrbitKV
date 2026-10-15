@@ -114,10 +114,7 @@ def test_two_manager_native_common_prefix_restores_exact_node_payload(tier, tmp_
             torch.cuda.synchronize()
             prefix = 3 - node
             ok, message = clients[node].save(
-                "dense",
-                0,
-                0,
-                context.device_id,
+                context.registration,
                 [("layer_0", list(range(prefix)), hashes[:prefix])],
             )
             assert ok, message

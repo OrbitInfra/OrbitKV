@@ -180,7 +180,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
         client.start_session_watcher(instance, namespace, 1, 1)
         wrappers = [serialize_gpu_buffer(tensor) for tensor in tensors]
         block_bytes = page_size * tensors[0].stride(0) * tensors[0].element_size()
-        ok, message = client.register_context_batch(
+        registration = client.register_context_batch(
             instance,
             namespace,
             0,
@@ -199,13 +199,9 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             tensors=tensors,
             layer_formats=["bf16"] * layer_count,
         )
-        assert ok, message
 
         success, message = client.save(
-            instance,
-            0,
-            0,
-            resolve_device_id(),
+            registration,
             [(name, list(range(1, page_count + 1)), hashes) for name in names],
         )
         assert success, message

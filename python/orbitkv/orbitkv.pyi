@@ -146,6 +146,16 @@ class ChannelCallObservation:
     @property
     def returned_mono_ns(self) -> int: ...
 
+class GpuRegistration:
+    """Opaque client-owned registration; retains exporters and fixes Publish identity.
+
+    Issued only by register_context_batch. This is a registration generation,
+    not a receipt of physical completion or an engine page-slot generation.
+    """
+
+    @property
+    def generation(self) -> bytes: ...
+
 class CacheManagerClient:
     """Native owner of query, publish and restore lifetimes."""
 
@@ -199,8 +209,8 @@ class CacheManagerClient:
         layer_attention: list[tuple[int, str, int, int]] | None = None,
         *,
         tensors: list[object],
-    ) -> tuple[bool, str]:
-        """Register client-local device_id and retain the UUID-resolved Manager route."""
+    ) -> GpuRegistration:
+        """Register client-local device_id and retain exporters and the resolved Manager route."""
         ...
     @property
     def transport(self) -> str: ...
@@ -273,18 +283,12 @@ class CacheManagerClient:
     def cancel_query(self, instance_id: str, req_id: str, group_id: int = 0) -> None: ...
     def save(
         self,
-        instance_id: str,
-        tp_rank: int,
-        pp_rank: int,
-        device_id: int,
+        registration: GpuRegistration,
         saves: list[tuple[str, list[int], list[bytes]]],
     ) -> tuple[bool, str]: ...
     def save_diagnostic(
         self,
-        instance_id: str,
-        tp_rank: int,
-        pp_rank: int,
-        device_id: int,
+        registration: GpuRegistration,
         saves: list[tuple[str, list[int], list[bytes]]],
     ) -> tuple[bool, str, ChannelCallObservation]: ...
     def start_restore(

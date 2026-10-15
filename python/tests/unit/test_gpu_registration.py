@@ -89,3 +89,22 @@ def test_registration_and_ipc_share_canonical_gpu_uuid(monkeypatch, value):
     )
     assert CudaIPCWrapper._get_device_uuid(1) == "GPU-c4930667-4d65-aae5-8205-fe785c3654be"
     assert seen == [1]
+
+
+@pytest.mark.parametrize("accepted", [False, True], ids=["failed-unregister", "normal-unregister"])
+def test_test_context_retains_registration_after_failed_unregistration(accepted):
+    from types import SimpleNamespace
+
+    from tests.support.cache_manager import ClientContext
+
+    context = object.__new__(ClientContext)
+    registration = object()
+    context._registered = True
+    context.registration = registration
+    context.instance_id = "cleanup"
+    context.client = SimpleNamespace(unregister_context=lambda _: (accepted, "controlled cleanup"))
+
+    context.unregister_context()
+
+    assert context._registered is (not accepted)
+    assert context.registration is (None if accepted else registration)

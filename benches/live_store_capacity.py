@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import hashlib
 import json
 import os
@@ -181,6 +180,7 @@ def run(
         managers = {}
         clients = {}
         tensors = {}
+        gpu_registrations = {}
 
         def start_manager(node):
             port = find_available_port()
@@ -221,7 +221,7 @@ def run(
             tensor = torch.empty(payload_bytes, dtype=torch.uint8, device="cuda")
             tensors[node] = tensor
             client.start_session_watcher(node, identity, 1, 1)
-            ok, message = client.register_context_batch(
+            gpu_registrations[node] = client.register_context_batch(
                 node,
                 identity,
                 0,
@@ -239,7 +239,6 @@ def run(
                 False,
                 tensors=[tensor],
             )
-            assert ok, message
 
         start_manager("observer")
         for owner in range(owners):
@@ -247,7 +246,6 @@ def run(
         manager_list = list(managers.values())
         source_nodes = [f"source-{owner}" for owner in range(owners)]
         result["clock_domain"] = _clock_domain(manager.process.pid for manager in manager_list)
-        device = resolve_device_id()
         hashes = {
             node: [
                 hashlib.sha256(f"s2.10:capacity:{node}:{block}".encode()).digest()
@@ -261,7 +259,7 @@ def run(
             tensors[node].copy_(payload)
             torch.cuda.synchronize()
             ok, message = clients[node].save(
-                node, 0, 0, device, [("kv:0", list(range(pages)), hashes[node])]
+                gpu_registrations[node], [("kv:0", list(range(pages)), hashes[node])]
             )
             assert ok, message
 
@@ -276,8 +274,9 @@ def run(
             )
         else:
             _until(
-                lambda: _metadata(managers["observer"])["index"]["coverage"]
-                != "complete_at_watermarks",
+                lambda: (
+                    _metadata(managers["observer"])["index"]["coverage"] != "complete_at_watermarks"
+                ),
                 manager_list,
                 timeout=30,
             )
@@ -322,10 +321,7 @@ def run(
                     torch.cuda.synchronize()
                     owner_save_started_ns = time.monotonic_ns()
                     ok, message = clients[node].save(
-                        node,
-                        0,
-                        0,
-                        device,
+                        gpu_registrations[node],
                         [("kv:0", list(range(pages)), hashes[node])],
                     )
                     assert ok, message
@@ -476,10 +472,7 @@ def run(
                     torch.cuda.synchronize()
                     owner_save_started_ns = time.monotonic_ns()
                     ok, message = clients[node].save(
-                        node,
-                        0,
-                        0,
-                        device,
+                        gpu_registrations[node],
                         [("kv:0", list(range(pages)), hashes[node])],
                     )
                     assert ok, message
@@ -609,9 +602,10 @@ def run(
                 result["status"] = "failed"
 
         for node, client in clients.items():
-            with contextlib.suppress(Exception):
-                client.unregister_context(node)
+            ok, message = client.unregister_context(node)
+            assert ok, message
             client.close()
+            gpu_registrations.pop(node)
         tensors.clear()
         torch.cuda.synchronize()
         torch.cuda.ipc_collect()

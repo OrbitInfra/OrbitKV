@@ -1,5 +1,6 @@
 """Real subprocess controls for task-owned Manager non-killing cleanup."""
 
+import json
 import os
 import signal
 import subprocess
@@ -86,3 +87,46 @@ def test_identity_mismatch_refuses_signal(tmp_path, monkeypatch):
     finally:
         monkeypatch.undo()
         finish(process, owner)
+
+
+def test_strict_stop_retains_live_process_and_log_after_timeout(tmp_path, monkeypatch):
+    process = child(ignore=True)
+    owner = manager(process, tmp_path)
+    owner._configured_log_path = tmp_path / "manager.log"
+    owner._log_file = owner._configured_log_path.open("w")
+    wait = process.wait
+    monkeypatch.setenv("ORBITKV_TEST_STRICT_SHUTDOWN", "1")
+    monkeypatch.setattr(process, "wait", lambda timeout: wait(timeout=0.05))
+    try:
+        with pytest.raises(RuntimeError, match="owner retained"):
+            owner.stop()
+        assert owner.process is process and process.poll() is None
+        assert not owner._log_file.closed
+        receipt = json.loads((tmp_path / "manager.log.cleanup.json").read_text())
+        assert receipt["status"] == "quarantined"
+        assert receipt["exit_code"] is None and not receipt["reaped"]
+        assert not receipt["forced_kill"] and receipt["start_ticks"] > 0
+    finally:
+        monkeypatch.undo()
+        finish(process, owner)
+        owner._log_file.close()
+
+
+@pytest.mark.parametrize("inspection", [False, True], ids=["remaining-worker", "unknown-group"])
+def test_waited_leader_does_not_release_unresolved_group(tmp_path, monkeypatch, inspection):
+    process = child()
+    owner = manager(process, tmp_path)
+    owner._log_file = (tmp_path / "manager.log").open("w")
+    monkeypatch.setattr(
+        "tests.support.cache_manager.identity_group_members",
+        lambda _pid: ([], ["inspection denied"]) if inspection else ([{"pid": 42}], []),
+    )
+    try:
+        receipt = owner.stop_without_kill(timeout=2)
+        assert receipt["status"] == "quarantined"
+        assert receipt["reason"] == "process_group_not_drained" and receipt["reaped"]
+        assert owner.process is process and not owner._log_file.closed
+    finally:
+        monkeypatch.undo()
+        finish(process, owner)
+        owner._log_file.close()

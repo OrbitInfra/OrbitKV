@@ -17,7 +17,12 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   `docs/adapters.md`; release targets and current qualification are distinct.
 - Model/layout identity and hybrid recovery are shared contracts. Do not equate
   compatible API shapes with cross-engine byte compatibility.
-- `register_context_batch` takes client-local CUDA ordinals and retained tensors.
+- `register_context_batch` returns an opaque native `GpuRegistration` and takes
+  client-local CUDA ordinals and retained tensors. Publish calls
+  `save(registration, saves)`; adapters capture that object at producer handoff,
+  not when a delayed queue worker executes. Retired or foreign-client authority
+  is rejected. The object retains exporters but is neither a page-slot
+  generation nor a device completion receipt.
   Resolve their full physical GPU UUIDs; the native owner retains the Manager's
   resolved ordinal for Publish/Restore. Do not reuse the client's ordinal on the
   Manager or convert a UUID into an ordinal with physical `nvidia-smi` ordering.

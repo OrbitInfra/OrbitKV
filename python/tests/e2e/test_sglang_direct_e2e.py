@@ -27,6 +27,19 @@ pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
 def _stop_server(process: subprocess.Popen, directory: Path, timeout: float = 30) -> None:
     primary_error = sys.exc_info()[1]
+    strict = os.environ.get("ORBITKV_TEST_STRICT_SHUTDOWN") == "1"
+    start_ticks = getattr(process, "_orbitkv_start_ticks", None)
+    if start_ticks is None:
+        try:
+            start_ticks = int(
+                Path(f"/proc/{process.pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+            )
+        except (OSError, ValueError, IndexError) as identity_error:
+            if strict:
+                error = RuntimeError("Strict shutdown cannot establish the native leader identity")
+                if primary_error is not None:
+                    raise primary_error from error
+                raise error from identity_error
     forced_kill = False
     errors = []
     inspection_errors = []
@@ -50,6 +63,9 @@ def _stop_server(process: subprocess.Popen, directory: Path, timeout: float = 30
 
     def force_cleanup():
         nonlocal forced_kill, before_forced_kill, members, group_known
+        if strict:
+            errors.append("Strict shutdown retains the process owner without forced cleanup")
+            return
         forced_kill = True
         before_forced_kill = members
         try:
@@ -113,6 +129,7 @@ def _stop_server(process: subprocess.Popen, directory: Path, timeout: float = 30
         errors.append("SGLang process-group ownership is unknown")
     cleanup = {
         "pid": process.pid,
+        "start_ticks": start_ticks,
         "exit_code": process.returncode,
         "sigterm_target": process.pid,
         "forced_kill": forced_kill,
@@ -257,6 +274,9 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
                 pass_fds=inherited_gpu_lock_fds(),
+            )
+            process._orbitkv_start_ticks = int(
+                Path(f"/proc/{process.pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
             )
         try:
             deadline = time.monotonic() + 600

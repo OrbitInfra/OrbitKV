@@ -250,7 +250,7 @@ def _discover_storage_namespaces(
             tensor = torch.empty(pages * block_bytes, dtype=torch.uint8, device="cuda")
             tensors.append(tensor)
             client.start_session_watcher(instance, identity, 1, 1)
-            ok, message = client.register_context_batch(
+            client.register_context_batch(
                 instance,
                 identity,
                 0,
@@ -268,7 +268,6 @@ def _discover_storage_namespaces(
                 False,
                 tensors=[tensor],
             )
-            assert ok, message
         pattern = re.compile(
             r"instance=(namespace-probe-\d+).*storage_namespace=(orbitkv:v2:[0-9a-f]{64})"
         )
@@ -312,6 +311,7 @@ def test_manager_graceful_shutdown_fences_inventory_and_restarts_node(tmp_path, 
         managers = []
         clients = []
         tensors = []
+        gpu_registrations = {}
         ports = {node: find_available_port() for node in ("source", "consumer")}
 
         def new_manager(node, run):
@@ -346,7 +346,7 @@ def test_manager_graceful_shutdown_fences_inventory_and_restarts_node(tmp_path, 
             tensor = torch.empty(payload_bytes, dtype=torch.uint8, device="cuda")
             tensors.append(tensor)
             client.start_session_watcher(node, identity, 1, 1)
-            ok, message = client.register_context_batch(
+            gpu_registrations[node] = client.register_context_batch(
                 node,
                 identity,
                 0,
@@ -364,14 +364,13 @@ def test_manager_graceful_shutdown_fences_inventory_and_restarts_node(tmp_path, 
                 False,
                 tensors=[tensor],
             )
-            assert ok, message
 
         source_client, consumer_client = clients
         source_tensor = tensors[0]
         source_tensor.copy_(payload)
         torch.cuda.synchronize()
         ok, message = source_client.save(
-            "source", 0, 0, resolve_device_id(), [("kv:0", list(range(pages)), hashes)]
+            gpu_registrations["source"], [("kv:0", list(range(pages)), hashes)]
         )
         assert ok, message
         fence = _sync(source_manager)
@@ -384,6 +383,7 @@ def test_manager_graceful_shutdown_fences_inventory_and_restarts_node(tmp_path, 
         assert old_member and old_member["owner"]["incarnation"] == old_owner
 
         source_client.close()
+        gpu_registrations.pop("source")
         exit_code, shutdown_seconds = source_manager.terminate_gracefully(timeout=10)
         assert exit_code == 0
         assert _etcd_json(endpoint, member_key) is None
@@ -423,6 +423,7 @@ def test_manager_graceful_shutdown_fences_inventory_and_restarts_node(tmp_path, 
             }
         )
         consumer_client.close()
+        gpu_registrations.pop("consumer")
         source_tensor = None
         tensors.clear()
         torch.cuda.synchronize()
@@ -463,6 +464,7 @@ def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, m
         managers = []
         clients = []
         tensors = []
+        gpu_registrations = {}
         for node in ("source", "consumer"):
             port = source_port if node == "source" else find_available_port()
             http_port = find_available_port()
@@ -505,7 +507,7 @@ def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, m
             tensor = torch.empty(payload_bytes, dtype=torch.uint8, device="cuda")
             tensors.append(tensor)
             client.start_session_watcher(node, namespace, 1, 1)
-            ok, message = client.register_context_batch(
+            gpu_registrations[node] = client.register_context_batch(
                 node,
                 namespace,
                 0,
@@ -523,12 +525,10 @@ def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, m
                 False,
                 tensors=[tensor],
             )
-            assert ok, message
 
         source_manager, consumer_manager = managers
         source_client, consumer_client = clients
         source_tensor, consumer_tensor = tensors
-        device = resolve_device_id()
         result["manager_pids"] = [manager.process.pid for manager in managers]
         result["manager_commands"] = [manager.command for manager in managers]
         ssd_written = 0
@@ -540,7 +540,7 @@ def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, m
             source_tensor.copy_(expected)
             torch.cuda.synchronize()
             ok, message = source_client.save(
-                "source", 0, 0, device, [("kv:0", list(range(pages)), hashes)]
+                gpu_registrations["source"], [("kv:0", list(range(pages)), hashes)]
             )
             assert ok, message
             if medium == "ssd":
@@ -665,9 +665,11 @@ def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, m
         _until(lambda: not _metadata(source_manager)["index"]["registration_valid"], managers)
         source_member_key = f"/orbitkv/v2/{cluster}/members/source"
         _until(
-            lambda: source_member_key not in _etcd_keys(endpoint, f"/orbitkv/v2/{cluster}/")
-            and _metadata(consumer_manager)["index"]["registration_valid"]
-            and _metadata(consumer_manager)["index"]["coverage"] == "complete_at_watermarks",
+            lambda: (
+                source_member_key not in _etcd_keys(endpoint, f"/orbitkv/v2/{cluster}/")
+                and _metadata(consumer_manager)["index"]["registration_valid"]
+                and _metadata(consumer_manager)["index"]["coverage"] == "complete_at_watermarks"
+            ),
             managers,
             timeout=25,
         )
@@ -712,8 +714,9 @@ def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, m
         for node, client in zip(("source", "consumer"), clients, strict=True):
             ok, message = client.unregister_context(node)
             assert ok, message
-        for client in clients:
+        for node, client in zip(("source", "consumer"), clients, strict=True):
             client.close()
+            gpu_registrations.pop(node)
         tensors.clear()
         del tensor
         source_tensor = consumer_tensor = None
@@ -758,6 +761,7 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
         managers = []
         clients = {}
         tensors = {}
+        gpu_registrations = {}
         for node in ("source", "consumer"):
             port = find_available_port()
             source = node == "source"
@@ -799,7 +803,7 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
                 tensor = torch.empty(payload_bytes, dtype=torch.uint8, device="cuda")
                 tensors[(node, label)] = tensor
                 client.start_session_watcher(instance, identity, 1, 1)
-                ok, message = client.register_context_batch(
+                gpu_registrations[(node, label)] = client.register_context_batch(
                     instance,
                     identity,
                     0,
@@ -817,17 +821,15 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
                     False,
                     tensors=[tensor],
                 )
-                assert ok, message
 
         source_manager, consumer_manager = managers
-        device = resolve_device_id()
         for label, payload in (("selected", selected_payload), ("outside", outside_payload)):
             source_client = clients[("source", label)]
             tensor = tensors[("source", label)]
             tensor.copy_(payload)
             torch.cuda.synchronize()
             ok, message = source_client.save(
-                f"source-{label}", 0, 0, device, [("kv:0", list(range(pages)), hashes)]
+                gpu_registrations[("source", label)], [("kv:0", list(range(pages)), hashes)]
             )
             assert ok, message
         if medium == "ssd":
@@ -878,7 +880,7 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
         torch.cuda.synchronize()
         outside_client = clients[("consumer", "outside")]
         ok, message = outside_client.save(
-            "consumer-outside", 0, 0, device, [("kv:0", list(range(pages)), hashes)]
+            gpu_registrations[("consumer", "outside")], [("kv:0", list(range(pages)), hashes)]
         )
         assert ok, message
         _restore(
@@ -922,6 +924,7 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
             ok, message = client.unregister_context(f"{node}-{label}")
             assert ok, message
             client.close()
+            gpu_registrations.pop((node, label))
         tensor = local = None
         tensors.clear()
         torch.cuda.synchronize()

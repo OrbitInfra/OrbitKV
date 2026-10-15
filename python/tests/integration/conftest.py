@@ -1,8 +1,12 @@
 """Real Cache Manager and GPU registration fixtures."""
 
 import hashlib
+import json
+import os
+import time
 import uuid
 from collections.abc import Generator
+from pathlib import Path
 
 import pytest
 
@@ -52,7 +56,7 @@ def orbitkv_server() -> Generator[CacheManagerProcess, None, None]:
 
 @pytest.fixture
 def channel_client_context(
-    channel_server: CacheManagerProcess, instance_id: str, namespace: str
+    channel_server: CacheManagerProcess, instance_id: str, namespace: str, tmp_path
 ) -> Generator[ClientContext, None, None]:
     """Register a minimal GPU context on the isolated Cache Manager."""
     import importlib
@@ -68,7 +72,33 @@ def channel_client_context(
     )
     ctx.register_kv_caches()
     yield ctx
-    if channel_server.is_running():
+    if os.environ.get("ORBITKV_TEST_STRICT_SHUTDOWN") == "1":
+        if not channel_server.is_running():
+            raise RuntimeError("Manager ended before explicit native client release")
+        session_epoch = ctx.client.session_epoch
+        ctx.unregister_context(strict=True)
+        ctx.client.close()
+        with pytest.raises(orbitkv_native.OrbitKVError, match="reconnect"):
+            ctx.client.health()
+        (tmp_path / "registration.native-release.json").write_text(
+            json.dumps(
+                {
+                    "stage": "registration-close",
+                    "pid": os.getpid(),
+                    "start_ticks": int(
+                        Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]
+                    ),
+                    "instance_id": instance_id,
+                    "session_epoch": session_epoch,
+                    "unregistered": True,
+                    "closed": True,
+                    "completed_mono_ns": time.monotonic_ns(),
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+    elif channel_server.is_running():
         ctx.unregister_context()
 
 

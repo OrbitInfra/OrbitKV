@@ -11,7 +11,7 @@ import time
 import uuid
 from concurrent.futures import CancelledError
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
@@ -29,6 +29,9 @@ from orbitkv.logging_utils import TRANSFER_TRACING, trace_transfer
 
 from .config import derive_namespace, resolve_static_loras, resolve_transfer_backend
 from .events import _LayerDoneCounter
+
+if TYPE_CHECKING:
+    from orbitkv import GpuRegistration
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +98,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
             wrappers = [
                 serialize_gpu_buffer(tensor) for pool in pools for tensor in pool.entry.kv_buffer
             ]
-            ok, message = self.client.register_context_batch(
+            self.registration = self.client.register_context_batch(
                 self.instance_id,
                 self.namespace,
                 0,
@@ -133,8 +136,6 @@ class OrbitKVLinker(UnifiedCacheLinker):
                     for tensor in pool.entry.kv_buffer
                 ],
             )
-            if not ok:
-                raise RuntimeError(f"OrbitKV GPU registration failed: {message}")
         except Exception:
             self.client.close()
             raise
@@ -147,7 +148,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self._queued_loads: dict[str, _Load] = {}
         self._load_queue: queue.Queue[tuple[int, list[_Load]] | None] = queue.Queue()
         self._offload_queue: queue.Queue[
-            tuple[list[tuple[str, list[int], list[bytes]]], torch.cuda.Event] | None
+            tuple[GpuRegistration, list[tuple[str, list[int], list[bytes]]], torch.cuda.Event]
+            | None
         ] = queue.Queue()
         self._completed_loads: queue.Queue[list[str]] = queue.Queue()
         self._load_error: Exception | None = None
@@ -536,7 +538,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
             saves.extend((layer, block_ids, hashes) for layer in pool.layer_names)
         ready = torch.cuda.Event()
         ready.record()
-        self._offload_queue.put((saves, ready))
+        self._offload_queue.put((self.registration, saves, ready))
         return True
 
     def _offload_worker(self) -> None:
@@ -545,13 +547,11 @@ class OrbitKVLinker(UnifiedCacheLinker):
             try:
                 if task is None:
                     return
-                saves, ready = task
+                registration, saves, ready = task
                 success = False
                 try:
                     ready.synchronize()
-                    success, message = self.client.save(
-                        self.instance_id, 0, 0, self.device_id, saves
-                    )
+                    success, message = self.client.save(registration, saves)
                     if not success:
                         logger.error("OrbitKV SGLang GPU offload failed: %s", message)
                 except Exception:
@@ -591,8 +591,13 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self._offload_queue.put(None)
         self._load_thread.join()
         self._offload_thread.join()
+        unregistered = False
         try:
-            self.client.unregister_context(self.instance_id)
+            unregistered, message = self.client.unregister_context(self.instance_id)
+            if not unregistered:
+                logger.warning("Could not unregister SGLang GPU context: %s", message)
         except Exception:
             logger.warning("Could not unregister SGLang GPU context", exc_info=True)
         self.client.close()
+        if unregistered:
+            self.registration = None

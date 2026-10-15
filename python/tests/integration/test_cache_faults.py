@@ -93,8 +93,8 @@ def reached(directory, name):
 
 
 def publish(client, ctx, hashes):
-    return client.save(
-        ctx.instance_id, 0, 0, 0, [(ctx._layer_names[0], list(range(len(hashes))), hashes)]
+    return ctx.client.save(
+        ctx.registration, [(ctx._layer_names[0], list(range(len(hashes))), hashes)]
     )
 
 
@@ -293,7 +293,7 @@ def test_fp8_storage_matches_torch_scalar_cast_and_isolates_exact_registration(f
     # The same namespace/hash with exact storage policy must not adopt lossy data.
     name = "exact-instance"
     stride = tensor.stride()
-    ok, message = client.register_context_batch(
+    client.register_context_batch(
         name,
         ctx.namespace,
         0,
@@ -312,7 +312,6 @@ def test_fp8_storage_matches_torch_scalar_cast_and_isolates_exact_registration(f
         tensors=[tensor],
         layer_formats=["exact"],
     )
-    assert ok, message
     from orbitkv import BlockHashes, QueryReady
 
     result = client.query_prefetch(name, BlockHashes(hashes), "exact")
@@ -347,9 +346,7 @@ def test_gpu_codecs_restore_after_registration_and_ssd_eviction(fault_cache, req
     backend = request.node.callspec.params["fault_cache"]["ssd_backend"]
     originals = [tensor[:, :1].clone() for tensor in ctx.gpu_kv_caches]
     hashes = [b"gpu-codec-roundtrip"]
-    assert client.save(
-        ctx.instance_id, 0, 0, 0, [(name, [0], hashes) for name in ctx._layer_names]
-    )[0]
+    assert client.save(ctx.registration, [(name, [0], hashes) for name in ctx._layer_names])[0]
     drain_ssd(server)
     encoded = fetch_orbitkv_codec_bytes(server.http_port)
     assert encoded["logical"] > encoded["stored"] > 0
@@ -403,7 +400,7 @@ def test_gpu_codecs_restore_after_registration_and_ssd_eviction(fault_cache, req
         restored = [tensor[:, 2:3].clone() for tensor in ctx.gpu_kv_caches]
         hot_hash = b"gpu-codec-hot-prefix"
         assert client.save(
-            ctx.instance_id, 0, 0, 0, [(name, [0], [hot_hash]) for name in ctx._layer_names]
+            ctx.registration, [(name, [0], [hot_hash]) for name in ctx._layer_names]
         )[0]
         until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_cache_resident_bytes"] > 0)
         for tensor in ctx.gpu_kv_caches:
@@ -467,9 +464,7 @@ def test_encoded_cufile_corruption_rejects_gpu_restore_and_allows_republication(
     hashes = [b"repair-gpu-encoded"]
 
     def save():
-        return client.save(
-            ctx.instance_id, 0, 0, 0, [(name, [0], hashes) for name in ctx._layer_names]
-        )[0]
+        return client.save(ctx.registration, [(name, [0], hashes) for name in ctx._layer_names])[0]
 
     assert save()
     drain_ssd(server)
@@ -884,15 +879,34 @@ def test_full_gpu_write_queue_uses_host_writeback_without_waiting(fault_cache, e
 
     # Each Publish descriptor session has one outstanding call. Independent
     # producers are needed to exercise the shared worker's admission limit.
-    producers = [CacheManagerClient(server.bootstrap_socket, timeout_ms=100) for _ in range(9)]
+    producers = []
+    producer_contexts = []
+    for index in range(9):
+        producer = CacheManagerClient(server.bootstrap_socket, timeout_ms=100)
+        producers.append(producer)
+        context = ClientContext(
+            producer,
+            f"write-producer-{index}",
+            ctx.namespace,
+            device_id=ctx.device_id,
+            num_blocks=ctx.num_blocks,
+            num_layers=ctx.num_layers,
+            block_size=ctx.block_size,
+            num_heads=ctx.num_heads,
+            head_size=ctx.head_size,
+            dtype=ctx.dtype,
+        )
+        context.gpu_kv_caches = ctx.gpu_kv_caches
+        context.register_kv_caches()
+        producer_contexts.append(context)
 
-    def save_page(producer, index):
-        return producer.save(
-            ctx.instance_id, 0, 0, 0, [(ctx._layer_names[0], [index], [bytes([index]) * 32])]
+    def save_page(producer_context, index):
+        return producer_context.client.save(
+            producer_context.registration, [(ctx._layer_names[0], [index], [bytes([index]) * 32])]
         )
 
     pool = ThreadPoolExecutor(9)
-    writes = [pool.submit(save_page, producer, i) for i, producer in enumerate(producers)]
+    writes = [pool.submit(save_page, context, i) for i, context in enumerate(producer_contexts)]
     try:
         reached(directory, "cufile_write_completion")
         # Encoded extents are reserved only when their worker starts. The one
@@ -1137,9 +1151,7 @@ def test_cufile_batches_keep_all_leases_and_only_read_selected_pages(
     # Establish physical file order explicitly; a multi-page Publish may group
     # hashes in any order, so logical pages 0/2 need not have a disk gap.
     for page, block_hash in enumerate(hashes):
-        assert client.save(ctx.instance_id, 0, 0, 0, [(ctx._layer_names[0], [page], [block_hash])])[
-            0
-        ]
+        assert client.save(ctx.registration, [(ctx._layer_names[0], [page], [block_hash])])[0]
     drain_ssd(server)
     ready = query(client, ctx, hashes, "batched")
     assert ready.num_hit_blocks == len(hashes)
@@ -1480,8 +1492,10 @@ def test_engine_death_after_claim_quarantines_source_reservation(fault_cache):
         )
         try:
             until(
-                lambda: (directory / "local_restore_claim.reached").exists()
-                or process.poll() is not None
+                lambda: (
+                    (directory / "local_restore_claim.reached").exists()
+                    or process.poll() is not None
+                )
             )
             assert process.poll() is None, log.read_text()
             before = fetch_orbitkv_metrics(server.http_port)["orbitkv_query_reserved_bytes"]
@@ -1649,7 +1663,7 @@ def test_partitioned_restore_keeps_owners_and_completes_only_after_all_parts(fau
     torch.cuda.synchronize()
     hashes = [index.to_bytes(8, "little") for index in range(count)]
     assert client.save(
-        ctx.instance_id, 0, 0, 0, [(name, list(range(count)), hashes) for name in ctx._layer_names]
+        ctx.registration, [(name, list(range(count)), hashes) for name in ctx._layer_names]
     )[0]
     ready = query(client, ctx, hashes, "partitioned")
     assert ready.num_hit_blocks == count

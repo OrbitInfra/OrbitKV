@@ -109,17 +109,17 @@ def test_window_and_checkpoint_restore_only_required_destinations(channel_server
         worker.register_kv_caches(buffers)
         torch.cuda.synchronize()
         saved, message = client.save(
-            identity, 0, 0, 0, [("model.layers.0.attn", [1, 2, 3, 4], hashes)]
+            worker._registration, [("model.layers.0.attn", [1, 2, 3, 4], hashes)]
         )
         assert saved, message
         assert lookup("missing-window")[1] == (0, False)
         saves = [("model.layers.2.window", [3, 4], hashes[2:])]
-        saved, message = client.save(identity, 0, 0, 0, saves)
+        saved, message = client.save(worker._registration, saves)
         assert saved, message
         if with_checkpoint:
             assert lookup("missing-checkpoint")[1] == (0, False)
             saved, message = client.save(
-                identity, 0, 0, 0, [("model.layers.1.mamba", [4], hashes[3:])]
+                worker._registration, [("model.layers.1.mamba", [4], hashes[3:])]
             )
             assert saved, message
         if channel_server.ssd_cache_path is not None:
@@ -381,10 +381,7 @@ def test_complete_checkpoint_restores_through_vllm_worker(channel_server):
         assert cold_metrics.get("orbitkv_query_reserved_bytes", 0) == 0
         torch.cuda.synchronize()
         ok, message = client.save(
-            identity,
-            0,
-            0,
-            0,
+            worker._registration,
             [
                 ("model.layers.0.attn", [1, 2, 3, 4], hashes[4:]),
                 ("model.layers.1.mamba", [1, 3], [hashes[5], hashes[7]]),

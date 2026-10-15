@@ -285,6 +285,7 @@ fn orbitkv(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_class::<ChannelProbeClient>()?;
     m.add_class::<client::PyCacheManagerClient>()?;
+    m.add_class::<client::PyGpuRegistration>()?;
     m.add_class::<client::PyChannelCallObservation>()?;
     m.add_class::<client::PyBlockHashes>()?;
     m.add_class::<client::PyRestoreHandle>()?;

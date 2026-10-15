@@ -641,3 +641,62 @@ def test_hybrid_match_requires_rank_common_materialized_state(
     assert linker.expire_query.call_count == int(expired)
     assert (req.rid in wrapper.hit_markers) == ready
     assert req.rid not in linker._origins
+
+
+@pytest.mark.parametrize("rejected", [False, True], ids=["success", "stale-registration"])
+def test_offload_keeps_producer_registration_and_reports_rejection(linker, monkeypatch, rejected):
+    import queue
+
+    from sglang.srt.mem_cache.hicache_storage import PoolName
+
+    original = object()
+    linker.registration = original
+    linker._offload_queue = queue.Queue()
+    linker._completed_offloads = queue.Queue()
+    linker.layout.pools = {
+        PoolName.KV: SimpleNamespace(
+            kind="attention", layer_names=["kv:0"], block_ids=lambda indices, count: [2]
+        )
+    }
+    ready = MagicMock()
+    monkeypatch.setattr("orbitkv.sglang.linker.torch.cuda.Event", lambda: ready)
+    transfers = [SimpleNamespace(name=PoolName.KV, keys=["key"], device_indices=[2])]
+    expected = [("kv:0", [2], linker._hashes(["key"]))]
+    if rejected:
+        linker.client.save.side_effect = ValueError("GPU registration is no longer active")
+    else:
+        linker.client.save.return_value = True, ""
+
+    assert linker.offload(transfers)
+    linker.registration = object()
+    linker._offload_queue.put(None)
+    linker._offload_worker()
+
+    linker.client.save.assert_called_once_with(original, expected)
+    ready.synchronize.assert_called_once()
+    assert linker.pop_completed_offload() is not rejected
+    assert linker._offload_queue.unfinished_tasks == 0
+
+
+@pytest.mark.parametrize("failure", [None, "unregister", "close"])
+def test_close_retires_only_the_linkers_own_registration_after_normal_cleanup(linker, failure):
+    import queue
+
+    original = object()
+    queued = original
+    linker.registration = original
+    linker.reset = MagicMock()
+    linker._load_queue = queue.Queue()
+    linker._offload_queue = queue.Queue()
+    linker._load_thread = MagicMock()
+    linker._offload_thread = MagicMock()
+    linker.client.unregister_context.return_value = failure != "unregister", "controlled cleanup"
+    if failure == "close":
+        linker.client.close.side_effect = RuntimeError("controlled close failure")
+        with pytest.raises(RuntimeError, match="controlled close failure"):
+            linker.close()
+    else:
+        linker.close()
+
+    assert linker.registration is (None if failure is None else original)
+    assert queued is original

@@ -36,6 +36,7 @@ import pytest
 
 from tests.support.paths import TESTS_ROOT
 
+pytest.importorskip("vllm")
 torch = pytest.importorskip("torch")
 
 from orbitkv.client import CacheManagerClient, QueryReady  # noqa: E402
@@ -204,10 +205,7 @@ def test_mla_replica_devices_save_and_load(dual_device_server):
         block_hashes = [uuid.uuid4().bytes * 2 for _ in SAVED_BLOCK_IDS]
         saves = [(name, SAVED_BLOCK_IDS, block_hashes) for name in layer_names]
         ok, message = engine_client.save(
-            instance_id,
-            workers[0].ctx.effective_tp_rank,
-            workers[0].ctx.pp_rank,
-            workers[0].ctx.device_id,
+            workers[0].connector._registration,
             saves,
         )
         assert ok, f"save from the MLA rank-0 replica must succeed, got: {message}"

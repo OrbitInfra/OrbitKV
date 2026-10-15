@@ -116,6 +116,7 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
         managers = {}
         clients = {}
         tensors = {}
+        gpu_registrations = {}
         registrations = {}
         membership_history = []
 
@@ -188,7 +189,7 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
                 tensors[(node, label)] = tensor
                 instance = f"{node}-{label}"
                 client.start_session_watcher(instance, identity, 1, 1)
-                ok, message = client.register_context_batch(
+                gpu_registrations[(node, label)] = client.register_context_batch(
                     instance,
                     identity,
                     0,
@@ -206,16 +207,17 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
                     False,
                     tensors=[tensor],
                 )
-                assert ok, message
             return previous, current
 
         def close_node_clients(node):
             for label in ("dram", "ssd", "outside"):
-                client = clients.pop((node, label), None)
+                client = clients.get((node, label))
                 if client is not None:
                     ok, message = client.unregister_context(f"{node}-{label}")
                     assert ok, message
                     client.close()
+                    clients.pop((node, label))
+                    gpu_registrations.pop((node, label))
                 tensors.pop((node, label), None)
             torch.cuda.synchronize()
             torch.cuda.ipc_collect()
@@ -229,7 +231,6 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
 
         start_node("consumer")
         start_node("source")
-        device = resolve_device_id()
         current_hashes = {}
         current_payloads = {}
         async_visibility = []
@@ -364,10 +365,7 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
                 tensor.copy_(payload)
                 torch.cuda.synchronize()
                 ok, message = clients[("source", label)].save(
-                    f"source-{label}",
-                    0,
-                    0,
-                    device,
+                    gpu_registrations[("source", label)],
                     [("kv:0", list(range(pages)), block_hashes)],
                 )
                 assert ok, message
@@ -421,9 +419,7 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
                     target = _metadata(source_manager)["inventory_sequence"]
                     source_owner = registrations["source"]["owner"]["incarnation"]
                     _until(
-                        lambda target=target,
-                        source_owner=source_owner,
-                        consumer_manager=consumer_manager: (
+                        lambda target=target, source_owner=source_owner, consumer_manager=consumer_manager: (
                             (status := _owner_status(consumer_manager, source_owner))
                             and status["fresh"]
                             and status["applied_sequence"] >= target

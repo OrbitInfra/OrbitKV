@@ -22,21 +22,26 @@ Unix socket fails fast.
 Registration, health, session watching, and unregistration use the
 authenticated bootstrap UDS for both adapters.
 
-Registration-generation fencing returns the existing InstanceContext
-owner generation with the resolved GPU ordinal. Both adapters' native client
-snapshots it after acquiring the local-worker lock and carries it in every
-Publish wire chunk. The actual Core Publish
-owner rejects stale/nil generations before topology or GPU pointer binding;
-it checks the same retained instance it then uses. A request captured at that snapshot cannot act on a same-named replacement
-registration. Pre-snapshot waits and arbitrary late engine callbacks remain
-outside this fence. Matching lifecycle 8 and
-cache schema 10 artifacts are required; retired schemas are rejected.
+Registration returns an opaque native `GpuRegistration` containing the existing
+InstanceContext generation, fixed client/rank/device identity and retained tensor
+exporters. Publish accepts that object instead of a mutable instance/rank/device
+lookup. Both adapters capture it when queuing their producing step. The native
+client validates the original client and generation after acquiring its worker
+lock, so a wait or late callback cannot bind a replacement registration. Each
+Publish chunk carries the captured generation; the Core owner rechecks the same
+retained instance before topology or GPU pointer binding. Matching lifecycle 8
+and cache schema 10 artifacts remain required; retired schemas are rejected.
+
 This is registration lifetime fencing, not allocation/page generation or a
-physical termination receipt. Restore query leases already bind the registered
-owner generation and retain their existing checks. Independent `03cbcebd`
-acceptance covers code/CPU controls and matching installed import. Core/lifecycle
-controls include real read-only CUDA discovery plus the host-registration shim;
-GPU allocation/compute/DMA and actual installed GPU/adapter gates remain open.
+physical termination receipt. Holding the registration also holds its exporters
+after unregister; it does not reauthorize them. Workloads and adapters retire
+their own references after normal cleanup and retain them if cleanup fails.
+A separately queued reference keeps its exporters until that task retires. Restore retains its existing
+query-lease checks and API. The earlier `03cbcebd` acceptance covers its snapshot
+and Core/lifecycle controls. The new producer-bound authority is implemented
+pending independent acceptance and actual installed GPU/adapter lifetime gates.
+CPU authority controls use an authenticated process fixture and an idle worker
+with no CUDA executor; they do not register, compute or submit device DMA.
 
 ## Process channel
 
