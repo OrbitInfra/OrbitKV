@@ -476,6 +476,27 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   are under `/root/orbitkv-artifacts/s3-registration-owner-20261015/`.
   Actual CUDA mapping/lifetime qualification remains open. This does not
   replace the remaining pickle wire or implement allocation/page generation.
+- Registration-generation fencing reuses InstanceContext's existing owner
+  generation. GPU registration returns it with the Manager-local ordinal;
+  the actual native client used by both adapters snapshots it after acquiring
+  the local-worker lock, then carries it through every Publish chunk into the
+  retained Core owner check before GPU pointer binding. Same-name restart
+  rejects captured old Publish input. Pre-snapshot waits and arbitrary late
+  engine callbacks remain unqualified. Restore keeps its existing query-lease
+  generation checks; lifecycle 8/cache schema 10 require matching artifacts.
+  Independent `ACCEPTED_CODE_CPU_AND_INSTALLED_IMPORT_SCOPE` at
+  `03cbcebd6c2ba683547730a6e9350e42ee11acae`, tree `d878a3e8`, covers Core1,
+  lifecycle1, channel67/process7 and matching installed import controls.
+  Core/lifecycle use the host-registration shim and real read-only local CUDA
+  driver discovery; no GPU allocation, compute or DMA is tested. The mutation
+  disables the whole generation guard. Its old nonzero-owner failure proves
+  guard necessity, without isolating equality removal. Original failed scope
+  assertions and both corrective addenda remain archived.
+  Freeze `203178d2c65647155652a74db7385f19eec2fd982d2e0841b035e0a40cf849b9`,
+  wheel `3777a5ee372cd76b277f78815634e34ced81d231c23e69a6655f542757d8d3f6`,
+  review `da45664e6b0d47584a5c27b19c307410a2c05b8aa25447954e95e74f49266fc0`
+  are under `/root/orbitkv-artifacts/s3-registration-generation-20261015/`.
+  Installed GPU/adapter and allocation/page-generation qualification remain open.
 - Replace the remaining framework CUDA IPC pickle interpretation in the Manager
   with explicit validated registration data; remove the retired wire/API path.
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

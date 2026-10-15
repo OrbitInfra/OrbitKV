@@ -469,6 +469,9 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     engine_a
         .batch_save_kv_blocks_from_ipc(
             "inst-a",
+            engine_a
+                .registration_generation("inst-a")
+                .unwrap_or_default(),
             0,
             0,
             DEVICE_ID,
@@ -694,6 +697,9 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     engine_a
         .batch_save_kv_blocks_from_ipc(
             "inst-a",
+            engine_a
+                .registration_generation("inst-a")
+                .unwrap_or_default(),
             0,
             0,
             DEVICE_ID,
@@ -772,6 +778,9 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     engine_a
         .batch_save_kv_blocks_from_ipc(
             "inst-a",
+            engine_a
+                .registration_generation("inst-a")
+                .unwrap_or_default(),
             0,
             0,
             DEVICE_ID,
@@ -993,6 +1002,7 @@ async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata
     engine
         .batch_save_kv_blocks_from_ipc(
             INSTANCE,
+            engine.registration_generation(INSTANCE).unwrap_or_default(),
             0,
             0,
             DEVICE_ID,
@@ -1028,6 +1038,7 @@ async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata
     engine
         .batch_save_kv_blocks_from_ipc(
             INSTANCE,
+            engine.registration_generation(INSTANCE).unwrap_or_default(),
             0,
             0,
             DEVICE_ID,
@@ -1283,6 +1294,7 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
         source
             .batch_save_kv_blocks_from_ipc(
                 "source",
+                source.registration_generation("source").unwrap_or_default(),
                 0,
                 0,
                 0,

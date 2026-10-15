@@ -394,6 +394,9 @@ impl TestEnv {
         self.engine
             .batch_save_kv_blocks_from_ipc(
                 &self.instance_id,
+                self.engine
+                    .registration_generation(&self.instance_id)
+                    .unwrap_or_default(),
                 0,
                 0,
                 0,
@@ -435,7 +438,16 @@ impl TestEnv {
             })
             .collect();
         self.engine
-            .batch_save_kv_blocks_from_ipc(&self.instance_id, 0, 0, 0, saves)
+            .batch_save_kv_blocks_from_ipc(
+                &self.instance_id,
+                self.engine
+                    .registration_generation(&self.instance_id)
+                    .unwrap_or_default(),
+                0,
+                0,
+                0,
+                saves,
+            )
             .await
             .expect("save all layers");
         self.engine.flush_saves().await;

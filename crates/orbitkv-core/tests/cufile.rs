@@ -403,6 +403,9 @@ impl EncodedFixture {
         self.engine
             .batch_save_kv_blocks_from_ipc(
                 "encoded-gds",
+                self.engine
+                    .registration_generation("encoded-gds")
+                    .unwrap_or_default(),
                 0,
                 0,
                 0,

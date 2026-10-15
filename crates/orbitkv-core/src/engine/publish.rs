@@ -353,6 +353,7 @@ impl OrbitKVEngine {
     pub async fn batch_save_kv_blocks_from_ipc(
         &self,
         instance_id: &str,
+        registration_generation: [u8; 16],
         tp_rank: usize,
         pp_rank: usize,
         device_id: i32,
@@ -360,6 +361,7 @@ impl OrbitKVEngine {
     ) -> Result<(), EngineError> {
         self.batch_save_kv_blocks_from_ipc_inner(
             instance_id,
+            registration_generation,
             tp_rank,
             pp_rank,
             device_id,
@@ -369,9 +371,14 @@ impl OrbitKVEngine {
         .await
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "binds registered GPU identity, batched inputs and diagnostic ownership"
+    )]
     pub async fn batch_save_kv_blocks_from_ipc_diagnostic(
         &self,
         instance_id: &str,
+        registration_generation: [u8; 16],
         tp_rank: usize,
         pp_rank: usize,
         device_id: i32,
@@ -380,6 +387,7 @@ impl OrbitKVEngine {
     ) -> Result<(), EngineError> {
         self.batch_save_kv_blocks_from_ipc_inner(
             instance_id,
+            registration_generation,
             tp_rank,
             pp_rank,
             device_id,
@@ -389,9 +397,14 @@ impl OrbitKVEngine {
         .await
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "binds registered GPU identity, batched inputs and diagnostic ownership"
+    )]
     async fn batch_save_kv_blocks_from_ipc_inner(
         &self,
         instance_id: &str,
+        registration_generation: [u8; 16],
         tp_rank: usize,
         pp_rank: usize,
         device_id: i32,
@@ -404,6 +417,11 @@ impl OrbitKVEngine {
         let total_layers = saves.len();
 
         let instance = self.get_instance(instance_id)?;
+        if registration_generation == [0; 16] || instance.generation() != registration_generation {
+            return Err(EngineError::InvalidArgument(
+                "stale GPU registration generation".into(),
+            ));
+        }
         let topology = instance.sealed_topology()?;
         let namespace = topology.cache_namespace.clone();
 
@@ -752,8 +770,9 @@ impl OrbitKVEngine {
         }
 
         debug!(
-            "save_batch completed: instance_id={} tp_rank={} pp_rank={} device_id={} layers={} layers_saved={} blocks_saved={} bytes={} numa={} total_ms={:.2}",
+            "save_batch completed: instance_id={} registration_generation={:?} tp_rank={} pp_rank={} device_id={} layers={} layers_saved={} blocks_saved={} bytes={} numa={} total_ms={:.2}",
             instance_id,
+            registration_generation,
             tp_rank,
             pp_rank,
             device_id,

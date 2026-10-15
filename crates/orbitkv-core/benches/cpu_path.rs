@@ -39,6 +39,7 @@ const MULTI_LAYER_COUNT: usize = 61;
 struct BenchFixture {
     local_restore: std::sync::Mutex<LocalRestoreExecutor>,
     engine: OrbitKVEngine,
+    registration_generation: [u8; 16],
     _ctx: Arc<CudaContext>,
     _gpu: GpuBuffer,
     num_blocks: usize,
@@ -148,7 +149,7 @@ impl BenchFixture {
             .expect("pool size overflow");
         let engine = OrbitKVEngine::new_with_config(pool_size, false, config).expect("engine");
 
-        engine
+        let registration_generation = engine
             .register_context_layer_batch(
                 INSTANCE_ID,
                 NAMESPACE,
@@ -191,6 +192,7 @@ impl BenchFixture {
         Self {
             local_restore: std::sync::Mutex::new(local_restore),
             engine,
+            registration_generation,
             _ctx: ctx,
             _gpu: gpu,
             num_blocks: block_ids.len(),
@@ -202,6 +204,7 @@ impl BenchFixture {
         self.engine
             .batch_save_kv_blocks_from_ipc(
                 INSTANCE_ID,
+                self.registration_generation,
                 0,
                 0,
                 DEVICE_ID,
@@ -294,6 +297,7 @@ impl BenchFixture {
 
 struct MultiLayerBenchFixture {
     engine: OrbitKVEngine,
+    registration_generation: [u8; 16],
     _ctx: Arc<CudaContext>,
     _gpu: GpuBuffer,
     layer_names: Vec<String>,
@@ -388,7 +392,7 @@ impl MultiLayerBenchFixture {
         let strides = vec![0; MULTI_LAYER_COUNT];
         let segments = vec![1; MULTI_LAYER_COUNT];
 
-        engine
+        let registration_generation = engine
             .register_context_layer_batch(
                 INSTANCE_ID,
                 NAMESPACE,
@@ -411,6 +415,7 @@ impl MultiLayerBenchFixture {
 
         Self {
             engine,
+            registration_generation,
             _ctx: ctx,
             _gpu: gpu,
             layer_names,
@@ -432,7 +437,14 @@ impl MultiLayerBenchFixture {
 
     async fn save_and_flush(&self, saves: Vec<LayerSave>) {
         self.engine
-            .batch_save_kv_blocks_from_ipc(INSTANCE_ID, 0, 0, DEVICE_ID, saves)
+            .batch_save_kv_blocks_from_ipc(
+                INSTANCE_ID,
+                self.registration_generation,
+                0,
+                0,
+                DEVICE_ID,
+                saves,
+            )
             .await
             .expect("save");
         self.engine.flush_saves().await;
@@ -440,7 +452,14 @@ impl MultiLayerBenchFixture {
 
     async fn save_only(&self, saves: Vec<LayerSave>) {
         self.engine
-            .batch_save_kv_blocks_from_ipc(INSTANCE_ID, 0, 0, DEVICE_ID, saves)
+            .batch_save_kv_blocks_from_ipc(
+                INSTANCE_ID,
+                self.registration_generation,
+                0,
+                0,
+                DEVICE_ID,
+                saves,
+            )
             .await
             .expect("save");
     }

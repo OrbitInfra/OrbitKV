@@ -181,7 +181,10 @@ impl LifecycleService {
         self.engine.payload_arenas().map_err(Self::map_engine_error)
     }
 
-    pub(crate) async fn register(&self, req: Registration) -> Result<i32, ControlError> {
+    pub(crate) async fn register(
+        &self,
+        req: Registration,
+    ) -> Result<(i32, [u8; 16]), ControlError> {
         let stopping = self.stopping.read().await;
         if *stopping {
             return Err(ControlError::failed_precondition(
@@ -346,7 +349,7 @@ impl LifecycleService {
         } else {
             Some(&req.layer_group_ids)
         };
-        if let Err(err) = self.engine.register_context_layer_batch_strided(
+        let registered = self.engine.register_context_layer_batch_strided(
             &req.instance_id,
             &req.namespace,
             manager_device_id,
@@ -366,19 +369,23 @@ impl LifecycleService {
             Some(&formats),
             transfer_mode,
             req.page_first,
-        ) {
-            let status = Self::map_engine_error(err);
-            let removed = self.registry.drop_context(context_key.clone()).await;
-            if removed > 0 {
-                warn!(
-                    "Rolled back {} CUDA tensor(s) for failed register_context_batch context {:?}",
-                    removed, context_key
-                );
+        );
+        let registration_generation = match registered {
+            Ok(generation) => generation,
+            Err(err) => {
+                let status = Self::map_engine_error(err);
+                let removed = self.registry.drop_context(context_key.clone()).await;
+                if removed > 0 {
+                    warn!(
+                        "Rolled back {} CUDA tensor(s) for failed register_context_batch context {:?}",
+                        removed, context_key
+                    );
+                }
+                return Err(status);
             }
-            return Err(status);
-        }
+        };
 
-        Ok(manager_device_id)
+        Ok((manager_device_id, registration_generation))
     }
 
     fn validate_session_topology(

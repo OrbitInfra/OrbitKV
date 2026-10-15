@@ -11,11 +11,11 @@ const RELEASE_REQUEST_MAGIC: u32 = 0x4f52_4c51; // ORLQ
 const PUBLISH_REQUEST_MAGIC: u32 = 0x4f52_5051; // ORPQ
 const RESTORE_REQUEST_MAGIC: u32 = 0x4f52_5251; // ORRQ
 const COMPLETION_OBSERVATION_MAGIC: u32 = 0x4f52_434f; // ORCO
-const CACHE_PROTOCOL_VERSION: u16 = 9;
+const CACHE_PROTOCOL_VERSION: u16 = 10;
 const REQUEST_HEADER_BYTES: usize = 40;
 const RESPONSE_HEADER_BYTES: usize = 24;
 const RELEASE_HEADER_BYTES: usize = 12;
-const PUBLISH_HEADER_BYTES: usize = 28;
+const PUBLISH_HEADER_BYTES: usize = 44;
 const RESTORE_HEADER_BYTES: usize = 28;
 const COMPLETION_OBSERVATION_HEADER_BYTES: usize = 104;
 const MAX_COMPLETION_INSTANCE_ID_BYTES: usize = 256;
@@ -627,6 +627,7 @@ pub struct PublishLayer {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublishRequest {
     pub instance_id: String,
+    pub registration_generation: [u8; 16],
     pub tp_rank: u32,
     pub pp_rank: u32,
     pub device_id: i32,
@@ -642,6 +643,9 @@ impl PublishRequest {
         &self,
         range: Option<Range<usize>>,
     ) -> Result<usize, CacheProtocolError> {
+        if self.registration_generation == [0; 16] {
+            return Err(CacheProtocolError::InvalidRegistrationGeneration);
+        }
         validate_publish_layers(&self.layers)?;
         checked_u32(self.instance_id.len(), "instance_id")?;
         checked_u32(self.layers.len(), "layers")?;
@@ -695,6 +699,7 @@ impl PublishRequest {
             })
             .count();
         push_u32(&mut bytes, checked_u32(layer_count, "layers")?);
+        bytes.extend_from_slice(&self.registration_generation);
         bytes.extend_from_slice(instance);
         for layer in &self.layers {
             let selected = match &range {
@@ -747,6 +752,13 @@ impl PublishRequest {
         let device_id = decoder.i32()?;
         let instance_len = decoder.usize_u32()?;
         let layer_count = decoder.usize_u32()?;
+        let registration_generation: [u8; 16] = decoder
+            .bytes(16)?
+            .try_into()
+            .map_err(|_| CacheProtocolError::Truncated)?;
+        if registration_generation == [0; 16] {
+            return Err(CacheProtocolError::InvalidRegistrationGeneration);
+        }
         let instance_id = decoder.string(instance_len, "instance_id")?;
         if layer_count > decoder.remaining() / 8 {
             return Err(CacheProtocolError::Truncated);
@@ -776,6 +788,7 @@ impl PublishRequest {
         validate_publish_layers(&layers)?;
         Ok(Self {
             instance_id,
+            registration_generation,
             tp_rank,
             pp_rank,
             device_id,
@@ -1092,6 +1105,8 @@ impl QueryBundleResponse {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum CacheProtocolError {
+    #[error("GPU registration generation must be nonzero")]
+    InvalidRegistrationGeneration,
     #[error("invalid dense shard query response")]
     InvalidShardPayload,
     #[error("only selected recovery reads must carry complete compiled demand")]

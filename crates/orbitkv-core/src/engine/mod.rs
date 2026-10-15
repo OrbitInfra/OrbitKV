@@ -255,7 +255,7 @@ impl OrbitKVEngine {
         segments_list: &[usize],
         transfer_mode: TransferMode,
         page_first: bool,
-    ) -> Result<(), EngineError> {
+    ) -> Result<[u8; 16], EngineError> {
         // Dense default: block stride == bytes_per_block (layer-first layout).
         self.register_context_layer_batch_strided(
             instance_id,
@@ -313,7 +313,7 @@ impl OrbitKVEngine {
         storage_formats: Option<&[orbitkv_state::StorageFormat]>,
         transfer_mode: TransferMode,
         page_first: bool,
-    ) -> Result<(), EngineError> {
+    ) -> Result<[u8; 16], EngineError> {
         // Build all registrations
         let ssd_enabled = self.storage.is_ssd_enabled();
         let batch_size = layer_names.len();
@@ -432,7 +432,7 @@ impl OrbitKVEngine {
             "Registered context batch: instance={instance_id}, namespace={namespace}, \
              device={device_id}, layers={batch_size}, tp_rank={tp_rank}/{tp_size}, pp_rank={pp_rank}"
         );
-        Ok(())
+        Ok(instance.generation())
     }
 
     /// Drain all GPU transfers before callers release imported CUDA mappings.
@@ -516,6 +516,11 @@ impl OrbitKVEngine {
                 .get(instance_id)
                 .is_some_and(|instance| instance.generation().as_slice() == generation)
         })
+    }
+
+    /// Identity of the current registration owner, including a partially registered topology.
+    pub fn registration_generation(&self, instance_id: &str) -> Result<[u8; 16], EngineError> {
+        Ok(self.get_instance(instance_id)?.generation())
     }
 
     /// Snapshot the exact sealed registration authorized by local lifecycle metadata.

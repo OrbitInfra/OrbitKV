@@ -81,7 +81,16 @@ async fn hybrid_groups_load_to_distinct_block_ids() {
         },
     ];
     env.engine
-        .batch_save_kv_blocks_from_ipc(&env.instance_id, 0, 0, 0, saves)
+        .batch_save_kv_blocks_from_ipc(
+            &env.instance_id,
+            env.engine
+                .registration_generation(&env.instance_id)
+                .unwrap_or_default(),
+            0,
+            0,
+            0,
+            saves,
+        )
         .await
         .expect("save hybrid groups");
     env.engine.flush_saves().await;
@@ -146,7 +155,16 @@ async fn page_first_rejects_partial_layer_save() {
     }];
     let err = env
         .engine
-        .batch_save_kv_blocks_from_ipc(&env.instance_id, 0, 0, 0, partial)
+        .batch_save_kv_blocks_from_ipc(
+            &env.instance_id,
+            env.engine
+                .registration_generation(&env.instance_id)
+                .unwrap_or_default(),
+            0,
+            0,
+            0,
+            partial,
+        )
         .await
         .expect_err("partial page-first save must be rejected");
     assert!(

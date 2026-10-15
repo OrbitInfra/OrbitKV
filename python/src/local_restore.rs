@@ -248,6 +248,7 @@ struct Job {
 /// every accepted operation drains, even when its Python handle is dropped.
 pub(crate) struct LocalRestoreWorker {
     pub(crate) manager_device_id: i32,
+    pub(crate) registration_generation: [u8; 16],
     executor: Arc<Mutex<Option<LocalRestoreExecutor>>>,
     jobs: mpsc::SyncSender<Job>,
     admission: Arc<LocalCompletions>,
@@ -266,6 +267,7 @@ impl LocalRestoreWorker {
         completions: Arc<LocalCompletions>,
         arena_count: usize,
         manager_device_id: i32,
+        registration_generation: [u8; 16],
     ) -> Result<Self, String> {
         let executor = Arc::new(Mutex::new(Some(executor)));
         let worker_executor = Arc::clone(&executor);
@@ -373,6 +375,7 @@ impl LocalRestoreWorker {
             .map_err(|error| error.to_string())?;
         Ok(Self {
             manager_device_id,
+            registration_generation,
             executor,
             jobs,
             admission,
