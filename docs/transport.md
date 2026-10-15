@@ -213,6 +213,9 @@ Generic claim errors cannot publish drain merely by observing `Active` or
 `ActiveMore`: another executor may own that transition. Only the completion
 owner that won the CAS can establish never-submitted work when it rejects a
 plan before returning its bytes. CAS loss and unknown failures remain pending.
+Independent acceptance at `d9f779c9` covers code/CPU owner controls and the
+matching installed wheel's import/ELF checks. It does not qualify live Manager
+endpoint/GPU bytes, device/RDMA termination, page reuse or adapter faults.
 
 
 SSD, encoded, and mixed-source restores use a `Managed` execution state and

@@ -450,9 +450,21 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   may mark a rejected plan as never submitted, before returning bytes to any
   executor; deterministic competing-claim and old-branch mutation controls
   exercise that boundary. This is not a
-  physical-failure drain or reclamation primitive. Independent acceptance,
-  final installed package and GPU/adapter fault gates remain open; controls
-  belong under `/root/orbitkv-artifacts/s3-managed-restore-retention-20261015/`.
+  physical-failure drain or reclamation primitive. Independent
+  `ACCEPTED_CODE_CPU_AND_INSTALLED_IMPORT_SCOPE` at
+  `d9f779c9b844b5265caf09985d319445587cd05b`, tree `39c30ccb`, reruns 66
+  channel units, seven process tests and three actual-owner CPU controls.
+  Freeze manifest
+  `ed03585ec2c30c608856cf09267b2dd0df7d57419fab5d2efb3490d27794049a`,
+  wheel `6413f4c7d9748773cacb888a769d9bd46abec191a8828e7984435c56bfe8a655`
+  and review SHA256
+  `351db332f4644aaa54f4ebb86e099992ba56d039b9cdc696f5b4f2721f74a4ab`
+  are under `/root/orbitkv-artifacts/s3-managed-restore-retention-20261015/`.
+  Live Manager endpoint bytes, installed GPU/adapter faults and physical
+  termination/reclaim remain open. Before adding registration generations,
+  fix the existing imported-context owner selection: instance cleanup must
+  compare the whole instance identity, not a string prefix shared by another
+  legal instance such as `a:b`.
 - Replace the remaining framework CUDA IPC pickle interpretation in the Manager
   with explicit validated registration data; remove the retired wire/API path.
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
