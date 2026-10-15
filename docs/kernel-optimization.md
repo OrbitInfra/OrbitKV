@@ -680,3 +680,41 @@ Its immutable run manifest SHA256 is
 The invalid first cohort, rejected prelaunch freezes and failed controls remain
 preserved separately. S3/S4/S5 remain Partial; no serving, p99 or default
 qualification follows from this pool-only result.
+
+
+### Observation-cost candidate
+
+The local trace writer serializes borrowed typed schema-2 records directly.
+It retains complete descriptor bounds and actual submitted order, captures
+physical part-drain time before serialization and synchronously flushes the
+part checkpoint before returning. No background writer, sampling, changed copy
+backend or owner release is introduced. A buffered child that calls
+`process::exit` and the maintained production-compiler parser protect that
+publication boundary. Hardware overhead qualification remains open.
+
+The component contract `s4.copy-observation-components.v1` uses the same
+`benches.copy_observation` analyzer and byte oracle with 16 fresh processes:
+
+| Independent block | First | Second | Third | Fourth |
+| --- | --- | --- | --- | --- |
+| 0 | off | native | on | driver |
+| 1 | driver | on | native | off |
+| 2 | native | driver | off | on |
+| 3 | on | off | driver | native |
+
+`native` enables complete raw tracing with limit 65,536 and no collector;
+`driver` enables only the explicitly loaded CUPTI collector with native tracing
+disabled. `on` enables both and `off` enables neither. Every cell retains one
+warm-up, two measured complete 4K restores, full payload/sentinel/corruption
+controls, installed-file integrity and normal native/Manager shutdown.
+Native-only captures require the actual production geometry compiler; driver-only
+captures require the waited main process, complete driver records and copy calls
+inside every operation. Disabled captures must be absent.
+
+The primary decision remains four independent `on/off` ratios and their paired
+95% interval, all bounded by 1.05. Each mode appears once in each position; native
+and driver contrasts are reported against the same block's off process, without
+assuming their effects add together. The original eight-cell v2 consumer and
+failed cohort remain reproducible unchanged. Fresh implementation/runtime review
+is required before launching this component contract; it does not authorize
+inference contention, a backend default, p99 or physical-fault reclamation.

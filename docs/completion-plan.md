@@ -582,6 +582,18 @@ model output or serving gains. The original invalid cohort and two rejected
 zero-GPU prelaunch freezes remain preserved. See
 [matched overhead methodology](kernel-optimization.md#matched-observation-overhead-pilot).
 
+**Observation-cost candidate (2026-10-15): implemented; qualification open.**
+Engine-local trace records serialize borrowed typed fields directly, without
+intermediate JSON trees for every descriptor. Schema-2 geometry, cumulative caps,
+part clocks and synchronous publication/flush before return are unchanged.
+A buffered real-child immediate-exit control protects flush, and the actual
+Rust output is parsed by the maintained consumer and production DMA compiler.
+The component analyzer adds four balanced off/native/driver/on blocks; each mode
+occupies every position once, while the four primary off/on pairs keep their
+alternating order and unchanged 5% guard. Component costs are reported separately
+without assuming additivity. Code/CPU review and a fresh installed runtime/resource
+freeze are required before a new GPU result or performance claim.
+
 **Next bounded delivery:** reduce observation cost before another independently
 reviewed freeze; retain complete capture/byte/drain controls, four off/on pairs,
 one warm-up and two measured full 4K restores, unchanged caps and the 5% guard.
