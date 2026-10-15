@@ -30,7 +30,7 @@ branches at cutover. See [interface audit](engine-release-audit.md).
 | --- | --- | --- |
 | S0 | Complete | Handoff/skill migration merged in PR #190 |
 | S1 | Accepted at `ec3add9b` | Preserve external evidence and one queue |
-| S2 | Complete for the accepted engineering scope | Reviewed metadata contracts, the same-host four-owner baseline and one normal-SIGTERM three-host etcd process-only cohort are accepted. DRAM/SSD isolation FAIL; sixteen owners UNQUALIFIED; support stays four owners. Cross-host cache HA and independent etcd failure domains remain unqualified |
+| S2 | Complete for the accepted engineering scope; full qualification open | Reviewed metadata contracts, the same-host four-owner baseline and one normal-SIGTERM three-host etcd process-only cohort are accepted. DRAM/SSD isolation FAIL; sixteen owners UNQUALIFIED; support stays four owners. Cross-host cache HA and independent etcd failure domains remain unqualified |
 | S3 | Implementation partial; qualification open | Conservative native failure retention has limited code/CPU acceptance at `27f1cb1b`; physical termination proof, installed GPU/adapter gates, page generations, explicit registration and crash reclamation remain open |
 | S4 | Partial | Measured copy/SSD/control improvements exist; mixed contention, complete serving gains and S3-dependent faults remain open |
 | S5 | Partial | Official dense cache/restart and scoped deployment profiles accepted; public lifecycle, complete hybrid recovery, native P/D faults and broader topology remain open |
