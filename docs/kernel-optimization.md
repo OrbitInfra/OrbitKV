@@ -680,3 +680,79 @@ Its immutable run manifest SHA256 is
 The invalid first cohort, rejected prelaunch freezes and failed controls remain
 preserved separately. S3/S4/S5 remain Partial; no serving, p99 or default
 qualification follows from this pool-only result.
+
+
+### Observation-cost candidate
+
+The local trace writer serializes borrowed typed schema-2 records directly.
+It retains complete descriptor bounds and actual submitted order, captures
+physical part-drain time before serialization and synchronously flushes the
+part checkpoint before returning. No background writer, sampling, changed copy
+backend or owner release is introduced. A buffered child that calls
+`process::exit` and the maintained production-compiler parser protect that
+publication boundary. The completed component cohort below fails the unchanged
+observation-overhead guard.
+
+The component contract `s4.copy-observation-components.v1` uses the same
+`benches.copy_observation` analyzer and byte oracle with 16 fresh processes:
+
+| Independent block | First | Second | Third | Fourth |
+| --- | --- | --- | --- | --- |
+| 0 | off | native | on | driver |
+| 1 | driver | on | native | off |
+| 2 | native | driver | off | on |
+| 3 | on | off | driver | native |
+
+`native` enables complete raw tracing with limit 65,536 and no collector;
+`driver` enables only the explicitly loaded CUPTI collector with native tracing
+disabled. `on` enables both and `off` enables neither. Every cell retains one
+warm-up, two measured complete 4K restores, full payload/sentinel/corruption
+controls, installed-file integrity and normal native/Manager shutdown.
+Native-only captures require the actual production geometry compiler; driver-only
+captures require the waited main process and complete driver records. Every
+memcpy overlapping an operation must be a successful H2D submission contained
+between operation start and all-enqueued acknowledgement; straddling calls and
+late submissions invalidate the cell. Disabled captures must be absent.
+
+The primary decision remains four independent `on/off` ratios and their paired
+95% interval, all bounded by 1.05. Each mode appears once in each position; native
+and driver contrasts are reported against the same block's off process, without
+assuming their effects add together. The original eight-cell v2 consumer and
+failed cohort remain reproducible unchanged. Each new candidate still requires
+independent implementation/runtime/launch review; this contract does not authorize
+inference contention, a backend default, p99 or physical-fault reclamation.
+
+### Component cohort result
+
+Independent review accepts the evidence and unchanged failed decision. The one
+16-cell H20 cohort uses the installed production wheel from `cf4de1e3` and measured harness `ed09686c`. Each mode has four independent
+fresh-process medians, each based on two measured restores after one warm-up:
+
+| Mode | Mean of four process medians |
+| --- | --- |
+| off | 50.7946 ms |
+| native | 57.1048 ms |
+| driver | 50.7699 ms |
+| on | 57.3025 ms |
+
+The primary combined/off geometric ratio is 1.1281, with independent-pair 95%
+interval [1.1242, 1.1324]. All four pairs exceed 1.05: `PILOT_OVERHEAD_FAIL`.
+Native/off is 1.1242 [1.1176, 1.1321]; driver/off is 0.9995 [0.9954, 1.0023].
+These are complete-restoration host-wall contrasts. They identify the native
+observation bundle as the next profiling target, not a specific capture,
+serialization or flush function, and do not assume additivity. The prior 1.4133x
+v2 result remains failed; these separately collected cohorts do not establish a
+matched old/new production speedup or a benefit with tracing disabled.
+
+All 48 full-layout restores and 96 corruption controls pass. The 32 SDK/Manager
+processes, controller and supervisor have actual normal wait evidence and ended
+identities. GPU1 has zero memory/compute and its original lease is released;
+GPU0's protected reservation remains unchanged. No forced cleanup, retry,
+replacement cell or second cohort ran. Source/runtime hashes remain unchanged.
+The post-run consumer `fd142c59` closes foreign/linked cell admission and replays
+the same archived inputs identically; it was not substituted into the running
+harness. The raw manifest, source/wheel/compiler and complete runtime closure
+are retained under `/root/orbitkv-artifacts/s4-observation-cost-20261015/`, with
+reviews and reproduction context in
+[PR #247](https://github.com/feichai0017/orbitkv/pull/247). This does not qualify
+p99, device-only time, model output/serving, fault reclamation or a copy default.

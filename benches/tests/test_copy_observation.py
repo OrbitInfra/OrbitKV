@@ -77,19 +77,21 @@ def result(contract, factor=1, offset=0, mode="off"):
             "library": contract["collector"],
             "sha256": contract["collector_sha256"],
         }
-        if mode == "on"
+        if observation.VARIANTS[mode]["driver"]
         else None,
         "observation_design": {"warmup": contract["warmup"], "samples": contract["samples"]},
         "rounds": rounds,
     }
 
 
-@pytest.fixture
-def cohort(tmp_path, monkeypatch):
+@pytest.fixture(params=("pilot", "components"))
+def cohort(tmp_path, monkeypatch, request):
     native = tmp_path / "native"
     native.write_bytes(b"Frozen compiled geometry control")
     contract = {
-        "schema": "s4.copy-observation-pilot.v2",
+        "schema": "s4.copy-observation-components.v1"
+        if request.param == "components"
+        else "s4.copy-observation-pilot.v2",
         "warmup": 1,
         "samples": 2,
         "length": 4096,
@@ -107,8 +109,13 @@ def cohort(tmp_path, monkeypatch):
         },
         "cells": [],
     }
-    for i, mode in enumerate(("off", "on", "on", "off", "off", "on", "on", "off")):
-        contract["cells"].append({"name": f"cell-{i}-{mode}", "mode": mode, "pair": i // 2})
+    order = (
+        observation.COMPONENT_ORDER if request.param == "components" else observation.PILOT_ORDER
+    )
+    width = 4 if request.param == "components" else 2
+    contract["variant_envs"] = {mode: observation.VARIANTS[mode].copy() for mode in set(order)}
+    for i, mode in enumerate(order):
+        contract["cells"].append({"name": f"cell-{i}-{mode}", "mode": mode, "pair": i // width})
     cp = tmp_path / "contract.json"
     cp.write_text(json.dumps(contract))
     sha = hashlib.sha256(cp.read_bytes()).hexdigest()
@@ -164,7 +171,7 @@ def cohort(tmp_path, monkeypatch):
                 "stop_finished_mono_ns": 10_000_000_000 + i * 1_000_000_000 + 6_000_000,
             },
         )
-        if cell["mode"] == "on":
+        if observation.VARIANTS[cell["mode"]]["driver"]:
             (path / "driver").mkdir()
             (path / "driver" / f"cuda-driver-{100 + i}.jsonl").write_text(
                 "Frozen capture fixture\n"
@@ -189,6 +196,42 @@ def cohort(tmp_path, monkeypatch):
             ],
         }
 
+    def native_collect(log, validator):
+        value = analyze(None, log, validator)
+        data = json.loads((log.parent / "bytes/RESULT.json").read_text())
+        return {
+            "native_geometry_validation": {"fixture_sha256": contract["native_fixture_sha256"]},
+            "traces": [
+                {
+                    "header": {"pid": value["pid"], "trace_id": 1},
+                    "headers": [
+                        {"pid": value["pid"], "clock": "CLOCK_MONOTONIC"} for _ in data["rounds"]
+                    ],
+                    "parts": [
+                        {"part_id": i, "drained_ns": row["observation"]["drained_ns"] - 10}
+                        for i, row in enumerate(data["rounds"])
+                    ],
+                    "batches": value["batches"],
+                }
+            ],
+        }
+
+    def driver_capture(trace):
+        data = json.loads((trace.parent.parent / "bytes/RESULT.json").read_text())
+        pid = json.loads((trace.parent.parent / "ORACLE-WAIT.json").read_text())["pid"]
+        calls = [
+            {
+                "name": "cuMemcpyHtoDAsync_v2",
+                "result": 0,
+                "begin_ns": row["observation"]["started_ns"] + 10,
+                "end_ns": row["observation"]["started_ns"] + 100,
+            }
+            for row in data["rounds"]
+        ]
+        return pid, len(calls), {7: calls}
+
+    monkeypatch.setattr(observation, "collect_native", native_collect)
+    monkeypatch.setattr(observation, "_driver_capture", driver_capture)
     monkeypatch.setattr(observation, "analyze_engine", analyze)
     return root, cp, native, contract
 
@@ -212,9 +255,11 @@ def test_all_samples_and_independent_pairs_are_retained(cohort):
 
 def test_one_failed_pair_blocks_further_contention(cohort):
     root, cp, native, contract = cohort
-    cell = contract["cells"][1]
+    cell = next(cell for cell in contract["cells"] if cell["mode"] == "on")
     (root / cell["name"] / "bytes/RESULT.json").write_text(
-        json.dumps(result(contract, 1.08, offset=1_000_000_000, mode="on"))
+        json.dumps(
+            result(contract, 1.08, offset=contract["cells"].index(cell) * 1_000_000_000, mode="on")
+        )
     )
     data = observation.collect(root, cp, native)
     assert data["status"] == "PILOT_OVERHEAD_FAIL"
@@ -378,7 +423,12 @@ def test_initial_compiler_binding_and_disabled_inventory_survive_analysis(
             return original(*args)
 
         monkeypatch.setattr(observation, "analyze_engine", add_capture)
-    with pytest.raises(ValueError, match="changed during cohort analysis"):
+    message = (
+        "compiler differs from frozen profile"
+        if fault == "compiler_after_first_hash"
+        else "changed during cohort analysis"
+    )
+    with pytest.raises(ValueError, match=message):
         observation.collect(root, cp, native)
 
 
@@ -423,7 +473,11 @@ def test_per_cell_capture_census_rejects_invalid_files_before_analysis(tmp_path,
 )
 def test_frozen_collector_activation_is_consumed(cohort, fault):
     root, cp, native, contract = cohort
-    i = 0 if fault == "off-loaded" else 1
+    i = (
+        0
+        if fault == "off-loaded"
+        else next(i for i, cell in enumerate(contract["cells"]) if cell["mode"] == "on")
+    )
     path = root / contract["cells"][i]["name"] / "bytes/RESULT.json"
     value = json.loads(path.read_text())
     if fault == "off-loaded":
@@ -438,4 +492,245 @@ def test_frozen_collector_activation_is_consumed(cohort, fault):
         value["driver_capture"][field] = changed
     path.write_text(json.dumps(value))
     with pytest.raises(ValueError, match="activation"):
+        observation.collect(root, cp, native)
+
+
+@pytest.mark.parametrize("cohort", ["components"], indirect=True)
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "native_pid",
+        "driver_pid",
+        "driver_window",
+        "driver_result",
+        "driver_direction",
+        "driver_after_enqueued",
+        "driver_crossing_start",
+        "driver_crossing_end",
+        "missing_operation",
+        "native_when_disabled",
+    ],
+)
+def test_component_cost_requires_actual_mode_and_operation_coverage(cohort, monkeypatch, fault):
+    root, cp, native, contract = cohort
+    if fault == "native_when_disabled":
+        cell = next(cell for cell in contract["cells"] if cell["mode"] == "driver")
+        (root / cell["name"] / "oracle.stderr").write_text("local_raw_copy {}\n")
+    elif fault == "native_pid":
+        original = observation.collect_native
+
+        def change(*args):
+            value = copy.deepcopy(original(*args))
+            value["traces"][0]["headers"][0]["pid"] += 1
+            return value
+
+        monkeypatch.setattr(observation, "collect_native", change)
+    else:
+        original = observation._driver_capture
+
+        def change(*args):
+            pid, calls, threads = copy.deepcopy(original(*args))
+            if fault == "driver_pid":
+                pid += 1
+            elif fault == "driver_window":
+                threads[7][0]["begin_ns"] = 1
+            elif fault == "driver_result":
+                threads[7][0]["result"] = 1
+            elif fault == "driver_direction":
+                threads[7][0]["name"] = "cuMemcpyDtoHAsync_v2"
+            elif fault == "driver_after_enqueued":
+                for event in threads[7]:
+                    event["begin_ns"] += 200_000
+                    event["end_ns"] += 200_000
+            elif fault == "driver_crossing_start":
+                event = threads[7][0].copy()
+                event["begin_ns"] -= 20
+                event["name"] = "cuMemcpyDtoHAsync_v2"
+                threads[7].append(event)
+            elif fault == "driver_crossing_end":
+                event = threads[7][0].copy()
+                event["begin_ns"] += 399_980
+                event["end_ns"] += 400_000
+                threads[7].append(event)
+            else:
+                threads[7].pop()
+            return pid, calls, threads
+
+        monkeypatch.setattr(observation, "_driver_capture", change)
+    with pytest.raises(ValueError):
+        observation.collect(root, cp, native)
+
+
+@pytest.mark.parametrize("cohort", ["components"], indirect=True)
+def test_component_contrasts_do_not_gate_on_a_single_faster_component(cohort):
+    root, cp, native, contract = cohort
+    for index, cell in enumerate(contract["cells"]):
+        factor = {"off": 1, "native": 1.01, "driver": 1.20, "on": 1.22}[cell["mode"]]
+        (root / cell["name"] / "bytes/RESULT.json").write_text(
+            json.dumps(
+                result(contract, factor=factor, offset=index * 1_000_000_000, mode=cell["mode"])
+            )
+        )
+    data = observation.collect(root, cp, native)
+    assert data["status"] == "PILOT_OVERHEAD_FAIL"
+    assert data["eligible_for_separate_contention_contract"] is False
+    assert set(data["component_contrasts"]) == {"native", "driver", "on"}
+    assert data["component_contrasts"]["native"]["geometric_mean_ratio"] == pytest.approx(1.01)
+    assert data["component_contrasts"]["driver"]["geometric_mean_ratio"] == pytest.approx(1.20)
+    assert data["pairs"]["geometric_mean_ratio"] == pytest.approx(1.22)
+
+
+@pytest.mark.parametrize("cohort", ["components"], indirect=True)
+@pytest.mark.parametrize("fault", ["native_log", "driver_trace", "combined_trace", "compiler"])
+def test_live_cell_capture_cannot_change_before_next_admission(cohort, monkeypatch, fault):
+    root, cp, native, contract = cohort
+    mode, owner = {
+        "native_log": ("native", "collect_native"),
+        "driver_trace": ("driver", "_driver_capture"),
+        "combined_trace": ("on", "analyze_engine"),
+        "compiler": ("native", "collect_native"),
+    }[fault]
+    cell = next(cell for cell in contract["cells"] if cell["mode"] == mode)
+    path = root / cell["name"]
+    wait = json.loads((path / "ORACLE-WAIT.json").read_text())
+    data = json.loads((path / "bytes/RESULT.json").read_text())
+    changed = (
+        native
+        if fault == "compiler"
+        else path / "oracle.stderr"
+        if fault == "native_log"
+        else path / "driver" / f"cuda-driver-{wait['pid']}.jsonl"
+    )
+    original = getattr(observation, owner)
+
+    def modify_after_parse(*args):
+        value = original(*args)
+        changed.write_bytes(b"changed after actual parser return")
+        return value
+
+    monkeypatch.setattr(observation, owner, modify_after_parse)
+    with pytest.raises(ValueError, match="changed during cell validation"):
+        observation.validate_capture(path, data, wait, contract, native, mode)
+
+
+@pytest.mark.parametrize("cohort", ["components"], indirect=True)
+@pytest.mark.parametrize(
+    "fault", [None, "duration_as_clock", "early", "late", "missing", "float", "clock"]
+)
+def test_native_only_consumes_absolute_part_completion_from_real_parser(cohort, monkeypatch, fault):
+    from benches.local_restore_shapes import _collect
+    from benches.tests.test_local_restore_shapes import records
+
+    root, _, native, contract = cohort
+    cell = next(cell for cell in contract["cells"] if cell["mode"] == "native")
+    path = root / cell["name"]
+    wait = json.loads((path / "ORACLE-WAIT.json").read_text())
+    data = json.loads((path / "bytes/RESULT.json").read_text())
+    events = []
+    for part, row in enumerate(data["rounds"]):
+        header, batch, drained, footer = records()
+        for event in (header, batch, drained, footer):
+            event.update(pid=wait["pid"], sequence=part, clock="CLOCK_MONOTONIC")
+        reserved = 2 * PLANES + 1
+        header.update(limit=65536, records_before=part * reserved)
+        if fault == "clock" and part == 1:
+            header["clock"] = "CLOCK_REALTIME"
+        events.append(header)
+        for plane in range(PLANES):
+            item = copy.deepcopy(batch)
+            item.update(
+                part_id=part,
+                batch_id=plane,
+                begin_ns=row["observation"]["started_ns"] + 10 + plane * 1000,
+                submitted_ns=row["observation"]["started_ns"] + 510 + plane * 1000,
+            )
+            item["copies"][0]["device"] += plane * 65536
+            item["copies"][0]["registered_device_start"] += plane * 65536
+            events.append(item)
+        drained.update(
+            part_id=part,
+            batches=PLANES,
+            planned_descriptors=PLANES,
+            submitted_descriptors=PLANES,
+            host_drain_ns=10,
+            drained_ns=row["observation"]["drained_ns"] - 10,
+        )
+        if part == 0:
+            if fault == "duration_as_clock":
+                drained["drained_ns"] = drained["host_drain_ns"]
+            elif fault == "early":
+                drained["drained_ns"] = row["observation"]["started_ns"] + 1000
+            elif fault == "late":
+                drained["drained_ns"] = row["observation"]["drained_ns"] + 1
+            elif fault == "missing":
+                drained.pop("drained_ns")
+            elif fault == "float":
+                drained["drained_ns"] = float(drained["drained_ns"])
+        footer.update(
+            parts=part + 1,
+            batches=(part + 1) * PLANES,
+            descriptors=(part + 1) * PLANES,
+            records_reserved=(part + 1) * reserved,
+        )
+        events.extend((drained, footer))
+    (path / "oracle.stderr").write_text(
+        "".join("local_raw_copy " + json.dumps(event) + "\n" for event in events)
+    )
+
+    def native_collect(log, fixture):
+        # This CPU contract test consumes real schema records; native compiler
+        # execution is exercised separately by installed-artifact review.
+        return _collect(log) | {"native_geometry_validation": {"fixture": str(fixture)}}
+
+    monkeypatch.setattr(observation, "collect_native", native_collect)
+    if fault is None:
+        value = observation.validate_capture(path, data, wait, contract, native, "native")
+        assert len(value["batches"]) == 3 * PLANES
+        assert (
+            value["batches"][0]["drained_ns"] == data["rounds"][0]["observation"]["drained_ns"] - 10
+        )
+    else:
+        with pytest.raises(ValueError, match="clock|windows|drained_ns"):
+            observation.validate_capture(path, data, wait, contract, native, "native")
+
+
+@pytest.mark.parametrize(
+    "fault", ["extra-directory", "extra-file", "extra-symlink", "cell-symlink", "root-symlink"]
+)
+def test_cell_census_rejects_foreign_or_linked_entries_before_replay(cohort, monkeypatch, fault):
+    root, cp, native, contract = cohort
+    if fault == "extra-directory":
+        (root / "foreign").mkdir()
+    elif fault == "extra-file":
+        (root / "foreign").write_text("unlisted evidence")
+    elif fault == "extra-symlink":
+        (root / "foreign").symlink_to(root / "missing")
+    elif fault == "cell-symlink":
+        cell = root / contract["cells"][0]["name"]
+        target = root.parent / "moved-cell"
+        cell.rename(target)
+        cell.symlink_to(target, target_is_directory=True)
+    else:
+        target = root.parent / "moved-cohort"
+        root.rename(target)
+        root.symlink_to(target, target_is_directory=True)
+
+    def unexpected_replay(*args, **kwargs):
+        pytest.fail("Native replay ran before cell census was validated")
+
+    monkeypatch.setattr(observation, "validate_capture", unexpected_replay)
+    with pytest.raises(ValueError, match="cell directory"):
+        observation.collect(root, cp, native)
+
+
+def test_cell_added_during_replay_cannot_qualify(cohort, monkeypatch):
+    root, cp, native, _ = cohort
+    original = observation.validate_capture
+
+    def add_cell(*args, **kwargs):
+        (root / "foreign").mkdir(exist_ok=True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(observation, "validate_capture", add_cell)
+    with pytest.raises(ValueError, match="cell directory inventory"):
         observation.collect(root, cp, native)

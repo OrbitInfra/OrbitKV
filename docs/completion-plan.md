@@ -582,12 +582,41 @@ model output or serving gains. The original invalid cohort and two rejected
 zero-GPU prelaunch freezes remain preserved. See
 [matched overhead methodology](kernel-optimization.md#matched-observation-overhead-pilot).
 
-**Next bounded delivery:** reduce observation cost before another independently
-reviewed freeze; retain complete capture/byte/drain controls, four off/on pairs,
+**Observation-cost delivery (2026-10-15): implemented; matched overhead FAIL.**
+Engine-local trace records serialize borrowed typed fields directly, without
+intermediate JSON trees for every descriptor. Schema-2 geometry, cumulative caps,
+part clocks and synchronous publication/flush before return are unchanged.
+A buffered real-child immediate-exit control protects flush, and the actual
+Rust output is parsed by the maintained consumer and production DMA compiler.
+The component analyzer adds four balanced off/native/driver/on blocks; each mode
+occupies every position once, while the four primary off/on pairs keep their
+alternating order and unchanged 5% guard. Component costs are reported separately
+without assuming additivity.
+
+The one fresh H20 component cohort uses production `cf4de1e3` and measured harness
+`ed09686c`: all 16 cells, 48 complete restore oracles and 96 corruption controls
+pass. Independent review accepts the evidence and unchanged failed decision.
+All 34 owned process identities end after actual normal waits; GPU1's original
+lease is released with zero memory/compute, and GPU0's prior failed-run reservation is unchanged. Frozen input and installed-file
+hashes match. The combined/off pair-geometric ratio is 1.1281, with independent-pair
+95% interval [1.1242, 1.1324]; every pair exceeds 1.05.
+The native/off contrast is 1.1242 while driver/off is near one, identifying the
+native observation bundle as the next profiling target. This does not isolate
+individual native functions or assume additive effects.
+The cohort is valid but `PILOT_OVERHEAD_FAIL`. The maintained consumer at
+`fd142c59` additionally rejects foreign or linked cell entries before and after
+replay; both consumer revisions reproduce the same raw result. Raw evidence and
+the complete runtime closure are archived outside the checkout with
+[PR #247](https://github.com/feichai0017/orbitkv/pull/247). See the
+[component result](kernel-optimization.md#component-cohort-result).
+
+**Next bounded delivery:** profile native geometry capture, encoding and
+synchronous publication/flush separately before selecting another observation-cost
+change. Retain complete capture/byte/drain controls, four balanced component blocks,
 one warm-up and two measured full 4K restores, unchanged caps and the 5% guard.
-Separate native tracing and driver-callback costs before attributing the
-regression. Inference contention and further kernel/default promotion remain
-blocked by this observation gate; S3/S4/S5 qualification limits are unchanged.
+Require independent code/runtime/launch review for a new candidate and cohort.
+Inference contention and further kernel/default promotion remain blocked by this
+observation gate; S3/S4/S5 qualification limits are unchanged.
 
 - Profile actual adapter hashing/conversions, destination checks, fragmentation,
   dispatch, scratch allocation and repeated shared-prefix H2D before selecting

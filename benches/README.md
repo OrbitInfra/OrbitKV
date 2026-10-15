@@ -41,6 +41,7 @@ uv run --isolated --no-project --with pytest --with requests --with uvicorn==0.5
 | `tent_native_trace.cpp` / `tent_trace.py` | Bounded pinned-native metadata/QP/bootstrap interposition and offline per-host trace validation |
 | `cpu_codec.rs` | Production scalar/AVX2/AVX-512/auto CPU FP8 conversion with an independent oracle before timing |
 | `cost_observations.py` | Same-binary off/on observation overhead, three reversed-order pairs on both engines |
+| `copy_observation.py` | Full-byte SGLang restore observation overhead; four paired off/on controls or balanced native/driver component blocks; see [methodology](../docs/kernel-optimization.md#observation-cost-candidate) |
 | `metadata.py` | Explicit full-Manager 0/2/5 ms metadata coalescing comparison using frozen binaries |
 | `live_store_capacity.py` | S2.10 1/4/16-owner ordinary install visibility plus separately named serial/concurrent barrier diagnostics |
 | `live_store_isolation.py` | Matched full-Manager local save/query/restore under quiet or metadata-only inventory pressure |
