@@ -346,11 +346,17 @@ impl ChannelClient {
             if final_response.state != RestoreState::Pending {
                 return Ok(final_response);
             }
-            if !matches!(
-                self.bootstrap.completions().state(operation_id)?,
-                crate::GrantState::Active | crate::GrantState::ActiveMore
-            ) {
-                return Err(ChannelError::SessionRequiresReconnect);
+            match self.bootstrap.completions().state(operation_id)? {
+                crate::GrantState::Managed => {
+                    return Ok(RestoreResponse {
+                        message:
+                            "Cache Manager exited without a Restore completion; resources retained"
+                                .into(),
+                        ..final_response
+                    });
+                }
+                crate::GrantState::Active | crate::GrantState::ActiveMore => {}
+                _ => return Err(ChannelError::SessionRequiresReconnect),
             }
         }
         Ok(response)

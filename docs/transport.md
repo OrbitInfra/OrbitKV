@@ -202,6 +202,21 @@ claim without drain evidence leaves its sources, byte reservations, and session
 credits quarantined. Neither TTL, UDS closure, nor pidfd exit authorizes source
 reuse. If the Manager dies during a claimed local copy, the engine retains its
 own imported mapping, CUDA registration, and tensors until local drain.
+A managed Restore without a terminal publication also remains pending after
+Manager process exit. An unreadable/unknown completion keeps the native worker
+job and registered tensors owned; it does not produce `RestoreStatus.done`.
+`poll_restore` can expose a bounded retention reason while `wait_restore` still
+respects its deadline. Pending operation admission remains charged until a
+known completion or a proven never-submitted drain. This candidate does not
+provide a device/RDMA failure fence or reclaim orphaned pages.
+Generic claim errors cannot publish drain merely by observing `Active` or
+`ActiveMore`: another executor may own that transition. Only the completion
+owner that won the CAS can establish never-submitted work when it rejects a
+plan before returning its bytes. CAS loss and unknown failures remain pending.
+Independent acceptance at `d9f779c9` covers code/CPU owner controls and the
+matching installed wheel's import/ELF checks. It does not qualify live Manager
+endpoint/GPU bytes, device/RDMA termination, page reuse or adapter faults.
+
 
 SSD, encoded, and mixed-source restores use a `Managed` execution state and
 retain Manager workers for their materialization, decode, and I/O. This follows

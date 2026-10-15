@@ -24,6 +24,10 @@ mod client;
     reason = "sealed shared completion memory uses aligned atomic access"
 )]
 mod completion;
+#[cfg(all(target_os = "linux", any(test, feature = "test-hooks")))]
+#[path = "../tests/support/claim.rs"]
+pub mod test_faults;
+
 pub mod lifecycle;
 mod protocol;
 mod transport;

@@ -100,7 +100,10 @@ impl LocalCompletions {
 }
 
 enum RestoreResult {
-    Pending { enqueued: bool },
+    Pending {
+        enqueued: bool,
+        retained: Option<String>,
+    },
     Ready(RestoreResponse, Option<(RestoreHandle, Instant)>),
     Consumed,
 }
@@ -133,6 +136,7 @@ impl RestoreResult {
 }
 
 pub(crate) struct LocalRestore {
+    operation_id: u64,
     result: Mutex<RestoreResult>,
     completed: Condvar,
 }
@@ -143,7 +147,7 @@ impl LocalRestore {
             .result
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        if let RestoreResult::Pending { enqueued } = &mut *result {
+        if let RestoreResult::Pending { enqueued, .. } = &mut *result {
             *enqueued = true;
         }
         self.completed.notify_all();
@@ -157,7 +161,13 @@ impl LocalRestore {
         let (result, _) = self
             .completed
             .wait_timeout_while(result, timeout, |result| {
-                matches!(result, RestoreResult::Pending { enqueued: false })
+                matches!(
+                    result,
+                    RestoreResult::Pending {
+                        enqueued: false,
+                        ..
+                    }
+                )
             })
             .unwrap_or_else(|poison| poison.into_inner());
         match &*result {
@@ -165,16 +175,50 @@ impl LocalRestore {
                 Err(response.message.clone())
             }
             RestoreResult::Consumed => Err("Restore result was already consumed".into()),
-            RestoreResult::Pending { enqueued } => Ok(*enqueued),
+            RestoreResult::Pending { enqueued, .. } => Ok(*enqueued),
             RestoreResult::Ready(_, _) => Ok(true),
         }
     }
 
-    pub(crate) fn poll(&self) -> Result<Option<RestoreResponse>, &'static str> {
-        self.result
+    fn retain_unproven(&self, mut message: String) {
+        let mut result = self
+            .result
             .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .take()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if let RestoreResult::Pending { retained, .. } = &mut *result {
+            let mut end = message.len().min(1024);
+            while !message.is_char_boundary(end) {
+                end -= 1;
+            }
+            message.truncate(end);
+            if retained.as_ref() != Some(&message) {
+                log::warn!(
+                    "Restore {} retains pages without completion: {}",
+                    self.operation_id,
+                    message
+                );
+                *retained = Some(message);
+            }
+        }
+    }
+
+    pub(crate) fn poll(&self) -> Result<Option<RestoreResponse>, &'static str> {
+        let mut result = self
+            .result
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if let RestoreResult::Pending {
+            retained: Some(message),
+            ..
+        } = &*result
+        {
+            return Ok(Some(RestoreResponse {
+                operation_id: self.operation_id,
+                state: RestoreState::Pending,
+                message: message.clone(),
+            }));
+        }
+        result.take()
     }
 
     pub(crate) fn wait(&self, timeout: Duration) -> Result<Option<RestoreResponse>, &'static str> {
@@ -425,7 +469,11 @@ impl LocalRestoreWorker {
             timing.dispatched_ns = start.elapsed().as_nanos() as u64;
         }
         let result = Arc::new(LocalRestore {
-            result: Mutex::new(RestoreResult::Pending { enqueued: false }),
+            operation_id: handle.operation_id,
+            result: Mutex::new(RestoreResult::Pending {
+                enqueued: false,
+                retained: None,
+            }),
             completed: Condvar::new(),
         });
         if self
@@ -545,21 +593,20 @@ fn advance(
                 }
                 Some((response, None))
             }
-            Ok(_) => None,
-            Err(error) => Some((failed(error.to_string()), None)),
+            Ok(response) => {
+                if !response.message.is_empty() {
+                    job.result.retain_unproven(response.message);
+                }
+                None
+            }
+            Err(error) => {
+                job.result.retain_unproven(error.to_string());
+                None
+            }
         },
         Err(error) => {
-            // Decoding shared plan bytes can fail after Granted -> Active; no
-            // GPU work was submitted here, so publishing Drained is safe.
-            if matches!(
-                client.restore_completions().state(handle.operation_id),
-                Ok(GrantState::Active | GrantState::ActiveMore)
-            ) {
-                let _ = client.finish_local_restore(handle, Err(error.to_string()), None);
-            }
-            // A failed claim can lose the CAS to revocation. Keep its record
-            // until Reaped -> Acknowledged even though no DMA was submitted.
-            Some((failed(error.to_string()), Some(handle)))
+            job.result.retain_unproven(error.to_string());
+            None
         }
     }
 }
@@ -601,3 +648,7 @@ fn wait_for_updates(client: &CacheClient, admission: &LocalCompletions, pending:
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/local_restore.rs"]
+mod tests;

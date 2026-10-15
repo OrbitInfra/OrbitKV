@@ -9,6 +9,9 @@ description = "Versioned process channel between inference engines and OrbitKV C
 [lints]
 workspace = true
 
+[features]
+test-hooks = []
+
 [dependencies]
 iceoryx2.workspace = true
 memmap2.workspace = true
