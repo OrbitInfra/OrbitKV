@@ -42,6 +42,7 @@ uv run --isolated --no-project --with pytest --with requests --with uvicorn==0.5
 | `cpu_codec.rs` | Production scalar/AVX2/AVX-512/auto CPU FP8 conversion with an independent oracle before timing |
 | `cost_observations.py` | Same-binary off/on observation overhead, three reversed-order pairs on both engines |
 | `copy_observation.py` | Full-byte SGLang restore observation overhead; four paired off/on controls or balanced native/driver component blocks; see [methodology](../docs/kernel-optimization.md#observation-cost-candidate) |
+| `native_copy_trace.rs` | Explicit CPU replay of the private Rust trace owner; separates geometry capture, JSON encoding, synchronous log publication and flush without CUDA calls |
 | `metadata.py` | Explicit full-Manager 0/2/5 ms metadata coalescing comparison using frozen binaries |
 | `live_store_capacity.py` | S2.10 1/4/16-owner ordinary install visibility plus separately named serial/concurrent barrier diagnostics |
 | `live_store_isolation.py` | Matched full-Manager local save/query/restore under quiet or metadata-only inventory pressure |
@@ -1367,3 +1368,34 @@ teardown can wake the output handler before its cancellation. The related
 [PR #49000](https://github.com/vllm-project/vllm/pull/49000) is open as checked on
 2026-10-10. Official vLLM 0.31.0 remains unchanged. Do not suppress this error in
 the benchmark or treat a CPU protocol check as a repaired hardware lifecycle.
+
+### Native trace CPU profile
+
+This ignored Rust test replays a complete schema-2 native capture through the
+actual private trace owner. It never dereferences captured addresses or calls
+CUDA. It does not measure DMA or engine restoration. Use a reviewed capture,
+record its digest and CPU topology/affinity, and select fresh external paths:
+
+```bash
+ORBITKV_TRACE_PROFILE_INPUT=/external/previous-cell/oracle.stderr \
+ORBITKV_TRACE_PROFILE_OUTPUT=/external/profile/staged.json \
+ORBITKV_TRACE_PROFILE_MODE=staged \
+RUST_LOG=info \
+cargo test -p orbitkv-core --release --no-default-features \
+  --features cuda-13,mooncake --lib \
+  transfer::local::trace::profile::captured_geometry_profile \
+  -- --exact --ignored --nocapture > /external/profile/staged.stdout \
+  2> /external/profile/staged.stderr
+```
+
+Run the already-built test executable directly for matched profiles; compilation
+is outside the measurement. Alternate independent `staged`/`whole` processes on
+the same CPU. Each process uses four warm-up and eight measured sequences of all
+input parts, with a new executor budget per sequence. `staged` measures geometry
+insertion, batch capture, drained record assembly/encoding, pre-encoded log
+publication and synchronous flush. Nested encoding timers include a separate
+clock control; report their overhead and the separate unmodified `whole` path.
+Compare every stable output field, record count and cumulative cap against the
+input outside the timed intervals. Reconstruction follows submission order,
+which need not equal original plan construction order. These staged CPU costs
+cannot be added to infer GPU restore overhead or promote a transfer backend.
