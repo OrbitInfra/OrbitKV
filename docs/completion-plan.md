@@ -575,7 +575,7 @@ No retry or replacement cell ran; GPU1 was released normally and GPU0's prior
 failed-run reservation remains untouched. The invalid cohort and reviews are
 preserved outside the checkout with [PR #238](https://github.com/feichai0017/orbitkv/pull/238).
 
-**Capture-scope repair (2026-10-15): implemented; hardware qualification open.**
+**Capture-scope repair (2026-10-15): implemented; matched overhead FAIL.**
 The oracle explicitly loads the frozen collector in its own process before
 Torch/engine/native imports and retains it through completion. It rejects
 inherited preloads and ambiguous trace directories. CPU-only controls using the
@@ -590,13 +590,63 @@ after replay. The controller also rejects changed byte-result evidence before
 accepting a cell. No production wheel, collector C++, backend or ownership policy
 changes; the original invalid cohort stays invalid.
 
-**Next bounded delivery:** independently review the repaired source and a fresh
-runtime/resource freeze before a new H20 cohort. Retain four independent off/on
-pairs, one warm-up and two measured full 4K restores, unchanged capture caps and
-the 5% median/independent-pair CI guard. Preserve all failures and successful
-physical drain receipts. Inference contention and kernel/default promotion
-remain blocked by this observation gate; a pool-only pilot does not qualify p99,
-model output or serving gains.
+**Completed H20 v2 cohort (2026-10-15):** the fresh `7601af23` runtime uses
+matching lifecycle-8/cache-10 artifacts. All eight cells and 24 full-layout
+restores pass payload/sentinel and corruption controls, with native release, normal
+SDK/Manager/controller waits and unchanged installed files. The four main-only
+captures pass exact inventory and production-compiler replay. The cohort is valid
+but `PILOT_OVERHEAD_FAIL`: all four pair ratios exceed 1.05; the pair-geometric
+ratio is 1.4133, with independent-pair 95% interval [1.4036, 1.4231]. This measures
+combined diagnostic overhead; the small pool-only pilot does not qualify p99,
+model output or serving gains. The original invalid cohort and two rejected
+zero-GPU prelaunch freezes remain preserved. See
+[matched overhead methodology](kernel-optimization.md#matched-observation-overhead-pilot).
+
+**Observation-cost delivery (2026-10-15): implemented; matched overhead FAIL.**
+Engine-local trace records serialize borrowed typed fields directly, without
+intermediate JSON trees for every descriptor. Schema-2 geometry, cumulative caps,
+part clocks and synchronous publication/flush before return are unchanged.
+A buffered real-child immediate-exit control protects flush, and the actual
+Rust output is parsed by the maintained consumer and production DMA compiler.
+The component analyzer adds four balanced off/native/driver/on blocks; each mode
+occupies every position once, while the four primary off/on pairs keep their
+alternating order and unchanged 5% guard. Component costs are reported separately
+without assuming additivity.
+
+The one fresh H20 component cohort uses production `cf4de1e3` and measured harness
+`ed09686c`: all 16 cells, 48 complete restore oracles and 96 corruption controls
+pass. Independent review accepts the evidence and unchanged failed decision.
+All 34 owned process identities end after actual normal waits; GPU1's original
+lease is released with zero memory/compute, and GPU0's prior failed-run reservation is unchanged. Frozen input and installed-file
+hashes match. The combined/off pair-geometric ratio is 1.1281, with independent-pair
+95% interval [1.1242, 1.1324]; every pair exceeds 1.05.
+The native/off contrast is 1.1242 while driver/off is near one, identifying the
+native observation bundle as the next profiling target. This does not isolate
+individual native functions or assume additive effects.
+The cohort is valid but `PILOT_OVERHEAD_FAIL`. The maintained consumer at
+`fd142c59` additionally rejects foreign or linked cell entries before and after
+replay; both consumer revisions reproduce the same raw result. Raw evidence and
+the complete runtime closure are archived outside the checkout with
+[PR #247](https://github.com/feichai0017/orbitkv/pull/247). See the
+[component result](kernel-optimization.md#component-cohort-result).
+
+**Native trace CPU profile (2026-10-15): implemented and collected; CPU scope only.**
+The actual private trace owner replays the preceding complete H20 geometry in
+five independent staged/whole process pairs. All ten processes and 360 CPU
+replays pass full output, identity, clock and cap checks. Encoding and synchronous
+publication dominate every staged process; process variability remains explicit,
+and this CPU profile does not establish H20 latency or a production speedup.
+See the [CPU profile and limits](kernel-optimization.md#native-trace-cpu-profile)
+and [PR #248](https://github.com/feichai0017/orbitkv/pull/248).
+
+**Next bounded delivery:** evaluate a lossless trace encoding/output-volume
+reduction inside the existing owner, preserving every geometry field, record
+order, cumulative cap and synchronous publication/flush. Retain complete
+capture/byte/drain controls, four balanced component blocks, one warm-up and two
+measured full 4K restores, unchanged caps and the 5% guard. Require independent
+code/runtime/launch review for a new candidate and cohort. Inference contention
+and further kernel/default promotion remain blocked by this observation gate;
+S3/S4/S5 qualification limits are unchanged.
 
 - Profile actual adapter hashing/conversions, destination checks, fragmentation,
   dispatch, scratch allocation and repeated shared-prefix H2D before selecting

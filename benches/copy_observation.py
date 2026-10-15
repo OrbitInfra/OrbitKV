@@ -8,10 +8,38 @@ import json
 import statistics
 from pathlib import Path
 
-from .cuda_submission import analyze_engine
+from .cuda_submission import _driver_capture, analyze_engine
 from .kernel_pairs import _ratio_summary, _service
+from .local_restore_shapes import collect as collect_native
 from .metrics import validate_ownership
+from .raw_copy_shapes import _integer
 from .sglang_kv_oracle import PAGE_BYTES, PAGES, PLANES, page_maps
+
+VARIANTS = {
+    "off": {"trace": False, "driver": False, "limit": 0},
+    "native": {"trace": True, "driver": False, "limit": 65536},
+    "driver": {"trace": False, "driver": True, "limit": 0},
+    "on": {"trace": True, "driver": True, "limit": 65536},
+}
+PILOT_ORDER = ("off", "on", "on", "off", "off", "on", "on", "off")
+COMPONENT_ORDER = (
+    "off",
+    "native",
+    "on",
+    "driver",
+    "driver",
+    "on",
+    "native",
+    "off",
+    "native",
+    "driver",
+    "off",
+    "on",
+    "on",
+    "off",
+    "driver",
+    "native",
+)
 
 
 def _read(path: Path) -> dict:
@@ -35,10 +63,10 @@ def _sha256(path: Path) -> str:
 
 def capture_file(cell: Path, mode: str, pid: int) -> Path | None:
     """Require the exact process capture before accepting a cell or its analysis."""
-    if mode not in {"on", "off"} or type(pid) is not int or pid <= 0:
+    if mode not in VARIANTS or type(pid) is not int or pid <= 0:
         raise ValueError("Invalid capture mode or process identity")
     directory = cell / "driver"
-    if mode == "off":
+    if not VARIANTS[mode]["driver"]:
         if directory.exists() or directory.is_symlink():
             raise ValueError(f"Disabled diagnostic unexpectedly emitted capture: {cell.name}")
         return None
@@ -56,7 +84,7 @@ def capture_file(cell: Path, mode: str, pid: int) -> Path | None:
 
 def validate_activation(result: dict, contract: dict, mode: str, pid: int) -> None:
     """Bind explicit loading to the frozen library and the waited oracle process."""
-    if mode not in {"on", "off"} or type(pid) is not int or pid <= 0:
+    if mode not in VARIANTS or type(pid) is not int or pid <= 0:
         raise ValueError("Invalid capture activation identity")
     expected = (
         {
@@ -65,11 +93,13 @@ def validate_activation(result: dict, contract: dict, mode: str, pid: int) -> No
             "library": contract["collector"],
             "sha256": contract["collector_sha256"],
         }
-        if mode == "on"
+        if VARIANTS[mode]["driver"]
         else None
     )
     activation = result.get("driver_capture")
-    if activation != expected or (mode == "on" and type(activation.get("pid")) is not int):
+    if activation != expected or (
+        VARIANTS[mode]["driver"] and type(activation.get("pid")) is not int
+    ):
         raise ValueError("Driver collector activation differs from frozen profile")
 
 
@@ -148,6 +178,137 @@ def validate_observations(result: dict, contract: dict) -> list[int]:
     return elapsed
 
 
+def validate_capture(
+    path: Path,
+    result: dict,
+    wait: dict,
+    contract: dict,
+    native_fixture: Path,
+    mode: str,
+) -> dict | None:
+    """Reject an invalid mode capture before admitting another hardware cell."""
+    name = path.name
+    driver = capture_file(path, mode, wait.get("pid"))
+    inputs = {
+        path / "oracle.stderr": _sha256(path / "oracle.stderr"),
+        native_fixture: _sha256(native_fixture),
+    }
+    if inputs[native_fixture] != contract["native_fixture_sha256"]:
+        raise ValueError("Native capture compiler differs from frozen profile")
+    if driver is not None:
+        inputs[driver] = _sha256(driver)
+    validate_activation(result, contract, mode, wait["pid"])
+    capture = None
+    if VARIANTS[mode]["trace"]:
+        if mode == "on":
+            capture = analyze_engine(
+                path / "driver" / f"cuda-driver-{wait['pid']}.jsonl",
+                path / "oracle.stderr",
+                native_fixture,
+            )
+        else:
+            native = collect_native(path / "oracle.stderr", native_fixture)
+            capture = {
+                "native_geometry_validation": native["native_geometry_validation"],
+                "pid": wait["pid"],
+                "batches": [],
+            }
+            for trace in native["traces"]:
+                if any(
+                    header["pid"] != wait["pid"] or header.get("clock") != "CLOCK_MONOTONIC"
+                    for header in trace["headers"]
+                ):
+                    raise ValueError(f"Foreign native capture PID/clock: {name}")
+                parts = {part["part_id"]: part for part in trace["parts"]}
+                for batch in trace["batches"]:
+                    capture["batches"].append(
+                        {
+                            **batch,
+                            "trace_id": trace["header"]["trace_id"],
+                            "drained_ns": _integer(parts[batch["part_id"]], "drained_ns", 1),
+                        }
+                    )
+        expected = (contract["warmup"] + contract["samples"]) * PLANES
+        batches = capture["batches"]
+        if len(batches) != expected or capture["pid"] != wait["pid"]:
+            raise ValueError(f"Incomplete or foreign native batch capture: {name}")
+        parts = sorted({(b["trace_id"], b["part_id"]) for b in batches})
+        if (
+            len(parts) != contract["warmup"] + contract["samples"]
+            or len({t for t, _ in parts}) != 1
+        ):
+            raise ValueError(f"Incorrect operation/trace coverage: {name}")
+        for operation, part in zip(result["rounds"], parts, strict=True):
+            observed = operation["observation"]
+            group = [b for b in batches if (b["trace_id"], b["part_id"]) == part]
+            if len(group) != PLANES or any(
+                b["backend"] != "direct"
+                or not observed["started_ns"]
+                <= _integer(b, "begin_ns", 1)
+                < _integer(b, "submitted_ns", 1)
+                <= observed["enqueued_ns"]
+                or not b["submitted_ns"] <= _integer(b, "drained_ns", 1) <= observed["drained_ns"]
+                for b in group
+            ):
+                raise ValueError(f"Driver windows differ from native operation: {name}")
+    elif any(
+        marker in (path / "oracle.stderr").read_text()
+        for marker in ("cache_timeline ", "local_raw_copy ")
+    ):
+        raise ValueError(f"Disabled diagnostic emitted native timeline records: {name}")
+    if mode == "driver":
+        pid, calls, threads = _driver_capture(path / "driver" / f"cuda-driver-{wait['pid']}.jsonl")
+        events = [event for thread in threads.values() for event in thread]
+        if pid != wait["pid"] or any(
+            not wait["launched_mono_ns"]
+            <= event["begin_ns"]
+            <= event["end_ns"]
+            <= wait["waited_mono_ns"]
+            for event in events
+        ):
+            raise ValueError(f"Foreign driver-only process/window: {name}")
+        operation_calls = []
+        for row in result["rounds"]:
+            clocks = row["observation"]
+            copies = [
+                event
+                for event in events
+                if event["name"].startswith("cuMemcpy")
+                and event["begin_ns"] < clocks["drained_ns"]
+                and event["end_ns"] > clocks["started_ns"]
+            ]
+            if not copies or any(
+                not clocks["started_ns"]
+                <= event["begin_ns"]
+                <= event["end_ns"]
+                <= clocks["enqueued_ns"]
+                or event["name"] not in {"cuMemcpyHtoDAsync_v2", "cuMemcpy2DAsync_v2"}
+                or event["result"] != 0
+                for event in copies
+            ):
+                raise ValueError(f"Missing or failed driver-only operation capture: {name}")
+            operation_calls.append(len(copies))
+        capture = {
+            "pid": pid,
+            "captured_driver_calls": calls,
+            "operation_copy_calls": operation_calls,
+        }
+    capture_file(path, mode, wait["pid"])
+    if any(_sha256(file) != expected for file, expected in inputs.items()):
+        raise ValueError("Consumed capture evidence changed during cell validation")
+    return capture
+
+
+def _cell_census(directory: Path, names: set[str]) -> None:
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError("Missing regular observation cell directory")
+    entries = list(directory.iterdir())
+    if {entry.name for entry in entries} != names or any(
+        entry.is_symlink() or not entry.is_dir() for entry in entries
+    ):
+        raise ValueError("Observation cell directory inventory differs from the frozen contract")
+
+
 def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
     if contract_path.is_symlink() or not contract_path.is_file():
         raise ValueError("Missing regular observation contract")
@@ -157,26 +318,26 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
         raise ValueError("Malformed observation contract")
     contract_sha = hashlib.sha256(contract_bytes).hexdigest()
     compiler_sha = _sha256(native_fixture)
+    components = contract.get("schema") == "s4.copy-observation-components.v1"
+    order = COMPONENT_ORDER if components else PILOT_ORDER
+    width = 4 if components else 2
     if (
-        contract.get("schema") != "s4.copy-observation-pilot.v2"
+        contract.get("schema")
+        not in {"s4.copy-observation-pilot.v2", "s4.copy-observation-components.v1"}
         or type(contract.get("warmup")) is not int
         or type(contract.get("samples")) is not int
         or contract.get("warmup") != 1
         or contract.get("samples") != 2
         or contract.get("length") != 4096
         or contract.get("max_ratio") != 1.05
-        or len(contract.get("cells", [])) != 8
+        or len(contract.get("cells", [])) != len(order)
         or len(contract.get("expected_plane_sha256", [])) != PLANES
         or len(set(contract["expected_plane_sha256"])) != PLANES
         or any(
             not isinstance(h, str) or len(h) != 64 or any(c not in "0123456789abcdef" for c in h)
             for h in contract["expected_plane_sha256"]
         )
-        or contract.get("variant_envs")
-        != {
-            "off": {"trace": False, "driver": False, "limit": 0},
-            "on": {"trace": True, "driver": True, "limit": 65536},
-        }
+        or contract.get("variant_envs") != {mode: VARIANTS[mode] for mode in set(order)}
         or compiler_sha != contract.get("native_fixture_sha256")
         or not isinstance(contract.get("collector"), str)
         or not Path(contract["collector"]).is_absolute()
@@ -184,7 +345,7 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
         or len(contract["collector_sha256"]) != 64
         or any(c not in "0123456789abcdef" for c in contract["collector_sha256"])
     ):
-        raise ValueError("Pilot design differs from the frozen eight-cell contract")
+        raise ValueError("Observation design differs from the frozen contract")
     rows = []
     names = set()
     owners = set()
@@ -193,7 +354,7 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
     paths = []
     for index, cell in enumerate(contract["cells"]):
         name, mode = cell["name"], cell["mode"]
-        expected_mode = (("off", "on"), ("on", "off"))[index // 2 % 2][index % 2]
+        expected_mode = order[index]
         if (
             not isinstance(name, str)
             or not name
@@ -201,12 +362,15 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
             or Path(name).name != name
             or name in {".", ".."}
             or mode != expected_mode
-            or cell.get("pair") != index // 2
+            or cell.get("pair") != index // width
         ):
             raise ValueError("Unbalanced or invalid observation pair order")
         names.add(name)
         path = directory / name
         paths.append(path)
+    _cell_census(directory, names)
+    for cell, path in zip(contract["cells"], paths, strict=True):
+        mode = cell["mode"]
         for file in (
             "CELL.json",
             "ORACLE-WAIT.json",
@@ -255,7 +419,6 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
         cleanup = _service(path, "manager")
         result = _read(path / "bytes" / "RESULT.json")
         elapsed = validate_observations(result, contract)
-        validate_activation(result, contract, mode, wait["pid"])
         if not (
             wait["launched_mono_ns"]
             <= result["rounds"][0]["observation"]["started_ns"]
@@ -266,38 +429,7 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
             raise ValueError(f"Native clocks lie outside live process ownership: {name}")
         previous_stop = cleanup["stop_finished_mono_ns"]
         previous_start_ticks = wait["start_ticks"]
-        capture = None
-        if mode == "on":
-            capture = analyze_engine(
-                path / "driver" / f"cuda-driver-{wait['pid']}.jsonl",
-                path / "oracle.stderr",
-                native_fixture,
-            )
-            expected = (contract["warmup"] + contract["samples"]) * PLANES
-            batches = capture["batches"]
-            if len(batches) != expected or capture["pid"] != wait["pid"]:
-                raise ValueError(f"Incomplete or foreign native batch capture: {name}")
-            parts = sorted({(b["trace_id"], b["part_id"]) for b in batches})
-            if (
-                len(parts) != contract["warmup"] + contract["samples"]
-                or len({t for t, _ in parts}) != 1
-            ):
-                raise ValueError(f"Incorrect operation/trace coverage: {name}")
-            for operation, part in zip(result["rounds"], parts, strict=True):
-                observed = operation["observation"]
-                group = [b for b in batches if (b["trace_id"], b["part_id"]) == part]
-                if len(group) != PLANES or any(
-                    b["backend"] != "direct"
-                    or not observed["started_ns"]
-                    <= b["begin_ns"]
-                    < b["submitted_ns"]
-                    <= observed["enqueued_ns"]
-                    or b["drained_ns"] > observed["drained_ns"]
-                    for b in group
-                ):
-                    raise ValueError(f"Driver windows differ from native operation: {name}")
-        elif "cache_timeline " in (path / "oracle.stderr").read_text():
-            raise ValueError(f"Disabled diagnostic emitted native timeline records: {name}")
+        capture = validate_capture(path, result, wait, contract, native_fixture, mode)
         rows.append(
             {
                 "name": name,
@@ -308,17 +440,24 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
                 "capture": capture,
             }
         )
-    ratios = []
-    for pair in range(4):
-        off, on = (
-            next(r for r in rows if r["pair"] == pair and r["mode"] == mode)
-            for mode in ("off", "on")
+    contrasts = {}
+    for mode in ("native", "driver", "on") if components else ("on",):
+        ratios = []
+        for pair in range(4):
+            off, observed = (
+                next(r for r in rows if r["pair"] == pair and r["mode"] == selected)
+                for selected in ("off", mode)
+            )
+            ratios.append(observed["median_ns"] / off["median_ns"])
+        summary = _ratio_summary(ratios, seed=20261014, draws=20000)
+        summary["bootstrap_unit"] = (
+            f"One freshly restarted off/{mode} process pair within an independent block; requests are not replicates"
+            if components
+            else "One freshly restarted off/on process pair; requests are not replicates"
         )
-        ratios.append(on["median_ns"] / off["median_ns"])
-    summary = _ratio_summary(ratios, seed=20261014, draws=20000)
-    summary["bootstrap_unit"] = (
-        "One freshly restarted off/on process pair; requests are not replicates"
-    )
+        contrasts[mode] = summary
+    summary = contrasts["on"]
+    ratios = summary["ratios"]
     passed = (
         max(ratios) <= contract["max_ratio"]
         and summary["bootstrap_95_ci"][1] <= contract["max_ratio"]
@@ -330,6 +469,7 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
             raise ValueError(
                 "Diagnostic directory inventory changed during cohort analysis"
             ) from error
+    _cell_census(directory, names)
     if any(_sha256(path) != expected for path, expected in inputs.items()):
         raise ValueError("Consumed observation evidence changed during cohort analysis")
     return {
@@ -337,6 +477,14 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
         "status": "PILOT_OVERHEAD_PASS" if passed else "PILOT_OVERHEAD_FAIL",
         "contract_sha256": contract_sha,
         "cells": rows,
+        **(
+            {
+                "component_contrasts": contrasts,
+                "component_scope": "Paired mode costs; native/driver effects and interaction are not assumed additive",
+            }
+            if components
+            else {}
+        ),
         "pairs": summary,
         "eligible_for_separate_contention_contract": passed,
         "scope": "Isolated complete-restoration host wall pilot; not p99, device-only time, model serving gain, native fault reclamation or a copy default.",

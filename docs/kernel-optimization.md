@@ -665,5 +665,144 @@ real exec child: explicit loading emits one main capture; the matched inherited-
 preload control emits main and child captures. These tests do not initialize
 CUDA or qualify hardware/descendant work. Collector C++, native wheel, production
 copy paths, ownership and the original capture/5% overhead guards are unchanged.
-A new independently reviewed runtime freeze is required before another GPU pilot;
-S4/S5 remain Partial.
+The fresh H20 v2 cohort at `7601af23` completes all eight cells with exact
+main-process captures, production-compiler replay and normal native/Manager
+release. The frozen 5% overhead guard fails in every pair: the pair-geometric
+ratio is 1.4133, with independent-pair 95% interval [1.4036, 1.4231]. This is the
+combined tracing/collector overhead, not an attribution to either component.
+Further inference contention and kernel/default promotion remain blocked; the
+next bounded delivery is in [S4](completion-plan.md#s4--finish-communication-execution-and-demonstrate-gains).
+
+The complete run is archived outside the checkout at
+`/root/orbitkv-artifacts/s4-h20-observation-7601af23-r3-20261015/remote-run/`.
+Its immutable run manifest SHA256 is
+`a9c8a4c86f93314ba1564b320c8731b375b9fa2e29fa46db2b3a74d015c78746`.
+The invalid first cohort, rejected prelaunch freezes and failed controls remain
+preserved separately. S3/S4/S5 remain Partial; no serving, p99 or default
+qualification follows from this pool-only result.
+
+
+### Observation-cost candidate
+
+The local trace writer serializes borrowed typed schema-2 records directly.
+It retains complete descriptor bounds and actual submitted order, captures
+physical part-drain time before serialization and synchronously flushes the
+part checkpoint before returning. No background writer, sampling, changed copy
+backend or owner release is introduced. A buffered child that calls
+`process::exit` and the maintained production-compiler parser protect that
+publication boundary. The completed component cohort below fails the unchanged
+observation-overhead guard.
+
+The component contract `s4.copy-observation-components.v1` uses the same
+`benches.copy_observation` analyzer and byte oracle with 16 fresh processes:
+
+| Independent block | First | Second | Third | Fourth |
+| --- | --- | --- | --- | --- |
+| 0 | off | native | on | driver |
+| 1 | driver | on | native | off |
+| 2 | native | driver | off | on |
+| 3 | on | off | driver | native |
+
+`native` enables complete raw tracing with limit 65,536 and no collector;
+`driver` enables only the explicitly loaded CUPTI collector with native tracing
+disabled. `on` enables both and `off` enables neither. Every cell retains one
+warm-up, two measured complete 4K restores, full payload/sentinel/corruption
+controls, installed-file integrity and normal native/Manager shutdown.
+Native-only captures require the actual production geometry compiler; driver-only
+captures require the waited main process and complete driver records. Every
+memcpy overlapping an operation must be a successful H2D submission contained
+between operation start and all-enqueued acknowledgement; straddling calls and
+late submissions invalidate the cell. Disabled captures must be absent.
+
+The primary decision remains four independent `on/off` ratios and their paired
+95% interval, all bounded by 1.05. Each mode appears once in each position; native
+and driver contrasts are reported against the same block's off process, without
+assuming their effects add together. The original eight-cell v2 consumer and
+failed cohort remain reproducible unchanged. Each new candidate still requires
+independent implementation/runtime/launch review; this contract does not authorize
+inference contention, a backend default, p99 or physical-fault reclamation.
+
+### Component cohort result
+
+Independent review accepts the evidence and unchanged failed decision. The one
+16-cell H20 cohort uses the installed production wheel from `cf4de1e3` and measured harness `ed09686c`. Each mode has four independent
+fresh-process medians, each based on two measured restores after one warm-up:
+
+| Mode | Mean of four process medians |
+| --- | --- |
+| off | 50.7946 ms |
+| native | 57.1048 ms |
+| driver | 50.7699 ms |
+| on | 57.3025 ms |
+
+The primary combined/off geometric ratio is 1.1281, with independent-pair 95%
+interval [1.1242, 1.1324]. All four pairs exceed 1.05: `PILOT_OVERHEAD_FAIL`.
+Native/off is 1.1242 [1.1176, 1.1321]; driver/off is 0.9995 [0.9954, 1.0023].
+These are complete-restoration host-wall contrasts. They identify the native
+observation bundle as the next profiling target, not a specific capture,
+serialization or flush function, and do not assume additivity. The prior 1.4133x
+v2 result remains failed; these separately collected cohorts do not establish a
+matched old/new production speedup or a benefit with tracing disabled.
+
+All 48 full-layout restores and 96 corruption controls pass. The 32 SDK/Manager
+processes, controller and supervisor have actual normal wait evidence and ended
+identities. GPU1 has zero memory/compute and its original lease is released;
+GPU0's protected reservation remains unchanged. No forced cleanup, retry,
+replacement cell or second cohort ran. Source/runtime hashes remain unchanged.
+The post-run consumer `fd142c59` closes foreign/linked cell admission and replays
+the same archived inputs identically; it was not substituted into the running
+harness. The raw manifest, source/wheel/compiler and complete runtime closure
+are retained under `/root/orbitkv-artifacts/s4-observation-cost-20261015/`, with
+reviews and reproduction context in
+[PR #247](https://github.com/feichai0017/orbitkv/pull/247). This does not qualify
+p99, device-only time, model output/serving, fault reclamation or a copy default.
+
+
+## Native trace CPU profile
+
+The explicit profile at `513ee7aa` replays the preceding H20 capture through the
+actual private Rust trace owner on an Intel Xeon Platinum 8457C CPU, pinned to
+CPU 0. Five independently restarted staged/whole pairs retain four warm-up and
+eight measured sequences per process; each sequence contains three captured
+restores of 128 batches and 8,064 descriptors. All ten processes exit zero.
+The external controller verifies all 47,160 emitted records and 2,903,040
+geometry entries against the input, binding waited PIDs, trace identities,
+cumulative budgets and ordered clocks. This is 360 CPU replays, including 240
+measured and 120 warm-up restores, without CUDA calls or address dereferences.
+Independent acceptance and provenance are recorded with the linked PR and
+external review evidence.
+
+The following values are medians of five independent process medians. They
+identify work inside this CPU replay; they are not GPU restore or serving times.
+
+| Observed work | Median per replay |
+| --- | --- |
+| Geometry insertion | 0.221 ms |
+| Batch capture and shape recording | 0.458 ms |
+| JSON encoding | 2.992 ms |
+| Synchronous log publication and String release | 2.332 ms |
+| Explicit logger flush | 0.00031 ms |
+
+Encoding and publication account for 86.8%–89.4% of each staged process's
+median total. The whole-path process medians range from 5.773 to 7.812 ms;
+paired staged/whole ratios range from 0.787 to 1.359. This variation prevents an
+exact overhead estimate or causal extrapolation to H20. The small clock-control
+estimate excludes other instrumentation, allocation and scheduling effects.
+`finish_ns` includes record assembly, encoding and publication: its nested
+encoding/publication fields must not be added as exclusive stages. The replay
+log's `cpu_submit_ns` and `host_drain_ns` are copied input metadata, not newly
+measured GPU intervals.
+
+The next candidate should reduce trace encoding/output volume without losing
+geometry, inside the existing bounded owner. Preserve per-record publication
+order, cumulative caps, all completion/clock evidence and synchronous flush
+before return. This profile does not implement that candidate or qualify a
+transfer/default change. A candidate still needs independent review and the
+unchanged full-byte H20 component cohort and 5% observation guard before
+inference contention or further kernel promotion.
+
+See [CPU reproduction](../benches/README.md#native-trace-cpu-profile) and
+[PR #248](https://github.com/feichai0017/orbitkv/pull/248). The complete raw
+profile, frozen executable, exact source, input copy and immutable indexes live
+outside the checkout at
+`/root/orbitkv-artifacts/s4-native-trace-profile-20261015/`.

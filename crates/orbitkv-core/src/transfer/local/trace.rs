@@ -40,6 +40,75 @@ struct Part {
     batches: Vec<Batch>,
 }
 
+#[derive(Clone, Copy, Serialize)]
+struct TraceIdentity {
+    schema: u8,
+    pid: u32,
+    trace_id: u64,
+    device: usize,
+    sequence: usize,
+    clock: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "stage")]
+enum TraceRecord<'a> {
+    #[serde(rename = "local_raw_copy_open")]
+    Open {
+        #[serde(flatten)]
+        identity: TraceIdentity,
+        max_pitch: usize,
+        limit: usize,
+        records_before: usize,
+    },
+    #[serde(rename = "local_raw_copy_batch")]
+    Batch {
+        #[serde(flatten)]
+        identity: TraceIdentity,
+        part_id: usize,
+        batch_id: usize,
+        backend: &'static str,
+        direction: &'static str,
+        bytes: u64,
+        descriptors: u64,
+        dma_ranges: u64,
+        zero_descriptors: u64,
+        min_bytes: u64,
+        max_bytes: u64,
+        size_histogram: &'a [u64; 8],
+        cpu_submit_ns: u64,
+        tid: u64,
+        begin_ns: u64,
+        submitted_ns: u64,
+        success: bool,
+        copies: &'a [Geometry],
+    },
+    #[serde(rename = "local_raw_copy_part")]
+    Part {
+        #[serde(flatten)]
+        identity: TraceIdentity,
+        part_id: usize,
+        final_part: bool,
+        planned_descriptors: usize,
+        submitted_descriptors: usize,
+        batches: usize,
+        host_drain_ns: u64,
+        drained_ns: u64,
+        success: bool,
+    },
+    #[serde(rename = "local_raw_copy_complete")]
+    Complete {
+        #[serde(flatten)]
+        identity: TraceIdentity,
+        parts: usize,
+        batches: usize,
+        descriptors: usize,
+        records_reserved: usize,
+        invalid_reason: Option<&'static str>,
+        complete: bool,
+    },
+}
+
 /// Publishes each physically drained part under one cumulative executor budget.
 /// Opening records precede submission; geometry serialization follows drain.
 pub(super) struct LocalCopyTrace {
@@ -99,19 +168,22 @@ impl LocalCopyTrace {
         self.begin_part_with(planned_descriptors, final_part, Self::write);
     }
 
-    fn base(&self) -> serde_json::Value {
-        serde_json::json!({
-            "schema": 2, "pid": std::process::id(), "trace_id": self.id,
-            "device": self.device, "sequence": self.parts,
-            "clock": "CLOCK_MONOTONIC",
-        })
+    fn identity(&self) -> TraceIdentity {
+        TraceIdentity {
+            schema: 2,
+            pid: std::process::id(),
+            trace_id: self.id,
+            device: self.device,
+            sequence: self.parts,
+            clock: "CLOCK_MONOTONIC",
+        }
     }
 
     fn begin_part_with(
         &mut self,
         planned_descriptors: usize,
         final_part: bool,
-        mut write: impl FnMut(serde_json::Value),
+        mut write: impl FnMut(TraceRecord<'_>),
     ) {
         if self.closed {
             return;
@@ -120,12 +192,12 @@ impl LocalCopyTrace {
             self.invalid = Some("unfinished_previous_part");
             return;
         }
-        let mut header = self.base();
-        header["stage"] = "local_raw_copy_open".into();
-        header["max_pitch"] = self.max_pitch.into();
-        header["limit"] = self.limit.into();
-        header["records_before"] = self.used.into();
-        write(header);
+        write(TraceRecord::Open {
+            identity: self.identity(),
+            max_pitch: self.max_pitch,
+            limit: self.limit,
+            records_before: self.used,
+        });
         self.geometry.clear();
         if self.admit(planned_descriptors.saturating_mul(2).saturating_add(1))
             && self.geometry.try_reserve(planned_descriptors).is_err()
@@ -241,78 +313,85 @@ impl LocalCopyTrace {
         &mut self,
         host_drain_ns: u64,
         success: bool,
-        mut write: impl FnMut(serde_json::Value),
+        mut write: impl FnMut(TraceRecord<'_>),
     ) {
         let Some(part) = self.part.take() else {
             return;
         };
         let drained_ns = orbitkv_common::timeline::monotonic_ns();
-        let base = self.base();
+        let identity = self.identity();
         let part_id = self.parts;
         let mut successful = success;
         {
             let submitted: usize = part.batches.iter().map(|batch| batch.geometry.len()).sum();
             for (batch_id, batch) in part.batches.iter().enumerate() {
                 let shape = &batch.shape;
-                let mut event = base.clone();
-                event["stage"] = "local_raw_copy_batch".into();
-                event["part_id"] = part_id.into();
-                event["batch_id"] = batch_id.into();
-                event["backend"] = shape.backend.into();
-                event["direction"] = shape.direction.into();
-                event["bytes"] = shape.bytes.into();
-                event["descriptors"] = shape.descriptors.into();
-                event["dma_ranges"] = shape.dma_ranges.into();
-                event["zero_descriptors"] = shape.zero_descriptors.into();
-                event["min_bytes"] = shape.min_bytes.into();
-                event["max_bytes"] = shape.max_bytes.into();
-                event["size_histogram"] = serde_json::json!(shape.size_histogram);
-                event["cpu_submit_ns"] = shape.cpu_submit_ns.into();
-                event["tid"] = batch.tid.into();
-                event["begin_ns"] = batch.begin_ns.into();
-                event["submitted_ns"] = batch.submitted_ns.into();
-                event["success"] = shape.success.into();
-                event["copies"] = serde_json::json!(batch.geometry);
-                write(event);
+                write(TraceRecord::Batch {
+                    identity,
+                    part_id,
+                    batch_id,
+                    backend: shape.backend,
+                    direction: shape.direction,
+                    bytes: shape.bytes,
+                    descriptors: shape.descriptors,
+                    dma_ranges: shape.dma_ranges,
+                    zero_descriptors: shape.zero_descriptors,
+                    min_bytes: shape.min_bytes,
+                    max_bytes: shape.max_bytes,
+                    size_histogram: &shape.size_histogram,
+                    cpu_submit_ns: shape.cpu_submit_ns,
+                    tid: batch.tid,
+                    begin_ns: batch.begin_ns,
+                    submitted_ns: batch.submitted_ns,
+                    success: shape.success,
+                    copies: &batch.geometry,
+                });
                 successful &= shape.success;
                 self.batches += 1;
                 self.descriptors += batch.geometry.len();
             }
-            let mut event = base.clone();
-            event["stage"] = "local_raw_copy_part".into();
-            event["part_id"] = part_id.into();
-            event["final_part"] = part.final_part.into();
-            event["planned_descriptors"] = part.planned_descriptors.into();
-            event["submitted_descriptors"] = submitted.into();
-            event["batches"] = part.batches.len().into();
-            event["host_drain_ns"] = host_drain_ns.into();
-            event["drained_ns"] = drained_ns.into();
-            event["success"] = success.into();
-            write(event);
+            write(TraceRecord::Part {
+                identity,
+                part_id,
+                final_part: part.final_part,
+                planned_descriptors: part.planned_descriptors,
+                submitted_descriptors: submitted,
+                batches: part.batches.len(),
+                host_drain_ns,
+                drained_ns,
+                success,
+            });
             successful &= submitted == part.planned_descriptors;
         }
         if !successful && self.invalid.is_none() {
             self.invalid = Some("incomplete_or_failed_part");
         }
-        let mut complete = base;
-        complete["stage"] = "local_raw_copy_complete".into();
-        complete["parts"] = (self.parts + 1).into();
-        complete["batches"] = self.batches.into();
-        complete["descriptors"] = self.descriptors.into();
-        complete["records_reserved"] = self.used.into();
-        complete["invalid_reason"] = self.invalid.into();
-        complete["complete"] = (self.invalid.is_none() && successful).into();
-        write(complete);
+        write(TraceRecord::Complete {
+            identity,
+            parts: self.parts + 1,
+            batches: self.batches,
+            descriptors: self.descriptors,
+            records_reserved: self.used,
+            invalid_reason: self.invalid,
+            complete: self.invalid.is_none() && successful,
+        });
         self.parts += 1;
         self.closed = self.invalid.is_some();
         self.geometry.clear();
     }
 
-    fn write(fields: serde_json::Value) {
-        log::info!("local_raw_copy {fields}");
+    fn write(record: TraceRecord<'_>) {
+        match serde_json::to_string(&record) {
+            Ok(fields) => log::info!("local_raw_copy {fields}"),
+            Err(error) => log::error!("Cannot serialize local raw-copy capture: {error}"),
+        }
     }
 }
 
 #[cfg(test)]
 #[path = "../../../tests/unit/transfer/local/trace.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../../../benches/native_copy_trace.rs"]
+mod profile;

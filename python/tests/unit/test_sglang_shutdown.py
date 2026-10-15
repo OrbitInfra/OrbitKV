@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -277,3 +278,22 @@ def test_sglang_shutdown_interrupt_stops_workers_and_releases_lease(
     waited, status = os.waitpid(child_pid, 0)
     assert waited == child_pid and os.WIFSIGNALED(status)
     assert os.WTERMSIG(status) == signal.SIGKILL
+
+
+@pytest.mark.parametrize("owned_server", ["clean", "orphan", "leader_timeout"], indirect=True)
+def test_strict_shutdown_keeps_unknown_owner_and_lease(owned_server, tmp_path, monkeypatch):
+    process, child_pid, lock_path, mode = owned_server
+    monkeypatch.setenv("ORBITKV_TEST_STRICT_SHUTDOWN", "1")
+    if mode == "clean":
+        sglang_direct._stop_server(process, tmp_path, timeout=2)
+    else:
+        with pytest.raises(AssertionError, match="SGLang cleanup failed"):
+            sglang_direct._stop_server(process, tmp_path, timeout=0.05)
+        assert Path(f"/proc/{child_pid}").exists()
+        if mode == "leader_timeout":
+            assert process.poll() is None
+        with lock_path.open("a") as lock, pytest.raises(BlockingIOError):
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    receipt = json.loads((tmp_path / f"sglang-{process.pid}.cleanup.json").read_text())
+    assert not receipt["forced_kill"] and receipt["start_ticks"] > 0
+    assert bool(receipt["errors"]) == (mode != "clean")

@@ -7,7 +7,7 @@ fn completed_part_is_published_before_process_exit() {
     if let Some(path) = std::env::var_os(CHILD_LOG) {
         use std::io::Write;
 
-        struct CaptureLogger(std::sync::Mutex<std::fs::File>);
+        struct CaptureLogger(std::sync::Mutex<std::io::BufWriter<std::fs::File>>);
 
         impl log::Log for CaptureLogger {
             fn enabled(&self, _: &log::Metadata<'_>) -> bool {
@@ -25,7 +25,7 @@ fn completed_part_is_published_before_process_exit() {
 
         let file = std::fs::File::create(path).unwrap();
         log::set_logger(Box::leak(Box::new(CaptureLogger(std::sync::Mutex::new(
-            file,
+            std::io::BufWriter::with_capacity(1024 * 1024, file),
         )))))
         .unwrap();
         log::set_max_level(log::LevelFilter::Info);
@@ -105,19 +105,69 @@ fn captures_actual_submitted_order_and_one_shared_part_drain() {
     let mut trace = LocalCopyTrace::new(0, Ok(usize::MAX), 100);
     let mut values = Vec::new();
     let copies = copies();
-    trace.begin_part_with(2, true, |event| values.push(event));
+    trace.begin_part_with(2, true, |event| {
+        values.push(serde_json::to_value(event).unwrap());
+    });
     bindings(&mut trace, &copies);
     for copy in copies.iter().rev() {
         let index = trace.begin_batch(&[*copy], "direct").unwrap();
         trace.finish_batch(index, 17, true);
     }
-    trace.finish_part_with(31, true, |event| values.push(event));
+    trace.finish_part_with(31, true, |event| {
+        values.push(serde_json::to_value(event).unwrap());
+    });
     assert_eq!(values.len(), 5);
     assert_eq!(values[1]["copies"][0]["destination_offset"], 4096);
     assert_eq!(values[2]["copies"][0]["source_offset"], 256);
     assert_eq!(values[1]["copies"][0]["source_allocation_bytes"], 16384);
     assert_eq!(values[1]["copies"][0]["registered_device_bytes"], 65536);
     assert_eq!(values[1]["dma_ranges"], 1);
+    assert_eq!(
+        values[1],
+        serde_json::json!({
+            "schema": 2,
+            "pid": std::process::id(),
+            "trace_id": trace.id,
+            "device": 0,
+            "sequence": 0,
+            "clock": "CLOCK_MONOTONIC",
+            "stage": "local_raw_copy_batch",
+            "part_id": 0,
+            "batch_id": 0,
+            "backend": "direct",
+            "direction": "h2d",
+            "bytes": 4096,
+            "descriptors": 1,
+            "dma_ranges": 1,
+            "zero_descriptors": 0,
+            "min_bytes": 4096,
+            "max_bytes": 4096,
+            "size_histogram": [0, 1, 0, 0, 0, 0, 0, 0],
+            "cpu_submit_ns": 17,
+            "tid": values[1]["tid"],
+            "begin_ns": values[1]["begin_ns"],
+            "submitted_ns": values[1]["submitted_ns"],
+            "success": true,
+            "copies": [{
+                "device": 0x11000,
+                "host": 0x101100,
+                "host_device": 0x201100,
+                "size": 4096,
+                "device_allocation": 7,
+                "host_registration": 0x100000,
+                "registered_device_start": 0x10000,
+                "registered_device_bytes": 65536,
+                "destination_offset": 4096,
+                "arena_id": 2,
+                "arena_bytes": 65536,
+                "source_allocation_id": 3,
+                "source_allocation_offset": 256,
+                "source_allocation_bytes": 16384,
+                "source_offset": 4352,
+            }],
+        })
+    );
+    assert!(values[4].get("invalid_reason").unwrap().is_null());
     assert_eq!(values[0]["clock"], "CLOCK_MONOTONIC");
     assert_eq!(values[1]["tid"], values[2]["tid"]);
     for batch in &values[1..3] {
@@ -144,7 +194,9 @@ fn partial_failure_overflow_missing_submission_and_missing_drain_are_invalid() {
         let mut trace = LocalCopyTrace::new(0, pitch, if mode == "overflow" { 4 } else { 100 });
         let mut values = Vec::new();
         let copies = copies();
-        trace.begin_part_with(2, true, |event| values.push(event));
+        trace.begin_part_with(2, true, |event| {
+            values.push(serde_json::to_value(event).unwrap());
+        });
         bindings(&mut trace, &copies);
         if let Some(index) = trace.begin_batch(&copies[..1], "direct") {
             trace.finish_batch(index, 17, mode != "failure");
@@ -155,7 +207,9 @@ fn partial_failure_overflow_missing_submission_and_missing_drain_are_invalid() {
             trace.finish_batch(index, 17, true);
         }
         if mode != "no_drain" {
-            trace.finish_part_with(31, mode != "failure", |event| values.push(event));
+            trace.finish_part_with(31, mode != "failure", |event| {
+                values.push(serde_json::to_value(event).unwrap());
+            });
             assert_eq!(values.last().unwrap()["complete"], false, "{mode}");
         } else {
             assert_eq!(values.len(), 1);
@@ -168,8 +222,12 @@ fn partial_failure_overflow_missing_submission_and_missing_drain_are_invalid() {
 fn empty_managed_parts_are_preserved_without_inventing_h2d_bytes() {
     let mut trace = LocalCopyTrace::new(0, Ok(usize::MAX), 2);
     let mut values = Vec::new();
-    trace.begin_part_with(0, true, |event| values.push(event));
-    trace.finish_part_with(19, true, |event| values.push(event));
+    trace.begin_part_with(0, true, |event| {
+        values.push(serde_json::to_value(event).unwrap());
+    });
+    trace.finish_part_with(19, true, |event| {
+        values.push(serde_json::to_value(event).unwrap());
+    });
     assert_eq!(values.len(), 3);
     assert_eq!(values[1]["planned_descriptors"], 0);
     assert_eq!(values[2]["batches"], 0);
@@ -183,12 +241,16 @@ fn publishing_a_part_does_not_replenish_the_executor_budget() {
     let copies = copies();
     for sequence in 0..3 {
         let start = values.len();
-        trace.begin_part_with(2, true, |event| values.push(event));
+        trace.begin_part_with(2, true, |event| {
+            values.push(serde_json::to_value(event).unwrap());
+        });
         bindings(&mut trace, &copies);
         if let Some(index) = trace.begin_batch(&copies, "direct") {
             trace.finish_batch(index, 17, true);
         }
-        trace.finish_part_with(31, true, |event| values.push(event));
+        trace.finish_part_with(31, true, |event| {
+            values.push(serde_json::to_value(event).unwrap());
+        });
         assert_eq!(values[start]["sequence"], sequence);
         assert_eq!(values[start]["records_before"], (sequence * 5).min(10));
         assert_eq!(values.last().unwrap()["complete"], sequence < 2);
@@ -199,7 +261,11 @@ fn publishing_a_part_does_not_replenish_the_executor_budget() {
         "capacity_exceeded"
     );
     let count = values.len();
-    trace.begin_part_with(0, true, |event| values.push(event));
-    trace.finish_part_with(31, true, |event| values.push(event));
+    trace.begin_part_with(0, true, |event| {
+        values.push(serde_json::to_value(event).unwrap());
+    });
+    trace.finish_part_with(31, true, |event| {
+        values.push(serde_json::to_value(event).unwrap());
+    });
     assert_eq!(values.len(), count);
 }
