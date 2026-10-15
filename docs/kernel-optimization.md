@@ -629,3 +629,41 @@ acceptance covers the successfully drained native owners. A new freeze needs an 
 reviewed process-scope and per-cell inventory fix before another cohort. The
 runtime, installed wheel, descriptor compiler and collector were not changed by
 this pilot, and it promotes no backend or kernel.
+
+
+### Main-process capture repair
+
+The controlled released-pool oracle now accepts `--driver-collector` with an
+absolute regular library path. It loads that library before Torch, SGLang or
+OrbitKV imports and keeps the handle through native completion. Its result
+records explicit loading, its own PID and the library path/SHA256. The controlled
+oracle rejects `LD_PRELOAD`, environment-only activation, a missing/nonempty or
+symlink trace directory, and preinitialized engine/native modules.
+
+```bash
+mkdir /external/new-pilot/cell/driver
+ORBITKV_CUDA_DRIVER_TRACE_DIR=/external/new-pilot/cell/driver \
+ORBITKV_TRACE_TRANSFERS=1 ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT=65536 \
+python -m benches.sglang_kv_oracle --model-config /path/to/frozen-config.json \
+  --length 4096 --backend direct --warmup 1 --samples 2 \
+  --driver-collector /external/frozen/cuda-driver-trace.so \
+  --manager-socket /path/to/owned.sock --manager-url http://127.0.0.1:20642 \
+  --gpu-uuid GPU-full-physical-uuid --output /external/new-pilot/cell/bytes
+```
+
+The `s4.copy-observation-pilot.v2` contract adds `collector` and
+`collector_sha256`; new qualification consumes the explicit activation record.
+Old v1 evidence remains archived with its frozen analyzer and cannot be relabeled.
+The maintained `capture_file` and `validate_activation` checks are shared by the
+external per-cell controller and full cohort analysis. Check the exact regular
+main-PID file before and after replay, preserve the byte-result hash, then record
+`CELL_VALID` or admit another cell. A complete zero-call foreign file is invalid.
+Disabled mode requires absence even of a dangling trace-directory symlink.
+
+CPU-only loader tests compile the actual collector with stub CUPTI and launch a
+real exec child: explicit loading emits one main capture; the matched inherited-
+preload control emits main and child captures. These tests do not initialize
+CUDA or qualify hardware/descendant work. Collector C++, native wheel, production
+copy paths, ownership and the original capture/5% overhead guards are unchanged.
+A new independently reviewed runtime freeze is required before another GPU pilot;
+S4/S5 remain Partial.

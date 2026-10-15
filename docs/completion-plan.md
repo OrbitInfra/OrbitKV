@@ -555,12 +555,26 @@ No retry or replacement cell ran; GPU1 was released normally and GPU0's prior
 failed-run reservation remains untouched. The invalid cohort and reviews are
 preserved outside the checkout with [PR #238](https://github.com/feichai0017/orbitkv/pull/238).
 
-**Next bounded delivery:** establish the collector's child-process scope and
-make the exact capture inventory a per-cell admission gate, then independently
-review a new freeze. Keep the four independent off/on pairs, one warm-up and two
-measured full 4K restores, unchanged capture caps and the 5% median/independent-
-pair CI guard. A new cohort must retain all failures and establish successful
-physical drain before cleanup. Inference contention and kernel/default promotion
+**Capture-scope repair (2026-10-15): implemented; hardware qualification open.**
+The oracle explicitly loads the frozen collector in its own process before
+Torch/engine/native imports and retains it through completion. It rejects
+inherited preloads and ambiguous trace directories. CPU-only controls using the
+actual collector with stub CUPTI reproduce the old exec-child capture and verify
+that explicit loading captures only the main process. This does not establish
+old helper lineage, fork support or descendant/DMA safety.
+
+The new v2 pilot contract binds the explicit loader, waited PID, library path and
+SHA256. A shared census rejects missing/foreign/symlink captures and disabled-mode
+directories; both per-cell admission and final analysis consume it before and
+after replay. The controller also rejects changed byte-result evidence before
+accepting a cell. No production wheel, collector C++, backend or ownership policy
+changes; the original invalid cohort stays invalid.
+
+**Next bounded delivery:** independently review the repaired source and a fresh
+runtime/resource freeze before a new H20 cohort. Retain four independent off/on
+pairs, one warm-up and two measured full 4K restores, unchanged capture caps and
+the 5% median/independent-pair CI guard. Preserve all failures and successful
+physical drain receipts. Inference contention and kernel/default promotion
 remain blocked by this observation gate; a pool-only pilot does not qualify p99,
 model output or serving gains.
 

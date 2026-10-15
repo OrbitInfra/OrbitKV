@@ -33,6 +33,46 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def capture_file(cell: Path, mode: str, pid: int) -> Path | None:
+    """Require the exact process capture before accepting a cell or its analysis."""
+    if mode not in {"on", "off"} or type(pid) is not int or pid <= 0:
+        raise ValueError("Invalid capture mode or process identity")
+    directory = cell / "driver"
+    if mode == "off":
+        if directory.exists() or directory.is_symlink():
+            raise ValueError(f"Disabled diagnostic unexpectedly emitted capture: {cell.name}")
+        return None
+    trace = directory / f"cuda-driver-{pid}.jsonl"
+    if (
+        directory.is_symlink()
+        or not directory.is_dir()
+        or list(directory.iterdir()) != [trace]
+        or trace.is_symlink()
+        or not trace.is_file()
+    ):
+        raise ValueError(f"Missing or foreign driver capture: {cell.name}")
+    return trace
+
+
+def validate_activation(result: dict, contract: dict, mode: str, pid: int) -> None:
+    """Bind explicit loading to the frozen library and the waited oracle process."""
+    if mode not in {"on", "off"} or type(pid) is not int or pid <= 0:
+        raise ValueError("Invalid capture activation identity")
+    expected = (
+        {
+            "loader": "explicit-dlopen",
+            "pid": pid,
+            "library": contract["collector"],
+            "sha256": contract["collector_sha256"],
+        }
+        if mode == "on"
+        else None
+    )
+    activation = result.get("driver_capture")
+    if activation != expected or (mode == "on" and type(activation.get("pid")) is not int):
+        raise ValueError("Driver collector activation differs from frozen profile")
+
+
 def validate_observations(result: dict, contract: dict) -> list[int]:
     """Require the exact warm-up, physical terminal and full-byte controls."""
     count = contract["warmup"] + contract["samples"]
@@ -118,7 +158,7 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
     contract_sha = hashlib.sha256(contract_bytes).hexdigest()
     compiler_sha = _sha256(native_fixture)
     if (
-        contract.get("schema") != "s4.copy-observation-pilot.v1"
+        contract.get("schema") != "s4.copy-observation-pilot.v2"
         or type(contract.get("warmup")) is not int
         or type(contract.get("samples")) is not int
         or contract.get("warmup") != 1
@@ -138,6 +178,11 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
             "on": {"trace": True, "driver": True, "limit": 65536},
         }
         or compiler_sha != contract.get("native_fixture_sha256")
+        or not isinstance(contract.get("collector"), str)
+        or not Path(contract["collector"]).is_absolute()
+        or not isinstance(contract.get("collector_sha256"), str)
+        or len(contract["collector_sha256"]) != 64
+        or any(c not in "0123456789abcdef" for c in contract["collector_sha256"])
     ):
         raise ValueError("Pilot design differs from the frozen eight-cell contract")
     rows = []
@@ -171,18 +216,10 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
         ):
             inputs[path / file] = _sha256(path / file)
         wait = _read(path / "ORACLE-WAIT.json")
-        if type(wait.get("pid")) is not int or wait["pid"] <= 0:
-            raise ValueError(f"Invalid capture process identity: {name}")
-        if mode == "on":
-            trace = path / "driver" / f"cuda-driver-{wait['pid']}.jsonl"
-            if list((path / "driver").iterdir()) != [trace]:
-                raise ValueError(f"Missing or foreign driver capture: {name}")
+        trace = capture_file(path, mode, wait.get("pid"))
+        if trace is not None:
             inputs[trace] = _sha256(trace)
-            driver_files[path / "driver"] = [trace]
-        else:
-            driver_files[path / "driver"] = None
-            if (path / "driver").exists():
-                raise ValueError(f"Disabled diagnostic unexpectedly emitted capture: {name}")
+        driver_files[path] = (mode, wait["pid"])
     previous_stop = previous_start_ticks = 0
     for cell, path in zip(contract["cells"], paths, strict=True):
         name, mode = cell["name"], cell["mode"]
@@ -218,6 +255,7 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
         cleanup = _service(path, "manager")
         result = _read(path / "bytes" / "RESULT.json")
         elapsed = validate_observations(result, contract)
+        validate_activation(result, contract, mode, wait["pid"])
         if not (
             wait["launched_mono_ns"]
             <= result["rounds"][0]["observation"]["started_ns"]
@@ -285,11 +323,13 @@ def collect(directory: Path, contract_path: Path, native_fixture: Path) -> dict:
         max(ratios) <= contract["max_ratio"]
         and summary["bootstrap_95_ci"][1] <= contract["max_ratio"]
     )
-    for path, files in driver_files.items():
-        if (files is None and path.exists()) or (
-            files is not None and (not path.is_dir() or list(path.iterdir()) != files)
-        ):
-            raise ValueError("Diagnostic directory inventory changed during cohort analysis")
+    for path, (mode, pid) in driver_files.items():
+        try:
+            capture_file(path, mode, pid)
+        except ValueError as error:
+            raise ValueError(
+                "Diagnostic directory inventory changed during cohort analysis"
+            ) from error
     if any(_sha256(path) != expected for path, expected in inputs.items()):
         raise ValueError("Consumed observation evidence changed during cohort analysis")
     return {
