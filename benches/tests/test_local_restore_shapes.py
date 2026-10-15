@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from benches.local_restore_shapes import _collect
+from benches.local_restore_shapes import COPY_FIELDS, _collect
 
 
 def records():
@@ -75,15 +75,29 @@ def records():
     ]
 
 
-def log(tmp_path, events):
+def wire_records(events, schema):
+    events = [copy.deepcopy(event) for event in events]
+    if schema == 3:
+        for event in events:
+            event["schema"] = 3
+            if event["stage"] == "local_raw_copy_open":
+                event["copy_fields"] = list(COPY_FIELDS)
+            elif event["stage"] == "local_raw_copy_batch":
+                event["copies"] = [[row[field] for field in COPY_FIELDS] for row in event["copies"]]
+    return events
+
+
+def log(tmp_path, events, schema=2):
+    events = wire_records(events, schema)
     path = tmp_path / "engine.log"
     path.write_text("\n".join("prefix local_raw_copy " + json.dumps(event) for event in events))
     return path
 
 
-def test_actual_geometry_and_shared_part_wait_are_reported_separately(tmp_path):
+@pytest.mark.parametrize("schema", [2, 3])
+def test_actual_geometry_and_shared_part_wait_are_reported_separately(tmp_path, schema):
     events = records()
-    result = _collect(log(tmp_path, events))
+    result = _collect(log(tmp_path, events, schema))
     assert result["geometry_validation"] == "scalar_consistency_only_not_qualified"
     assert result["bytes"] == 4096
     assert result["cpu_submit_ns"] == 19
@@ -121,7 +135,8 @@ def test_actual_geometry_and_shared_part_wait_are_reported_separately(tmp_path):
         "changed_pitch",
     ],
 )
-def test_partial_failed_or_inconsistent_capture_is_rejected(tmp_path, case):
+@pytest.mark.parametrize("schema", [2, 3])
+def test_partial_failed_or_inconsistent_capture_is_rejected(tmp_path, case, schema):
     events = copy.deepcopy(records())
     if case == "missing_footer":
         events.pop()
@@ -185,10 +200,11 @@ def test_partial_failed_or_inconsistent_capture_is_rejected(tmp_path, case):
         events[2]["final_part"] = False
         events.extend(second)
     with pytest.raises(ValueError):
-        _collect(log(tmp_path, events))
+        _collect(log(tmp_path, events, schema))
 
 
-def test_drained_checkpoints_share_executor_geometry_and_cumulative_budget(tmp_path):
+@pytest.mark.parametrize("schema", [2, 3])
+def test_drained_checkpoints_share_executor_geometry_and_cumulative_budget(tmp_path, schema):
     events = records()
     events[2]["final_part"] = False
     second = copy.deepcopy(records())
@@ -198,7 +214,72 @@ def test_drained_checkpoints_share_executor_geometry_and_cumulative_budget(tmp_p
     second[1]["part_id"] = second[2]["part_id"] = 1
     second[-1].update(parts=2, batches=2, descriptors=2, records_reserved=6)
     events.extend(second)
-    result = _collect(log(tmp_path, events))
+    result = _collect(log(tmp_path, events, schema))
     assert (result["executors"], result["parts"], result["bytes"]) == (1, 2, 8192)
-    assert result["traces"][0]["checkpoints"] == [events[3], events[7]]
-    assert result["traces"][0]["headers"] == [events[0], events[4]]
+    wire = wire_records(events, schema)
+    assert result["traces"][0]["checkpoints"] == [wire[3], wire[7]]
+    assert result["traces"][0]["headers"] == [wire[0], wire[4]]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing_fields",
+        "reordered_fields",
+        "short",
+        "long",
+        "object",
+        "boolean",
+        "float",
+        "negative",
+        "overflow",
+        "mixed_batch_schema",
+        "mixed_next_part_schema",
+    ],
+)
+def test_compact_geometry_requires_exact_order_width_unsigned_values_and_schema(tmp_path, case):
+    events = wire_records(records(), 3)
+    if case == "missing_fields":
+        del events[0]["copy_fields"]
+    elif case == "reordered_fields":
+        events[0]["copy_fields"].reverse()
+    elif case == "short":
+        events[1]["copies"][0].pop()
+    elif case == "long":
+        events[1]["copies"][0].append(0)
+    elif case == "object":
+        events[1]["copies"] = records()[1]["copies"]
+    elif case in ("boolean", "float", "negative", "overflow"):
+        events[1]["copies"][0][8] = {
+            "boolean": False,
+            "float": 0.0,
+            "negative": -1,
+            "overflow": 2**64,
+        }[case]
+    elif case == "mixed_batch_schema":
+        events[1]["schema"] = 2
+        events[1]["copies"] = records()[1]["copies"]
+    else:
+        second = records()
+        for event in second:
+            event["sequence"] = 1
+        second[0]["records_before"] = 3
+        second[1]["part_id"] = second[2]["part_id"] = 1
+        second[-1].update(parts=2, batches=2, descriptors=2, records_reserved=6)
+        events.extend(second)
+    with pytest.raises(ValueError):
+        _collect(log(tmp_path, events))
+
+
+def test_compact_geometry_retains_all_unsigned_bits_before_native_validation(tmp_path):
+    events = records()
+    for row in events[1]["copies"]:
+        row["device"] += 2**63
+        row["registered_device_start"] += 2**63
+        row["host"] += 2**63
+        row["host_device"] += 2**63
+        row["host_registration"] += 2**63
+        row["arena_id"] = 2**64 - 1
+        row["source_allocation_id"] = 2**64 - 2
+    result = _collect(log(tmp_path, events, 3))
+    assert result["traces"][0]["batches"][0]["copies"] == events[1]["copies"]

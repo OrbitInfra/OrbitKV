@@ -210,7 +210,7 @@ actual maximum pitch.
 CPU submission is recorded per batch; stream waiting is recorded once for the
 whole part, including its layer events. Neither isolates GPU execution time.
 
-The executor publishes a schema-2 opening record before each part's submission,
+The executor publishes a schema-3 opening record before each part's submission,
 then serializes its bounded scalar geometry after the existing physical stream
 drain. `local_raw_copy_complete` checkpoints all records through that drained
 part under the same retained executor identity. It does not seal executor
@@ -806,3 +806,25 @@ See [CPU reproduction](../benches/README.md#native-trace-cpu-profile) and
 profile, frozen executable, exact source, input copy and immutable indexes live
 outside the checkout at
 `/root/orbitkv-artifacts/s4-native-trace-profile-20261015/`.
+
+
+### Compact local trace geometry
+
+The local owner emits schema 3. Each opening record declares `copy_fields` in
+this fixed order: `device`, `host`, `host_device`, `size`, `device_allocation`,
+`host_registration`, `registered_device_start`, `registered_device_bytes`,
+`destination_offset`, `arena_id`, `arena_bytes`, `source_allocation_id`,
+`source_allocation_offset`, `source_allocation_bytes`, `source_offset`.
+Each batch's `copies` contains ordered arrays of these fifteen unsigned integers.
+All values remain explicit; no address, owner, bound or offset is reconstructed
+from an inferred relationship. This removes repeated field names from each
+copy without changing descriptor capture or execution.
+
+The maintained reader verifies the declared order and exact row width, restores
+named geometry and applies the existing full span, shape, generation, cumulative
+budget and production DMA-compiler checks. It retains schema-2 input for archived
+captures, and rejects a schema change within an executor. The CPU replay accepts
+both input formats. Opening-before-submit, drained-part publication, synchronous
+logging/flush and failure semantics are unchanged. This candidate's CPU controls
+do not establish H20 overhead or a serving gain; the complete unchanged component
+cohort remains required before dependent contention work.

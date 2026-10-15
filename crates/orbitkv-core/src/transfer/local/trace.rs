@@ -7,7 +7,25 @@ use super::{CopyDesc, LocalTensor, RawCopy};
 
 static NEXT_TRACE: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Clone, Serialize)]
+const COPY_FIELDS: [&str; 15] = [
+    "device",
+    "host",
+    "host_device",
+    "size",
+    "device_allocation",
+    "host_registration",
+    "registered_device_start",
+    "registered_device_bytes",
+    "destination_offset",
+    "arena_id",
+    "arena_bytes",
+    "source_allocation_id",
+    "source_allocation_offset",
+    "source_allocation_bytes",
+    "source_offset",
+];
+
+#[derive(Clone)]
 struct Geometry {
     device: u64,
     host: u64,
@@ -24,6 +42,29 @@ struct Geometry {
     source_allocation_offset: u64,
     source_allocation_bytes: u64,
     source_offset: u64,
+}
+
+impl Serialize for Geometry {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        [
+            self.device,
+            self.host,
+            self.host_device,
+            self.size as u64,
+            self.device_allocation as u64,
+            self.host_registration as u64,
+            self.registered_device_start,
+            self.registered_device_bytes as u64,
+            self.destination_offset,
+            self.arena_id,
+            self.arena_bytes as u64,
+            self.source_allocation_id,
+            self.source_allocation_offset,
+            self.source_allocation_bytes,
+            self.source_offset,
+        ]
+        .serialize(serializer)
+    }
 }
 
 struct Batch {
@@ -60,6 +101,7 @@ enum TraceRecord<'a> {
         max_pitch: usize,
         limit: usize,
         records_before: usize,
+        copy_fields: &'static [&'static str; 15],
     },
     #[serde(rename = "local_raw_copy_batch")]
     Batch {
@@ -170,7 +212,7 @@ impl LocalCopyTrace {
 
     fn identity(&self) -> TraceIdentity {
         TraceIdentity {
-            schema: 2,
+            schema: 3,
             pid: std::process::id(),
             trace_id: self.id,
             device: self.device,
@@ -197,6 +239,7 @@ impl LocalCopyTrace {
             max_pitch: self.max_pitch,
             limit: self.limit,
             records_before: self.used,
+            copy_fields: &COPY_FIELDS,
         });
         self.geometry.clear();
         if self.admit(planned_descriptors.saturating_mul(2).saturating_add(1))

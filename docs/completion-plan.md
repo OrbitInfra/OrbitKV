@@ -619,7 +619,16 @@ and this CPU profile does not establish H20 latency or a production speedup.
 See the [CPU profile and limits](kernel-optimization.md#native-trace-cpu-profile)
 and [PR #248](https://github.com/feichai0017/orbitkv/pull/248).
 
-**Next bounded delivery:** evaluate a lossless trace encoding/output-volume
+**Compact trace candidate (2026-10-15): implemented; hardware qualification pending.**
+Schema-3 descriptors contain the same fifteen unsigned geometry values in a
+fixed order declared by every opening record. The reader restores named geometry
+before all existing validation; archived schema-2 captures remain readable and
+mixed-schema executors are rejected. Capture, budgets, clocks, physical drain
+and synchronous publication/flush are unchanged. CPU controls cover both formats,
+unsigned extremes, malformed rows and the real buffered immediate-exit boundary.
+This is an observation-format change, not a copy backend or ownership change.
+
+**Next bounded delivery:** evaluate this lossless trace encoding/output-volume
 reduction inside the existing owner, preserving every geometry field, record
 order, cumulative cap and synchronous publication/flush. Retain complete
 capture/byte/drain controls, four balanced component blocks, one warm-up and two
