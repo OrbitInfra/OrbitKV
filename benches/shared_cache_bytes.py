@@ -186,6 +186,7 @@ def worker(args: argparse.Namespace) -> None:
                 client.unregister_context(args.instance)
         finally:
             client.close()
+            registration = None
 
 
 def qualify(args: argparse.Namespace) -> dict:

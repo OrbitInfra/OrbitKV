@@ -34,7 +34,9 @@ and cache schema 10 artifacts remain required; retired schemas are rejected.
 
 This is registration lifetime fencing, not allocation/page generation or a
 physical termination receipt. Holding the registration also holds its exporters
-after unregister; it does not reauthorize them. Restore retains its existing
+after unregister; it does not reauthorize them. Workloads and adapters retire
+their own references after normal cleanup and retain them if cleanup fails.
+A separately queued reference keeps its exporters until that task retires. Restore retains its existing
 query-lease checks and API. The earlier `03cbcebd` acceptance covers its snapshot
 and Core/lifecycle controls. The new producer-bound authority is implemented
 pending independent acceptance and actual installed GPU/adapter lifetime gates.

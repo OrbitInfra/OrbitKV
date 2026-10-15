@@ -783,6 +783,7 @@ def run(
         ok, message = client.unregister_context("foreground")
         assert ok, message
         client.close()
+        registration = None
         tensor = None
         torch.cuda.synchronize()
         torch.cuda.ipc_collect()

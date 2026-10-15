@@ -266,6 +266,7 @@ class WorkerAdapter:
             ok, message = self._ctx.client.unregister_context(self._ctx.instance_id)
             if not ok:
                 logger.warning("[OrbitKVConnector] Unregister context failed: %s", message)
+                return
 
         self._registered_layers.clear()
         self._registration = None

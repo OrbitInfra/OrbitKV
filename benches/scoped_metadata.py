@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import contextlib
 import hashlib
 import json
 import os
@@ -595,9 +594,10 @@ def run(
         assert not observer_metrics.get("orbitkv_transfer_completion_outstanding", 0)
         (output / "scoped-result.json").write_text(json.dumps(result, indent=2) + "\n")
         for (node, index), client in clients.items():
-            with contextlib.suppress(Exception):
-                client.unregister_context(f"{node}-{index}")
+            ok, message = client.unregister_context(f"{node}-{index}")
+            assert ok, message
             client.close()
+            gpu_registrations.pop((node, index))
         tensor = outside = local_tensor = None
         expected_payload = local_expected = final_payload = outside_payload = None
         payloads.clear()

@@ -380,3 +380,16 @@ def test_batch_with_two_registration_owners_is_rejected_before_publish(caplog):
     worker._client.save.assert_not_called()
     assert "save batch spans different GPU registrations" in caplog.text
     assert completion.is_set()
+
+
+@pytest.mark.parametrize("accepted", [False, True], ids=["failed-unregister", "normal-unregister"])
+def test_unregister_keeps_authority_until_native_cleanup_succeeds(accepted):
+    worker = make_worker()
+    original = worker._registration
+    worker._registered_layers = ["layer"]
+    worker._client.unregister_context.return_value = accepted, "controlled cleanup"
+
+    worker.unregister_context()
+
+    assert worker._registration is (None if accepted else original)
+    assert worker._registered_layers == ([] if accepted else ["layer"])

@@ -211,11 +211,13 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
 
         def close_node_clients(node):
             for label in ("dram", "ssd", "outside"):
-                client = clients.pop((node, label), None)
+                client = clients.get((node, label))
                 if client is not None:
                     ok, message = client.unregister_context(f"{node}-{label}")
                     assert ok, message
                     client.close()
+                    clients.pop((node, label))
+                    gpu_registrations.pop((node, label))
                 tensors.pop((node, label), None)
             torch.cuda.synchronize()
             torch.cuda.ipc_collect()

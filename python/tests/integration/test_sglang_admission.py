@@ -676,3 +676,27 @@ def test_offload_keeps_producer_registration_and_reports_rejection(linker, monke
     ready.synchronize.assert_called_once()
     assert linker.pop_completed_offload() is not rejected
     assert linker._offload_queue.unfinished_tasks == 0
+
+
+@pytest.mark.parametrize("failure", [None, "unregister", "close"])
+def test_close_retires_only_the_linkers_own_registration_after_normal_cleanup(linker, failure):
+    import queue
+
+    original = object()
+    queued = original
+    linker.registration = original
+    linker.reset = MagicMock()
+    linker._load_queue = queue.Queue()
+    linker._offload_queue = queue.Queue()
+    linker._load_thread = MagicMock()
+    linker._offload_thread = MagicMock()
+    linker.client.unregister_context.return_value = failure != "unregister", "controlled cleanup"
+    if failure == "close":
+        linker.client.close.side_effect = RuntimeError("controlled close failure")
+        with pytest.raises(RuntimeError, match="controlled close failure"):
+            linker.close()
+    else:
+        linker.close()
+
+    assert linker.registration is (None if failure is None else original)
+    assert queued is original

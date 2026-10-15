@@ -347,10 +347,13 @@ class ClientContext:
         try:
             ok, message = self.client.unregister_context(self.instance_id)
             if not ok:
-                logger.warning(f"Unregister context failed: {message}")
+                logger.warning("Unregister context failed: %s", message)
+                return
         except Exception as e:
-            logger.warning(f"Unregister context exception: {e}")
+            logger.warning("Unregister context exception: %s", e)
+            return
 
+        self.registration = None
         self._registered = False
 
     def query(self, block_hashes: list[bytes]) -> dict:

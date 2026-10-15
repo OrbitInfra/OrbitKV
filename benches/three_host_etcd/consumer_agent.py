@@ -99,9 +99,11 @@ class Agent:
         self.client = None
         self.query_source_client = None
         self.tensor = None
+        self.registration = None
         self.expected = None
         self.hashes = None
         self.query_source_tensor = None
+        self.query_source_registration = None
         self.query_source_hashes = None
         self.pressure: subprocess.Popen | None = None
         self.pressure_log = None
@@ -1302,6 +1304,7 @@ class Agent:
         self.query_source_client = None
         self.query_source_manager = None
         self.query_source_tensor = None
+        self.query_source_registration = None
         self.query_source_hashes = None
         torch.cuda.synchronize()
         torch.cuda.ipc_collect()
@@ -1338,6 +1341,7 @@ class Agent:
             node: self.wait_member_absent(node, old_members[node]) for node in old_members
         }
         self.tensor = None
+        self.registration = None
         self.expected = None
         torch.cuda.synchronize()
         torch.cuda.ipc_collect()
@@ -1435,6 +1439,7 @@ class Agent:
         ):
             raise RuntimeError(f"Manager cleanup did not finish: {result}")
         self.tensor = None
+        self.registration = None
         self.expected = None
         torch.cuda.synchronize()
         torch.cuda.ipc_collect()
@@ -1503,8 +1508,10 @@ class Agent:
             import torch
 
             self.tensor = None
+            self.registration = None
             self.expected = None
             self.query_source_tensor = None
+            self.query_source_registration = None
             self.query_source_hashes = None
             torch.cuda.synchronize()
             torch.cuda.ipc_collect()

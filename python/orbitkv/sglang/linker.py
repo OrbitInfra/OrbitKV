@@ -587,8 +587,13 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self._offload_queue.put(None)
         self._load_thread.join()
         self._offload_thread.join()
+        unregistered = False
         try:
-            self.client.unregister_context(self.instance_id)
+            unregistered, message = self.client.unregister_context(self.instance_id)
+            if not unregistered:
+                logger.warning("Could not unregister SGLang GPU context: %s", message)
         except Exception:
             logger.warning("Could not unregister SGLang GPU context", exc_info=True)
         self.client.close()
+        if unregistered:
+            self.registration = None

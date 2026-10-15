@@ -388,6 +388,7 @@ def run(args: argparse.Namespace) -> dict:
         finally:
             try:
                 client.close()
+                registration = None
             except BaseException as error:
                 if primary_error is None:
                     raise

@@ -36,6 +36,7 @@ import pytest
 
 from tests.support.paths import TESTS_ROOT
 
+pytest.importorskip("vllm")
 torch = pytest.importorskip("torch")
 
 from orbitkv.client import CacheManagerClient, QueryReady  # noqa: E402

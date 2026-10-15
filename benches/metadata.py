@@ -257,8 +257,9 @@ def run(tmp_path: Path, profile: str):
 
         def unregister_on_exit():
             for client, instance in ((observer_client, "observer"), (source_client, "source")):
-                with contextlib.suppress(Exception):
-                    client.unregister_context(instance)
+                if instance in registrations:
+                    with contextlib.suppress(Exception):
+                        client.unregister_context(instance)
 
         stack.callback(unregister_on_exit)
         _until(
@@ -503,6 +504,8 @@ def run(tmp_path: Path, profile: str):
         for client, instance in ((observer_client, "observer"), (source_client, "source")):
             ok, message = client.unregister_context(instance)
             assert ok, message
+            client.close()
+            registrations.pop(instance)
         tensor = observer_tensor = None
         torch.cuda.synchronize()
         torch.cuda.ipc_collect()

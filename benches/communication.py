@@ -851,6 +851,7 @@ def main(argv: list[str] | None = None) -> None:
             if not ok:
                 raise RuntimeError(f"context drain failed: {message}")
             client.close()
+            registration = None
             client = None
         if args.tier == "ssd":
             write_json(

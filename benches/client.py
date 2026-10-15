@@ -123,6 +123,7 @@ def main() -> None:
         finally:
             client.unregister_context("poll-bench")
             client.close()
+            registration = None
     (args.output / "results.json").write_text(
         json.dumps(
             {

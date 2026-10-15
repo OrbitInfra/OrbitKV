@@ -383,6 +383,7 @@ def test_manager_graceful_shutdown_fences_inventory_and_restarts_node(tmp_path, 
         assert old_member and old_member["owner"]["incarnation"] == old_owner
 
         source_client.close()
+        gpu_registrations.pop("source")
         exit_code, shutdown_seconds = source_manager.terminate_gracefully(timeout=10)
         assert exit_code == 0
         assert _etcd_json(endpoint, member_key) is None
@@ -422,6 +423,7 @@ def test_manager_graceful_shutdown_fences_inventory_and_restarts_node(tmp_path, 
             }
         )
         consumer_client.close()
+        gpu_registrations.pop("consumer")
         source_tensor = None
         tensors.clear()
         torch.cuda.synchronize()
@@ -714,6 +716,7 @@ def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, m
             assert ok, message
         for client in clients:
             client.close()
+            gpu_registrations.pop(node)
         tensors.clear()
         del tensor
         source_tensor = consumer_tensor = None
@@ -921,6 +924,7 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
             ok, message = client.unregister_context(f"{node}-{label}")
             assert ok, message
             client.close()
+            gpu_registrations.pop((node, label))
         tensor = local = None
         tensors.clear()
         torch.cuda.synchronize()

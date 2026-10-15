@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import hashlib
 import json
 import os
@@ -603,9 +602,10 @@ def run(
                 result["status"] = "failed"
 
         for node, client in clients.items():
-            with contextlib.suppress(Exception):
-                client.unregister_context(node)
+            ok, message = client.unregister_context(node)
+            assert ok, message
             client.close()
+            gpu_registrations.pop(node)
         tensors.clear()
         torch.cuda.synchronize()
         torch.cuda.ipc_collect()

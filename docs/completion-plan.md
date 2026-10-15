@@ -508,6 +508,15 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   generations, physical termination or GPU/model qualification. New controls
   and installation evidence are under
   `/root/orbitkv-artifacts/s3-registration-authority-20261015/`.
+  The first freeze at `5e34ab34` remains unaccepted: independent review found
+  that workload registration dictionaries retained exporters through restart
+  and final cleanup. The remediation retires each consumer-owned reference
+  after normal unregister/close, retains it on failure, and leaves independently
+  queued authority intact. CPU weak-reference controls execute the consumed
+  cleanup bodies and reject the original source. Installed default and
+  SGLang-only environments are validated separately; the original combined
+  environment collection failure is preserved. Remediation acceptance remains
+  pending; no hardware or S3 completion claim changes.
 - Replace the remaining framework CUDA IPC pickle interpretation in the Manager
   with explicit validated registration data; remove the retired wire/API path.
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
