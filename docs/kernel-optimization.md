@@ -984,3 +984,33 @@ reclamation. Per-part timers still exclude eventual trace-owner destruction.
 Prior valid failed cohorts and S3/S4/S5 limits remain unchanged. The KDA draft,
 fixed guards, original input, complete raw data and reviews are outside Git under
 `/root/orbitkv-artifacts/s4-trace-publication-20261016/`.
+
+
+### Bounded JSON encoding workspace
+
+The next S4 candidate reuses serialization storage in the existing native trace
+owner. A drained record is encoded into a lazy byte workspace and checked as
+UTF-8, then synchronously copied into the existing publisher or logged intact.
+After each successful or failed record attempt, the workspace is empty and
+retains at most 64 KiB of capacity; larger storage is discarded inside the timed
+publication path. Opening records keep the original pre-submission serializer.
+Schema, canonical RLE bytes, clocks, capture caps and terminal flush are unchanged.
+
+The JSON workspace and publication payload each have a separate 64-KiB retained
+bound. Geometry, temporary RLE data, transient oversized serialization, allocator
+bookkeeping and downstream logger storage are separate costs. Initial reserve is
+fallible; subsequent Vec growth does not promise recoverable allocator OOM.
+Allocation, encoding and UTF-8 checks remain inside encoding and inclusive finish
+clocks, while recycling and oversized release remain inside publication and
+inclusive finish. Eventual owner destruction keeps the existing per-part timer
+boundary. Both immediate-exit logger controls and the real whole-owner profile
+remain required.
+
+CPU and hardware qualification are pending. A fresh CPU comparison must preserve
+all records/values and canonical bytes, normal process waits and memory bounds;
+whole-capture geometric ratio must improve, every pair and the independent-pair
+95% upper bound must stay at most 1.05, and encoding geometric ratio must improve.
+A CPU pass permits preparing a separately reviewed installed runtime, not GPU or
+serving promotion. Previous failed H20 cohorts and the unchanged 5% observation
+guard remain binding. The KDA contract and complete evidence belong outside Git
+under `/root/orbitkv-artifacts/s4-trace-json-workspace-20261016/`.

@@ -679,6 +679,20 @@ needs independent code/runtime/launch review and a newly frozen cohort; complete
 cohorts are not retried or replaced. Inference contention and further
 kernel/default promotion remain blocked; S3/S4/S5 limits are unchanged.
 
+**Bounded JSON workspace: implemented; CPU/hardware qualification pending.**
+The existing trace owner reuses a lazy JSON encoding workspace after physical
+part drain. Retained capacity is at most 64 KiB at each completed record boundary;
+an oversized record is synchronously consumed before its workspace is discarded.
+The separate publication buffer, original opening path, canonical schema-4 bytes,
+record order, cumulative cap, completion clocks and terminal flush stay unchanged.
+The staged profile consumes the same encoder and recycling methods inside its
+encoding/publication and inclusive finish clocks. Keep the whole-capture 1.05
+guards and require an encoding improvement in a fresh, fixed CPU comparison
+before preparing a separately reviewed installed runtime or hardware cohort.
+Prior CPU/H20 results and dependent-work restrictions remain unchanged. The KDA
+contract and evidence are outside Git at
+`/root/orbitkv-artifacts/s4-trace-json-workspace-20261016/`.
+
 **Bounded synchronous publication: CPU retention accepted; H20 overhead FAIL.**
 The candidate groups already-drained diagnostic JSON lines into
 synchronous log messages of at most 64 KiB. Keep opening records on the original
