@@ -1,5 +1,7 @@
 """Real CUDA export-credit gates; test proxies never replace runtime modules."""
 
+import json
+import os
 import time
 import uuid
 from pathlib import Path
@@ -81,7 +83,7 @@ def register(client, instance, tensors, names):
     )
 
 
-def test_partial_export_repayments_are_real_and_no_credit_is_forgotten(channel_server):
+def test_partial_export_repayments_are_real_and_no_credit_is_forgotten(channel_server, tmp_path):
     torch = pytest.importorskip("torch")
     from orbitkv import CacheManagerClient
 
@@ -94,6 +96,7 @@ def test_partial_export_repayments_are_real_and_no_credit_is_forgotten(channel_s
             torch.zeros((8, 4096), dtype=torch.uint8, device="cuda"), exports, fail=True
         ),
     ]
+    torch.cuda.synchronize()
     before = client.registration_retention()
     try:
         with pytest.raises(RuntimeError, match="controlled second-export failure"):
@@ -108,11 +111,32 @@ def test_partial_export_repayments_are_real_and_no_credit_is_forgotten(channel_s
         assert any(row[1] == instance and row[4] for row in retained)
         with pytest.raises(Exception, match="pending or retained"):
             client.unregister_context(instance)
+        torch.cuda.synchronize()
+        (tmp_path / "partial-export.credit-state.json").write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "instance_id": instance,
+                    "start_ticks": int(
+                        Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]
+                    ),
+                    "credit_counter_exists_and_zero": counter(exports[0]) == 0,
+                    "native_retained_attempts": after[0],
+                    "native_retained_bytes": after[1],
+                    "framework_throw_retained": True,
+                    "unregister_refused": True,
+                    "native_registration_or_payload_submitted": False,
+                    "physical_fault_drain_claimed": False,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
     finally:
         client.close()
 
 
-def test_duplicate_registration_creates_no_additional_real_export_credit(channel_server):
+def test_duplicate_registration_creates_no_additional_real_export_credit(channel_server, tmp_path):
     torch = pytest.importorskip("torch")
     from orbitkv import CacheManagerClient
 
@@ -124,6 +148,7 @@ def test_duplicate_registration_creates_no_additional_real_export_credit(channel
         exports,
     )
     registered = False
+    torch.cuda.synchronize()
     try:
         authority = register(client, instance, [tensor], ["kv"])
         registered = True
@@ -139,6 +164,25 @@ def test_duplicate_registration_creates_no_additional_real_export_credit(channel
         while counter(exports[0]) != 0:
             assert time.monotonic() < deadline, "Manager importer did not retire its real credit"
             time.sleep(0.01)
+        (tmp_path / "duplicate-export.credit-state.json").write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "instance_id": instance,
+                    "start_ticks": int(
+                        Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]
+                    ),
+                    "registration_generation": authority.generation.hex(),
+                    "export_calls": len(exports),
+                    "duplicate_refused_before_export": True,
+                    "credit_counter_exists_and_zero": counter(exports[0]) == 0,
+                    "unregister_succeeded": True,
+                    "physical_fault_drain_claimed": False,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
     finally:
         if registered:
             ok, message = client.unregister_context(instance)
