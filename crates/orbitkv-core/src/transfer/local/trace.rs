@@ -27,64 +27,42 @@ const COPY_FIELDS: [&str; 15] = [
     "source_offset",
 ];
 
-#[derive(Clone)]
-struct Geometry {
-    device: u64,
-    host: u64,
-    host_device: u64,
-    size: usize,
-    device_allocation: usize,
-    host_registration: usize,
-    registered_device_start: u64,
-    registered_device_bytes: usize,
-    destination_offset: u64,
-    arena_id: u64,
-    arena_bytes: usize,
-    source_allocation_id: u64,
-    source_allocation_offset: u64,
-    source_allocation_bytes: u64,
-    source_offset: u64,
-}
+type Geometry = [u64; 15];
 
-impl Geometry {
-    fn values(&self) -> [u64; 15] {
-        [
-            self.device,
-            self.host,
-            self.host_device,
-            self.size as u64,
-            self.device_allocation as u64,
-            self.host_registration as u64,
-            self.registered_device_start,
-            self.registered_device_bytes as u64,
-            self.destination_offset,
-            self.arena_id,
-            self.arena_bytes as u64,
-            self.source_allocation_id,
-            self.source_allocation_offset,
-            self.source_allocation_bytes,
-            self.source_offset,
-        ]
+fn encode_integer(mut value: u64, data: &mut Vec<u8>) {
+    while value >= 128 {
+        data.push((value as u8 & 127) | 128);
+        value >>= 7;
     }
+    data.push(value as u8);
 }
 
 fn serialize_geometry<S: serde::Serializer>(
     geometry: &[Geometry],
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    let Some(capacity) = geometry.len().checked_mul(COPY_FIELDS.len() * 10) else {
+    let Some(capacity) = geometry.len().checked_mul(COPY_FIELDS.len() * 11) else {
         return Err(serde::ser::Error::custom("geometry frame is too large"));
     };
     let mut data = Vec::new();
     data.try_reserve_exact(capacity)
         .map_err(serde::ser::Error::custom)?;
-    for row in geometry {
-        for mut value in row.values() {
-            while value >= 128 {
-                data.push((value as u8 & 127) | 128);
-                value >>= 7;
+    if let Some(first) = geometry.first() {
+        for column in 0..COPY_FIELDS.len() {
+            let mut value = first[column];
+            let mut run = 0_u64;
+            for row in geometry {
+                if row[column] == value {
+                    run += 1;
+                } else {
+                    encode_integer(run, &mut data);
+                    encode_integer(value, &mut data);
+                    value = row[column];
+                    run = 1;
+                }
             }
-            data.push(value as u8);
+            encode_integer(run, &mut data);
+            encode_integer(value, &mut data);
         }
     }
     serializer.collect_str(&Base64Display::new(&data, &STANDARD))
@@ -292,23 +270,23 @@ impl LocalCopyTrace {
         }
         self.geometry.insert(
             copy.device,
-            Geometry {
-                device: copy.device,
-                host: copy.host as u64,
-                host_device: copy.host_device,
-                size: copy.size,
-                device_allocation: copy.device_allocation,
-                host_registration: copy.host_registration,
-                registered_device_start: tensor.address,
-                registered_device_bytes: tensor.bytes,
-                destination_offset: raw.destination_offset,
-                arena_id: raw.source.arena_id,
-                arena_bytes,
-                source_allocation_id: raw.source.allocation_id,
-                source_allocation_offset: raw.source.allocation_offset,
-                source_allocation_bytes: raw.source.allocation_size,
-                source_offset: raw.source.offset,
-            },
+            [
+                copy.device,
+                copy.host as u64,
+                copy.host_device,
+                copy.size as u64,
+                copy.device_allocation as u64,
+                copy.host_registration as u64,
+                tensor.address,
+                tensor.bytes as u64,
+                raw.destination_offset,
+                raw.source.arena_id,
+                arena_bytes as u64,
+                raw.source.allocation_id,
+                raw.source.allocation_offset,
+                raw.source.allocation_size,
+                raw.source.offset,
+            ],
         );
     }
 
@@ -330,7 +308,7 @@ impl LocalCopyTrace {
                 self.invalid = Some("submission_geometry_missing");
                 return None;
             };
-            geometry.push(bounds.clone());
+            geometry.push(*bounds);
         }
         let mut shape = crate::transfer::raw_copy_shape(copies, self.max_pitch);
         shape.device = self.device as u64;
@@ -413,7 +391,7 @@ impl LocalCopyTrace {
                     begin_ns: batch.begin_ns,
                     submitted_ns: batch.submitted_ns,
                     success: shape.success,
-                    copies_encoding: "uvarint-base64-v1",
+                    copies_encoding: "uvarint-rle-base64-v1",
                     copy_rows: batch.geometry.len(),
                     copies: &batch.geometry,
                 });

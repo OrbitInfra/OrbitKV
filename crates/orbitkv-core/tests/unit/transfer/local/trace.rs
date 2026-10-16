@@ -4,27 +4,38 @@ use super::*;
 use crate::transfer::local::SourceRange;
 
 fn decoded_geometry(encoded: &serde_json::Value, rows: usize) -> serde_json::Value {
-    let data = STANDARD.decode(encoded.as_str().unwrap()).unwrap();
-    let mut cursor = 0;
-    let mut decoded = Vec::new();
-    for _ in 0..rows {
-        let mut row = Vec::new();
-        for _ in COPY_FIELDS {
-            let mut value = 0_u64;
-            for digit in 0..10 {
-                let byte = data[cursor];
-                cursor += 1;
-                assert!(digit != 9 || byte <= 1);
-                value |= (byte as u64 & 127) << (digit * 7);
-                if byte < 128 {
-                    assert!(digit == 0 || byte != 0);
-                    row.push(value);
-                    break;
-                }
+    fn integer(data: &[u8], cursor: &mut usize) -> u64 {
+        let mut value = 0_u64;
+        for digit in 0..10 {
+            let byte = data[*cursor];
+            *cursor += 1;
+            assert!(digit != 9 || byte <= 1);
+            value |= (byte as u64 & 127) << (digit * 7);
+            if byte < 128 {
+                assert!(digit == 0 || byte != 0);
+                return value;
             }
         }
-        assert_eq!(row.len(), COPY_FIELDS.len());
-        decoded.push(row);
+        panic!("unterminated integer");
+    }
+
+    let data = STANDARD.decode(encoded.as_str().unwrap()).unwrap();
+    let mut cursor = 0;
+    let mut decoded = vec![[0_u64; COPY_FIELDS.len()]; rows];
+    for column in 0..COPY_FIELDS.len() {
+        let mut next = 0;
+        let mut previous = None;
+        while next < rows {
+            let count = usize::try_from(integer(&data, &mut cursor)).unwrap();
+            assert!(count > 0 && count <= rows - next);
+            let value = integer(&data, &mut cursor);
+            assert_ne!(previous, Some(value));
+            for row in &mut decoded[next..next + count] {
+                row[column] = value;
+            }
+            next += count;
+            previous = Some(value);
+        }
     }
     assert_eq!(cursor, data.len());
     serde_json::json!(decoded)
@@ -33,7 +44,7 @@ fn decoded_geometry(encoded: &serde_json::Value, rows: usize) -> serde_json::Val
 fn record(event: TraceRecord<'_>) -> serde_json::Value {
     let mut value = serde_json::to_value(event).unwrap();
     if value["stage"] == "local_raw_copy_batch" {
-        assert_eq!(value["copies_encoding"], "uvarint-base64-v1");
+        assert_eq!(value["copies_encoding"], "uvarint-rle-base64-v1");
         assert_eq!(value["copy_rows"], value["descriptors"]);
         value["copies"] = decoded_geometry(
             &value["copies"],
@@ -190,7 +201,7 @@ fn captures_actual_submitted_order_and_one_shared_part_drain() {
             "begin_ns": values[1]["begin_ns"],
             "submitted_ns": values[1]["submitted_ns"],
             "success": true,
-            "copies_encoding": "uvarint-base64-v1",
+            "copies_encoding": "uvarint-rle-base64-v1",
             "copy_rows": 1,
             "copies": [[
                 0x11000, 0x101100, 0x201100, 4096, 7, 0x100000,
@@ -303,23 +314,23 @@ fn publishing_a_part_does_not_replenish_the_executor_budget() {
 
 #[test]
 fn compact_geometry_preserves_unsigned_values_and_declares_every_field() {
-    let geometry = Geometry {
-        device: u64::MAX,
-        host: u64::MAX - 1,
-        host_device: u64::MAX - 2,
-        size: usize::MAX,
-        device_allocation: usize::MAX - 1,
-        host_registration: usize::MAX - 2,
-        registered_device_start: u64::MAX - 3,
-        registered_device_bytes: usize::MAX - 3,
-        destination_offset: u64::MAX - 4,
-        arena_id: u64::MAX - 5,
-        arena_bytes: usize::MAX - 4,
-        source_allocation_id: u64::MAX - 6,
-        source_allocation_offset: u64::MAX - 7,
-        source_allocation_bytes: u64::MAX - 8,
-        source_offset: u64::MAX - 9,
-    };
+    let geometry = [
+        u64::MAX,
+        u64::MAX - 1,
+        u64::MAX - 2,
+        usize::MAX as u64,
+        (usize::MAX - 1) as u64,
+        (usize::MAX - 2) as u64,
+        u64::MAX - 3,
+        (usize::MAX - 3) as u64,
+        u64::MAX - 4,
+        u64::MAX - 5,
+        (usize::MAX - 4) as u64,
+        u64::MAX - 6,
+        u64::MAX - 7,
+        u64::MAX - 8,
+        u64::MAX - 9,
+    ];
     let mut encoded = Vec::new();
     serialize_geometry(&[geometry], &mut serde_json::Serializer::new(&mut encoded)).unwrap();
     let wire: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
@@ -387,32 +398,18 @@ fn geometry_encoding_preserves_varint_boundaries_and_empty_rows() {
         1_u64 << 63,
         u64::MAX,
     ];
-    let geometry: Vec<_> = values
+    let geometry: Vec<_> = values.iter().map(|value| [*value; 15]).collect();
+    let repeated = vec![[u64::MAX; 15]; 129];
+    let mixed: Vec<_> = geometry
         .iter()
-        .map(|value| Geometry {
-            device: *value,
-            host: *value,
-            host_device: *value,
-            size: *value as usize,
-            device_allocation: *value as usize,
-            host_registration: *value as usize,
-            registered_device_start: *value,
-            registered_device_bytes: *value as usize,
-            destination_offset: *value,
-            arena_id: *value,
-            arena_bytes: *value as usize,
-            source_allocation_id: *value,
-            source_allocation_offset: *value,
-            source_allocation_bytes: *value,
-            source_offset: *value,
-        })
+        .copied()
+        .chain(repeated.iter().copied())
         .collect();
-    for rows in [&geometry[..], &[]] {
+    for rows in [&geometry[..], &repeated, &mixed, &[]] {
         let mut encoded = Vec::new();
         serialize_geometry(rows, &mut serde_json::Serializer::new(&mut encoded)).unwrap();
         let wire = serde_json::from_slice(&encoded).unwrap();
         let decoded = decoded_geometry(&wire, rows.len());
-        let expected: Vec<_> = rows.iter().map(Geometry::values).collect();
-        assert_eq!(decoded, serde_json::json!(expected));
+        assert_eq!(decoded, serde_json::json!(rows));
     }
 }

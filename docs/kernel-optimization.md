@@ -859,21 +859,35 @@ model output/serving, physical-fault reclamation or a backend/default qualificat
 
 ### Lossless binary geometry candidate
 
-The current writer emits schema 4. It encodes every unsigned value in the same
-fifteen-field row order as canonical unsigned LEB128, then Base64 in `copies`.
-Each batch declares `copies_encoding=uvarint-base64-v1` and the exact `copy_rows`.
-The bounded reader checks count agreement with descriptors and the cumulative
-capture budget before decoding, limits encoded length before allocation, and
-rejects noncanonical Base64, overflow, overlong/truncated integers and extra
-bytes. It restores the named geometry before existing span, scalar, ordering,
-generation and production DMA-compiler checks. Archived schema-2/3 inputs remain
-readable; executor schemas cannot mix.
+The first row-varint candidate at `5fb3d61f` has independently accepted source
+correctness and valid CPU **FAIL** evidence. Twenty processes preserve 720
+restores, every scalar, full geometry and all clocks/ownership budgets. Whole
+candidate/baseline geometric ratio is 0.9090 with independent-pair 95% interval
+[0.7955, 1.1427]; its worst pair is 1.4275 and staged encoding ratio is 1.2726.
+It fails retention and is not promoted to H20. Smaller output did not establish
+a qualified timing improvement. Complete source, reader, binaries, raw data and
+review remain at `/root/orbitkv-artifacts/s4-varint-trace-20261016/`.
 
-Capture, completion clocks and synchronous logging/flush remain unchanged. The
-accepted CPU volume preflight reconstructs every value in all eight schema-3
-captures: 34,045,216 to 20,479,336 structured JSON bytes, a 39.85% reduction with
-framing included. This is a representation comparison only. Actual Rust CPU
-cost and a fresh matching H20 observation-overhead cohort remain unqualified;
-the preceding failed 5% gate and all ownership/backend/default limits remain.
-See the completion plan's current S4 delivery; evidence is outside Git under
-`/root/orbitkv-artifacts/s4-varint-trace-20261016/`.
+The distinct follow-up keeps schema 4 and declares
+`copies_encoding=uvarint-rle-base64-v1` plus exact `copy_rows`. Each of the
+fifteen columns, in opening `copy_fields` order, records positive run lengths
+and exact unsigned values as canonical LEB128, followed by Base64. No address is
+inferred from another field. The reader fills each column to exactly the stated
+row count and restores named rows in their original submission order. It checks
+row/descriptor agreement and the cumulative cap, bounds encoded length before
+allocation by rows × 15 × 11 bytes, and rejects zero/excess runs, adjacent equal
+runs, malformed Base64/integers, overflow, truncation and trailing data. The
+existing span, scalar, generation and production DMA-compiler checks still run.
+Archived schema-2/3 captures remain readable; the rejected unmerged prototype
+retains its own frozen reader instead of adding a permanent fallback.
+
+Capture, completion clocks and synchronous logging/flush remain unchanged.
+The candidate needs actual CPU retention and then a fresh matching H20 cohort
+with the unchanged 5% guard. The preceding failed cohorts and all
+ownership/backend/default limits remain. New evidence is outside Git under
+`/root/orbitkv-artifacts/s4-rle-trace-20261016/`.
+
+The separate offline compiler uses buffered file input. Its output must remain
+byte-identical on the same complete captured geometry. This reduces validation
+work outside the native profile clock; it is not a trace, restore or serving
+performance result.

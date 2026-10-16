@@ -1408,11 +1408,15 @@ See the [profile result and limits](../docs/kernel-optimization.md#native-trace-
 
 
 Schema-4 engine-local captures encode all fifteen unsigned geometry values in
-row order as canonical unsigned LEB128/Base64, with an explicit encoding tag and
-row count. Every opening record still declares the exact `copy_fields` order.
+column order as canonical positive run-length/unsigned-value LEB128 pairs,
+then Base64, with the `uvarint-rle-base64-v1` tag and exact row count. Each
+column reconstructs exactly that many rows in the original submission order.
+Every opening record still declares the exact `copy_fields` order.
 `benches.local_restore_shapes` validates framing, count and pre-decode allocation
-bounds before restoring the named geometry consumed by the production compiler.
-Archived schema-2 named and schema-3 array captures remain readable; mixing
+bounds, positive run sums and canonical adjacent runs before restoring the named
+geometry consumed by the production compiler. The offline compiler buffers JSON
+file input; this validation is outside native profile timing. Archived schema-2
+named and schema-3 array captures remain readable; mixing
 formats within an executor is invalid. The ignored Rust CPU replay above accepts
 schema-2/3 input and exercises the current writer; decoding and exact comparison
 run after the measured process exits. Capture budgets, submission/drain clocks

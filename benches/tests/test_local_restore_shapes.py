@@ -1,10 +1,11 @@
 import base64
 import copy
 import json
+from itertools import groupby
 
 import pytest
 
-from benches.local_restore_shapes import COPY_FIELDS, _collect
+from benches.local_restore_shapes import COPY_FIELDS, _collect, _decode_copies
 
 
 def records():
@@ -78,12 +79,13 @@ def records():
 
 def encoded_rows(rows):
     data = bytearray()
-    for row in rows:
-        for value in row:
-            while value >= 128:
-                data.append((value & 127) | 128)
-                value >>= 7
-            data.append(value)
+    for column in zip(*rows, strict=True):
+        for value, group in groupby(column):
+            for number in (sum(1 for _ in group), value):
+                while number >= 128:
+                    data.append((number & 127) | 128)
+                    number >>= 7
+                data.append(number)
     return base64.b64encode(data).decode("ascii")
 
 
@@ -98,7 +100,7 @@ def wire_records(events, schema):
                 event["copies"] = [[row[field] for field in COPY_FIELDS] for row in event["copies"]]
                 if schema == 4:
                     event["copy_rows"] = len(event["copies"])
-                    event["copies_encoding"] = "uvarint-base64-v1"
+                    event["copies_encoding"] = "uvarint-rle-base64-v1"
                     event["copies"] = encoded_rows(event["copies"])
     return events
 
@@ -308,6 +310,10 @@ def test_compact_geometry_retains_all_unsigned_bits_before_native_validation(tmp
         "missing_order",
         "wrong_order",
         "wrong_encoding",
+        "superseded_unmerged_encoding",
+        "zero_run",
+        "excess_run",
+        "missing_column",
         "missing_rows",
         "boolean_rows",
         "float_rows",
@@ -336,6 +342,14 @@ def test_encoded_geometry_rejects_malformed_frames_before_native_compilation(tmp
         events[0]["copy_fields"].reverse()
     elif case == "wrong_encoding":
         batch["copies_encoding"] = "unknown"
+    elif case == "superseded_unmerged_encoding":
+        batch["copies_encoding"] = "uvarint-base64-v1"
+    elif case in ("zero_run", "excess_run", "missing_column"):
+        data = base64.b64decode(batch["copies"])
+        data = {"zero_run": b"\x00\x00", "excess_run": b"\x02\x00", "missing_column": data[:-1]}[
+            case
+        ]
+        batch["copies"] = base64.b64encode(data).decode("ascii")
     elif case == "missing_rows":
         del batch["copy_rows"]
     elif case in ("boolean_rows", "float_rows", "negative_rows", "too_many_rows", "row_mismatch"):
@@ -360,7 +374,7 @@ def test_encoded_geometry_rejects_malformed_frames_before_native_compilation(tmp
             "overflow": b"\xff" * 9 + b"\x02",
             "unterminated": b"\x80" * 10,
             "overlong_integer": b"\x80\x00" + b"\x00" * 14,
-            "extra_integer": b"\x00" * 16,
+            "extra_integer": base64.b64decode(batch["copies"]) + b"\x01\x00",
         }[case]
         batch["copies"] = base64.b64encode(data).decode("ascii")
     elif case == "mixed_batch_schema":
@@ -379,7 +393,7 @@ def test_encoded_geometry_rejects_malformed_frames_before_native_compilation(tmp
 
 def test_encoded_frame_length_is_bounded_before_base64_allocation(tmp_path, monkeypatch):
     events = wire_records(records(), 4)
-    events[1]["copies"] = "A" * 204
+    events[1]["copies"] = "A" * 224
 
     def unexpected_decode(*args, **kwargs):
         pytest.fail("Oversized geometry reached Base64 allocation")
@@ -387,3 +401,37 @@ def test_encoded_frame_length_is_bounded_before_base64_allocation(tmp_path, monk
     monkeypatch.setattr(base64, "b64decode", unexpected_decode)
     with pytest.raises(ValueError, match="bounded frame"):
         _collect(log(tmp_path, events))
+
+
+@pytest.mark.parametrize("count", [2, 127, 128, 129])
+def test_repeated_geometry_preserves_exact_values_and_row_order(tmp_path, count):
+    events = records()
+    batch = events[1]
+    original = batch["copies"][0]
+    batch["copies"] = []
+    for index in reversed(range(count)):
+        row = original.copy()
+        for field in ("device", "host", "host_device", "destination_offset", "source_offset"):
+            row[field] += index * 4096
+        row["registered_device_bytes"] = row["arena_bytes"] = (count + 1) * 4096
+        row["source_allocation_bytes"] = count * 4096
+        batch["copies"].append(row)
+    batch.update(bytes=4096 * count, descriptors=count, dma_ranges=count)
+    batch["size_histogram"][1] = count
+    events[0]["limit"] = count * 2 + 1
+    events[2].update(planned_descriptors=count, submitted_descriptors=count)
+    events[3].update(descriptors=count, records_reserved=count * 2 + 1)
+    result = _collect(log(tmp_path, events, 4))
+    assert result["traces"][0]["batches"][0]["copies"] == batch["copies"]
+
+
+def test_equal_adjacent_runs_are_rejected_instead_of_accepting_split_encodings():
+    batch = {
+        "schema": 4,
+        "descriptors": 2,
+        "copy_rows": 2,
+        "copies_encoding": "uvarint-rle-base64-v1",
+        "copies": base64.b64encode(b"\x01\x01\x01\x01" + b"\x02\x01" * 14).decode("ascii"),
+    }
+    with pytest.raises(ValueError, match="adjacent"):
+        _decode_copies(batch)

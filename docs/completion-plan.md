@@ -677,16 +677,24 @@ independent code/runtime/launch review and a newly frozen cohort; this completed
 cohort is not retried or replaced. Inference contention and further kernel/default
 promotion remain blocked by the observation gate; S3/S4/S5 limits are unchanged.
 
-The schema-4 lossless encoding candidate is implemented inside that owner and
-its maintained reader. Canonical unsigned LEB128/Base64 retains all fifteen
-values with an explicit row count; decoding bounds allocation before accepting
-canonical frames and restores named geometry for the existing compiler checks.
-The independently accepted CPU volume preflight reconstructs all 193,536
-captured descriptors and reduces complete structured JSON by 39.85% relative to
-schema 3, including framing. Actual Rust CPU cost and a new matching H20 cohort
-remain qualification gates; this preflight does not supply a latency gain.
-Implementation and evaluation evidence is outside Git at
-`/root/orbitkv-artifacts/s4-varint-trace-20261016/`.
+The first schema-4 row-varint candidate at `5fb3d61f` passes independent source
+and complete CPU-data review, but fails its predeclared retention criteria.
+All twenty processes preserve 720 restores and every recorded value; the whole
+ratio's independent-pair 95% upper bound is 1.1427, its worst pair is 1.4275,
+and the encoding geometric ratio is 1.2726. The candidate is not retained and
+does not authorize H20. Its frozen source, reader, binaries and complete failed
+cohort remain at `/root/orbitkv-artifacts/s4-varint-trace-20261016/`.
+
+The distinct follow-up uses canonical column run-length/value pairs with an
+explicit row count and `uvarint-rle-base64-v1` tag. It preserves all fifteen
+unsigned values and their row order; the bounded reader restores named geometry
+for the unchanged checks. Capture, clocks, cumulative caps and synchronous flush
+remain unchanged. Source controls and actual CPU retention are separate from
+H20 qualification; no latency or default gain is claimed before those gates.
+The offline DMA fixture separately buffers JSON input; identical full compiler
+receipts are required, and its validation time is outside trace measurement.
+New implementation/evaluation evidence is at
+`/root/orbitkv-artifacts/s4-rle-trace-20261016/`.
 
 - Profile actual adapter hashing/conversions, destination checks, fragmentation,
   dispatch, scratch allocation and repeated shared-prefix H2D before selecting

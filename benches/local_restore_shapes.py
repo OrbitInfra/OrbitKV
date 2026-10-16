@@ -31,6 +31,23 @@ COPY_FIELDS = (
 )
 
 
+def _decode_integer(data: bytes, cursor: int) -> tuple[int, int]:
+    value = 0
+    for digit in range(10):
+        if cursor == len(data):
+            raise ValueError("Truncated local H2D descriptor integer")
+        byte = data[cursor]
+        cursor += 1
+        if digit == 9 and byte > 1:
+            raise ValueError("Local H2D descriptor integer exceeds u64")
+        value |= (byte & 127) << (digit * 7)
+        if byte < 128:
+            if digit and byte == 0:
+                raise ValueError("Noncanonical local H2D descriptor integer")
+            return value, cursor
+    raise ValueError("Unterminated local H2D descriptor integer")
+
+
 def _decode_copies(batch: dict) -> None:
     copies = batch.get("copies")
     if batch["schema"] == 4:
@@ -39,38 +56,32 @@ def _decode_copies(batch: dict) -> None:
             type(rows) is not int
             or rows != batch["descriptors"]
             or not 1 <= rows <= 65536
-            or batch.get("copies_encoding") != "uvarint-base64-v1"
+            or batch.get("copies_encoding") != "uvarint-rle-base64-v1"
             or not isinstance(copies, str)
         ):
             raise ValueError("Malformed encoded local H2D descriptor frame")
-        max_bytes = rows * len(COPY_FIELDS) * 10
+        max_bytes = rows * len(COPY_FIELDS) * 11
         if len(copies) > 4 * ((max_bytes + 2) // 3):
             raise ValueError("Encoded local H2D geometry exceeds its bounded frame")
         data = base64.b64decode(copies, validate=True)
         if len(data) > max_bytes or base64.b64encode(data).decode("ascii") != copies:
             raise ValueError("Noncanonical local H2D descriptor encoding")
-        copies = []
+        copies = [[0] * len(COPY_FIELDS) for _ in range(rows)]
         cursor = 0
-        for _ in range(rows):
-            values = []
-            for _ in COPY_FIELDS:
-                value = 0
-                for digit in range(10):
-                    if cursor == len(data):
-                        raise ValueError("Truncated local H2D descriptor integer")
-                    byte = data[cursor]
-                    cursor += 1
-                    if digit == 9 and byte > 1:
-                        raise ValueError("Local H2D descriptor integer exceeds u64")
-                    value |= (byte & 127) << (digit * 7)
-                    if byte < 128:
-                        if digit and byte == 0:
-                            raise ValueError("Noncanonical local H2D descriptor integer")
-                        values.append(value)
-                        break
-                else:
-                    raise ValueError("Unterminated local H2D descriptor integer")
-            copies.append(values)
+        for column in range(len(COPY_FIELDS)):
+            next_row = 0
+            previous = None
+            while next_row < rows:
+                run, cursor = _decode_integer(data, cursor)
+                if not 1 <= run <= rows - next_row:
+                    raise ValueError("Local H2D descriptor run exceeds its column")
+                value, cursor = _decode_integer(data, cursor)
+                if value == previous:
+                    raise ValueError("Noncanonical adjacent local H2D descriptor runs")
+                for index in range(next_row, next_row + run):
+                    copies[index][column] = value
+                next_row += run
+                previous = value
         if cursor != len(data):
             raise ValueError("Extra local H2D descriptor bytes")
     if not isinstance(copies, list) or len(copies) != batch["descriptors"]:
