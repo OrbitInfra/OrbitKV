@@ -1,3 +1,4 @@
+import base64
 import copy
 import json
 
@@ -75,15 +76,30 @@ def records():
     ]
 
 
+def encoded_rows(rows):
+    data = bytearray()
+    for row in rows:
+        for value in row:
+            while value >= 128:
+                data.append((value & 127) | 128)
+                value >>= 7
+            data.append(value)
+    return base64.b64encode(data).decode("ascii")
+
+
 def wire_records(events, schema):
     events = [copy.deepcopy(event) for event in events]
-    if schema == 3:
+    if schema in (3, 4):
         for event in events:
-            event["schema"] = 3
+            event["schema"] = schema
             if event["stage"] == "local_raw_copy_open":
                 event["copy_fields"] = list(COPY_FIELDS)
             elif event["stage"] == "local_raw_copy_batch":
                 event["copies"] = [[row[field] for field in COPY_FIELDS] for row in event["copies"]]
+                if schema == 4:
+                    event["copy_rows"] = len(event["copies"])
+                    event["copies_encoding"] = "uvarint-base64-v1"
+                    event["copies"] = encoded_rows(event["copies"])
     return events
 
 
@@ -94,7 +110,7 @@ def log(tmp_path, events, schema=2):
     return path
 
 
-@pytest.mark.parametrize("schema", [2, 3])
+@pytest.mark.parametrize("schema", [2, 3, 4])
 def test_actual_geometry_and_shared_part_wait_are_reported_separately(tmp_path, schema):
     events = records()
     result = _collect(log(tmp_path, events, schema))
@@ -135,7 +151,7 @@ def test_actual_geometry_and_shared_part_wait_are_reported_separately(tmp_path, 
         "changed_pitch",
     ],
 )
-@pytest.mark.parametrize("schema", [2, 3])
+@pytest.mark.parametrize("schema", [2, 3, 4])
 def test_partial_failed_or_inconsistent_capture_is_rejected(tmp_path, case, schema):
     events = copy.deepcopy(records())
     if case == "missing_footer":
@@ -203,7 +219,7 @@ def test_partial_failed_or_inconsistent_capture_is_rejected(tmp_path, case, sche
         _collect(log(tmp_path, events, schema))
 
 
-@pytest.mark.parametrize("schema", [2, 3])
+@pytest.mark.parametrize("schema", [2, 3, 4])
 def test_drained_checkpoints_share_executor_geometry_and_cumulative_budget(tmp_path, schema):
     events = records()
     events[2]["final_part"] = False
@@ -271,7 +287,8 @@ def test_compact_geometry_requires_exact_order_width_unsigned_values_and_schema(
         _collect(log(tmp_path, events))
 
 
-def test_compact_geometry_retains_all_unsigned_bits_before_native_validation(tmp_path):
+@pytest.mark.parametrize("schema", [3, 4])
+def test_compact_geometry_retains_all_unsigned_bits_before_native_validation(tmp_path, schema):
     events = records()
     for row in events[1]["copies"]:
         row["device"] += 2**63
@@ -281,5 +298,92 @@ def test_compact_geometry_retains_all_unsigned_bits_before_native_validation(tmp
         row["host_registration"] += 2**63
         row["arena_id"] = 2**64 - 1
         row["source_allocation_id"] = 2**64 - 2
-    result = _collect(log(tmp_path, events, 3))
+    result = _collect(log(tmp_path, events, schema))
     assert result["traces"][0]["batches"][0]["copies"] == events[1]["copies"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing_order",
+        "wrong_order",
+        "wrong_encoding",
+        "missing_rows",
+        "boolean_rows",
+        "float_rows",
+        "negative_rows",
+        "too_many_rows",
+        "row_mismatch",
+        "array_payload",
+        "bad_base64",
+        "newline",
+        "pad_bits",
+        "truncated",
+        "overflow",
+        "unterminated",
+        "overlong_integer",
+        "extra_integer",
+        "mixed_batch_schema",
+        "mixed_next_part_schema",
+    ],
+)
+def test_encoded_geometry_rejects_malformed_frames_before_native_compilation(tmp_path, case):
+    events = wire_records(records(), 4)
+    batch = events[1]
+    if case == "missing_order":
+        del events[0]["copy_fields"]
+    elif case == "wrong_order":
+        events[0]["copy_fields"].reverse()
+    elif case == "wrong_encoding":
+        batch["copies_encoding"] = "unknown"
+    elif case == "missing_rows":
+        del batch["copy_rows"]
+    elif case in ("boolean_rows", "float_rows", "negative_rows", "too_many_rows", "row_mismatch"):
+        batch["copy_rows"] = {
+            "boolean_rows": True,
+            "float_rows": 1.0,
+            "negative_rows": -1,
+            "too_many_rows": 65537,
+            "row_mismatch": 2,
+        }[case]
+    elif case == "array_payload":
+        batch["copies"] = [[0] * len(COPY_FIELDS)]
+    elif case == "bad_base64":
+        batch["copies"] = "%%%="
+    elif case == "newline":
+        batch["copies"] += "\n"
+    elif case == "pad_bits":
+        batch["copies"] = "AB=="
+    elif case in ("truncated", "overflow", "unterminated", "overlong_integer", "extra_integer"):
+        data = {
+            "truncated": b"\x80",
+            "overflow": b"\xff" * 9 + b"\x02",
+            "unterminated": b"\x80" * 10,
+            "overlong_integer": b"\x80\x00" + b"\x00" * 14,
+            "extra_integer": b"\x00" * 16,
+        }[case]
+        batch["copies"] = base64.b64encode(data).decode("ascii")
+    elif case == "mixed_batch_schema":
+        batch["schema"] = 3
+    else:
+        second = wire_records(records(), 3)
+        for event in second:
+            event["sequence"] = 1
+        second[0]["records_before"] = 3
+        second[1]["part_id"] = second[2]["part_id"] = 1
+        second[-1].update(parts=2, batches=2, descriptors=2, records_reserved=6)
+        events.extend(second)
+    with pytest.raises(ValueError):
+        _collect(log(tmp_path, events))
+
+
+def test_encoded_frame_length_is_bounded_before_base64_allocation(tmp_path, monkeypatch):
+    events = wire_records(records(), 4)
+    events[1]["copies"] = "A" * 204
+
+    def unexpected_decode(*args, **kwargs):
+        pytest.fail("Oversized geometry reached Base64 allocation")
+
+    monkeypatch.setattr(base64, "b64decode", unexpected_decode)
+    with pytest.raises(ValueError, match="bounded frame"):
+        _collect(log(tmp_path, events))

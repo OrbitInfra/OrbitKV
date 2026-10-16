@@ -1407,11 +1407,15 @@ cannot be added to infer GPU restore overhead or promote a transfer backend.
 See the [profile result and limits](../docs/kernel-optimization.md#native-trace-cpu-profile).
 
 
-Schema-3 engine-local captures store each copy as fifteen unsigned integers in
-the `copy_fields` order declared by its opening record. `benches.local_restore_shapes`
-validates that order and row width before restoring the named geometry consumed
-by the production compiler. Archived schema-2 captures remain readable; mixing
-formats within an executor is invalid. The format change preserves every value,
-submission order, cumulative capture budget and synchronous publication/flush.
-Use the same complete byte, drain and observation-overhead gates described above;
-smaller output alone does not qualify application performance.
+Schema-4 engine-local captures encode all fifteen unsigned geometry values in
+row order as canonical unsigned LEB128/Base64, with an explicit encoding tag and
+row count. Every opening record still declares the exact `copy_fields` order.
+`benches.local_restore_shapes` validates framing, count and pre-decode allocation
+bounds before restoring the named geometry consumed by the production compiler.
+Archived schema-2 named and schema-3 array captures remain readable; mixing
+formats within an executor is invalid. The ignored Rust CPU replay above accepts
+schema-2/3 input and exercises the current writer; decoding and exact comparison
+run after the measured process exits. Capture budgets, submission/drain clocks
+and synchronous publication/flush are unchanged. Use the same complete byte,
+drain and observation-overhead gates; smaller output alone does not qualify
+application performance.

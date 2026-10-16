@@ -210,7 +210,7 @@ actual maximum pitch.
 CPU submission is recorded per batch; stream waiting is recorded once for the
 whole part, including its layer events. Neither isolates GPU execution time.
 
-The executor publishes a schema-3 opening record before each part's submission,
+The executor publishes a schema-4 opening record before each part's submission,
 then serializes its bounded scalar geometry after the existing physical stream
 drain. `local_raw_copy_complete` checkpoints all records through that drained
 part under the same retained executor identity. It does not seal executor
@@ -810,7 +810,7 @@ outside the checkout at
 
 ### Compact local trace geometry
 
-The local owner emits schema 3. Each opening record declares `copy_fields` in
+The schema-3 delivery declares `copy_fields` in each opening record in
 this fixed order: `device`, `host`, `host_device`, `size`, `device_allocation`,
 `host_registration`, `registered_device_start`, `registered_device_bytes`,
 `destination_offset`, `arena_id`, `arena_bytes`, `source_allocation_id`,
@@ -855,3 +855,25 @@ reproduction context in [PR #249](https://github.com/feichai0017/orbitkv/pull/24
 The previous failed and invalid cohorts retain their original decisions.
 This is a complete-restoration observation pilot, not p99, device-only time,
 model output/serving, physical-fault reclamation or a backend/default qualification.
+
+
+### Lossless binary geometry candidate
+
+The current writer emits schema 4. It encodes every unsigned value in the same
+fifteen-field row order as canonical unsigned LEB128, then Base64 in `copies`.
+Each batch declares `copies_encoding=uvarint-base64-v1` and the exact `copy_rows`.
+The bounded reader checks count agreement with descriptors and the cumulative
+capture budget before decoding, limits encoded length before allocation, and
+rejects noncanonical Base64, overflow, overlong/truncated integers and extra
+bytes. It restores the named geometry before existing span, scalar, ordering,
+generation and production DMA-compiler checks. Archived schema-2/3 inputs remain
+readable; executor schemas cannot mix.
+
+Capture, completion clocks and synchronous logging/flush remain unchanged. The
+accepted CPU volume preflight reconstructs every value in all eight schema-3
+captures: 34,045,216 to 20,479,336 structured JSON bytes, a 39.85% reduction with
+framing included. This is a representation comparison only. Actual Rust CPU
+cost and a fresh matching H20 observation-overhead cohort remain unqualified;
+the preceding failed 5% gate and all ownership/backend/default limits remain.
+See the completion plan's current S4 delivery; evidence is outside Git under
+`/root/orbitkv-artifacts/s4-varint-trace-20261016/`.

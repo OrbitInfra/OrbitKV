@@ -677,6 +677,17 @@ independent code/runtime/launch review and a newly frozen cohort; this completed
 cohort is not retried or replaced. Inference contention and further kernel/default
 promotion remain blocked by the observation gate; S3/S4/S5 limits are unchanged.
 
+The schema-4 lossless encoding candidate is implemented inside that owner and
+its maintained reader. Canonical unsigned LEB128/Base64 retains all fifteen
+values with an explicit row count; decoding bounds allocation before accepting
+canonical frames and restores named geometry for the existing compiler checks.
+The independently accepted CPU volume preflight reconstructs all 193,536
+captured descriptors and reduces complete structured JSON by 39.85% relative to
+schema 3, including framing. Actual Rust CPU cost and a new matching H20 cohort
+remain qualification gates; this preflight does not supply a latency gain.
+Implementation and evaluation evidence is outside Git at
+`/root/orbitkv-artifacts/s4-varint-trace-20261016/`.
+
 - Profile actual adapter hashing/conversions, destination checks, fragmentation,
   dispatch, scratch allocation and repeated shared-prefix H2D before selecting
   the next bottleneck. Keep GIL/observer timing separate from native execution.

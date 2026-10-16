@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use base64::display::Base64Display;
+use base64::engine::general_purpose::STANDARD;
 use serde::Serialize;
 
 use super::{CopyDesc, LocalTensor, RawCopy};
@@ -44,8 +46,8 @@ struct Geometry {
     source_offset: u64,
 }
 
-impl Serialize for Geometry {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+impl Geometry {
+    fn values(&self) -> [u64; 15] {
         [
             self.device,
             self.host,
@@ -63,8 +65,29 @@ impl Serialize for Geometry {
             self.source_allocation_bytes,
             self.source_offset,
         ]
-        .serialize(serializer)
     }
+}
+
+fn serialize_geometry<S: serde::Serializer>(
+    geometry: &[Geometry],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let Some(capacity) = geometry.len().checked_mul(COPY_FIELDS.len() * 10) else {
+        return Err(serde::ser::Error::custom("geometry frame is too large"));
+    };
+    let mut data = Vec::new();
+    data.try_reserve_exact(capacity)
+        .map_err(serde::ser::Error::custom)?;
+    for row in geometry {
+        for mut value in row.values() {
+            while value >= 128 {
+                data.push((value as u8 & 127) | 128);
+                value >>= 7;
+            }
+            data.push(value as u8);
+        }
+    }
+    serializer.collect_str(&Base64Display::new(&data, &STANDARD))
 }
 
 struct Batch {
@@ -123,6 +146,9 @@ enum TraceRecord<'a> {
         begin_ns: u64,
         submitted_ns: u64,
         success: bool,
+        copies_encoding: &'static str,
+        copy_rows: usize,
+        #[serde(serialize_with = "serialize_geometry")]
         copies: &'a [Geometry],
     },
     #[serde(rename = "local_raw_copy_part")]
@@ -212,7 +238,7 @@ impl LocalCopyTrace {
 
     fn identity(&self) -> TraceIdentity {
         TraceIdentity {
-            schema: 3,
+            schema: 4,
             pid: std::process::id(),
             trace_id: self.id,
             device: self.device,
@@ -387,6 +413,8 @@ impl LocalCopyTrace {
                     begin_ns: batch.begin_ns,
                     submitted_ns: batch.submitted_ns,
                     success: shape.success,
+                    copies_encoding: "uvarint-base64-v1",
+                    copy_rows: batch.geometry.len(),
                     copies: &batch.geometry,
                 });
                 successful &= shape.success;

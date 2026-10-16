@@ -1,5 +1,47 @@
+use base64::Engine;
+
 use super::*;
 use crate::transfer::local::SourceRange;
+
+fn decoded_geometry(encoded: &serde_json::Value, rows: usize) -> serde_json::Value {
+    let data = STANDARD.decode(encoded.as_str().unwrap()).unwrap();
+    let mut cursor = 0;
+    let mut decoded = Vec::new();
+    for _ in 0..rows {
+        let mut row = Vec::new();
+        for _ in COPY_FIELDS {
+            let mut value = 0_u64;
+            for digit in 0..10 {
+                let byte = data[cursor];
+                cursor += 1;
+                assert!(digit != 9 || byte <= 1);
+                value |= (byte as u64 & 127) << (digit * 7);
+                if byte < 128 {
+                    assert!(digit == 0 || byte != 0);
+                    row.push(value);
+                    break;
+                }
+            }
+        }
+        assert_eq!(row.len(), COPY_FIELDS.len());
+        decoded.push(row);
+    }
+    assert_eq!(cursor, data.len());
+    serde_json::json!(decoded)
+}
+
+fn record(event: TraceRecord<'_>) -> serde_json::Value {
+    let mut value = serde_json::to_value(event).unwrap();
+    if value["stage"] == "local_raw_copy_batch" {
+        assert_eq!(value["copies_encoding"], "uvarint-base64-v1");
+        assert_eq!(value["copy_rows"], value["descriptors"]);
+        value["copies"] = decoded_geometry(
+            &value["copies"],
+            value["copy_rows"].as_u64().unwrap() as usize,
+        );
+    }
+    value
+}
 
 #[test]
 fn completed_part_is_published_before_process_exit() {
@@ -106,7 +148,7 @@ fn captures_actual_submitted_order_and_one_shared_part_drain() {
     let mut values = Vec::new();
     let copies = copies();
     trace.begin_part_with(2, true, |event| {
-        values.push(serde_json::to_value(event).unwrap());
+        values.push(record(event));
     });
     bindings(&mut trace, &copies);
     for copy in copies.iter().rev() {
@@ -114,7 +156,7 @@ fn captures_actual_submitted_order_and_one_shared_part_drain() {
         trace.finish_batch(index, 17, true);
     }
     trace.finish_part_with(31, true, |event| {
-        values.push(serde_json::to_value(event).unwrap());
+        values.push(record(event));
     });
     assert_eq!(values.len(), 5);
     assert_eq!(values[1]["copies"][0][8], 4096);
@@ -125,7 +167,7 @@ fn captures_actual_submitted_order_and_one_shared_part_drain() {
     assert_eq!(
         values[1],
         serde_json::json!({
-            "schema": 3,
+            "schema": 4,
             "pid": std::process::id(),
             "trace_id": trace.id,
             "device": 0,
@@ -148,6 +190,8 @@ fn captures_actual_submitted_order_and_one_shared_part_drain() {
             "begin_ns": values[1]["begin_ns"],
             "submitted_ns": values[1]["submitted_ns"],
             "success": true,
+            "copies_encoding": "uvarint-base64-v1",
+            "copy_rows": 1,
             "copies": [[
                 0x11000, 0x101100, 0x201100, 4096, 7, 0x100000,
                 0x10000, 65536, 4096, 2, 65536, 3, 256, 16384, 4352,
@@ -182,7 +226,7 @@ fn partial_failure_overflow_missing_submission_and_missing_drain_are_invalid() {
         let mut values = Vec::new();
         let copies = copies();
         trace.begin_part_with(2, true, |event| {
-            values.push(serde_json::to_value(event).unwrap());
+            values.push(record(event));
         });
         bindings(&mut trace, &copies);
         if let Some(index) = trace.begin_batch(&copies[..1], "direct") {
@@ -195,7 +239,7 @@ fn partial_failure_overflow_missing_submission_and_missing_drain_are_invalid() {
         }
         if mode != "no_drain" {
             trace.finish_part_with(31, mode != "failure", |event| {
-                values.push(serde_json::to_value(event).unwrap());
+                values.push(record(event));
             });
             assert_eq!(values.last().unwrap()["complete"], false, "{mode}");
         } else {
@@ -210,10 +254,10 @@ fn empty_managed_parts_are_preserved_without_inventing_h2d_bytes() {
     let mut trace = LocalCopyTrace::new(0, Ok(usize::MAX), 2);
     let mut values = Vec::new();
     trace.begin_part_with(0, true, |event| {
-        values.push(serde_json::to_value(event).unwrap());
+        values.push(record(event));
     });
     trace.finish_part_with(19, true, |event| {
-        values.push(serde_json::to_value(event).unwrap());
+        values.push(record(event));
     });
     assert_eq!(values.len(), 3);
     assert_eq!(values[1]["planned_descriptors"], 0);
@@ -229,14 +273,14 @@ fn publishing_a_part_does_not_replenish_the_executor_budget() {
     for sequence in 0..3 {
         let start = values.len();
         trace.begin_part_with(2, true, |event| {
-            values.push(serde_json::to_value(event).unwrap());
+            values.push(record(event));
         });
         bindings(&mut trace, &copies);
         if let Some(index) = trace.begin_batch(&copies, "direct") {
             trace.finish_batch(index, 17, true);
         }
         trace.finish_part_with(31, true, |event| {
-            values.push(serde_json::to_value(event).unwrap());
+            values.push(record(event));
         });
         assert_eq!(values[start]["sequence"], sequence);
         assert_eq!(values[start]["records_before"], (sequence * 5).min(10));
@@ -249,10 +293,10 @@ fn publishing_a_part_does_not_replenish_the_executor_budget() {
     );
     let count = values.len();
     trace.begin_part_with(0, true, |event| {
-        values.push(serde_json::to_value(event).unwrap());
+        values.push(record(event));
     });
     trace.finish_part_with(31, true, |event| {
-        values.push(serde_json::to_value(event).unwrap());
+        values.push(record(event));
     });
     assert_eq!(values.len(), count);
 }
@@ -276,8 +320,11 @@ fn compact_geometry_preserves_unsigned_values_and_declares_every_field() {
         source_allocation_bytes: u64::MAX - 8,
         source_offset: u64::MAX - 9,
     };
-    let encoded = serde_json::to_string(&geometry).unwrap();
-    let decoded: Vec<u64> = serde_json::from_str(&encoded).unwrap();
+    let mut encoded = Vec::new();
+    serialize_geometry(&[geometry], &mut serde_json::Serializer::new(&mut encoded)).unwrap();
+    let wire: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    let rows = decoded_geometry(&wire, 1);
+    let decoded: Vec<u64> = serde_json::from_value(rows[0].clone()).unwrap();
     assert_eq!(
         decoded,
         [
@@ -301,7 +348,7 @@ fn compact_geometry_preserves_unsigned_values_and_declares_every_field() {
     let mut trace = LocalCopyTrace::new(0, Ok(usize::MAX), 100);
     trace.begin_part_with(0, true, |event| {
         let header = serde_json::to_value(event).unwrap();
-        assert_eq!(header["schema"], 3);
+        assert_eq!(header["schema"], 4);
         assert_eq!(
             header["copy_fields"],
             serde_json::json!([
@@ -323,4 +370,49 @@ fn compact_geometry_preserves_unsigned_values_and_declares_every_field() {
             ])
         );
     });
+}
+
+#[test]
+fn geometry_encoding_preserves_varint_boundaries_and_empty_rows() {
+    let values = [
+        0,
+        1,
+        127,
+        128,
+        255,
+        256,
+        u32::MAX as u64,
+        1_u64 << 32,
+        (1_u64 << 63) - 1,
+        1_u64 << 63,
+        u64::MAX,
+    ];
+    let geometry: Vec<_> = values
+        .iter()
+        .map(|value| Geometry {
+            device: *value,
+            host: *value,
+            host_device: *value,
+            size: *value as usize,
+            device_allocation: *value as usize,
+            host_registration: *value as usize,
+            registered_device_start: *value,
+            registered_device_bytes: *value as usize,
+            destination_offset: *value,
+            arena_id: *value,
+            arena_bytes: *value as usize,
+            source_allocation_id: *value,
+            source_allocation_offset: *value,
+            source_allocation_bytes: *value,
+            source_offset: *value,
+        })
+        .collect();
+    for rows in [&geometry[..], &[]] {
+        let mut encoded = Vec::new();
+        serialize_geometry(rows, &mut serde_json::Serializer::new(&mut encoded)).unwrap();
+        let wire = serde_json::from_slice(&encoded).unwrap();
+        let decoded = decoded_geometry(&wire, rows.len());
+        let expected: Vec<_> = rows.iter().map(Geometry::values).collect();
+        assert_eq!(decoded, serde_json::json!(expected));
+    }
 }
