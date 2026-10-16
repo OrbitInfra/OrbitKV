@@ -1012,3 +1012,55 @@ a distinct candidate. Earlier H20 failures, the unchanged 5% observation guard a
 S3/S4/S5 limits remain binding. The rejected source, executable, fixed contract
 and complete failed data remain outside Git at
 `/root/orbitkv-artifacts/s4-trace-json-workspace-20261016/`.
+
+### Baseline A/A repeatability diagnosis
+
+Before selecting another native-observation candidate, compare the accepted
+baseline executable with itself. A and B use the same absolute executable path,
+input, canonical encoding reference, decoder and production geometry compiler.
+This diagnoses the existing CPU measurement path; it does not qualify GPU restore,
+serving performance or an optimization candidate.
+
+The fixed cohort contains eight four-process blocks: four pinned to CPU0 and
+four to the next allowed different physical core, CPU2. Each CPU has two ABBA
+and two BAAB blocks, with CPU order balanced across the cohort. These CPU IDs
+describe the frozen host; other hosts need a new topology-bound contract. Every process
+uses the existing four warm-up and eight measured three-part sequences in whole
+mode. Preserve the original constructor/destructor exclusions and part clocks.
+Validate every emitted geometry value, canonical row, order, budget and clock,
+then replay the complete output through the production compiler.
+
+Use the median of 24 measured parts per process. In an ABBA block, adjacent B/A
+ratios are the second/first and third/fourth process medians; in BAAB they are
+first/second and fourth/third. Their geometric mean is the block ratio. Bootstrap
+four complete blocks separately at each CPU; parts, adjacent ratios and CPUs are
+not pooled as independent repetitions. Report all ratios and uncertainty.
+Repeatability is demonstrated only if every adjacent and block ratio, and the
+entire block-bootstrap 95% interval, lie in `[1/1.05, 1.05]`. Four blocks provide
+descriptive uncertainty and do not establish general 5% measurement resolution.
+
+Before/after host and cgroup counters, plus actual child `wait4` CPU, fault, RSS
+and context-switch records, provide context. Child usage includes pre-exec work.
+These counters cover a complete process or
+shared host/container activity, so they cannot identify the cause of a timed-part
+outlier or count its allocations. CPU affinity does not reserve a core. Keep
+unavailable frequency information explicit and record the cgroup version, quota,
+mount and CPU/NUMA topology. No polling observer enters the native process.
+
+A valid repeatability failure remains a useful diagnostic result. It does not
+reclassify prior failed candidates, calibrate a looser guard, select a preferred
+CPU or authorize another candidate or hardware run. Complete contracts, source,
+raw data and independent reviews belong outside Git at
+`/root/orbitkv-artifacts/s4-trace-aa-diagnosis-20261016/`.
+
+The sole 32-cell cohort completes 1,152 replay parts (384 complete three-part
+sequences), 150,912 records and 139,345,920 reconstructed geometry values. All
+64 profile/compiler children, the controller and its outer session exit normally;
+all 28 frozen inputs remain unchanged. CPU0 does not demonstrate repeatability:
+block geometric ratio 0.9146, 95% interval [0.7922, 1.0086]. CPU2 demonstrates the
+band within this cohort: 0.9981 [0.9945, 1.0017], with all adjacent/block/interval
+guards passing. Keep both CPU results. This does not select a CPU for future
+experiments or establish why earlier comparisons varied. Shared cgroup throttle
+counts do not increase during these native windows, but this cannot exclude
+scheduler, frequency, allocator or cache effects inside the part clocks.
+Earlier rejected candidates and H20 failures retain their original status.

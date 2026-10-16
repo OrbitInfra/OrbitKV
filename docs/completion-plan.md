@@ -696,6 +696,20 @@ and S3/S4/S5 limits remain unchanged. Inspect capture allocation, memory footpri
 variance before selecting another bounded candidate; the component improvement
 does not establish a whole-path gain or identify the cause of failure.
 
+**Baseline A/A diagnosis: collected; repeatability remains scoped.**
+The accepted native CPU executable is compared with itself in 32 fixed whole-profile
+cells, with four complete ABBA/BAAB blocks separately at CPU0 and CPU2. All cells
+preserve complete geometry/canonical bytes and normal profile/compiler waits.
+CPU0 does not demonstrate the frozen symmetric 5% repeatability band: block
+geometric ratio 0.9146, 95% interval [0.7922, 1.0086]. CPU2 demonstrates it only
+in this cohort: 0.9981 [0.9945, 1.0017]. These are identical-code repeatability
+results, not optimization gains, a CPU ranking or a correction to prior FAILs.
+Shared resource counters do not establish the cause of timed-part differences.
+See the [A/A methodology](kernel-optimization.md#baseline-aa-repeatability-diagnosis)
+and complete evidence at `/root/orbitkv-artifacts/s4-trace-aa-diagnosis-20261016/`.
+Declare and validate subsequent measurement conditions before another candidate;
+no CPU setting, GPU run or dependent inference-contended experiment is promoted.
+
 **Bounded synchronous publication: CPU retention accepted; H20 overhead FAIL.**
 The candidate groups already-drained diagnostic JSON lines into
 synchronous log messages of at most 64 KiB. Keep opening records on the original
