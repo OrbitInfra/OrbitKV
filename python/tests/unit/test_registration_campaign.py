@@ -401,6 +401,54 @@ def test_expired_startup_verification_cannot_reach_resource_or_gpu_admission(mon
         campaign.main()
 
 
+def test_last_startup_stat_crossing_deadline_cannot_acquire_resources(tmp_path, monkeypatch):
+    lease = tmp_path / "selected.lock"
+    lease.touch()
+    contract = runtime_input_contract(tmp_path, [])
+    contract.update(
+        schema="orbitkv.explicit-registration-campaign.v1",
+        phase="precheck",
+        review_wait_seconds=10,
+        campaign_seconds=10,
+        cleanup_seconds=10,
+        cpus=sorted(os.sched_getaffinity(0))[:1],
+        cells=[{"kind": "native", "passed": 2}],
+        locks=[{"path": str(lease), "device": lease.stat().st_dev, "inode": lease.stat().st_ino}],
+    )
+    path = tmp_path / "CONTRACT.json"
+    path.write_text(json.dumps(contract))
+    now = [0.0]
+    monkeypatch.setattr(campaign.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(sys, "argv", [campaign.__file__, str(path)])
+    monkeypatch.setattr(campaign.ctypes, "CDLL", lambda *_: SimpleNamespace(prctl=lambda *_: 0))
+    monkeypatch.setattr(campaign.signal, "signal", lambda *_: None)
+    lstat = Path.lstat
+
+    def late_stat(selected, *args, **kwargs):
+        metadata = lstat(selected, *args, **kwargs)
+        if selected == lease:
+            now[0] = 181.0
+        return metadata
+
+    monkeypatch.setattr(Path, "lstat", late_stat)
+    open_file = campaign.os.open
+
+    def forbid_late_admission(selected, *args, **kwargs):
+        if Path(selected) == lease:
+            raise AssertionError("Expired startup attempted resource open")
+        return open_file(selected, *args, **kwargs)
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("Expired startup reached affinity/GPU admission")
+
+    monkeypatch.setattr(campaign.os, "open", forbid_late_admission)
+    monkeypatch.setattr(campaign.os, "sched_setaffinity", unexpected)
+    monkeypatch.setattr(campaign, "inventory", unexpected)
+    monkeypatch.setattr(campaign.subprocess, "Popen", unexpected)
+    with pytest.raises(TimeoutError, match="deadline exhausted"):
+        campaign.main()
+
+
 def test_runtime_manifest_deadline_and_nonregular_inputs_cannot_pass(tmp_path):
     fifo = tmp_path / "not-a-library"
     os.mkfifo(fifo)

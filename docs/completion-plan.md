@@ -584,6 +584,15 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   every root. This prevents unrelated engine file scans consuming the unchanged
   cumulative 180-second cleanup budget. The admission increment requires review
   before use, and grants no GPU lifetime or physical completion claim.
+  Independent `058b6cc2` review found a startup boundary gap: the final file
+  metadata check could cross its deadline before affinity/resource admission.
+  That freeze stays unaccepted and unlaunched. The repair checks the deadline
+  after input verification and around each resource admission. A real local
+  last-stat counterexample fails the old source and passes the repaired owner.
+  The new installed prefixes also remove duplicate OrbitKV distribution
+  metadata caused by the earlier dependency `.pth`; both final package/native
+  probes and ELF closure pass without CUDA/Manager launch. New exact source,
+  runtime/resource/READY review and hardware gates remain required.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

@@ -282,6 +282,7 @@ def check_inputs(
             held = os.fstat(locks[index])
             if (held.st_dev, held.st_ino) != expected:
                 raise RuntimeError("Held resource descriptor differs from its frozen path")
+    remaining(deadline)
 
 
 def cell_environment(cell: dict, gpu_uuid: str) -> dict:
@@ -527,16 +528,21 @@ def main() -> None:
         signal.signal(number, signal.SIG_IGN)
     try:
         check_inputs(contract, deadline=startup_deadline)
+        remaining(startup_deadline)
         cpus = contract["cpus"]
         if not cpus or not set(cpus) <= os.sched_getaffinity(0):
             raise RuntimeError("Frozen CPU affinity is unavailable")
+        remaining(startup_deadline)
         os.sched_setaffinity(0, cpus)
         for resource in contract["locks"]:
+            remaining(startup_deadline)
             fd = os.open(resource["path"], os.O_RDWR | os.O_NOFOLLOW)
             locks.append(fd)
+            remaining(startup_deadline)
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if os.fstat(fd).st_ino != resource["inode"]:
                 raise RuntimeError("Resource lock inode changed")
+            remaining(startup_deadline)
         if Path(contract["quarantine"]).exists():
             raise RuntimeError("GPU resource is quarantined")
         check_inputs(contract, locks, startup_deadline)
