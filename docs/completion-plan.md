@@ -553,8 +553,15 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   Protocol/registry, real UDS rejection and native owner CPU controls pass;
   final matching installation, actual IPC-credit failure/repayment, GPU bytes
   and independent acceptance remain open. This does not close true allocation/page
-  generation, live Publish stalls or physical orphan reclamation. New evidence
-  is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
+  generation, live Publish stalls or physical orphan reclamation. Independent
+  `cf4ea6f9` review accepts the repaired software/CPU/installed-import scope;
+  `b8c360c2` accepts the real-credit test source and receipt contract. Neither
+  grants GPU launch or physical lifetime qualification. A task-owned controller
+  candidate separates precheck from formal admission, retains resource locks
+  on unknown native ownership, rejects missing cleanup/log evidence and shares
+  one cumulative cleanup budget. Its CPU admission/evidence controls pass;
+  controller/source and exact resource/launch acceptance remain pending.
+  New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
   without a control RPC or taking a blocked Publish/lifecycle lock. Restore

@@ -125,6 +125,15 @@ unregister/close, and retain failed cleanup plus independent queued holds.
 The optional `ORBITKV_CLEANUP_SOURCE_ROOT` selects an archived source for the
 negative control; it never changes production lookup or admission.
 
+The installed registration campaign controller is
+`tests/support/registration_campaign.py`. Its CPU gate
+`pytest tests/unit/test_registration_campaign.py` checks real READY lock ownership
+and rejects missing/forced/unreaped/native-error evidence. It separates precheck
+from formal cells, preserves locks on unknown ownership and requires a distinct
+independent grant matching the immutable contract. A source/CPU controller pass
+is not GPU launch approval; freeze and review the actual runtime/resources before
+execution. Runtime outputs and contracts belong outside this checkout.
+
 For explicit CUDA registration/credit-owner changes, run
 `registration::tests` and the actual duplicate-entry control in `client::tests`
 with the authenticated channel fixture below. CPU tests use a declared local
