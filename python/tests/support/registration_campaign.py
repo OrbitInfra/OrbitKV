@@ -17,6 +17,7 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from uuid import UUID
 
 MAX_JSON_BYTES = 1024 * 1024
 MAX_LOG_BYTES = 32 * 1024 * 1024
@@ -728,25 +729,41 @@ def validate_cell(
                 raise RuntimeError("Registration credit snapshot owner differs")
             evidence = row.get("evidence", {})
             if (
-                evidence.get("schema") != "orbitkv.cuda-credit-observation.v1"
+                not isinstance(evidence, dict)
+                or evidence.get("schema") != "orbitkv.cuda-credit-observation.v1"
                 or evidence.get("physical_termination_claimed") is not False
                 or evidence.get("reclamation_authorized") is not False
                 or not evidence.get("registration_generation")
                 or not evidence.get("export_owner_generation")
-                or not evidence.get("credits")
+                or not isinstance(evidence.get("credits"), list)
+                or not 0 < len(evidence["credits"]) <= 4096
             ):
                 raise RuntimeError("Registration handoff credit evidence is missing")
+            for field in ("registration_generation", "export_owner_generation"):
+                value = evidence[field]
+                if not isinstance(value, str) or str(UUID(value)) != value or UUID(value).int == 0:
+                    raise RuntimeError("Registration credit generation is invalid")
             identities = set()
+            physical_slots = set()
             for credit in evidence["credits"]:
+                if not isinstance(credit, dict) or not isinstance(credit.get("observation"), dict):
+                    raise RuntimeError("Registration counter observation schema is invalid")
                 observation = credit.get("observation", {})
                 name, offset = credit.get("counter_name"), credit.get("counter_offset")
+                normalized = name.removeprefix("/") if isinstance(name, str) else ""
                 if (
                     not isinstance(name, str)
                     or not name
+                    or not normalized
+                    or normalized in (".", "..")
+                    or "/" in normalized
+                    or "\0" in name
+                    or len(name.encode()) > 255
                     or type(offset) is not int
                     or not 0 <= offset < 10_000
-                    or (name, offset) in identities
+                    or (normalized, offset) in identities
                     or credit.get("disposition") != "importer_owned"
+                    or type(credit.get("exclusive_value_at_export")) is not int
                     or credit.get("exclusive_value_at_export") != 1
                     or credit.get("observation_error") is not None
                     or observation.get("same_object") is not True
@@ -758,11 +775,17 @@ def validate_cell(
                     or observation["inode"] <= 0
                     or type(observation.get("device")) is not int
                     or observation["device"] < 0
+                    or type(observation.get("path_inode")) is not int
+                    or type(observation.get("path_device")) is not int
                     or observation["inode"] != observation.get("path_inode")
                     or observation["device"] != observation.get("path_device")
                 ):
                     raise RuntimeError("Original registration counter observation is unproven")
-                identities.add((name, offset))
+                physical = (observation["device"], observation["inode"], offset)
+                if physical in physical_slots:
+                    raise RuntimeError("Duplicate physical registration counter slot")
+                physical_slots.add(physical)
+                identities.add((normalized, offset))
         releases = evidence_paths(directory, "*.native-release.json", deadline)
         if len(releases) != 4:
             raise RuntimeError("Missing complete native client release receipts")

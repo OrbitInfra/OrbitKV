@@ -740,8 +740,8 @@ def test_native_cell_requires_command_record_bound_to_observed_manager(tmp_path,
         "owner": owner,
         "evidence": {
             "schema": "orbitkv.cuda-credit-observation.v1",
-            "registration_generation": "a" * 32,
-            "export_owner_generation": "b" * 32,
+            "registration_generation": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "export_owner_generation": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
             "physical_termination_claimed": False,
             "reclamation_authorized": False,
             "credits": [
@@ -833,6 +833,52 @@ def test_native_cell_requires_command_record_bound_to_observed_manager(tmp_path,
     else:
         with pytest.raises(RuntimeError):
             campaign.validate_cell(cell, tmp_path, owner, observed)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("registration_generation", True),
+        ("export_owner_generation", [1]),
+        ("registration_generation", "00000000-0000-0000-0000-000000000000"),
+        ("exclusive_value_at_export", True),
+        ("exclusive_value_at_export", 1.0),
+        ("path_device", True),
+        ("path_inode", 2.0),
+        ("counter_name", "/../not-counter"),
+        ("counter_name", "/counter\0other"),
+        ("duplicate_physical_slot", True),
+    ],
+)
+def test_native_credit_oracle_refuses_malformed_types_and_aliased_slots(
+    tmp_path, monkeypatch, field, value
+):
+    import copy
+
+    captured = []
+    validate = campaign.validate_cell
+    monkeypatch.setattr(
+        campaign, "validate_cell", lambda *args, **kwargs: captured.append((args, kwargs))
+    )
+    test_native_cell_requires_command_record_bound_to_observed_manager(tmp_path, None)
+    monkeypatch.setattr(campaign, "validate_cell", validate)
+    path = tmp_path / "registration.credit-owner.json"
+    row = json.loads(path.read_text())
+    evidence = row["evidence"]
+    credit = evidence["credits"][0]
+    if field in ("registration_generation", "export_owner_generation"):
+        evidence[field] = value
+    elif field in ("path_device", "path_inode"):
+        credit["observation"][field] = value
+    elif field == "duplicate_physical_slot":
+        evidence["credits"].append(copy.deepcopy(credit))
+        evidence["credits"][1]["counter_name"] = "/other-name"
+    else:
+        credit[field] = value
+    path.write_text(json.dumps(row))
+    args, kwargs = captured[0]
+    with pytest.raises((RuntimeError, ValueError)):
+        validate(*args, **kwargs)
 
 
 def test_expired_or_oversized_oracle_cannot_get_success(tmp_path, monkeypatch):

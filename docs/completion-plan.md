@@ -711,6 +711,13 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   fixture persists these records on both registration outcomes before runtime
   capture. This increment requires independent native/package review and real
   GPU consumption; it adds no release action or historical reconciliation.
+  Independent `2572a63c` review accepts the native counter observations and
+  package checks only as evidence, but requests changes to the strict consumer:
+  generation/number types, native counter-name domains and aliased physical
+  slots could pass. The follow-up enforces the native JSON domains and rejects
+  duplicate normalized names or original device/inode/slot identities. Its
+  matched controls preserve valid zero/one observations; a new source/freeze
+  rereview is required before consuming the wheel in a GPU gate.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
