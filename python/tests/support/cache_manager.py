@@ -536,6 +536,41 @@ class CacheManagerProcess:
         except OSError:
             self._process_start_ticks = None
 
+        if os.environ.get("ORBITKV_TEST_STRICT_SHUTDOWN") == "1":
+            from .registration_campaign import write
+
+            record = {
+                "pid": self.process.pid,
+                "start_ticks": int(self._process_start_ticks)
+                if self._process_start_ticks
+                else None,
+                "argv": list(self.command),
+                "environment": {
+                    key: env[key]
+                    for key in (
+                        "PYO3_PYTHON",
+                        "PYTHONHOME",
+                        "PYTHONPATH",
+                        "PYTHONNOUSERSITE",
+                        "PYTHONSAFEPATH",
+                        "LD_LIBRARY_PATH",
+                        "CUDA_VISIBLE_DEVICES",
+                        "MC_FORCE_TCP",
+                    )
+                    if key in env
+                },
+                "log_path": str(self._log_path.resolve()),
+                "bootstrap_socket": self.bootstrap_socket,
+                "port": self.port,
+                "http_port": self.http_port,
+                "channel_service": self.channel_service,
+                "channel_session_epoch": self.channel_session_epoch,
+            }
+            path = Path(
+                f"{self._log_path}.{self.process.pid}-{self._process_start_ticks}.manager-start.json"
+            )
+            write(path, record, time.monotonic() + 30)
+
         return wait_for_server_ready(self.bootstrap_socket, process=self.process)
 
     def stop(self) -> None:

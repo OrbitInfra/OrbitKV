@@ -476,15 +476,57 @@ def validate_cell(
         expected_origin = cell.get("manager_python")
         if not expected_origin:
             raise RuntimeError("Frozen Manager Python origin contract is required")
+        starts = evidence_paths(directory, "*.manager-start.json", deadline)
+        if len(starts) != len(receipts):
+            raise RuntimeError("Missing actual Manager startup command records")
+        startup = {}
+        for path in starts:
+            row = read_json(path, deadline)
+            key = (row["pid"], row["start_ticks"])
+            argv = row.get("argv")
+            if (
+                key in startup
+                or key not in known
+                or type(row["pid"]) is not int
+                or type(row["start_ticks"]) is not int
+                or not isinstance(argv, list)
+                or not argv
+                or any(not isinstance(argument, str) for argument in argv)
+                or argv[0] != cell["environment"]["ORBITKV_CACHE_MANAGER_BINARY"]
+                or row.get("environment", {}).get("PYTHONNOUSERSITE") != "1"
+                or row.get("environment", {}).get("MC_FORCE_TCP") != "1"
+                or row.get("environment", {}).get("CUDA_VISIBLE_DEVICES")
+                != cell["environment"]["CUDA_VISIBLE_DEVICES"]
+            ):
+                raise RuntimeError("Manager startup identity/command/environment differs")
+            required = {
+                "--addr": f"127.0.0.1:{row['port']}",
+                "--http-addr": f"127.0.0.1:{row['http_port']}",
+                "--bootstrap-socket": row["bootstrap_socket"],
+                "--channel-service": row["channel_service"],
+                "--channel-session-epoch": str(row["channel_session_epoch"]),
+            }
+            for flag, value in required.items():
+                if argv.count(flag) != 1:
+                    raise RuntimeError("Manager startup lacks its declared listener/namespace")
+                index = argv.index(flag)
+                if index + 1 >= len(argv) or argv[index + 1] != value:
+                    raise RuntimeError("Manager startup listener/namespace differs")
+            startup[key] = row
         for path in receipts:
             row = read_json(path, deadline)
             log = Path(str(path).removesuffix(".cleanup.json"))
+            start = startup.pop((row["pid"], row["start_ticks"]), None)
+            if start is None or start["log_path"] != str(log.resolve()):
+                raise RuntimeError("Manager startup command is not bound to its cleanup log")
             validate_python_origin(
                 read_bytes(log, MAX_LOG_BYTES, deadline).decode(errors="replace"),
                 expected_origin,
                 row["pid"],
                 deadline,
             )
+        if startup:
+            raise RuntimeError("Manager startup has no matching cleanup")
         releases = evidence_paths(directory, "*.native-release.json", deadline)
         if len(releases) != 4:
             raise RuntimeError("Missing complete native client release receipts")

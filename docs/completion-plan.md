@@ -608,6 +608,16 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   runtime evidence refuses qualification. This startup diagnostic changes the
   Manager artifact, so a matching rebuilt wheel and fresh independent software,
   runtime/resource/READY and launch reviews are required before GPU admission.
+  Independent Codex reviews accept the supervisor source/CPU at `4fac546d` and
+  the rebuilt interpreter/provenance software and installed import at `c4fef136`.
+  The next exact c4fef READY launch review remains ChangesRequired: actual Manager
+  argv was only held in fixture memory. Its grant is denied before GPU/Manager
+  launch. The remedy durably records actual argv, public runtime environment,
+  listener/namespace and PID/start ticks after construction, retaining ownership
+  if record persistence fails. The native oracle requires each startup record
+  to match its observed Manager and cleanup log. This harness-only increment
+  keeps the accepted wheel bytes unchanged and requires independent source and
+  fresh launch rereview; all earlier rejected inputs remain preserved.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

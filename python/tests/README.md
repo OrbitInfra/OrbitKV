@@ -149,6 +149,9 @@ inputs too. Embedded Manager Python still uses its explicit installed environmen
 disable user-site, freeze every consumed system site and require the actual
 registry Torch/helper origin records and `sys.path`. The native gate rejects
 missing/duplicate origins, foreign paths and mismatched process identity.
+Strict Manager fixtures persist an actual argv/environment/listener/namespace
+startup record bound to PID/start ticks before readiness. Missing or mismatched
+records cannot pass the native gate; persistence failure retains the live owner.
 The original controller
 and its counterexamples stay in the external artifact archive. It separates precheck
 from formal cells, preserves locks on unknown ownership and requires a distinct

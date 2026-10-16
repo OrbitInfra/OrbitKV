@@ -557,6 +557,81 @@ def test_manager_importer_origin_is_identity_bound_and_inside_frozen_roots(fault
             campaign.validate_python_origin(text, expected, 17, time.monotonic() + 1)
 
 
+@pytest.mark.parametrize("fault", [None, "missing", "wrong-pid", "wrong-command", "wrong-port"])
+def test_native_cell_requires_command_record_bound_to_observed_manager(tmp_path, fault):
+    cell, owner, observed = valid_evidence(tmp_path)
+    cell.update(
+        kind="native",
+        environment={
+            "ORBITKV_CACHE_MANAGER_BINARY": "/frozen/manager",
+            "CUDA_VISIBLE_DEVICES": "GPU-fixture",
+        },
+        manager_python={
+            "torch_file": "/frozen/site/torch/__init__.py",
+            "gpu_module_file": "/frozen/site/orbitkv/client/gpu.py",
+            "prefix": "/usr",
+            "base_prefix": "/usr",
+            "allowed_sys_path": ["/frozen/site"],
+        },
+    )
+    runtime = {
+        "pid": 17,
+        "torch_file": cell["manager_python"]["torch_file"],
+        "sys_path": ["/frozen/site"],
+        "prefix": "/usr",
+        "base_prefix": "/usr",
+        "no_user_site": 1,
+    }
+    helper = {"pid": 17, "gpu_module_file": cell["manager_python"]["gpu_module_file"]}
+    (tmp_path / "manager.log").write_text(
+        "CUDA registration Python runtime: " + json.dumps(runtime) + "\n"
+        "CUDA registration Python helper: " + json.dumps(helper) + "\n"
+    )
+    for index in range(4):
+        (tmp_path / f"{index}.native-release.json").write_text(json.dumps(dict(owner, closed=True)))
+    start = {
+        "pid": 17,
+        "start_ticks": 18,
+        "log_path": str(tmp_path / "manager.log"),
+        "port": 12345,
+        "http_port": 12346,
+        "bootstrap_socket": "/tmp/CPU-fixture.sock",
+        "channel_service": "CPU-fixture",
+        "channel_session_epoch": 7,
+        "argv": [
+            "/frozen/manager",
+            "--addr",
+            "127.0.0.1:12345",
+            "--http-addr",
+            "127.0.0.1:12346",
+            "--bootstrap-socket",
+            "/tmp/CPU-fixture.sock",
+            "--channel-service",
+            "CPU-fixture",
+            "--channel-session-epoch",
+            "7",
+        ],
+        "environment": {
+            "CUDA_VISIBLE_DEVICES": "GPU-fixture",
+            "MC_FORCE_TCP": "1",
+            "PYTHONNOUSERSITE": "1",
+        },
+    }
+    if fault == "wrong-pid":
+        start["pid"] = 19
+    elif fault == "wrong-command":
+        start["argv"][0] = "/unfrozen/manager"
+    elif fault == "wrong-port":
+        start["port"] = 12347
+    if fault != "missing":
+        (tmp_path / "manager.manager-start.json").write_text(json.dumps(start))
+    if fault is None:
+        campaign.validate_cell(cell, tmp_path, owner, observed)
+    else:
+        with pytest.raises(RuntimeError):
+            campaign.validate_cell(cell, tmp_path, owner, observed)
+
+
 def test_expired_or_oversized_oracle_cannot_get_success(tmp_path, monkeypatch):
     cell, owner, observed = valid_evidence(tmp_path)
     with pytest.raises(TimeoutError):
