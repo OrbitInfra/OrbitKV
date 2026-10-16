@@ -1,7 +1,7 @@
 //! Native copy comparison with explicit physical owners and disclosed geometry.
 
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{BufReader, Write};
 use std::path::PathBuf;
 use std::ptr::NonNull;
 use std::sync::Arc;
@@ -419,9 +419,10 @@ fn main() {
         .expect("new output");
     if let Some(path) = local_geometry {
         assert!(!validate_only, "select one CPU validation mode");
-        let summary =
-            serde_json::from_reader(std::fs::File::open(path).expect("captured geometry input"))
-                .expect("captured geometry JSON");
+        let summary = serde_json::from_reader(BufReader::new(
+            std::fs::File::open(path).expect("captured geometry input"),
+        ))
+        .expect("captured geometry JSON");
         let receipt = capture::validate(&summary).expect("production compiler verification");
         writeln!(file, "{receipt}").expect("write compiler receipt");
         file.flush().expect("flush compiler receipt");
