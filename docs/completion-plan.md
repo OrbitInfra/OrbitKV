@@ -644,6 +644,15 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   use actual task-owned shared-memory counter files and preserve the framework
   stub's scope. Independent source/package and real credit acceptance remain
   required; old failed-run credit and child evidence is still missing.
+  Independent `bfd72221` source/CPU/installed-import review accepts the repayment
+  correction. The existing Forge task's selected stage is now `95601664`; its
+  second RUNNING executor is reachable and has distinct boot/GPU identities,
+  with no task quarantine or held resource lock in the read-only survey. The
+  first host's GPU0/GPU1/control quarantine remains unchanged. The next harness
+  contract declares an explicit list of protected local resources rather than
+  assuming GPU0 is quarantined on every host; an empty list still requires a
+  complete independently reviewed resource survey. New freeze/launch review
+  and actual credit/byte gates remain open, and no old resource is released.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

@@ -277,13 +277,17 @@ def check_inputs(
         manifests = [available[path] for path in runtime_manifest_paths]
     for manifest in manifests:
         check_runtime_manifest(manifest, deadline)
-    protected = contract["protected_gpu0"]
-    if (
-        digest(Path(protected["quarantine"]), deadline) != protected["quarantine_sha256"]
-        or Path(protected["lease"]).stat().st_ino != protected["lease_inode"]
-        or identity(protected["guardian_pid"])["start_ticks"] != protected["guardian_start_ticks"]
-    ):
-        raise RuntimeError("Protected resource identity changed")
+    protected_resources = contract["protected_resources"]
+    if not isinstance(protected_resources, list) or len(protected_resources) > 64:
+        raise RuntimeError("Invalid protected resource declarations")
+    for protected in protected_resources:
+        if (
+            digest(Path(protected["quarantine"]), deadline) != protected["quarantine_sha256"]
+            or Path(protected["lease"]).stat().st_ino != protected["lease_inode"]
+            or identity(protected["guardian_pid"], deadline)["start_ticks"]
+            != protected["guardian_start_ticks"]
+        ):
+            raise RuntimeError("Protected resource identity changed")
     if locks is not None and len(locks) != len(contract["locks"]):
         raise RuntimeError("Resource descriptor count differs")
     for index, resource in enumerate(contract["locks"]):

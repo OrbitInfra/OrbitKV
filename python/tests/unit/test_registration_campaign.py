@@ -34,14 +34,16 @@ def cpu_ready_inputs(tmp_path):
         "phase": "precheck",
         "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
         "input_sha256": {},
-        "protected_gpu0": {
-            "quarantine": str(protected),
-            "quarantine_sha256": campaign.digest(protected),
-            "lease": str(protected_lease),
-            "lease_inode": protected_lease.stat().st_ino,
-            "guardian_pid": os.getpid(),
-            "guardian_start_ticks": campaign.identity(os.getpid())["start_ticks"],
-        },
+        "protected_resources": [
+            {
+                "quarantine": str(protected),
+                "quarantine_sha256": campaign.digest(protected),
+                "lease": str(protected_lease),
+                "lease_inode": protected_lease.stat().st_ino,
+                "guardian_pid": os.getpid(),
+                "guardian_start_ticks": campaign.identity(os.getpid())["start_ticks"],
+            }
+        ],
         "locks": [
             {"path": str(lease), "device": lease.stat().st_dev, "inode": lease.stat().st_ino}
         ],
@@ -243,14 +245,16 @@ def test_same_content_lock_replacement_rejected_while_old_inode_is_held(tmp_path
         "locks": [
             {"path": str(lease), "device": lease.stat().st_dev, "inode": lease.stat().st_ino}
         ],
-        "protected_gpu0": {
-            "quarantine": str(marker),
-            "quarantine_sha256": campaign.digest(marker),
-            "lease": str(guard),
-            "lease_inode": guard.stat().st_ino,
-            "guardian_pid": os.getpid(),
-            "guardian_start_ticks": campaign.identity(os.getpid())["start_ticks"],
-        },
+        "protected_resources": [
+            {
+                "quarantine": str(marker),
+                "quarantine_sha256": campaign.digest(marker),
+                "lease": str(guard),
+                "lease_inode": guard.stat().st_ino,
+                "guardian_pid": os.getpid(),
+                "guardian_start_ticks": campaign.identity(os.getpid())["start_ticks"],
+            }
+        ],
     }
     with lease.open("r+") as held:
         fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -370,14 +374,16 @@ def runtime_input_contract(directory, manifests):
         "input_sha256": {},
         "runtime_manifests": manifests,
         "locks": [],
-        "protected_gpu0": {
-            "quarantine": str(marker),
-            "quarantine_sha256": campaign.digest(marker),
-            "lease": str(guard),
-            "lease_inode": guard.stat().st_ino,
-            "guardian_pid": os.getpid(),
-            "guardian_start_ticks": campaign.identity(os.getpid())["start_ticks"],
-        },
+        "protected_resources": [
+            {
+                "quarantine": str(marker),
+                "quarantine_sha256": campaign.digest(marker),
+                "lease": str(guard),
+                "lease_inode": guard.stat().st_ino,
+                "guardian_pid": os.getpid(),
+                "guardian_start_ticks": campaign.identity(os.getpid())["start_ticks"],
+            }
+        ],
     }
 
 
@@ -511,6 +517,18 @@ def test_absent_import_search_inputs_cannot_appear_after_freeze(tmp_path, appear
     else:
         os.mkfifo(path)
     with pytest.raises(RuntimeError, match="absent input appeared"):
+        campaign.check_inputs(contract)
+
+
+def test_fresh_host_protected_resource_list_is_explicit_and_does_not_release_other_owners(tmp_path):
+    contract = runtime_input_contract(tmp_path, [])
+    contract["protected_resources"] = []
+    campaign.check_inputs(contract)
+    contract["protected_resources"] = None
+    with pytest.raises(RuntimeError, match="protected resource declarations"):
+        campaign.check_inputs(contract)
+    del contract["protected_resources"]
+    with pytest.raises(KeyError):
         campaign.check_inputs(contract)
 
 
@@ -675,14 +693,16 @@ def test_final_failure_enters_retention_while_real_lock_is_still_held(tmp_path, 
         "phase": "precheck",
         "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
         "input_sha256": {},
-        "protected_gpu0": {
-            "quarantine": str(marker),
-            "quarantine_sha256": campaign.digest(marker),
-            "lease": str(guard),
-            "lease_inode": guard.stat().st_ino,
-            "guardian_pid": owner["pid"],
-            "guardian_start_ticks": owner["start_ticks"],
-        },
+        "protected_resources": [
+            {
+                "quarantine": str(marker),
+                "quarantine_sha256": campaign.digest(marker),
+                "lease": str(guard),
+                "lease_inode": guard.stat().st_ino,
+                "guardian_pid": owner["pid"],
+                "guardian_start_ticks": owner["start_ticks"],
+            }
+        ],
         "locks": [
             {"path": str(lease), "device": lease.stat().st_dev, "inode": lease.stat().st_ino}
         ],
