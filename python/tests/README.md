@@ -144,6 +144,11 @@ Use `--supervise` for remote launch: a durable parent owns the actual controller
 wait and records its identity, status and lack of forced cleanup. Normal and
 nonzero real child controls run without GPU; a quarantined controller stays alive.
 This supervision does not qualify controller crashes or native DMA termination.
+The control interpreter uses `-I -S`; freeze any absent default import search
+inputs too. Embedded Manager Python still uses its explicit installed environment:
+disable user-site, freeze every consumed system site and require the actual
+registry Torch/helper origin records and `sys.path`. The native gate rejects
+missing/duplicate origins, foreign paths and mismatched process identity.
 The original controller
 and its counterexamples stay in the external artifact archive. It separates precheck
 from formal cells, preserves locks on unknown ownership and requires a distinct

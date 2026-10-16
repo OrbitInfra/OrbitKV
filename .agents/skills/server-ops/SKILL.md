@@ -22,6 +22,13 @@ UUIDs. Known payload placement uses `mbind` before first touch and requires the
 selected memory node in the process's allowed nodes. CPU affinity alone cannot
 override an inherited interleave memory policy; inspect actual resident pages.
 
+For installed registration qualification, use a stdlib-only `-I -S` control
+interpreter with a durable actual-wait owner. Freeze absent import search paths
+as well as present files. The embedded Manager's explicit Python environment
+must disable user-site and cover consumed system-site `.pth` files. Require its
+actual registry Torch/helper origin records and `sys.path`, plus mapped native
+library provenance; an independent venv import does not prove Manager loading.
+
 For remote metadata scope, omission means `AllNamespaces`. Repeat
 `--metadata-namespace` only with complete storage namespaces logged by actual
 registration, or use `--metadata-empty-scope` for an explicit empty set. Scope is

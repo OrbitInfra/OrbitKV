@@ -498,6 +498,65 @@ def test_runtime_manifest_deadline_and_nonregular_inputs_cannot_pass(tmp_path):
         campaign.check_runtime_manifest({}, time.monotonic() - 1)
 
 
+@pytest.mark.parametrize("appeared", ["regular", "broken-symlink", "fifo"])
+def test_absent_import_search_inputs_cannot_appear_after_freeze(tmp_path, appeared):
+    path = tmp_path / "python311.zip"
+    contract = runtime_input_contract(tmp_path, [])
+    contract["absent_inputs"] = [str(path)]
+    campaign.check_inputs(contract)
+    if appeared == "regular":
+        path.write_bytes(b"unexpected import input")
+    elif appeared == "broken-symlink":
+        path.symlink_to(tmp_path / "missing")
+    else:
+        os.mkfifo(path)
+    with pytest.raises(RuntimeError, match="absent input appeared"):
+        campaign.check_inputs(contract)
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "missing", "duplicate", "wrong-pid", "wrong-file", "extra-root", "user-site"]
+)
+def test_manager_importer_origin_is_identity_bound_and_inside_frozen_roots(fault):
+    expected = {
+        "torch_file": "/frozen/site/torch/__init__.py",
+        "gpu_module_file": "/frozen/site/orbitkv/client/gpu.py",
+        "prefix": "/usr",
+        "base_prefix": "/usr",
+        "allowed_sys_path": ["/frozen/site", "/usr/lib/python3.11"],
+    }
+    runtime = {
+        "pid": 17,
+        "torch_file": expected["torch_file"],
+        "prefix": "/usr",
+        "base_prefix": "/usr",
+        "sys_path": expected["allowed_sys_path"],
+        "no_user_site": 1,
+    }
+    helper = {"pid": 17, "gpu_module_file": expected["gpu_module_file"]}
+    if fault == "wrong-pid":
+        runtime["pid"] = 18
+    elif fault == "wrong-file":
+        helper["gpu_module_file"] = "/unfrozen/orbitkv/client/gpu.py"
+    elif fault == "extra-root":
+        runtime["sys_path"] = [*runtime["sys_path"], "/unfrozen/site"]
+    elif fault == "user-site":
+        runtime["no_user_site"] = 0
+    text = (
+        "INFO CUDA registration Python runtime: " + json.dumps(runtime) + "\n"
+        "INFO CUDA registration Python helper: " + json.dumps(helper) + "\n"
+    )
+    if fault == "missing":
+        text = text.splitlines()[0]
+    elif fault == "duplicate":
+        text += text
+    if fault is None:
+        campaign.validate_python_origin(text, expected, 17, time.monotonic() + 1)
+    else:
+        with pytest.raises(RuntimeError):
+            campaign.validate_python_origin(text, expected, 17, time.monotonic() + 1)
+
+
 def test_expired_or_oversized_oracle_cannot_get_success(tmp_path, monkeypatch):
     cell, owner, observed = valid_evidence(tmp_path)
     with pytest.raises(TimeoutError):

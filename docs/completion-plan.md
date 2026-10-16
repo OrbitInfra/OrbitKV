@@ -599,6 +599,15 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   propagates nonzero exits and leaves a quarantined child alive. This is healthy
   launch/evidence supervision, not controller-crash or physical DMA termination
   qualification. New source/CPU and exact launch review are required.
+  The withdrawn launch review also rejects unmanifested system-site `.pth`
+  execution and the unguarded default Python ZIP search path. The repair uses
+  `-I -S` for the pure control process, checks declared absent inputs, and requires
+  actual Manager Torch/helper import origins plus `sys.path` at the existing
+  registry boundary. System sites consumed by the embedded `/usr` interpreter
+  must be frozen, with user-site disabled; missing, duplicate or out-of-root
+  runtime evidence refuses qualification. This startup diagnostic changes the
+  Manager artifact, so a matching rebuilt wheel and fresh independent software,
+  runtime/resource/READY and launch reviews are required before GPU admission.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

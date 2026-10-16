@@ -249,6 +249,19 @@ def check_inputs(
     for path, expected in contract["input_sha256"].items():
         if digest(Path(path), deadline) != expected:
             raise RuntimeError(f"Frozen input changed: {path}")
+    absent = contract.get("absent_inputs", [])
+    if not isinstance(absent, list) or len(absent) > MAX_EVIDENCE_FILES:
+        raise RuntimeError("Invalid absent input declarations")
+    for name in absent:
+        remaining(deadline)
+        path = Path(name)
+        if not path.is_absolute():
+            raise RuntimeError("Absent input must have an absolute path")
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            continue
+        raise RuntimeError(f"Frozen absent input appeared: {path}")
     manifests = contract.get("runtime_manifests", [])
     if runtime_manifest_paths is not None:
         available = {manifest["path"]: manifest for manifest in manifests}
@@ -335,6 +348,40 @@ def quarantine(root: Path, reason: str, locks: list[int]) -> None:
     while True:
         with contextlib.suppress(BaseException):
             time.sleep(1)
+
+
+def validate_python_origin(
+    text: str, expected: dict, manager_pid: int, deadline: float | None = None
+) -> None:
+    values = {}
+    for kind in ("runtime", "helper"):
+        marker = f"CUDA registration Python {kind}: "
+        records = [line.partition(marker)[2] for line in text.splitlines() if marker in line]
+        if len(records) != 1 or len(records[0].encode()) > MAX_JSON_BYTES:
+            raise RuntimeError("Missing or duplicate Manager Python origin evidence")
+        remaining(deadline)
+        value = json.loads(records[0])
+        remaining(deadline)
+        if type(value.get("pid")) is not int or value["pid"] != manager_pid:
+            raise RuntimeError("Manager Python origin process identity differs")
+        values[kind] = value
+    runtime = values["runtime"]
+    paths = runtime.get("sys_path")
+    if (
+        runtime.get("torch_file") != expected["torch_file"]
+        or runtime.get("prefix") != expected["prefix"]
+        or runtime.get("base_prefix") != expected["base_prefix"]
+        or type(runtime.get("no_user_site")) is not int
+        or runtime["no_user_site"] != 1
+        or not isinstance(paths, list)
+        or not paths
+        or any(
+            not isinstance(path, str) or path not in expected["allowed_sys_path"] for path in paths
+        )
+        or values["helper"].get("gpu_module_file") != expected["gpu_module_file"]
+    ):
+        raise RuntimeError("Manager Python importer leaves the frozen runtime")
+    remaining(deadline)
 
 
 def validate_cell(
@@ -426,6 +473,18 @@ def validate_cell(
         ):
             raise RuntimeError(f"Native/worker failure remains in log: {path}")
     if cell["kind"] == "native":
+        expected_origin = cell.get("manager_python")
+        if not expected_origin:
+            raise RuntimeError("Frozen Manager Python origin contract is required")
+        for path in receipts:
+            row = read_json(path, deadline)
+            log = Path(str(path).removesuffix(".cleanup.json"))
+            validate_python_origin(
+                read_bytes(log, MAX_LOG_BYTES, deadline).decode(errors="replace"),
+                expected_origin,
+                row["pid"],
+                deadline,
+            )
         releases = evidence_paths(directory, "*.native-release.json", deadline)
         if len(releases) != 4:
             raise RuntimeError("Missing complete native client release receipts")
@@ -498,7 +557,7 @@ def supervise(contract_path: Path) -> None:
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
     }
-    argv = [sys.executable, "-I", "-B", str(Path(__file__).resolve()), str(contract_path)]
+    argv = [sys.executable, "-I", "-S", "-B", str(Path(__file__).resolve()), str(contract_path)]
     with (root / "controller.log").open("x") as output:
         remaining(deadline)
         process = subprocess.Popen(

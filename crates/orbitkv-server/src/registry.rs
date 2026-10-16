@@ -65,6 +65,18 @@ impl CudaTensorRegistry {
     pub fn new() -> PyResult<Self> {
         Python::attach(|py| {
             let torch = py.import("torch")?;
+            let sys = py.import("sys")?;
+            log::info!(
+                "CUDA registration Python runtime: {}",
+                serde_json::json!({
+                    "pid": std::process::id(),
+                    "torch_file": torch.getattr("__file__")?.extract::<String>()?,
+                    "sys_path": sys.getattr("path")?.extract::<Vec<String>>()?,
+                    "prefix": sys.getattr("prefix")?.extract::<String>()?,
+                    "base_prefix": sys.getattr("base_prefix")?.extract::<String>()?,
+                    "no_user_site": sys.getattr("flags")?.getattr("no_user_site")?.extract::<u8>()?,
+                })
+            );
             let cuda = torch.getattr("cuda")?;
             cuda.call_method0("init")?;
             Ok(Self {
@@ -137,8 +149,15 @@ impl CudaTensorRegistry {
         }
         *disposition = CudaCreditDisposition::NeverImported;
         let device_id = Python::attach(|py| {
-            py.import("orbitkv.client.gpu")?
-                .call_method1("device_index_from_uuid", (device_uuid,))?
+            let gpu = py.import("orbitkv.client.gpu")?;
+            log::info!(
+                "CUDA registration Python helper: {}",
+                serde_json::json!({
+                    "pid": std::process::id(),
+                    "gpu_module_file": gpu.getattr("__file__")?.extract::<String>()?,
+                })
+            );
+            gpu.call_method1("device_index_from_uuid", (device_uuid,))?
                 .extract::<i32>()
         })?;
         let mut context = ContextState::new(device_id);
