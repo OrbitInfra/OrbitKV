@@ -275,6 +275,77 @@ def test_inventory_uses_one_remaining_deadline(monkeypatch):
     assert 0 < limits[1] < limits[0] <= 0.1
 
 
+@pytest.mark.parametrize(
+    "fault", [None, "payload", "extra-file", "symlink-target", "manifest", "duplicate", "traversal"]
+)
+def test_runtime_manifest_checks_bytes_targets_and_complete_census(tmp_path, fault):
+    root = tmp_path / "site-packages"
+    root.mkdir()
+    payload = root / "native.so"
+    payload.write_bytes(b"frozen CPU payload")
+    alias = root / "native-link.so"
+    alias.symlink_to(payload)
+    rows = [
+        {
+            "path": path.name,
+            "realpath": str(path.resolve()),
+            "bytes": path.stat().st_size,
+            "sha256": campaign.digest(path),
+        }
+        for path in (payload, alias)
+    ]
+    if fault == "duplicate":
+        rows.append(rows[0])
+    elif fault == "traversal":
+        rows[0] = dict(rows[0], path="../site-packages/native.so")
+    manifest = tmp_path / "runtime.json"
+    manifest.write_text(json.dumps({"root": str(root), "files": rows}))
+    declaration = {"path": str(manifest), "sha256": campaign.digest(manifest)}
+    guard = tmp_path / "protected.lock"
+    guard.touch()
+    marker = tmp_path / "protected.json"
+    marker.write_text("CPU fixture")
+    contract = {
+        "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+        "input_sha256": {},
+        "runtime_manifests": [declaration],
+        "locks": [],
+        "protected_gpu0": {
+            "quarantine": str(marker),
+            "quarantine_sha256": campaign.digest(marker),
+            "lease": str(guard),
+            "lease_inode": guard.stat().st_ino,
+            "guardian_pid": os.getpid(),
+            "guardian_start_ticks": campaign.identity(os.getpid())["start_ticks"],
+        },
+    }
+    if fault == "payload":
+        payload.write_bytes(b"changed CPU bytes")
+    elif fault == "extra-file":
+        (root / "sitecustomize.py").write_text("unexpected import influence")
+    elif fault == "symlink-target":
+        replacement = tmp_path / "same-bytes.so"
+        replacement.write_bytes(payload.read_bytes())
+        alias.unlink()
+        alias.symlink_to(replacement)
+    elif fault == "manifest":
+        manifest.write_text(manifest.read_text() + " ")
+    if fault is None:
+        campaign.check_inputs(contract, deadline=time.monotonic() + 1)
+    else:
+        with pytest.raises(RuntimeError):
+            campaign.check_inputs(contract, deadline=time.monotonic() + 1)
+
+
+def test_runtime_manifest_deadline_and_nonregular_inputs_cannot_pass(tmp_path):
+    fifo = tmp_path / "not-a-library"
+    os.mkfifo(fifo)
+    with pytest.raises(RuntimeError, match="regular file"):
+        campaign.digest(fifo, time.monotonic() + 1)
+    with pytest.raises(TimeoutError):
+        campaign.check_runtime_manifest({}, time.monotonic() - 1)
+
+
 def test_expired_or_oversized_oracle_cannot_get_success(tmp_path, monkeypatch):
     cell, owner, observed = valid_evidence(tmp_path)
     with pytest.raises(TimeoutError):

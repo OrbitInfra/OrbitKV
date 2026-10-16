@@ -568,8 +568,15 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   grant to READY/controller identity, and retains ownership through final
   durable evidence. Bounded evidence reads/parsing and all inventory/waits
   consume the shared remaining cleanup deadline. CPU controls reject the
-  preserved original counterexamples; independent controller/source and exact
-  runtime/resource/launch acceptance remain pending.
+  preserved original counterexamples. Independent `3228e80c` review accepts
+  controller source/CPU scope (24 controls, 433 source and 931 benchmark tests).
+  Exact runtime/resource/launch acceptance remains pending. Runtime manifests
+  now bind each installed file's bytes, digest and resolved target plus the
+  complete file census under each frozen root; extra files, target changes,
+  duplicate/path-traversal declarations and nonregular inputs are rejected.
+  Manifests are bounded to 64 MiB/200,000 files and consume the shared deadline.
+  This controller-only increment still requires independent acceptance; it
+  changes no production runtime bytes and grants no GPU launch or lifetime claim.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

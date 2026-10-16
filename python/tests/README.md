@@ -131,7 +131,12 @@ The installed registration campaign controller is
 and rejects missing/forced/unreaped/native-error evidence. It also checks
 adopted exit codes, expected logs, observed owner identities, selected lock
 replacement, READY/controller grant replay, loader/cache environment leakage,
-shared remaining deadlines and final-error retention. The original controller
+shared remaining deadlines and final-error retention. Runtime manifest controls
+use the consumed input check to reject payload changes, extra installed files,
+symlink target drift, changed manifests, duplicate/traversal entries and
+nonregular input. Each frozen root has a complete file census, file sizes,
+resolved targets and SHA256 values; manifests have a 64 MiB/200,000-file bound.
+The original controller
 and its counterexamples stay in the external artifact archive. It separates precheck
 from formal cells, preserves locks on unknown ownership and requires a distinct
 independent grant matching the immutable contract. A source/CPU controller pass

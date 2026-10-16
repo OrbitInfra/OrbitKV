@@ -20,6 +20,8 @@ MAX_JSON_BYTES = 1024 * 1024
 MAX_LOG_BYTES = 32 * 1024 * 1024
 MAX_EVIDENCE_FILES = 4096
 MAX_OBSERVED_PROCESSES = 1024
+MAX_RUNTIME_MANIFEST_BYTES = 64 * 1024 * 1024
+MAX_RUNTIME_FILES = 200000
 
 
 def remaining(deadline: float | None) -> float:
@@ -76,15 +78,76 @@ def evidence_paths(directory: Path, pattern: str, deadline: float | None = None)
 
 def digest(path: Path, deadline: float | None = None) -> str:
     value = hashlib.sha256()
-    with path.open("rb") as stream:
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise RuntimeError(f"Frozen input is not a regular file: {path}")
         while True:
             remaining(deadline)
-            chunk = stream.read(1024 * 1024)
+            chunk = os.read(fd, 1024 * 1024)
             if not chunk:
                 break
             value.update(chunk)
+    finally:
+        os.close(fd)
     remaining(deadline)
     return value.hexdigest()
+
+
+def check_runtime_manifest(declaration: dict, deadline: float | None = None) -> None:
+    remaining(deadline)
+    raw = read_bytes(Path(declaration["path"]), MAX_RUNTIME_MANIFEST_BYTES, deadline)
+    if hashlib.sha256(raw).hexdigest() != declaration["sha256"]:
+        raise RuntimeError("Frozen runtime manifest changed")
+    manifest = json.loads(raw)
+    remaining(deadline)
+    root = Path(manifest["root"])
+    if not root.is_absolute() or root.resolve() != root or not root.is_dir():
+        raise RuntimeError("Runtime manifest root is not a canonical directory")
+    files = manifest["files"]
+    if not isinstance(files, list) or not files or len(files) > MAX_RUNTIME_FILES:
+        raise RuntimeError("Runtime manifest file count is invalid")
+    declared = set()
+    for item in files:
+        remaining(deadline)
+        relative = Path(item["path"])
+        if (
+            relative.is_absolute()
+            or ".." in relative.parts
+            or relative.as_posix() != item["path"]
+            or item["path"] in declared
+            or type(item["bytes"]) is not int
+            or item["bytes"] < 0
+        ):
+            raise RuntimeError("Invalid or duplicate runtime file declaration")
+        declared.add(item["path"])
+        path = root / relative
+        resolved = path.resolve(strict=True)
+        if str(resolved) != item["realpath"]:
+            raise RuntimeError(f"Runtime file target changed: {path}")
+        if (
+            not resolved.is_file()
+            or resolved.stat().st_size != item["bytes"]
+            or digest(resolved, deadline) != item["sha256"]
+            or path.resolve(strict=True) != resolved
+        ):
+            raise RuntimeError(f"Frozen runtime payload changed: {path}")
+    actual = set()
+    for index, path in enumerate(root.rglob("*")):
+        remaining(deadline)
+        if index >= MAX_RUNTIME_FILES * 4:
+            raise RuntimeError("Runtime directory census bound exceeded")
+        if path.is_symlink() and path.is_dir():
+            raise RuntimeError("Runtime directory symlinks require a separate frozen root")
+        if path.is_file() or path.is_symlink():
+            actual.add(path.relative_to(root).as_posix())
+            if len(actual) > MAX_RUNTIME_FILES:
+                raise RuntimeError("Runtime file census bound exceeded")
+        elif not path.is_dir():
+            raise RuntimeError("Runtime census contains a non-regular input")
+    if actual != declared:
+        raise RuntimeError("Runtime file census differs from the frozen manifest")
+    remaining(deadline)
 
 
 def identity(pid: int, deadline: float | None = None) -> dict:
@@ -182,6 +245,8 @@ def check_inputs(
     for path, expected in contract["input_sha256"].items():
         if digest(Path(path), deadline) != expected:
             raise RuntimeError(f"Frozen input changed: {path}")
+    for manifest in contract.get("runtime_manifests", []):
+        check_runtime_manifest(manifest, deadline)
     protected = contract["protected_gpu0"]
     if (
         digest(Path(protected["quarantine"]), deadline) != protected["quarantine_sha256"]
