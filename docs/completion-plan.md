@@ -661,6 +661,16 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   Its exact binary/dependencies and all process output must be frozen and reviewed
   before use. This is exit evidence, not a physical transfer termination proof;
   it cannot reconstruct the original failed child's missing status.
+  Independent `bf7bf241` review is ChangesRequired: a short-lived nonzero child
+  missed by `/proc` sampling could pass, one trace could cover repeated PID
+  incarnations, conflicting exits were not fully rejected, and thread waits
+  were looked up under the wrong task. The repair builds a complete bounded
+  census from actual creation events and normal exit records, joins parent
+  thread wait results to their process owner, rejects extra/reused identities,
+  and checks every traced task even when process polling missed it. The real
+  old fast-exit counterexample now retains the controller, while the actual
+  threaded wait completes correctly. New source/CPU and launch review remain
+  required; all original controls and unlaunched freezes stay immutable.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

@@ -238,12 +238,22 @@ def test_logs_and_unique_observed_owners_are_required(tmp_path, fault):
 def test_actual_parent_wait_trace_binds_native_child_exit(tmp_path, fault):
     cell, owner, observed = valid_evidence(tmp_path)
     child = {"pid": 19, "start_ticks": 20, "parent": 17}
+    observed[1]["parent"] = 1
     observed.append(child)
     cell["process_trace_binary"] = "/frozen/strace"
     code = 7 if fault == "nonzero" else 0
     waited = 21 if fault == "wrong-pid" else 19
     line = f"1.0 wait4(-1, [{{WIFEXITED(s) && WEXITSTATUS(s) == {code}}}], 0, NULL) = {waited}\n"
-    (tmp_path / "process.trace.17").write_text(line * (2 if fault == "duplicate" else 1))
+    (tmp_path / "process.trace.1").write_text(
+        "0.0 clone(child_stack=NULL, flags=SIGCHLD) = 17\n"
+        "3.0 wait4(17, [{WIFEXITED(s) && WEXITSTATUS(s) == 0}], 0, NULL) = 17\n"
+        "4.0 +++ exited with 0 +++\n"
+    )
+    (tmp_path / "process.trace.17").write_text(
+        "0.1 clone(child_stack=NULL, flags=SIGCHLD) = 19\n"
+        + line * (2 if fault == "duplicate" else 1)
+        + "2.0 +++ exited with 0 +++\n"
+    )
     if fault != "missing":
         status = 8 if fault == "wrong-status" else code
         (tmp_path / "process.trace.19").write_text(f"1.1 +++ exited with {status} +++\n")
@@ -252,6 +262,58 @@ def test_actual_parent_wait_trace_binds_native_child_exit(tmp_path, fault):
     else:
         with pytest.raises((RuntimeError, OSError)):
             campaign.validate_cell(cell, tmp_path, owner, observed)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [None, "nonzero", "unlisted-task", "duplicate-birth", "conflicting-exit", "quoted-exit"],
+)
+def test_trace_census_checks_children_missed_by_proc_sampling(tmp_path, fault):
+    cell, owner, observed = valid_evidence(tmp_path)
+    observed[1]["parent"] = owner["pid"]
+    cell["process_trace_binary"] = "/frozen/strace"
+    code = 7 if fault == "nonzero" else 0
+    birth = "1.0 clone(child_stack=NULL, flags=SIGCHLD) = 19\n"
+    (tmp_path / "process.trace.1").write_text(
+        "0.0 clone(child_stack=NULL, flags=SIGCHLD) = 17\n"
+        "4.0 wait4(17, [{WIFEXITED(s) && WEXITSTATUS(s) == 0}], 0, NULL) = 17\n"
+        "5.0 +++ exited with 0 +++\n"
+    )
+    (tmp_path / "process.trace.17").write_text(
+        birth * (2 if fault == "duplicate-birth" else 1)
+        + f"2.0 wait4(19, [{{WIFEXITED(s) && WEXITSTATUS(s) == {code}}}], 0, NULL) = 19\n"
+        + "3.0 +++ exited with 0 +++\n"
+    )
+    terminal = f"2.1 +++ exited with {code} +++\n"
+    if fault == "conflicting-exit":
+        terminal += "2.2 +++ exited with 7 +++\n"
+    elif fault == "quoted-exit":
+        terminal = '2.1 execve("/bin/echo", ["+++ exited with 0 +++"], []) = 0\n'
+    (tmp_path / "process.trace.19").write_text(terminal)
+    if fault == "unlisted-task":
+        (tmp_path / "process.trace.21").write_text("2.1 +++ exited with 0 +++\n")
+    if fault is None:
+        campaign.validate_cell(cell, tmp_path, owner, observed)
+    else:
+        with pytest.raises(RuntimeError):
+            campaign.validate_cell(cell, tmp_path, owner, observed)
+
+
+def test_trace_wait_in_parent_thread_accounts_child_and_resumed_syscall(tmp_path):
+    (tmp_path / "process.trace.1").write_text(
+        "0.0 clone(child_stack=NULL, flags=SIGCHLD) = 19\n"
+        "0.1 clone3({flags=CLONE_VM|CLONE_THREAD|CLONE_PARENT_SETTID}, 88) = 21\n"
+        "3.0 +++ exited with 0 +++\n"
+    )
+    (tmp_path / "process.trace.19").write_text("1.1 +++ exited with 0 +++\n")
+    (tmp_path / "process.trace.21").write_text(
+        "1.0 wait4(19, <unfinished ...>\n"
+        "1.2 <... wait4 resumed>[{WIFEXITED(s) && WEXITSTATUS(s) == 0}], 0, NULL) = 19\n"
+        "2.0 +++ exited with 0 +++\n"
+    )
+    rows = campaign.process_trace_inventory(tmp_path, 1)
+    assert rows[19]["waited_by"] == 21 and rows[19]["parent"] == 1
+    assert rows[21]["group"] == 1 and rows[21]["thread"] is True
 
 
 def test_same_content_lock_replacement_rejected_while_old_inode_is_held(tmp_path):

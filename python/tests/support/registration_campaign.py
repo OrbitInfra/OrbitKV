@@ -389,27 +389,105 @@ def validate_python_origin(
     remaining(deadline)
 
 
-def traced_child_wait(directory: Path, child: dict, deadline: float | None = None) -> int:
-    path = directory / f"process.trace.{child['parent']}"
-    text = read_bytes(path, MAX_LOG_BYTES, deadline).decode(errors="strict")
-    matches = []
-    for line in text.splitlines():
-        remaining(deadline)
-        match = re.search(
-            r"wait4\([^,]+, \[\{WIFEXITED\(s\) && WEXITSTATUS\(s\) == (\d+)\}\],.*\) = (\d+)$",
-            line,
-        )
-        if match and int(match[2]) == child["pid"]:
-            matches.append(int(match[1]))
-    if len(matches) != 1:
-        raise RuntimeError("Observed native child has no unique traced parent wait")
-    terminal = read_bytes(
-        directory / f"process.trace.{child['pid']}", MAX_LOG_BYTES, deadline
-    ).decode(errors="strict")
-    if len(re.findall(rf"\+\+\+ exited with {matches[0]} \+\+\+", terminal)) != 1:
-        raise RuntimeError("Traced child exit disagrees with its actual parent wait")
+def process_trace_inventory(
+    directory: Path, root_pid: int, deadline: float | None = None
+) -> dict[int, dict]:
+    tasks = {}
+    births = {}
+    waits = []
+    for path in evidence_paths(directory, "process.trace.*", deadline):
+        name = path.name.removeprefix("process.trace.")
+        if not name.isdecimal() or int(name) in tasks:
+            raise RuntimeError("Invalid or duplicate process trace identity")
+        pid = int(name)
+        events = []
+        pending = {}
+        terminals = []
+        text = read_bytes(path, MAX_LOG_BYTES, deadline).decode(errors="strict")
+        for line in text.splitlines():
+            remaining(deadline)
+            match = re.fullmatch(r"(\d+\.\d+) (.+)", line)
+            if not match:
+                raise RuntimeError("Malformed process trace event")
+            stamp, event = match.groups()
+            terminal = re.fullmatch(r"\+\+\+ exited with (\d+) \+\+\+", event)
+            if terminal:
+                terminals.append(int(terminal[1]))
+                continue
+            if event.startswith("+++ "):
+                raise RuntimeError("Native task has no normal traced terminal state")
+            unfinished = re.fullmatch(r"(\w+)\((.*)<unfinished \.\.\.>", event)
+            resumed = re.fullmatch(r"<\.\.\. (\w+) resumed>(.*)", event)
+            if unfinished:
+                if unfinished[1] in pending:
+                    raise RuntimeError("Duplicate unfinished process syscall")
+                pending[unfinished[1]] = f"{unfinished[1]}({unfinished[2]}"
+                continue
+            if resumed:
+                start = pending.pop(resumed[1], None)
+                if start is None:
+                    raise RuntimeError("Resumed process syscall has no start")
+                event = start + resumed[2]
+            events.append((stamp, event))
+        if pending or len(terminals) != 1:
+            raise RuntimeError("Process trace is incomplete or has conflicting exits")
+        tasks[pid] = {"pid": pid, "exit_code": terminals[0]}
+        for stamp, event in events:
+            created = re.fullmatch(r"(clone3?|fork|vfork)\((.*)\)\s+= (\d+)", event)
+            if created and int(created[3]) > 0:
+                child = int(created[3])
+                if (
+                    child in births
+                    or child == root_pid
+                    or re.search(r"\bCLONE_PARENT\b", created[2])
+                ):
+                    raise RuntimeError("Unsupported/reused native task identity")
+                births[child] = (pid, "CLONE_THREAD" in created[2], stamp)
+            waited = re.fullmatch(
+                r"wait4\([^,]+, \[\{WIFEXITED\(s\) && WEXITSTATUS\(s\) == (\d+)\}\],.*\)\s+= (\d+)",
+                event,
+            )
+            if waited:
+                waits.append((pid, int(waited[2]), int(waited[1])))
+    if root_pid not in tasks or set(tasks) != {root_pid, *births}:
+        raise RuntimeError("Complete process trace census differs from its creation events")
+    tasks[root_pid].update(parent=None, group=root_pid, thread=False)
+    unresolved = set(births)
+    while unresolved:
+        advanced = False
+        for child in list(unresolved):
+            parent, thread, _stamp = births[child]
+            if parent not in tasks or "group" not in tasks[parent]:
+                continue
+            tasks[child].update(
+                parent=tasks[parent]["group"],
+                group=tasks[parent]["group"] if thread else child,
+                thread=thread,
+            )
+            unresolved.remove(child)
+            advanced = True
+        if not advanced:
+            raise RuntimeError("Process trace ancestry does not reach its leader")
+    for waiter, child, code in waits:
+        if (
+            child not in tasks
+            or tasks[child]["thread"]
+            or tasks[child]["parent"] != tasks[waiter]["group"]
+        ):
+            raise RuntimeError("Traced wait does not belong to the child's actual parent")
+        if tasks[child].get("waited_by") is not None or tasks[child]["exit_code"] != code:
+            raise RuntimeError("Duplicate traced wait or conflicting child exit")
+        tasks[child]["waited_by"] = waiter
     remaining(deadline)
-    return matches[0]
+    return tasks
+
+
+def traced_child_wait(directory: Path, child: dict, deadline: float | None = None) -> int:
+    tasks = process_trace_inventory(directory, child["parent"], deadline)
+    task = tasks.get(child["pid"])
+    if task is None or task.get("waited_by") is None:
+        raise RuntimeError("Observed native child has no unique traced parent wait")
+    return task["exit_code"]
 
 
 def validate_cell(
@@ -478,11 +556,27 @@ def validate_cell(
             raise RuntimeError("Adopted native exit was invalid, unobserved or duplicated")
         accounted.add(key)
     if cell.get("process_trace_binary"):
-        for key in set(known) - accounted:
-            code = traced_child_wait(directory, known[key], deadline)
-            if code not in cell["adopted_exit_codes"]:
+        tasks = process_trace_inventory(directory, pytest_owner["pid"], deadline)
+        by_pid = {}
+        for key in known:
+            if key[0] in by_pid:
+                raise RuntimeError("One trace cannot account for reused process incarnations")
+            by_pid[key[0]] = key
+        for pid, task in tasks.items():
+            if task["exit_code"] not in cell["adopted_exit_codes"]:
                 raise RuntimeError("Traced native child exit is not accepted")
-            accounted.add(key)
+            key = by_pid.get(pid)
+            if (
+                pid != pytest_owner["pid"]
+                and not task["thread"]
+                and task.get("waited_by") is None
+                and (key is None or key not in accounted)
+            ):
+                raise RuntimeError("Traced child has neither actual parent nor adopted wait")
+            if key is not None and task.get("waited_by") is not None:
+                if known[key].get("parent") != task["parent"]:
+                    raise RuntimeError("Observed and traced parent identities differ")
+                accounted.add(key)
     if accounted != set(known):
         raise RuntimeError("Observed native children have no terminal receipt")
     if not cell.get("log_sets"):
