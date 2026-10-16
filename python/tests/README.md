@@ -154,6 +154,10 @@ startup record bound to PID/start ticks before readiness. Missing or mismatched
 records cannot pass the native gate; persistence failure retains the live owner.
 Native cleanup additionally requires the actual owned `sigterm_sent` record and
 the Manager's normal-shutdown marker; exit zero/reaped alone does not pass.
+Cells that declare a frozen process tracer preserve the pytest leader PID and
+record native fork/exec/wait/exit events. A child reaped by its own parent requires
+one matching actual wait and child exit record; absence, duplication or unexpected
+status refuses success. Tracing does not establish physical DMA termination.
 The original controller
 and its counterexamples stay in the external artifact archive. It separates precheck
 from formal cells, preserves locks on unknown ownership and requires a distinct

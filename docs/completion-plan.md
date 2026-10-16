@@ -653,6 +653,14 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   assuming GPU0 is quarantined on every host; an empty list still requires a
   complete independently reviewed resource survey. New freeze/launch review
   and actual credit/byte gates remain open, and no old resource is released.
+  Independent source/CPU review accepts `bad63760`. The next harness increment
+  records process events for the cell and its native helpers. An observed child
+  reaped by its actual parent may be accounted only by one successful traced
+  wait plus its matching child exit; missing/duplicate/nonzero evidence refuses
+  success. The tracer preserves the pytest leader PID and owns no cache state.
+  Its exact binary/dependencies and all process output must be frozen and reviewed
+  before use. This is exit evidence, not a physical transfer termination proof;
+  it cannot reconstruct the original failed child's missing status.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

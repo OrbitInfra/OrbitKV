@@ -9,6 +9,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import signal
 import stat
 import subprocess
@@ -388,6 +389,29 @@ def validate_python_origin(
     remaining(deadline)
 
 
+def traced_child_wait(directory: Path, child: dict, deadline: float | None = None) -> int:
+    path = directory / f"process.trace.{child['parent']}"
+    text = read_bytes(path, MAX_LOG_BYTES, deadline).decode(errors="strict")
+    matches = []
+    for line in text.splitlines():
+        remaining(deadline)
+        match = re.search(
+            r"wait4\([^,]+, \[\{WIFEXITED\(s\) && WEXITSTATUS\(s\) == (\d+)\}\],.*\) = (\d+)$",
+            line,
+        )
+        if match and int(match[2]) == child["pid"]:
+            matches.append(int(match[1]))
+    if len(matches) != 1:
+        raise RuntimeError("Observed native child has no unique traced parent wait")
+    terminal = read_bytes(
+        directory / f"process.trace.{child['pid']}", MAX_LOG_BYTES, deadline
+    ).decode(errors="strict")
+    if len(re.findall(rf"\+\+\+ exited with {matches[0]} \+\+\+", terminal)) != 1:
+        raise RuntimeError("Traced child exit disagrees with its actual parent wait")
+    remaining(deadline)
+    return matches[0]
+
+
 def validate_cell(
     cell: dict,
     directory: Path,
@@ -453,6 +477,12 @@ def validate_cell(
         ):
             raise RuntimeError("Adopted native exit was invalid, unobserved or duplicated")
         accounted.add(key)
+    if cell.get("process_trace_binary"):
+        for key in set(known) - accounted:
+            code = traced_child_wait(directory, known[key], deadline)
+            if code not in cell["adopted_exit_codes"]:
+                raise RuntimeError("Traced native child exit is not accepted")
+            accounted.add(key)
     if accounted != set(known):
         raise RuntimeError("Observed native children have no terminal receipt")
     if not cell.get("log_sets"):
@@ -785,8 +815,23 @@ def main() -> None:
             env["PYTHONDONTWRITEBYTECODE"] = "1"
             with (directory / "pytest.log").open("x") as log:
                 active = True
+                argv = cell["argv"]
+                if cell.get("process_trace_binary"):
+                    argv = [
+                        cell["process_trace_binary"],
+                        "-D",
+                        "-ff",
+                        "-ttt",
+                        "-s",
+                        "256",
+                        "-e",
+                        "trace=process",
+                        "-o",
+                        str(directory / "process.trace"),
+                        *argv,
+                    ]
                 process = subprocess.Popen(
-                    cell["argv"],
+                    argv,
                     cwd=cell["cwd"],
                     env=env,
                     stdin=subprocess.DEVNULL,
@@ -797,6 +842,19 @@ def main() -> None:
                 )
                 deadline = min(global_deadline, time.monotonic() + cell["seconds"])
                 owner = identity(process.pid, deadline)
+                if cell.get("process_trace_binary"):
+                    exec_deadline = min(deadline, time.monotonic() + 10)
+                    expected_executable = Path(cell["argv"][0]).resolve()
+                    while Path(f"/proc/{process.pid}/exe").resolve() != expected_executable:
+                        remaining(exec_deadline)
+                        if process.poll() is not None:
+                            raise RuntimeError("Traced pytest leader exited before its exec")
+                        time.sleep(0.01)
+                    write(
+                        directory / "TRACED-EXEC.json",
+                        {"owner": owner, "executable": str(expected_executable)},
+                        deadline,
+                    )
                 observed = {(owner["pid"], owner["start_ticks"]): owner}
                 write(directory / "STARTED.json", owner, deadline)
                 while process.poll() is None:

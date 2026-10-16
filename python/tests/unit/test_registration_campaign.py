@@ -232,6 +232,28 @@ def test_logs_and_unique_observed_owners_are_required(tmp_path, fault):
         campaign.validate_cell(cell, tmp_path, owner, observed)
 
 
+@pytest.mark.parametrize(
+    "fault", [None, "missing", "wrong-pid", "wrong-status", "duplicate", "nonzero"]
+)
+def test_actual_parent_wait_trace_binds_native_child_exit(tmp_path, fault):
+    cell, owner, observed = valid_evidence(tmp_path)
+    child = {"pid": 19, "start_ticks": 20, "parent": 17}
+    observed.append(child)
+    cell["process_trace_binary"] = "/frozen/strace"
+    code = 7 if fault == "nonzero" else 0
+    waited = 21 if fault == "wrong-pid" else 19
+    line = f"1.0 wait4(-1, [{{WIFEXITED(s) && WEXITSTATUS(s) == {code}}}], 0, NULL) = {waited}\n"
+    (tmp_path / "process.trace.17").write_text(line * (2 if fault == "duplicate" else 1))
+    if fault != "missing":
+        status = 8 if fault == "wrong-status" else code
+        (tmp_path / "process.trace.19").write_text(f"1.1 +++ exited with {status} +++\n")
+    if fault is None:
+        campaign.validate_cell(cell, tmp_path, owner, observed)
+    else:
+        with pytest.raises((RuntimeError, OSError)):
+            campaign.validate_cell(cell, tmp_path, owner, observed)
+
+
 def test_same_content_lock_replacement_rejected_while_old_inode_is_held(tmp_path):
     lease = tmp_path / "selected.lock"
     lease.write_text("same contents")
