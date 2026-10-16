@@ -288,7 +288,15 @@ original_storage = weakref.ref(tensor.storage)
             element_size: 2,
             ..Default::default()
         };
-        validate_export_snapshot(py, &tensors, &storages, &[4096], &[layout.clone()], 0).unwrap();
+        validate_export_snapshot(
+            py,
+            &tensors,
+            &storages,
+            &[4096],
+            std::slice::from_ref(&layout),
+            0,
+        )
+        .unwrap();
         let replacement = fixture.getattr("Storage").unwrap().call1((8192,)).unwrap();
         tensor.setattr("storage", replacement).unwrap();
         drop(storage);
