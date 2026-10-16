@@ -1,6 +1,10 @@
 //! Native ownership of CUDA exports until registration has an import receipt.
 
 use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{FileExt, MetadataExt, OpenOptionsExt};
+use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use orbitkv_channel::CacheClient;
@@ -24,9 +28,16 @@ pub(crate) struct RegistrationAttempt {
     _tensors: Arc<Vec<Py<PyAny>>>,
     bytes: u64,
     shared: Vec<Py<PyAny>>,
-    credits: Vec<(Vec<u8>, u64, CreditState)>,
+    credits: Vec<ExportCredit>,
     exporting: bool,
     message: String,
+}
+
+struct ExportCredit {
+    name: Vec<u8>,
+    offset: u64,
+    state: CreditState,
+    counter: Option<File>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -96,19 +107,29 @@ impl AttemptOwner {
             ));
         }
         let mut duplicate = false;
+        let counter = counter_file(&name, offset)
+            .map_err(|error| crate::OrbitKVError::new_err(error.to_string()))?;
+        if counter_value(&counter, offset)? != 1 {
+            return Err(crate::OrbitKVError::new_err(
+                "CUDA export credit is not exclusively outstanding; owner retained",
+            ));
+        }
         self.update(|attempt| {
             duplicate = attempt
                 .credits
                 .iter()
-                .any(|(prior, slot, _)| *prior == name && *slot == offset);
+                .any(|prior| prior.name == name && prior.offset == offset);
             if duplicate {
-                for (_, _, state) in &mut attempt.credits {
-                    *state = CreditState::Unknown;
+                for credit in &mut attempt.credits {
+                    credit.state = CreditState::Unknown;
                 }
             } else {
-                attempt
-                    .credits
-                    .push((name, offset, CreditState::NeverImported));
+                attempt.credits.push(ExportCredit {
+                    name,
+                    offset,
+                    state: CreditState::NeverImported,
+                    counter: Some(counter),
+                });
                 attempt.exporting = false;
             }
         })?;
@@ -122,8 +143,8 @@ impl AttemptOwner {
 
     pub(crate) fn submitted(&self) -> PyResult<()> {
         self.update(|attempt| {
-            for (_, _, state) in &mut attempt.credits {
-                *state = CreditState::Unknown;
+            for credit in &mut attempt.credits {
+                credit.state = CreditState::Unknown;
             }
         })
     }
@@ -131,8 +152,8 @@ impl AttemptOwner {
     pub(crate) fn resolve(&self, py: Python<'_>, credits: &[i32]) -> PyResult<()> {
         self.update(|attempt| {
             if credits.len() == attempt.credits.len() {
-                for ((_, _, state), value) in attempt.credits.iter_mut().zip(credits) {
-                    *state = match CudaCreditDisposition::try_from(*value) {
+                for (credit, value) in attempt.credits.iter_mut().zip(credits) {
+                    credit.state = match CudaCreditDisposition::try_from(*value) {
                         Ok(CudaCreditDisposition::NeverImported) => CreditState::NeverImported,
                         Ok(CudaCreditDisposition::ImporterOwned) => CreditState::ImporterOwned,
                         _ => CreditState::Unknown,
@@ -149,10 +170,10 @@ impl AttemptOwner {
         loop {
             let mut next = None;
             self.update(|attempt| {
-                for (index, (name, offset, state)) in attempt.credits.iter_mut().enumerate() {
-                    if *state == CreditState::NeverImported {
-                        *state = CreditState::Unknown;
-                        next = Some((index, name.clone(), *offset));
+                for (index, credit) in attempt.credits.iter_mut().enumerate() {
+                    if credit.state == CreditState::NeverImported {
+                        credit.state = CreditState::Unknown;
+                        next = Some((index, credit.name.clone(), credit.offset));
                         break;
                     }
                 }
@@ -160,6 +181,30 @@ impl AttemptOwner {
             let Some((index, name, offset)) = next else {
                 break;
             };
+            let counter = {
+                let attempts = ATTEMPTS.lock().map_err(|_| {
+                    crate::OrbitKVInternal::new_err("registration attempt lock poisoned")
+                })?;
+                attempts
+                    .get(&self.0)
+                    .and_then(|attempt| attempt.credits[index].counter.as_ref())
+                    .ok_or_else(|| crate::OrbitKVError::new_err("CUDA credit file owner absent"))?
+                    .try_clone()?
+            };
+            let current = counter_file(&name, offset)
+                .map_err(|error| crate::OrbitKVError::new_err(error.to_string()))?;
+            let prior = counter.metadata()?;
+            let observed = current.metadata()?;
+            if (prior.dev(), prior.ino()) != (observed.dev(), observed.ino()) {
+                return Err(crate::OrbitKVError::new_err(
+                    "CUDA export counter identity changed; owner retained",
+                ));
+            }
+            if counter_value(&counter, offset)? != 1 {
+                return Err(crate::OrbitKVError::new_err(
+                    "CUDA export credit is not exclusively outstanding; owner retained",
+                ));
+            }
             // Do not hold the registry mutex while calling the framework ABI.
             // A lost return leaves exactly this credit Unknown; no second repay.
             py.import("torch")?
@@ -168,7 +213,22 @@ impl AttemptOwner {
                     "_release_ipc_counter_cuda",
                     (PyBytes::new(py, &name), offset),
                 )?;
-            self.update(|attempt| attempt.credits[index].2 = CreditState::Repaid)?;
+            let current = counter_file(&name, offset)
+                .map_err(|error| crate::OrbitKVError::new_err(error.to_string()))?;
+            let prior = counter.metadata()?;
+            let observed = current.metadata()?;
+            if (prior.dev(), prior.ino()) != (observed.dev(), observed.ino())
+                || counter_value(&counter, offset)? != 0
+                || counter_value(&current, offset)? != 0
+            {
+                return Err(crate::OrbitKVError::new_err(
+                    "CUDA export counter repayment unproven; owner retained",
+                ));
+            }
+            self.update(|attempt| {
+                attempt.credits[index].state = CreditState::Repaid;
+                attempt.credits[index].counter = None;
+            })?;
         }
         let mut attempts = ATTEMPTS
             .lock()
@@ -178,7 +238,7 @@ impl AttemptOwner {
                 && attempt
                     .credits
                     .iter()
-                    .all(|(_, _, state)| *state == CreditState::Repaid)
+                    .all(|credit| credit.state == CreditState::Repaid)
         }) {
             attempts.remove(&self.0);
         }
@@ -194,7 +254,7 @@ impl AttemptOwner {
                 || attempt
                     .credits
                     .iter()
-                    .any(|(_, _, state)| *state != CreditState::ImporterOwned)
+                    .any(|credit| credit.state != CreditState::ImporterOwned)
         }) {
             return Err(crate::OrbitKVError::new_err(
                 "CUDA registration lacks complete importer receipt; owner retained",
@@ -214,6 +274,37 @@ impl AttemptOwner {
         apply(attempt);
         Ok(())
     }
+}
+
+fn counter_file(name: &[u8], offset: u64) -> std::io::Result<File> {
+    let name = name.strip_prefix(b"/").unwrap_or(name);
+    if name.is_empty()
+        || name == b"."
+        || name == b".."
+        || name.contains(&b'/')
+        || name.contains(&0)
+        || offset >= 10_000
+    {
+        return Err(std::io::Error::other(
+            "invalid CUDA export counter identity",
+        ));
+    }
+    let path = Path::new("/dev/shm").join(std::ffi::OsStr::from_bytes(name));
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() < 64 + (offset + 1) * 8 {
+        return Err(std::io::Error::other("CUDA export counter slot is absent"));
+    }
+    Ok(file)
+}
+
+fn counter_value(file: &File, offset: u64) -> PyResult<i64> {
+    let mut bytes = [0; 8];
+    file.read_exact_at(&mut bytes, 64 + offset * 8)?;
+    Ok(i64::from_ne_bytes(bytes))
 }
 
 impl Drop for AttemptOwner {
@@ -253,8 +344,8 @@ pub(crate) fn retained_attempts() -> Vec<RetainedAttempt> {
             let states = attempt
                 .credits
                 .iter()
-                .map(|(_, _, state)| {
-                    match state {
+                .map(|credit| {
+                    match credit.state {
                         CreditState::NeverImported => "never_imported",
                         CreditState::Unknown => "unknown",
                         CreditState::ImporterOwned => "importer_owned",

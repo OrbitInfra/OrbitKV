@@ -32,6 +32,11 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   cudaMalloc export unchanged through the importer; bare legacy and expandable
   handles are outside this owner contract. Real installed export/import controls
   remain necessary even when synthetic metadata validation passes.
+  A normal return from Torch's best-effort counter release is not repayment
+  proof. The Rust attempt owner must retain the original counter file and verify
+  identity plus the exclusive slot's one-to-zero transition; missing, replaced,
+  silent or failed repayment remains charged without retry. This counter proof
+  does not establish CUDA/RDMA termination.
 
 Use the gate table in `AGENTS.md`: default Python tests must remain source-only;
 native lifecycle changes need process integration, and consumed adapter changes

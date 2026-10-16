@@ -635,6 +635,15 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   review and new launch inputs. Actual Manager prefix/CUTLASS search-path
   declarations also require correction from the retained runtime observation.
   No resource/quarantine release is inferred from empty GPU inventory.
+  Independent failed-result review also finds that the framework counter-release
+  helper can swallow mapping errors. Normal return/internal Repaid therefore
+  cannot establish credit reconciliation. The native-owner follow-up holds the
+  original counter file, requires its unchanged identity and exclusive slot,
+  and observes one-to-zero repayment before removing ownership. Silent/no-op,
+  lost return, replaced/missing files remain retained without retry. CPU controls
+  use actual task-owned shared-memory counter files and preserve the framework
+  stub's scope. Independent source/package and real credit acceptance remain
+  required; old failed-run credit and child evidence is still missing.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

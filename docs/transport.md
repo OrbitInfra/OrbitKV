@@ -67,6 +67,13 @@ returned credit is charged to the attempt owner immediately; a never-sent export
 can be repaid exactly once. Register replies bind the export generation and
 explicit credit disposition. Only NeverImported permits repayment; importer
 ownership is a handoff, and Unknown never proves import or device termination.
+The selected framework's rollback helper is best effort and can return after
+silently skipping a decrement. The native attempt owner therefore holds the
+actual exported counter file, checks its identity and exclusive value before
+rollback, and removes a credit only after the same slot is observed to change
+from one to zero. Missing/replaced files, unchanged counters and call errors
+retain the credit without another repayment attempt. This is a reference-credit
+proof; it is not a device-operation terminal receipt.
 A failed, partial or lost reply retains the attempt's client, tensors and credits,
 even after caller/client destruction. Unregister refuses a pending/retained
 attempt rather than reporting completed cleanup. The process limits these

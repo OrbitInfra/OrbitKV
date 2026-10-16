@@ -14,21 +14,45 @@ fn actual_attempt_owner_refunds_never_sent_and_retains_unknown_credits() {
             c_str!(
                 r#"
 from types import SimpleNamespace
+import os
+import struct
+import uuid
 calls = []
+counter_path = '/dev/shm/orbitkv-credit-control-' + uuid.uuid4().hex
+with open(counter_path, 'xb') as stream:
+    stream.write(bytes(64 + 10000 * 8))
 class Storage:
     fail_release = False
     fail_export = False
+    silent_release = False
+    replace_counter = False
+    remove_counter = False
     slot = 0
     def _share_cuda_(self):
         if self.fail_export:
             raise RuntimeError('controlled export failure')
         self.slot += 1
-        return (0, b'h'*64, 64, 0, b'/torch-counter', self.slot, b'', False)
+        with open(counter_path, 'r+b') as stream:
+            stream.seek(64 + self.slot * 8)
+            stream.write(struct.pack('=q', 1))
+        return (0, b'h'*64, 64, 0, os.path.basename(counter_path).encode(), self.slot, b'', False)
     @staticmethod
     def _release_ipc_counter_cuda(name, offset):
         calls.append((name, offset))
         if Storage.fail_release:
             raise RuntimeError('controlled release return lost')
+        if Storage.remove_counter:
+            os.unlink(counter_path)
+            return
+        if Storage.replace_counter:
+            os.unlink(counter_path)
+            with open(counter_path, 'xb') as stream:
+                stream.write(bytes(64 + 10000 * 8))
+            return
+        if not Storage.silent_release:
+            with open(counter_path, 'r+b') as stream:
+                stream.seek(64 + offset * 8)
+                stream.write(struct.pack('=q', 0))
 torch = SimpleNamespace(UntypedStorage=Storage)
 "#
             ),
@@ -128,6 +152,62 @@ torch = SimpleNamespace(UntypedStorage=Storage)
 
         let owner = AttemptOwner::reserve(
             Arc::clone(&process.client),
+            ("silent-release".into(), 0, 0),
+            Arc::clone(&tensors),
+            64,
+        )
+        .unwrap();
+        owner.export(py, &exporter).unwrap();
+        fixture
+            .getattr("Storage")
+            .unwrap()
+            .setattr("silent_release", true)
+            .unwrap();
+        assert!(owner.rollback(py).is_err());
+        assert!(instance_pending(&process.client, "silent-release"));
+        let calls = fixture.getattr("calls").unwrap().len().unwrap();
+        owner.rollback(py).unwrap();
+        assert_eq!(fixture.getattr("calls").unwrap().len().unwrap(), calls);
+        ATTEMPTS.lock().unwrap().remove(&owner.0);
+        fixture
+            .getattr("Storage")
+            .unwrap()
+            .setattr("silent_release", false)
+            .unwrap();
+
+        for mode in ["replace_counter", "remove_counter"] {
+            let owner = AttemptOwner::reserve(
+                Arc::clone(&process.client),
+                (mode.into(), 0, 0),
+                Arc::clone(&tensors),
+                64,
+            )
+            .unwrap();
+            owner.export(py, &exporter).unwrap();
+            fixture
+                .getattr("Storage")
+                .unwrap()
+                .setattr(mode, true)
+                .unwrap();
+            assert!(owner.rollback(py).is_err());
+            assert!(instance_pending(&process.client, mode));
+            let calls = fixture.getattr("calls").unwrap().len().unwrap();
+            owner.rollback(py).unwrap();
+            assert_eq!(fixture.getattr("calls").unwrap().len().unwrap(), calls);
+            ATTEMPTS.lock().unwrap().remove(&owner.0);
+            fixture
+                .getattr("Storage")
+                .unwrap()
+                .setattr(mode, false)
+                .unwrap();
+            let path: String = fixture.getattr("counter_path").unwrap().extract().unwrap();
+            if !std::path::Path::new(&path).exists() {
+                std::fs::write(path, vec![0; 64 + 10_000 * 8]).unwrap();
+            }
+        }
+
+        let owner = AttemptOwner::reserve(
+            Arc::clone(&process.client),
             ("partial".into(), 0, 0),
             Arc::clone(&tensors),
             64,
@@ -197,13 +277,15 @@ torch = SimpleNamespace(UntypedStorage=Storage)
         for owner in reserved {
             owner.rollback(py).unwrap();
         }
+        let counter: String = fixture.getattr("counter_path").unwrap().extract().unwrap();
+        std::fs::remove_file(counter).unwrap();
         if previous.bind(py).is_none() {
             modules.del_item("torch").unwrap();
         } else {
             modules.set_item("torch", previous).unwrap();
         }
         println!(
-            "actual_attempt_owner=1 duplicate_preexport=1 never_sent_refunded=1 unknown_retained=1 lost_release_not_retried=1 partial_export_retained=1 consumed_owner_handoff=1 budget_reject=1 CUDA_operations=0"
+            "actual_attempt_owner=1 duplicate_preexport=1 never_sent_refunded=1 unknown_retained=1 lost_release_not_retried=1 silent_release_retained=1 replaced_counter_retained=1 missing_counter_retained=1 partial_export_retained=1 consumed_owner_handoff=1 budget_reject=1 CUDA_operations=0"
         );
     });
     process.stop();
