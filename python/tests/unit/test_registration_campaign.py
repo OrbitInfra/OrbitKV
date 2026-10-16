@@ -14,7 +14,7 @@ import pytest
 from tests.support import registration_campaign as campaign
 
 
-def test_cpu_ready_owner_holds_then_normally_releases_real_resource_locks(tmp_path):
+def cpu_ready_inputs(tmp_path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     gpu = fake_bin / "nvidia-smi"
@@ -57,8 +57,18 @@ def test_cpu_ready_owner_holds_then_normally_releases_real_resource_locks(tmp_pa
     path.write_text(json.dumps(contract))
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    return path, env, lease
+
+
+@pytest.mark.parametrize("supervised", [False, True])
+def test_cpu_ready_owner_holds_then_normally_releases_real_resource_locks(tmp_path, supervised):
+    path, env, lease = cpu_ready_inputs(tmp_path)
+    argv = [sys.executable, "-B", campaign.__file__]
+    if supervised:
+        argv.append("--supervise")
+    argv.append(str(path))
     process = subprocess.Popen(
-        [sys.executable, "-B", campaign.__file__, str(path)],
+        argv,
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -76,6 +86,36 @@ def test_cpu_ready_owner_holds_then_normally_releases_real_resource_locks(tmp_pa
     with lease.open("a") as contender:
         fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
     assert not Path(f"/proc/{process.pid}").exists()
+    if supervised:
+        record = json.loads((tmp_path / "CONTROLLER-WAIT.json").read_text())
+        assert record["supervisor"]["pid"] == process.pid
+        assert record["controller"]["parent"] == process.pid
+        assert record["exit_code"] == 0 and record["actual_wait"] is True
+        assert record["forced_cleanup"] is False and record["wait_error"] is None
+        assert not Path(f"/proc/{record['controller']['pid']}").exists()
+
+
+def test_supervisor_records_real_nonzero_controller_exit_without_gpu_launch(tmp_path):
+    path, env, lease = cpu_ready_inputs(tmp_path)
+    contract = json.loads(path.read_text())
+    contract["boot_id"] = "invalid-CPU-fixture"
+    path.write_text(json.dumps(contract))
+    process = subprocess.Popen(
+        [sys.executable, "-B", campaign.__file__, "--supervise", str(path)],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    process.communicate(timeout=5)
+    assert process.returncode != 0
+    record = json.loads((tmp_path / "CONTROLLER-WAIT.json").read_text())
+    assert record["controller"]["parent"] == process.pid
+    assert record["exit_code"] == 1 and record["actual_wait"] is True
+    assert record["wait_error"] is None and record["forced_cleanup"] is False
+    assert not (tmp_path / "READY.json").exists()
+    assert not Path(f"/proc/{record['controller']['pid']}").exists()
+    with lease.open("a") as contender:
+        fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
 @pytest.mark.parametrize("fault", ["missing", "forced", "not-reaped", "bool-exit", "traceback"])

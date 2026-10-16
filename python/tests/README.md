@@ -140,6 +140,10 @@ Startup verification has one 180-second deadline. Cell admission/postflight can
 select only declared roots consumed by that cell; startup, grant and final input
 checks retain the complete manifest set. Freeze and review each cell's consumer
 root selection as part of launch acceptance, with the unchanged cleanup budget.
+Use `--supervise` for remote launch: a durable parent owns the actual controller
+wait and records its identity, status and lack of forced cleanup. Normal and
+nonzero real child controls run without GPU; a quarantined controller stays alive.
+This supervision does not qualify controller crashes or native DMA termination.
 The original controller
 and its counterexamples stay in the external artifact archive. It separates precheck
 from formal cells, preserves locks on unknown ownership and requires a distinct

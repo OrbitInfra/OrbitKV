@@ -593,6 +593,12 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   metadata caused by the earlier dependency `.pth`; both final package/native
   probes and ELF closure pass without CUDA/Manager launch. New exact source,
   runtime/resource/READY review and hardware gates remain required.
+  The first `fa729d86` READY is also held before GPU launch: its detached starter
+  lacks a task-owned controller wait/reap receipt. The next controller helper
+  keeps a durable supervisory parent, records real child identity and wait status,
+  propagates nonzero exits and leaves a quarantined child alive. This is healthy
+  launch/evidence supervision, not controller-crash or physical DMA termination
+  qualification. New source/CPU and exact launch review are required.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

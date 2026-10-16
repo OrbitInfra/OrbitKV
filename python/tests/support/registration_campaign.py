@@ -12,6 +12,7 @@ import os
 import signal
 import stat
 import subprocess
+import sys
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -484,15 +485,89 @@ def validate_cell(
     remaining(deadline)
 
 
+def supervise(contract_path: Path) -> None:
+    deadline = time.monotonic() + 180
+    root = contract_path.parent
+    owner = identity(os.getpid(), deadline)
+    write(root / "SUPERVISOR-STARTED.json", owner, deadline)
+    for number in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
+        signal.signal(number, signal.SIG_IGN)
+    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    environment = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+    }
+    argv = [sys.executable, "-I", "-B", str(Path(__file__).resolve()), str(contract_path)]
+    with (root / "controller.log").open("x") as output:
+        remaining(deadline)
+        process = subprocess.Popen(
+            argv,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        controller = {"pid": process.pid, "start_ticks": None}
+        start_error = None
+        try:
+            controller = identity(process.pid, deadline)
+            if controller["parent"] != owner["pid"]:
+                raise RuntimeError("Controller parent identity differs from its wait owner")
+            write(
+                root / "CONTROLLER-STARTED.json",
+                {"controller": controller, "supervisor": owner, "argv": argv},
+                deadline,
+            )
+        except BaseException as error:
+            start_error = repr(error)[:1024]
+            print(
+                f"Controller start evidence failed; wait owner retained: {start_error}", flush=True
+            )
+        wait_error = None
+        while True:
+            try:
+                code = process.wait(timeout=20)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+            except BaseException as error:
+                if wait_error is None:
+                    wait_error = repr(error)[:1024]
+                    print(f"Controller wait failed; owner retained: {wait_error}", flush=True)
+                time.sleep(1)
+        write(
+            root / "CONTROLLER-WAIT.json",
+            {
+                "controller": controller,
+                "supervisor": owner,
+                "exit_code": code,
+                "actual_wait": start_error is None and wait_error is None,
+                "forced_cleanup": False,
+                "start_error": start_error,
+                "wait_error": wait_error,
+                "waited_mono_ns": time.monotonic_ns(),
+            },
+            time.monotonic() + 30,
+        )
+    if code != 0 or start_error is not None or wait_error is not None:
+        raise RuntimeError(f"Controller exit {code}; campaign not accepted")
+
+
 def main() -> None:
     startup_deadline = time.monotonic() + 180
     parser = argparse.ArgumentParser()
+    parser.add_argument("--supervise", action="store_true")
     parser.add_argument("contract", type=Path)
     args = parser.parse_args()
     if not __debug__ or os.environ.get("PYTHONOPTIMIZE"):
         raise RuntimeError("Optimized controller execution is forbidden")
     if os.environ.get("LD_AUDIT") or os.environ.get("PYTHONPYCACHEPREFIX"):
         raise RuntimeError("Controller startup contains an unfrozen loader/bytecode influence")
+    if args.supervise:
+        supervise(args.contract)
+        return
     contract_bytes = read_bytes(args.contract, 16 * MAX_JSON_BYTES, startup_deadline)
     contract_sha = hashlib.sha256(contract_bytes).hexdigest()
     contract = json.loads(contract_bytes)
