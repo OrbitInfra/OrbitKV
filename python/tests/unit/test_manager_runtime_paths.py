@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import sys
 import time
 from types import SimpleNamespace
@@ -165,3 +166,83 @@ def test_strict_manager_start_records_actual_command_and_keeps_failed_record_own
         assert cleanup["exit_code"] == 0 and cleanup["reaped"] is True
         assert cleanup["forced_kill"] is False
         assert "SIGTERM received, shutting down" in (tmp_path / "manager.log").read_text()
+
+
+@pytest.mark.parametrize("replace_at_open", [False, True])
+def test_runtime_hash_is_bound_to_the_opened_mapped_inode(tmp_path, monkeypatch, replace_at_open):
+    library = tmp_path / "mapped.so"
+    library.write_bytes(b"A" * 4096)
+    replacement = tmp_path / "replacement.so"
+    replacement.write_bytes(b"B" * 4096)
+    backup = tmp_path / "original.so"
+    ready = tmp_path / "ready"
+    argv = [
+        sys.executable,
+        "-I",
+        "-S",
+        "-B",
+        "-c",
+        "import mmap,signal,sys\nfrom pathlib import Path\n"
+        "f=open(sys.argv[1],'rb');m=mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ)\n"
+        "signal.signal(signal.SIGTERM,lambda *_:sys.exit(0))\n"
+        "Path(sys.argv[2]).write_text('ready')\nwhile True:signal.pause()\n",
+        str(library),
+        str(ready),
+    ]
+    server = CacheManagerProcess(port=12345, log_path=tmp_path / "manager.log")
+    process = subprocess.Popen(argv, start_new_session=True)
+    server.process = process
+    server._process_start_ticks = str(registration_campaign.identity(process.pid)["start_ticks"])
+    server._log_path = tmp_path / "manager.log"
+    deadline = time.monotonic() + 5
+    try:
+        while not ready.exists():
+            assert process.poll() is None and time.monotonic() < deadline
+            time.sleep(0.01)
+        paths = {}
+        for line in cache_manager.Path(f"/proc/{process.pid}/maps").read_text().splitlines():
+            fields = line.split(maxsplit=5)
+            if len(fields) == 6 and fields[5].startswith("/"):
+                major, minor = (int(part, 16) for part in fields[3].split(":"))
+                paths[int(fields[4])] = os.makedev(major, minor)
+        actual_fstat, actual_stat, actual_open = os.fstat, cache_manager.Path.stat, os.open
+
+        def join(metadata):
+            # CPU seam for overlay device numbers only; inode and file bytes are real.
+            if metadata.st_ino not in paths:
+                return metadata
+            values = list(metadata)
+            values[2] = paths[metadata.st_ino]
+            return os.stat_result(values)
+
+        def opened(path, flags, *args, **kwargs):
+            if replace_at_open and cache_manager.Path(path) == library:
+                library.rename(backup)
+                replacement.rename(library)
+                try:
+                    return actual_open(path, flags, *args, **kwargs)
+                finally:
+                    library.rename(replacement)
+                    backup.rename(library)
+            return actual_open(path, flags, *args, **kwargs)
+
+        with monkeypatch.context() as local:
+            local.setattr(os, "fstat", lambda fd: join(actual_fstat(fd)))
+            local.setattr(
+                cache_manager.Path, "stat", lambda path, *a, **kw: join(actual_stat(path, *a, **kw))
+            )
+            local.setattr(os, "open", opened)
+            if replace_at_open:
+                with pytest.raises(RuntimeError, match="mapped runtime path was replaced"):
+                    server.record_runtime()
+                assert not list(tmp_path.glob("*.manager-runtime.json"))
+            else:
+                server.record_runtime()
+                runtime = json.loads(next(tmp_path.glob("*.manager-runtime.json")).read_text())
+                row = next(row for row in runtime["files"] if row["path"] == str(library))
+                assert row["inode"] == library.stat().st_ino
+                assert row["sha256"] == registration_campaign.digest(library)
+            assert process.poll() is None
+    finally:
+        process.terminate()
+        assert process.wait(timeout=5) == 0

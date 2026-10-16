@@ -676,6 +676,8 @@ def test_manager_importer_origin_is_identity_bound_and_inside_frozen_roots(fault
         "runtime-hash",
         "runtime-inode",
         "runtime-omission",
+        "runtime-omit-both",
+        "runtime-required-absent",
     ],
 )
 def test_native_cell_requires_command_record_bound_to_observed_manager(tmp_path, fault):
@@ -719,6 +721,15 @@ def test_native_cell_requires_command_record_bound_to_observed_manager(tmp_path,
         manager_runtime["files"][1]["inode"] = 10
     elif fault == "runtime-omission":
         manager_runtime["files"].pop()
+    elif fault == "runtime-omit-both":
+        manager_runtime["files"].pop()
+        manager_runtime["maps"] = manager_runtime["maps"].splitlines()[0] + "\n"
+    elif fault == "runtime-required-absent":
+        cell["runtime_mapped_files"]["/frozen/required.so"] = {
+            "realpath": "/frozen/required.so",
+            "bytes": 1,
+            "sha256": "d" * 64,
+        }
     if fault != "no-runtime":
         (tmp_path / "manager.manager-runtime.json").write_text(json.dumps(manager_runtime))
     runtime = {

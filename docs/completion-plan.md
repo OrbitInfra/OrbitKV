@@ -695,6 +695,11 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   increment needs independent source/CPU review before a fresh launch; it cannot
   reconstruct old maps or prove device termination. Original credit identity
   evidence and safe resource admission remain separate prerequisites.
+  Independent review of `a8c3b2b6` reproduced incomplete-census and pathname-hash
+  races; that freeze remains unaccepted. The next repair requires equality with
+  the complete frozen mapped-library set and hashes the same opened descriptor
+  whose device/inode matched the maps, checking file metadata and path identity
+  again afterward. Original failures and overlay limitations remain preserved.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

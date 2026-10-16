@@ -6,12 +6,14 @@ and test helpers for connector testing against a running server.
 
 import contextlib
 import errno
+import hashlib
 import json
 import logging
 import os
 import secrets
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import sysconfig
@@ -575,7 +577,7 @@ class CacheManagerProcess:
 
     def record_runtime(self) -> None:
         """Capture the live Manager's mapped file identities after registration."""
-        from .registration_campaign import digest, identity, read_bytes, remaining, write
+        from .registration_campaign import identity, read_bytes, remaining, write
 
         deadline = time.monotonic() + 30
         process = self.process
@@ -607,9 +609,32 @@ class CacheManagerProcess:
             remaining(deadline)
             path = Path(name)
             resolved = path.resolve(strict=True)
-            metadata = resolved.stat()
-            if (metadata.st_dev, metadata.st_ino) != paths[name]:
-                raise RuntimeError("Manager mapped runtime path was replaced")
+            fd = os.open(resolved, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                metadata = os.fstat(fd)
+                if (
+                    not stat.S_ISREG(metadata.st_mode)
+                    or (metadata.st_dev, metadata.st_ino) != paths[name]
+                ):
+                    raise RuntimeError("Manager mapped runtime path was replaced")
+                value = hashlib.sha256()
+                while True:
+                    remaining(deadline)
+                    chunk = os.read(fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    value.update(chunk)
+                after = os.fstat(fd)
+                current = resolved.stat()
+                if (
+                    (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                    != (metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns)
+                    or (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino)
+                    or path.resolve(strict=True) != resolved
+                ):
+                    raise RuntimeError("Manager mapped runtime changed during hashing")
+            finally:
+                os.close(fd)
             files.append(
                 {
                     "path": name,
@@ -617,7 +642,7 @@ class CacheManagerProcess:
                     "device": metadata.st_dev,
                     "inode": metadata.st_ino,
                     "bytes": metadata.st_size,
-                    "sha256": digest(resolved, deadline),
+                    "sha256": value.hexdigest(),
                 }
             )
         if (

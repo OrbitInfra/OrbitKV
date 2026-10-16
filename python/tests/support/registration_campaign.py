@@ -645,6 +645,7 @@ def validate_cell(
                     mapped_paths[name] = value
             if (
                 not mapped_paths
+                or set(mapped_paths) != set(frozen_files)
                 or set(mapped_paths) != {mapped.get("path") for mapped in row["files"]}
                 or len(row["files"]) != len(mapped_paths)
                 or cell["environment"]["ORBITKV_CACHE_MANAGER_BINARY"] not in mapped_paths
