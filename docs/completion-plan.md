@@ -973,7 +973,7 @@ fragment geometry and inference load before changing their owners. Preserve
 all-enqueued admission, event generations, source ownership and physical drain;
 keep CUDA in standalone files. Representative copy wins cannot select a production
 default. Native GDS and physical failure-domain qualification remain separate.
-S2/S4/S5 stay Partial.
+S4/S5 stay Partial; S2 is complete only for its accepted engineering scope.
 
 **Bounded attribution delivery:** source `4b568860` adds benchmark-only CUPTI
 driver callbacks and optional monotonic windows to the native layout fixture.

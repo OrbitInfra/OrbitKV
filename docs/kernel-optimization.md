@@ -943,6 +943,8 @@ logger storage; allocation and assembly remain inside publication and inclusive
 operation clocks. The staged CPU profile calls the same production publisher,
 including chunk-boundary and final-tail writes, and reports retained payload
 bytes separately. The whole profile still uses the real trace owner methods.
+Per-part clocks exclude eventual trace-owner destruction, including freeing the
+retained buffer; the baseline has the same owner-lifetime timer boundary.
 
 This changes `log::Record` grouping, counts and per-event metadata. Qualification
 covers the pinned plain-text logger and tested line-preserving embedding logger;

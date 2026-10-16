@@ -57,6 +57,7 @@ fn record(event: TraceRecord<'_>) -> serde_json::Value {
 #[test]
 fn completed_part_is_published_before_process_exit() {
     const CHILD_LOG: &str = "ORBITKV_TEST_LOCAL_COPY_CHILD_LOG";
+    const CHILD_LOGGER: &str = "ORBITKV_TEST_LOCAL_COPY_CHILD_LOGGER";
     if let Some(path) = std::env::var_os(CHILD_LOG) {
         use std::io::Write;
 
@@ -86,13 +87,19 @@ fn completed_part_is_published_before_process_exit() {
         }
 
         let path = std::path::PathBuf::from(path);
-        let file = std::fs::File::create(&path).unwrap();
-        let logger = Box::leak(Box::new(CaptureLogger {
-            output: std::sync::Mutex::new(std::io::BufWriter::with_capacity(1024 * 1024, file)),
-            messages: std::sync::Mutex::new(Vec::new()),
-        }));
-        log::set_logger(logger).unwrap();
-        log::set_max_level(log::LevelFilter::Info);
+        let logger = if std::env::var(CHILD_LOGGER).as_deref() == Ok("default") {
+            orbitkv_common::logging::init_stderr("info");
+            None
+        } else {
+            let file = std::fs::File::create(&path).unwrap();
+            let logger: &'static CaptureLogger = Box::leak(Box::new(CaptureLogger {
+                output: std::sync::Mutex::new(std::io::BufWriter::with_capacity(1024 * 1024, file)),
+                messages: std::sync::Mutex::new(Vec::new()),
+            }));
+            log::set_logger(logger).unwrap();
+            log::set_max_level(log::LevelFilter::Info);
+            Some(logger)
+        };
         let mut trace = LocalCopyTrace::new(0, Ok(usize::MAX), 16384);
         let large = |count: u64, size: u64| {
             (0..count)
@@ -136,110 +143,123 @@ fn completed_part_is_published_before_process_exit() {
         trace.finish_part(31, true);
         assert_eq!(trace.publication_len, 0);
         assert!(trace.closed);
-        let messages = serde_json::to_vec(&*logger.messages.lock().unwrap()).unwrap();
-        std::fs::write(path.with_extension("messages.json"), messages).unwrap();
+        if let Some(logger) = logger {
+            let messages = serde_json::to_vec(&*logger.messages.lock().unwrap()).unwrap();
+            std::fs::write(path.with_extension("messages.json"), messages).unwrap();
+        }
         // A released engine can end the process without running destructors.
         std::process::exit(0);
     }
 
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("capture.log");
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "transfer::local::trace::tests::completed_part_is_published_before_process_exit",
-        ])
-        .env(CHILD_LOG, &path)
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "{output:?}");
-    let events: Vec<serde_json::Value> = std::fs::read_to_string(&path)
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line.strip_prefix(RECORD_TAG).unwrap()).unwrap())
-        .collect();
-    let messages: Vec<(usize, String, String)> =
-        serde_json::from_slice(&std::fs::read(path.with_extension("messages.json")).unwrap())
+    for mode in ["buffered", "default"] {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(format!("{mode}.log"));
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "transfer::local::trace::tests::completed_part_is_published_before_process_exit",
+            ])
+            .env(CHILD_LOG, &path)
+            .env(CHILD_LOGGER, mode)
+            .env("RUST_LOG", "info")
+            .output()
             .unwrap();
-    assert!(messages.len() < events.len());
-    assert_eq!(
-        messages
-            .iter()
-            .filter(|message| message.0 > PUBLICATION_BYTES)
-            .count(),
-        1
-    );
-    assert!(messages.iter().all(|(_, target, level)| target
-        == "orbitkv_core::transfer::local::trace"
-        && level == "INFO"));
-    let mut start = 0;
-    for (sequence, (descriptors, batches, reserved)) in [
-        (256, 256, 513),
-        (256, 256, 514),
-        (258, 258, 519),
-        (4354, 261, 8712),
-        (4354, 261, 8712),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let end = events[start..]
-            .iter()
-            .position(|event| event["stage"] == "local_raw_copy_complete")
+        assert!(output.status.success(), "{output:?}");
+        if mode == "default" {
+            std::fs::write(&path, &output.stderr).unwrap();
+        }
+        let events: Vec<serde_json::Value> = std::fs::read_to_string(&path)
             .unwrap()
-            + start;
-        let part = &events[start..=end];
-        assert_eq!(part[0]["stage"], "local_raw_copy_open");
-        assert_eq!(part[0]["sequence"], sequence);
-        assert_eq!(part[part.len() - 2]["stage"], "local_raw_copy_part");
-        let footer = part.last().unwrap();
-        assert_eq!(footer["parts"], sequence + 1);
-        assert_eq!(footer["descriptors"], descriptors);
-        assert_eq!(footer["batches"], batches);
-        assert_eq!(footer["records_reserved"], reserved);
-        assert_eq!(footer["complete"], sequence < 4);
-        if sequence == 4 {
-            assert_eq!(footer["invalid_reason"], "capacity_exceeded");
+            .lines()
+            .filter_map(|line| line.split_once(RECORD_TAG))
+            .map(|(_, fields)| serde_json::from_str(fields).unwrap())
+            .collect();
+        if mode == "buffered" {
+            let messages: Vec<(usize, String, String)> = serde_json::from_slice(
+                &std::fs::read(path.with_extension("messages.json")).unwrap(),
+            )
+            .unwrap();
+            assert!(messages.len() < events.len());
+            assert_eq!(
+                messages
+                    .iter()
+                    .filter(|message| message.0 > PUBLICATION_BYTES)
+                    .count(),
+                1
+            );
+            assert!(messages.iter().all(|(_, target, level)| target
+                == "orbitkv_core::transfer::local::trace"
+                && level == "INFO"));
         }
-        for (index, batch) in part[1..part.len() - 2].iter().enumerate() {
-            assert_eq!(batch["batch_id"], index);
-            let rows = batch["copy_rows"].as_u64().unwrap() as usize;
-            let geometry = decoded_geometry(&batch["copies"], rows);
-            for (offset, row) in geometry.as_array().unwrap().iter().enumerate() {
-                let (copy_index, size) = match sequence {
-                    0 => (index, 64),
-                    2 => (index * 1024, 4),
-                    3 => (if index == 2 { offset + 2 } else { index }, 4),
-                    _ => unreachable!(),
-                };
-                let stride = copy_index * size;
-                assert_eq!(
-                    row,
-                    &serde_json::json!([
-                        0x10000 + stride,
-                        0x100100 + stride,
-                        0x200100 + stride,
-                        if sequence == 2 { 4096 } else { size },
-                        7,
-                        0x100000,
-                        0x10000,
-                        65536,
-                        stride,
-                        2,
-                        65536,
-                        3,
-                        256,
-                        16384,
-                        256 + stride,
-                    ])
-                );
+        let mut start = 0;
+        for (sequence, (descriptors, batches, reserved)) in [
+            (256, 256, 513),
+            (256, 256, 514),
+            (258, 258, 519),
+            (4354, 261, 8712),
+            (4354, 261, 8712),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let end = events[start..]
+                .iter()
+                .position(|event| event["stage"] == "local_raw_copy_complete")
+                .unwrap()
+                + start;
+            let part = &events[start..=end];
+            assert_eq!(part[0]["stage"], "local_raw_copy_open");
+            assert_eq!(part[0]["sequence"], sequence);
+            assert_eq!(part[part.len() - 2]["stage"], "local_raw_copy_part");
+            let footer = part.last().unwrap();
+            assert_eq!(footer["parts"], sequence + 1);
+            assert_eq!(footer["descriptors"], descriptors);
+            assert_eq!(footer["batches"], batches);
+            assert_eq!(footer["records_reserved"], reserved);
+            assert_eq!(footer["complete"], sequence < 4);
+            if sequence == 4 {
+                assert_eq!(footer["invalid_reason"], "capacity_exceeded");
             }
+            for (index, batch) in part[1..part.len() - 2].iter().enumerate() {
+                assert_eq!(batch["batch_id"], index);
+                let rows = batch["copy_rows"].as_u64().unwrap() as usize;
+                let geometry = decoded_geometry(&batch["copies"], rows);
+                for (offset, row) in geometry.as_array().unwrap().iter().enumerate() {
+                    let (copy_index, size) = match sequence {
+                        0 => (index, 64),
+                        2 => (index * 1024, 4),
+                        3 => (if index == 2 { offset + 2 } else { index }, 4),
+                        _ => unreachable!(),
+                    };
+                    let stride = copy_index * size;
+                    assert_eq!(
+                        row,
+                        &serde_json::json!([
+                            0x10000 + stride,
+                            0x100100 + stride,
+                            0x200100 + stride,
+                            if sequence == 2 { 4096 } else { size },
+                            7,
+                            0x100000,
+                            0x10000,
+                            65536,
+                            stride,
+                            2,
+                            65536,
+                            3,
+                            256,
+                            16384,
+                            256 + stride,
+                        ])
+                    );
+                }
+            }
+            start = end + 1;
         }
-        start = end + 1;
+        assert_eq!(start, events.len());
+        assert_eq!(events.len(), 276);
+        assert_eq!(events[270]["copy_rows"], 4094);
     }
-    assert_eq!(start, events.len());
-    assert_eq!(events.len(), 276);
-    assert_eq!(events[270]["copy_rows"], 4094);
 }
 
 #[test]
