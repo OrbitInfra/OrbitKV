@@ -152,6 +152,14 @@ missing/duplicate origins, foreign paths and mismatched process identity.
 Strict Manager fixtures persist an actual argv/environment/listener/namespace
 startup record bound to PID/start ticks before readiness. Missing or mismatched
 records cannot pass the native gate; persistence failure retains the live owner.
+After registration success or failure, the native fixture records the live
+Manager's complete maps and the resolved executable/shared-library identities,
+sizes and hashes. Each native cell freezes `runtime_mapped_files`; the result
+oracle joins every recorded library to its actual maps device/inode and frozen
+path/target/digest. Missing, foreign, omitted or replaced inputs refuse success.
+Capture has one 30-second deadline and never releases the process on evidence
+failure. Overlay map/path identities that cannot be joined remain unqualified.
+These snapshots do not reconstruct historical mappings or prove physical drain.
 Native cleanup additionally requires the actual owned `sigterm_sent` record and
 the Manager's normal-shutdown marker; exit zero/reaped alone does not pass.
 Cells that declare a frozen process tracer preserve the pytest leader PID and

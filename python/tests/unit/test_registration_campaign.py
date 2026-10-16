@@ -661,7 +661,22 @@ def test_manager_importer_origin_is_identity_bound_and_inside_frozen_roots(fault
 
 @pytest.mark.parametrize(
     "fault",
-    [None, "missing", "wrong-pid", "wrong-command", "wrong-port", "no-sigterm", "no-marker"],
+    [
+        None,
+        "missing",
+        "wrong-pid",
+        "wrong-command",
+        "wrong-port",
+        "no-sigterm",
+        "no-marker",
+        "no-runtime",
+        "runtime-pid",
+        "runtime-pytest",
+        "runtime-library",
+        "runtime-hash",
+        "runtime-inode",
+        "runtime-omission",
+    ],
 )
 def test_native_cell_requires_command_record_bound_to_observed_manager(tmp_path, fault):
     cell, owner, observed = valid_evidence(tmp_path)
@@ -678,7 +693,34 @@ def test_native_cell_requires_command_record_bound_to_observed_manager(tmp_path,
             "base_prefix": "/usr",
             "allowed_sys_path": ["/frozen/site"],
         },
+        runtime_mapped_files={
+            "/frozen/manager": {"realpath": "/frozen/manager", "bytes": 1, "sha256": "a" * 64},
+            "/frozen/lib.so": {"realpath": "/frozen/lib.so", "bytes": 1, "sha256": "b" * 64},
+        },
     )
+    manager_runtime = {
+        "owner": {"pid": 17, "start_ticks": 18},
+        "maps": "1000-2000 r-xp 00000000 00:01 7 /frozen/manager\n2000-3000 r-xp 00000000 00:01 8 /frozen/lib.so\n",
+        "physical_termination_claimed": False,
+        "files": [
+            dict(path=path, device=1, inode=7 + index, **values)
+            for index, (path, values) in enumerate(cell["runtime_mapped_files"].items())
+        ],
+    }
+    if fault == "runtime-pid":
+        manager_runtime["owner"]["pid"] = 19
+    elif fault == "runtime-pytest":
+        manager_runtime["owner"] = owner
+    elif fault == "runtime-library":
+        manager_runtime["files"][1]["path"] = "/unfrozen/lib.so"
+    elif fault == "runtime-hash":
+        manager_runtime["files"][1]["sha256"] = "c" * 64
+    elif fault == "runtime-inode":
+        manager_runtime["files"][1]["inode"] = 10
+    elif fault == "runtime-omission":
+        manager_runtime["files"].pop()
+    if fault != "no-runtime":
+        (tmp_path / "manager.manager-runtime.json").write_text(json.dumps(manager_runtime))
     runtime = {
         "pid": 17,
         "torch_file": cell["manager_python"]["torch_file"],

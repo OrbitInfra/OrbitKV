@@ -682,6 +682,19 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   host1 controller retains its GPU/control locks. Manager SIGTERM/wait exit zero
   does not close the retained IPC-credit or physical-lifetime boundary. Preserve
   the full failed precheck archive and every prior freeze/review.
+  Independent `c49157cb` software/CPU/installed-import review accepts the empty
+  typed-view correction; the extension, Python consumers and TENT libraries are
+  unchanged. Failed-result review accepts only its failed-evidence disposition,
+  with resource handoff NOT_ACCEPTED: seven shared-memory remnants, unknown IPC
+  credit and missing historical Manager maps remain unresolved. A follow-up
+  records actual live Manager maps after registration success or failure and
+  checks library path, mapped identity, size and digest against frozen inputs.
+  Missing, foreign, omitted or replaced mappings refuse success; capture and
+  validation consume bounded deadlines and retain process ownership on error.
+  Overlay device identities that cannot be joined are refused. This harness
+  increment needs independent source/CPU review before a fresh launch; it cannot
+  reconstruct old maps or prove device termination. Original credit identity
+  evidence and safe resource admission remain separate prerequisites.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

@@ -573,6 +573,77 @@ class CacheManagerProcess:
 
         return wait_for_server_ready(self.bootstrap_socket, process=self.process)
 
+    def record_runtime(self) -> None:
+        """Capture the live Manager's mapped file identities after registration."""
+        from .registration_campaign import digest, identity, read_bytes, remaining, write
+
+        deadline = time.monotonic() + 30
+        process = self.process
+        if process is None or process.poll() is not None or self._log_path is None:
+            raise RuntimeError("Manager is unavailable for its actual runtime record")
+        owner = identity(process.pid, deadline)
+        if owner["start_ticks"] != int(self._process_start_ticks):
+            raise RuntimeError("Manager runtime process identity changed")
+        raw = read_bytes(Path(f"/proc/{process.pid}/maps"), 1024 * 1024, deadline).decode()
+        executable = Path(f"/proc/{process.pid}/exe").resolve(strict=True)
+        paths = {}
+        for line in raw.splitlines():
+            fields = line.split(maxsplit=5)
+            if len(fields) == 6 and fields[5].startswith("/"):
+                name = fields[5]
+                if ".so" not in Path(name).name and name != str(executable):
+                    continue
+                if name.endswith(" (deleted)"):
+                    raise RuntimeError("Manager has a deleted mapped runtime file")
+                major, minor = (int(part, 16) for part in fields[3].split(":"))
+                mapped_identity = (os.makedev(major, minor), int(fields[4]))
+                if name in paths and paths[name] != mapped_identity:
+                    raise RuntimeError("Manager mapped runtime identities conflict")
+                paths[name] = mapped_identity
+        if not paths or len(paths) > 2048:
+            raise RuntimeError("Manager mapped file inventory is empty or exceeds its bound")
+        files = []
+        for name in sorted(paths):
+            remaining(deadline)
+            path = Path(name)
+            resolved = path.resolve(strict=True)
+            metadata = resolved.stat()
+            if (metadata.st_dev, metadata.st_ino) != paths[name]:
+                raise RuntimeError("Manager mapped runtime path was replaced")
+            files.append(
+                {
+                    "path": name,
+                    "realpath": str(resolved),
+                    "device": metadata.st_dev,
+                    "inode": metadata.st_ino,
+                    "bytes": metadata.st_size,
+                    "sha256": digest(resolved, deadline),
+                }
+            )
+        if (
+            identity(process.pid, deadline) != owner
+            or Path(f"/proc/{process.pid}/exe").resolve(strict=True) != executable
+        ):
+            raise RuntimeError("Manager changed during its runtime inventory")
+        final_maps = read_bytes(Path(f"/proc/{process.pid}/maps"), 1024 * 1024, deadline).decode()
+
+        def runtime_lines(value):
+            return {
+                line
+                for line in value.splitlines()
+                if len(fields := line.split(maxsplit=5)) == 6
+                and fields[5].startswith("/")
+                and (".so" in Path(fields[5]).name or fields[5] == str(executable))
+            }
+
+        if runtime_lines(raw) != runtime_lines(final_maps):
+            raise RuntimeError("Manager mapped runtime changed during capture")
+        write(
+            Path(f"{self._log_path}.{process.pid}-{owner['start_ticks']}.manager-runtime.json"),
+            {"owner": owner, "maps": raw, "files": files, "physical_termination_claimed": False},
+            deadline,
+        )
+
     def stop(self) -> None:
         """Stop the server process."""
         if self.process is None:

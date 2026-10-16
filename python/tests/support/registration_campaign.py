@@ -607,6 +607,60 @@ def validate_cell(
         starts = evidence_paths(directory, "*.manager-start.json", deadline)
         if len(starts) != len(receipts):
             raise RuntimeError("Missing actual Manager startup command records")
+        runtimes = evidence_paths(directory, "*.manager-runtime.json", deadline)
+        if len(runtimes) != len(receipts):
+            raise RuntimeError("Missing actual Manager mapped runtime records")
+        runtime_owners = set()
+        frozen_files = cell.get("runtime_mapped_files", {})
+        if not isinstance(frozen_files, dict) or not frozen_files:
+            raise RuntimeError("Frozen Manager mapped runtime inputs are required")
+        for path in runtimes:
+            remaining(deadline)
+            row = read_json(path, deadline)
+            owner = row.get("owner", {})
+            key = (owner.get("pid"), owner.get("start_ticks"))
+            if (
+                key not in known
+                or key in runtime_owners
+                or not row.get("maps")
+                or not row.get("files")
+            ):
+                raise RuntimeError("Manager runtime record identity or mappings differ")
+            runtime_owners.add(key)
+            mapped_paths = {}
+            for line in row["maps"].splitlines():
+                remaining(deadline)
+                fields = line.split(maxsplit=5)
+                if len(fields) == 6 and fields[5].startswith("/"):
+                    name = fields[5]
+                    if (
+                        ".so" not in Path(name).name
+                        and name != cell["environment"]["ORBITKV_CACHE_MANAGER_BINARY"]
+                    ):
+                        continue
+                    major, minor = (int(part, 16) for part in fields[3].split(":"))
+                    value = (os.makedev(major, minor), int(fields[4]))
+                    if name in mapped_paths and mapped_paths[name] != value:
+                        raise RuntimeError("Manager runtime mapping identities conflict")
+                    mapped_paths[name] = value
+            if (
+                not mapped_paths
+                or set(mapped_paths) != {mapped.get("path") for mapped in row["files"]}
+                or len(row["files"]) != len(mapped_paths)
+                or cell["environment"]["ORBITKV_CACHE_MANAGER_BINARY"] not in mapped_paths
+                or row.get("physical_termination_claimed") is not False
+            ):
+                raise RuntimeError("Manager actual runtime mapping census differs")
+            for mapped in row["files"]:
+                expected = frozen_files.get(mapped.get("path"))
+                if (
+                    expected is None
+                    or mapped.get("realpath") != expected.get("realpath")
+                    or mapped.get("bytes") != expected.get("bytes")
+                    or mapped.get("sha256") != expected.get("sha256")
+                    or (mapped.get("device"), mapped.get("inode")) != mapped_paths[mapped["path"]]
+                ):
+                    raise RuntimeError("Manager actually mapped an unfrozen runtime input")
         startup = {}
         for path in starts:
             row = read_json(path, deadline)
@@ -658,6 +712,12 @@ def validate_cell(
             )
         if startup:
             raise RuntimeError("Manager startup has no matching cleanup")
+        if runtime_owners != {
+            (row["pid"], row["start_ticks"])
+            for path in receipts
+            for row in [read_json(path, deadline)]
+        }:
+            raise RuntimeError("Manager runtime records do not match actual cleanup owners")
         releases = evidence_paths(directory, "*.native-release.json", deadline)
         if len(releases) != 4:
             raise RuntimeError("Missing complete native client release receipts")

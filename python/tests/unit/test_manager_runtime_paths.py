@@ -1,6 +1,7 @@
 """Manager test launches keep source and installed package modes distinct."""
 
 import json
+import os
 import sys
 import time
 from types import SimpleNamespace
@@ -120,6 +121,34 @@ def test_strict_manager_start_records_actual_command_and_keeps_failed_record_own
         observed = json.loads(actual.read_text())
         assert observed["pid"] == server.process.pid
         if not write_failure:
+            executable = cache_manager.Path(f"/proc/{server.process.pid}/exe").resolve()
+            raw = cache_manager.Path(f"/proc/{server.process.pid}/maps").read_text()
+            unavailable_identity = False
+            for line in raw.splitlines():
+                fields = line.split(maxsplit=5)
+                if len(fields) == 6 and fields[5].startswith("/"):
+                    path = cache_manager.Path(fields[5])
+                    if ".so" in path.name or path == executable:
+                        major, minor = (int(part, 16) for part in fields[3].split(":"))
+                        metadata = path.stat()
+                        unavailable_identity |= (os.makedev(major, minor), int(fields[4])) != (
+                            metadata.st_dev,
+                            metadata.st_ino,
+                        )
+            if unavailable_identity:
+                with pytest.raises(RuntimeError, match="mapped runtime path was replaced"):
+                    server.record_runtime()
+                assert not list(tmp_path.glob("*.manager-runtime.json"))
+            else:
+                server.record_runtime()
+                runtime = json.loads(next(tmp_path.glob("*.manager-runtime.json")).read_text())
+                assert runtime["owner"]["pid"] == server.process.pid
+                assert runtime["owner"]["start_ticks"] == int(server._process_start_ticks)
+                assert runtime["maps"] == raw
+                assert runtime["physical_termination_claimed"] is False
+                assert runtime["files"] and all(
+                    len(row["sha256"]) == 64 and row["bytes"] > 0 for row in runtime["files"]
+                )
             records = list(tmp_path.glob("*.manager-start.json"))
             assert len(records) == 1
             record = json.loads(records[0].read_text())

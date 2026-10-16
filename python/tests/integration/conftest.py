@@ -70,7 +70,11 @@ def channel_client_context(
         num_blocks=4,
         num_layers=1,
     )
-    ctx.register_kv_caches()
+    try:
+        ctx.register_kv_caches()
+    finally:
+        if os.environ.get("ORBITKV_TEST_STRICT_SHUTDOWN") == "1":
+            channel_server.record_runtime()
     yield ctx
     if os.environ.get("ORBITKV_TEST_STRICT_SHUTDOWN") == "1":
         if not channel_server.is_running():
