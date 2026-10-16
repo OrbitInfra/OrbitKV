@@ -116,6 +116,13 @@ torch = SimpleNamespace(UntypedStorage=Storage)
         assert!(owner.accepted().is_err());
         drop(owner);
         assert!(instance_pending(&process.client, "unknown"));
+        let evidence: serde_json::Value =
+            serde_json::from_str(&retained_credit_evidence(&process.client, "unknown").unwrap())
+                .unwrap();
+        let credit = &evidence["attempts"][0]["credit_evidence"]["credits"][0];
+        assert_eq!(credit["disposition"], "unknown");
+        assert_eq!(credit["observation"]["same_object"], true);
+        assert_eq!(credit["observation"]["observed_value"], 1);
         assert_eq!(fixture.getattr("calls").unwrap().len().unwrap(), 2);
         // This test ABI submits no importer/device work. Only its exact test
         // owner may remove the retained stub; production has no such release.
@@ -242,7 +249,29 @@ torch = SimpleNamespace(UntypedStorage=Storage)
             .resolve(py, &[CudaCreditDisposition::ImporterOwned as i32])
             .unwrap();
         assert!(instance_pending(&process.client, "accepted"));
-        owner.accepted().unwrap();
+        let credits = owner.accepted().unwrap();
+        let evidence = credit_evidence(&credits);
+        assert_eq!(evidence["credits"][0]["disposition"], "importer_owned");
+        assert_eq!(evidence["credits"][0]["observation"]["same_object"], true);
+        let path: String = fixture.getattr("counter_path").unwrap().extract().unwrap();
+        let name = std::path::Path::new(&path);
+        let backup = name.with_extension("held");
+        std::fs::rename(name, &backup).unwrap();
+        std::fs::write(name, vec![0; 64 + 10_000 * 8]).unwrap();
+        let replaced = credit_evidence(&credits);
+        assert_eq!(replaced["credits"][0]["observation"]["same_object"], false);
+        assert_eq!(
+            replaced["credits"][0]["observation"]["inode"],
+            evidence["credits"][0]["observation"]["inode"]
+        );
+        std::fs::remove_file(name).unwrap();
+        let absent = credit_evidence(&credits);
+        assert!(!absent["credits"][0]["observation"]["path_error"].is_null());
+        assert_eq!(
+            absent["credits"][0]["observation"]["inode"],
+            evidence["credits"][0]["observation"]["inode"]
+        );
+        std::fs::rename(backup, name).unwrap();
         assert!(!instance_pending(&process.client, "accepted"));
         assert!(
             AttemptOwner::reserve(

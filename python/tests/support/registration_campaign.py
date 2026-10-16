@@ -719,6 +719,50 @@ def validate_cell(
             for row in [read_json(path, deadline)]
         }:
             raise RuntimeError("Manager runtime records do not match actual cleanup owners")
+        credits = evidence_paths(directory, "registration.credit-owner.json", deadline)
+        if len(credits) != len(receipts):
+            raise RuntimeError("Missing original registration credit snapshots")
+        for path in credits:
+            row = read_json(path, deadline)
+            if row.get("owner") != pytest_owner:
+                raise RuntimeError("Registration credit snapshot owner differs")
+            evidence = row.get("evidence", {})
+            if (
+                evidence.get("schema") != "orbitkv.cuda-credit-observation.v1"
+                or evidence.get("physical_termination_claimed") is not False
+                or evidence.get("reclamation_authorized") is not False
+                or not evidence.get("registration_generation")
+                or not evidence.get("export_owner_generation")
+                or not evidence.get("credits")
+            ):
+                raise RuntimeError("Registration handoff credit evidence is missing")
+            identities = set()
+            for credit in evidence["credits"]:
+                observation = credit.get("observation", {})
+                name, offset = credit.get("counter_name"), credit.get("counter_offset")
+                if (
+                    not isinstance(name, str)
+                    or not name
+                    or type(offset) is not int
+                    or not 0 <= offset < 10_000
+                    or (name, offset) in identities
+                    or credit.get("disposition") != "importer_owned"
+                    or credit.get("exclusive_value_at_export") != 1
+                    or credit.get("observation_error") is not None
+                    or observation.get("same_object") is not True
+                    or observation.get("path_error") is not None
+                    or observation.get("read_error") is not None
+                    or type(observation.get("observed_value")) is not int
+                    or observation["observed_value"] not in (0, 1)
+                    or type(observation.get("inode")) is not int
+                    or observation["inode"] <= 0
+                    or type(observation.get("device")) is not int
+                    or observation["device"] < 0
+                    or observation["inode"] != observation.get("path_inode")
+                    or observation["device"] != observation.get("path_device")
+                ):
+                    raise RuntimeError("Original registration counter observation is unproven")
+                identities.add((name, offset))
         releases = evidence_paths(directory, "*.native-release.json", deadline)
         if len(releases) != 4:
             raise RuntimeError("Missing complete native client release receipts")

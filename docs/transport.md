@@ -85,6 +85,17 @@ at most 1 TiB of tensor storage bytes. These limits are separate from ordinary
 payload admission and existing transfer descriptor limits. Retention counters
 and per-generation states are available from the native client. The original
 unaccepted implementation and its negative review are preserved.
+`GpuRegistration.ipc_credit_evidence` is an immutable snapshot from importer
+handoff. `retained_credit_evidence(instance_id)` observes the original held
+counter descriptors for failed attempts belonging to that client and instance.
+The versioned JSON reports original and current-path identity separately, the
+value observed in the held slot, and explicit read/path errors. A missing or
+replaced path cannot become a successful observation. These diagnostics add no
+repayment/release action, and a zero counter is not a device drain receipt.
+Successful handoff drops the extra descriptors after the snapshot; uncertain
+attempts retain them under the existing admission limits. Diagnostic output is
+bounded to 4,096 credits and 4 MiB per call and is consumed by the strict installed
+registration gate before the producer exits.
 
 Source/CPU checks exist; final installed GPU bytes, real IPC repayment/import
 failure and both adapter lifecycles still need independent acceptance. These

@@ -678,6 +678,10 @@ def test_manager_importer_origin_is_identity_bound_and_inside_frozen_roots(fault
         "runtime-omission",
         "runtime-omit-both",
         "runtime-required-absent",
+        "no-credit",
+        "credit-owner",
+        "credit-replaced",
+        "credit-missing-value",
     ],
 )
 def test_native_cell_requires_command_record_bound_to_observed_manager(tmp_path, fault):
@@ -732,6 +736,40 @@ def test_native_cell_requires_command_record_bound_to_observed_manager(tmp_path,
         }
     if fault != "no-runtime":
         (tmp_path / "manager.manager-runtime.json").write_text(json.dumps(manager_runtime))
+    credit = {
+        "owner": owner,
+        "evidence": {
+            "schema": "orbitkv.cuda-credit-observation.v1",
+            "registration_generation": "a" * 32,
+            "export_owner_generation": "b" * 32,
+            "physical_termination_claimed": False,
+            "reclamation_authorized": False,
+            "credits": [
+                {
+                    "counter_name": "/counter",
+                    "counter_offset": 1,
+                    "disposition": "importer_owned",
+                    "exclusive_value_at_export": 1,
+                    "observation": {
+                        "same_object": True,
+                        "observed_value": 1,
+                        "device": 1,
+                        "inode": 2,
+                        "path_device": 1,
+                        "path_inode": 2,
+                    },
+                }
+            ],
+        },
+    }
+    if fault == "credit-owner":
+        credit["owner"] = {"pid": 3}
+    elif fault == "credit-replaced":
+        credit["evidence"]["credits"][0]["observation"]["same_object"] = False
+    elif fault == "credit-missing-value":
+        credit["evidence"]["credits"][0]["observation"]["observed_value"] = None
+    if fault != "no-credit":
+        (tmp_path / "registration.credit-owner.json").write_text(json.dumps(credit))
     runtime = {
         "pid": 17,
         "torch_file": cell["manager_python"]["torch_file"],

@@ -266,6 +266,7 @@ class ClientContext:
         # Map layer index to layer name (for compatibility with vLLM)
         self._layer_names = [f"layer_{i}" for i in range(num_layers)]
         self._registered = False
+        self.registration = None
 
     def register_kv_caches(self) -> None:
         """Register KV cache tensors with the engine server (like WorkerAdapter.register_kv_caches)."""

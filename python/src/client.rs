@@ -237,6 +237,7 @@ pub(crate) struct PyGpuRegistration {
     generation: [u8; 16],
     export_owner_generation: [u8; 16],
     ipc_counters: Vec<(Vec<u8>, u64)>,
+    ipc_credit_evidence: String,
     owner: Weak<CacheClient>,
     _tensors: Arc<Vec<Py<PyAny>>>,
 }
@@ -251,6 +252,11 @@ impl PyGpuRegistration {
     #[getter]
     fn ipc_counters(&self) -> Vec<(Vec<u8>, u64)> {
         self.ipc_counters.clone()
+    }
+
+    #[getter]
+    fn ipc_credit_evidence(&self) -> String {
+        self.ipc_credit_evidence.clone()
     }
 
     #[getter]
@@ -360,6 +366,10 @@ impl PyCacheManagerClient {
 
     fn registration_retention(&self) -> (usize, u64, usize) {
         crate::registration::retention()
+    }
+
+    fn retained_credit_evidence(&self, py: Python<'_>, instance_id: &str) -> PyResult<String> {
+        py.detach(|| crate::registration::retained_credit_evidence(&self.inner, instance_id))
     }
 
     #[getter]
@@ -761,7 +771,14 @@ impl PyCacheManagerClient {
             };
             let generation = worker.registration_generation;
             local.insert(key.clone(), Arc::new(worker));
-            attempt.accepted()?;
+            let credit_owners = attempt.accepted()?;
+            let mut evidence = crate::registration::credit_evidence(&credit_owners);
+            evidence["export_owner_generation"] = uuid::Uuid::from_bytes(export_owner_generation)
+                .to_string()
+                .into();
+            evidence["registration_generation"] =
+                uuid::Uuid::from_bytes(generation).to_string().into();
+            let ipc_credit_evidence = evidence.to_string();
             Ok(PyGpuRegistration {
                 instance_id: key.0,
                 tp_rank,
@@ -770,6 +787,7 @@ impl PyCacheManagerClient {
                 generation,
                 export_owner_generation,
                 ipc_counters,
+                ipc_credit_evidence,
                 owner: Arc::downgrade(&self.inner),
                 _tensors: retained,
             })

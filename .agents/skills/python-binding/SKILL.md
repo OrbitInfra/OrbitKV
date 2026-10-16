@@ -37,6 +37,11 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   identity plus the exclusive slot's one-to-zero transition; missing, replaced,
   silent or failed repayment remains charged without retry. This counter proof
   does not establish CUDA/RDMA termination.
+  Installed registration gates persist the immutable `ipc_credit_evidence`
+  handoff snapshot, or `retained_credit_evidence(instance_id)` on failure. The
+  latter reads original held counter descriptors and distinguishes current-path
+  identity, missing paths and read errors. Neither API authorizes repayment or
+  physical reuse; preserve the original failure and quarantine on uncertainty.
 
 Use the gate table in `AGENTS.md`: default Python tests must remain source-only;
 native lifecycle changes need process integration, and consumed adapter changes

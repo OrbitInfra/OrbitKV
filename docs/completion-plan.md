@@ -700,6 +700,17 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   the complete frozen mapped-library set and hashes the same opened descriptor
   whose device/inode matched the maps, checking file metadata and path identity
   again afterward. Original failures and overlay limitations remain preserved.
+  Independent `79bcceb0` source/CPU rereview accepts both corrections, including
+  the real descriptor-race and complete-census counterfactuals. The next native
+  observation increment exposes original counter File device/inode/name/slot
+  and value observations for retained attempts, and returns an immutable credit
+  snapshot with a successful registration. Missing or replaced paths are
+  explicit observations, never repayment or physical-drain evidence. Successful
+  handoff closes the extra diagnostic descriptors after snapshot construction;
+  unknown attempts retain their existing owners and budgets. The strict native
+  fixture persists these records on both registration outcomes before runtime
+  capture. This increment requires independent native/package review and real
+  GPU consumption; it adds no release action or historical reconciliation.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

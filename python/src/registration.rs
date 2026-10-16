@@ -33,7 +33,7 @@ pub(crate) struct RegistrationAttempt {
     message: String,
 }
 
-struct ExportCredit {
+pub(crate) struct ExportCredit {
     name: Vec<u8>,
     offset: u64,
     state: CreditState,
@@ -245,7 +245,7 @@ impl AttemptOwner {
         Ok(())
     }
 
-    pub(crate) fn accepted(&self) -> PyResult<()> {
+    pub(crate) fn accepted(&self) -> PyResult<Vec<ExportCredit>> {
         let mut attempts = ATTEMPTS
             .lock()
             .map_err(|_| crate::OrbitKVInternal::new_err("registration attempt lock poisoned"))?;
@@ -260,8 +260,10 @@ impl AttemptOwner {
                 "CUDA registration lacks complete importer receipt; owner retained",
             ));
         }
-        attempts.remove(&self.0);
-        Ok(())
+        attempts
+            .remove(&self.0)
+            .map(|attempt| attempt.credits)
+            .ok_or_else(|| crate::OrbitKVInternal::new_err("registration attempt owner absent"))
     }
 
     fn update(&self, apply: impl FnOnce(&mut RegistrationAttempt)) -> PyResult<()> {
@@ -323,6 +325,85 @@ pub(crate) fn retention() -> (usize, u64, usize) {
     let bytes = attempts.values().map(|attempt| attempt.bytes).sum();
     let credits = attempts.values().map(|attempt| attempt.credits.len()).sum();
     (attempts.len(), bytes, credits)
+}
+
+pub(crate) fn credit_evidence(credits: &[ExportCredit]) -> serde_json::Value {
+    let rows: Vec<_> = credits
+        .iter()
+        .map(|credit| {
+            let observed = (|| -> std::io::Result<_> {
+                let held = credit.counter.as_ref().ok_or_else(|| {
+                    std::io::Error::other("original counter descriptor is no longer held")
+                })?;
+                let metadata = held.metadata()?;
+                let mut value = [0; 8];
+                let read = held.read_exact_at(&mut value, 64 + credit.offset * 8);
+                let current = counter_file(&credit.name, credit.offset).and_then(|file| file.metadata());
+                Ok(serde_json::json!({
+                    "device": metadata.dev(), "inode": metadata.ino(),
+                    "path_device": current.as_ref().ok().map(MetadataExt::dev),
+                    "path_inode": current.as_ref().ok().map(MetadataExt::ino),
+                    "same_object": current.as_ref().ok().map(|path| (metadata.dev(), metadata.ino()) == (path.dev(), path.ino())),
+                    "path_error": current.err().map(|error| error.to_string()),
+                    "observed_value": read.as_ref().ok().map(|_| i64::from_ne_bytes(value)),
+                    "read_error": read.err().map(|error| error.to_string()),
+                }))
+            })();
+            serde_json::json!({
+                "counter_name": String::from_utf8_lossy(&credit.name),
+                "counter_offset": credit.offset,
+                "exclusive_value_at_export": 1,
+                "disposition": match credit.state {
+                    CreditState::NeverImported => "never_imported",
+                    CreditState::Unknown => "unknown",
+                    CreditState::ImporterOwned => "importer_owned",
+                    CreditState::Repaid => "repaid",
+                },
+                "observation": observed.as_ref().ok(),
+                "observation_error": observed.err().map(|error| error.to_string()),
+            })
+        })
+        .collect();
+    serde_json::json!({"schema": "orbitkv.cuda-credit-observation.v1", "credits": rows,
+        "physical_termination_claimed": false, "reclamation_authorized": false})
+}
+
+pub(crate) fn retained_credit_evidence(
+    client: &Arc<CacheClient>,
+    instance: &str,
+) -> PyResult<String> {
+    let attempts = ATTEMPTS.lock().unwrap_or_else(|poison| poison.into_inner());
+    let credit_count: usize = attempts
+        .values()
+        .filter(|attempt| Arc::ptr_eq(&attempt.client, client) && attempt.key.0 == instance)
+        .map(|attempt| attempt.credits.len())
+        .sum();
+    if credit_count > MAX_CREDITS {
+        return Err(crate::OrbitKVError::new_err(
+            "credit observation exceeds diagnostic bound; owner retained",
+        ));
+    }
+    let rows: Vec<_> = attempts
+        .iter()
+        .filter(|(_, attempt)| Arc::ptr_eq(&attempt.client, client) && attempt.key.0 == instance)
+        .map(|(generation, attempt)| {
+            serde_json::json!({
+                "generation": Uuid::from_bytes(*generation).to_string(),
+                "instance_id": attempt.key.0,
+                "retained_bytes": attempt.bytes,
+                "export_return_unknown": attempt.exporting,
+                "credit_evidence": credit_evidence(&attempt.credits),
+            })
+        })
+        .collect();
+    let output =
+        serde_json::json!({"attempts": rows, "physical_termination_claimed": false}).to_string();
+    if output.len() > 4 * 1024 * 1024 {
+        return Err(crate::OrbitKVError::new_err(
+            "credit observation exceeds byte bound; owner retained",
+        ));
+    }
+    Ok(output)
 }
 
 #[cfg(test)]
