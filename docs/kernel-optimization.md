@@ -889,18 +889,37 @@ and three complete parts per sequence. All 720 restores and 87,091,200 scalar
 values reconstruct exactly; all forty children and the controller are normally
 waited. Whole candidate/baseline geometric ratio is 0.7370, with independent-pair
 bootstrap 95% interval [0.6157, 0.8822]; all five whole pairs pass the predeclared
-1.05 guard. Staged encoding ratio is 0.6430. Median structured JSON payload per measured part (24 measured parts per
-process, excluding the logger prefix and newline) falls from 1,419,062 to
-457,225 bytes. This qualifies CPU retention only.
+1.05 guard. Staged encoding ratio is 0.6430. Median structured JSON payload per
+measured part (24 measured parts per process, excluding the logger prefix and
+newline) falls from 1,419,062 to 457,225 bytes. This qualifies CPU retention only.
 
-The complete matching wheel is built and its isolated H20 installation and
-basic native import pass without initializing CUDA. Consumed-import closure,
-independent runtime/READY/launch review and the fresh sixteen-cell off/native/
-driver/on cohort with the unchanged 5% guard remain pending. The preceding
-failed cohorts and all ownership/backend/default limits remain. No GPU restore,
-inference-contention or serving improvement is established. New evidence,
-including the accepted CPU receipt and sealed 206-file raw census, is outside
-Git under `/root/orbitkv-artifacts/s4-rle-trace-20261016/`.
+The complete CUDA 13 wheel, isolated installation and consumed-import closure
+pass independent runtime/READY/launch review. The sole fresh H20 cohort completes
+all sixteen off/native/driver/on cells in the frozen balanced order. Each cell
+uses one warm-up and two measured restores of the Qwen3-32B SGLang KV-pool
+geometry: 64 layers, 128 planes and a 4K-token sequence. Every restore checks the
+entire 4,311,744,512-byte pool, including 1,056,964,608 payload bytes and untouched
+sentinels; all 48 restores and 96 payload/sentinel corruption controls pass.
+This exercises real GPU storage and restore, without loading model weights or
+measuring serving. Native ownership is released, clients close and Manager/oracle
+processes return normally in every cell. Frozen inputs and the complete installed
+prefix remain unchanged.
+
+Four independent process blocks give the following geometric ratios against
+off, with bootstrap 95% intervals: native-only 1.0582 [1.0481, 1.0708], driver-only
+0.9966 [0.9915, 1.0018], combined 1.0609 [1.0567, 1.0656]. Driver-only passes the
+predeclared 1.05 guard; native-only and combined fail. These are paired component
+costs; their effects are not assumed additive. The exact terminal result is
+`PILOT_OVERHEAD_FAIL`. No sample, cell or cohort is replaced. CPU retention does
+not establish a qualified GPU restore gain: inference contention and
+kernel/default promotion remain
+blocked. The preceding failures retain their original decisions.
+
+Complete CPU and H20 raw evidence, the wheel and its full runtime closure remain
+outside Git under `/root/orbitkv-artifacts/s4-rle-trace-20261016/`; terminal
+capture is a closed 428-file archive. The complete-restoration host-wall pilot
+is not a p99 estimate, device-only result, model-output/serving comparison or
+native-fault/lifetime qualification.
 
 The separate offline compiler uses buffered file input. Its output must remain
 byte-identical on the same complete captured geometry. This reduces validation

@@ -669,13 +669,15 @@ Complete raw evidence and the runtime closure are retained outside Git with
 [PR #249](https://github.com/feichai0017/orbitkv/pull/249). This does not promote
 inference contention, a copy default, serving performance or S3 lifetime.
 
-**Next bounded delivery:** reduce the remaining native encoding/publication cost
-inside the existing owner with a lossless representation. Preserve every scalar,
-record order, cumulative cap, completion clock and synchronous flush; retain the
-same complete byte/capture/drain controls and 5% guard. Any new candidate needs
-independent code/runtime/launch review and a newly frozen cohort; this completed
-cohort is not retried or replaced. Inference contention and further kernel/default
-promotion remain blocked by the observation gate; S3/S4/S5 limits are unchanged.
+**Remaining delivery:** reduce native observation cost inside the existing
+owner. The column-RLE candidate below passes CPU retention but still fails the
+complete H20 observation guard. Profile the remaining capture, encoding and
+synchronous publication cost before selecting another change. Preserve every
+scalar, record order, cumulative cap, completion clock and synchronous flush;
+retain the complete byte/capture/drain controls and 5% guard. Any new candidate
+needs independent code/runtime/launch review and a newly frozen cohort; completed
+cohorts are not retried or replaced. Inference contention and further
+kernel/default promotion remain blocked; S3/S4/S5 limits are unchanged.
 
 The first schema-4 row-varint candidate at `5fb3d61f` passes independent source
 and complete CPU-data review, but fails its predeclared retention criteria.
@@ -695,16 +697,22 @@ candidate/baseline geometric ratio is 0.7370, with independent-pair 95% interval
 [0.6157, 0.8822]; every whole pair passes the frozen 1.05 guard. Staged encoding
 ratio is 0.6430. These are CPU replay results, not GPU restore or serving gains.
 
-The complete matching CUDA 13 wheel is built and installed in an isolated H20
-prefix with the original environment preserved. Consumed-import closure,
-independent runtime/READY/launch admission and one fresh sixteen-cell H20 cohort
-remain pending. Keep the complete byte/capture/drain controls and 5% guard; no
-backend/default, inference-contention or qualification promotion follows from
-CPU acceptance. The offline DMA fixture separately buffers JSON input; its
-identical full compiler receipt is independently accepted and its validation
-time stays outside trace measurement. Evidence, including the accepted CPU
-receipt and sealed raw census, is at
-`/root/orbitkv-artifacts/s4-rle-trace-20261016/`.
+The complete CUDA 13 wheel and consumed-import closure pass independent
+runtime/READY/launch review in an isolated H20 prefix. The sole fresh sixteen-cell
+cohort completes 48 full-layout restores and 96 corruption controls with actual
+normal process waits and unchanged frozen inputs. Four independent matched
+blocks distinguish native-only, CUDA-driver-only and combined observation from
+off. Native-only geometric ratio is 1.0582, with 95% interval [1.0481, 1.0708];
+combined is 1.0609 [1.0567, 1.0656]. Both fail the unchanged 1.05 guard.
+Driver-only is 0.9966 [0.9915, 1.0018] and passes. The exact terminal status is
+`PILOT_OVERHEAD_FAIL`. There is no second cohort or replacement cell. This is
+complete-restoration host-wall observation evidence, not p99, model serving or
+a backend/default qualification; inference contention remains blocked.
+
+The offline DMA fixture separately buffers JSON input; its identical full
+compiler receipt is independently accepted and its validation time stays outside
+trace measurement. CPU retention, terminal raw data and the full frozen runtime
+remain outside Git at `/root/orbitkv-artifacts/s4-rle-trace-20261016/`.
 
 - Profile actual adapter hashing/conversions, destination checks, fragmentation,
   dispatch, scratch allocation and repeated shared-prefix H2D before selecting
