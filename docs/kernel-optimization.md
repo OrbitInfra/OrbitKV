@@ -953,8 +953,34 @@ The actual Info target stays `orbitkv_core::transfer::local::trace`. Synchronous
 flush does not add a persistence guarantee to the logger interface. Full reader
 and production-compiler verification remain required.
 
-Independent design review accepts this bounded implementation scope. Fresh CPU
-retention and matching installed-runtime/H20 qualification are pending; prior
-valid observation-overhead failures and S3/S4/S5 limits are unchanged. The KDA
-draft, fixed guards, original input and gate outputs are kept outside Git under
+Independent design, source and complete CPU-data review accepts source
+`6265bc8c` against the merged `6a00e221` baseline. All twenty fixed cells preserve
+720 replays, 94,320 records and all 87,091,200 geometry values. Whole-capture
+candidate/baseline geometric ratio is 0.8256, with independent-process-pair 95%
+interval [0.7514, 0.9071]; all five whole pairs pass the unchanged 1.05 guard.
+Staged synchronous publication ratio is 0.4876 [0.4327, 0.5472]. Encoding remains
+unchanged, with ratio 1.0216 [0.8929, 1.1101]. This qualifies CPU retention only.
+
+The matching installed CUDA 13 wheel and full runtime pass independent review.
+Fresh resource/READY review admits one exact sixteen-cell H20 cohort. All sixteen
+cells complete 48 full-layout restores and 96 corruption controls, with explicit
+native unregister/close, normal SDK/Manager/controller/foreground SSH waits and
+unchanged frozen inputs and installed files. Four independent process blocks
+retain the original balanced order and one warmup/two measured restores per cell.
+
+| Observation mode versus off | Geometric ratio | Independent-block 95% interval | Frozen 1.05 guard |
+| --- | ---: | --- | --- |
+| Native capture | 1.0567 | [1.0437, 1.0770] | FAIL |
+| CUDA driver only | 1.0033 | [0.9981, 1.0109] | PASS |
+| Combined | 1.0538 | [1.0466, 1.0612] | FAIL |
+
+The exact terminal status is `PILOT_OVERHEAD_FAIL`. Combined capture exceeds 1.05
+in two matched blocks and its 95% upper bound also exceeds the unchanged guard.
+The valid CPU improvement does not override this H20 result. No retry or
+replacement cell ran, and the cohort does not admit dependent inference
+contention. These are complete-restoration host-wall observations, not p99,
+device-only latency, model serving benefit, a backend default or physical fault
+reclamation. Per-part timers still exclude eventual trace-owner destruction.
+Prior valid failed cohorts and S3/S4/S5 limits remain unchanged. The KDA draft,
+fixed guards, original input, complete raw data and reviews are outside Git under
 `/root/orbitkv-artifacts/s4-trace-publication-20261016/`.

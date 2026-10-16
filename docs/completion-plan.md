@@ -679,7 +679,7 @@ needs independent code/runtime/launch review and a newly frozen cohort; complete
 cohorts are not retried or replaced. Inference contention and further
 kernel/default promotion remain blocked; S3/S4/S5 limits are unchanged.
 
-**Bounded synchronous publication: implemented; qualification pending.**
+**Bounded synchronous publication: CPU retention accepted; H20 overhead FAIL.**
 The candidate groups already-drained diagnostic JSON lines into
 synchronous log messages of at most 64 KiB. Keep opening records on the original
 pre-submission path, all tagged JSON lines in order, intact oversized records,
@@ -690,9 +690,22 @@ and staged publication clocks; retain at most 64 KiB of publication payload
 storage per trace, allocated lazily inside the measured path. Allocator bookkeeping
 and temporary serialization storage remain separate measured costs. Log event
 grouping changes; compatibility is limited to tested line-preserving loggers.
-Independent design/source review and a fresh CPU comparison against merged
-`6a00e221` precede any new matching installed-wheel H20 qualification. The KDA
-draft, predeclared guards and baseline observations are outside Git at
+Independent design, source and complete CPU-data review accepts retention at
+`6265bc8c` against merged `6a00e221`. All twenty fixed cells and 720 replays
+preserve 87,091,200 reconstructed geometry values. The whole-capture geometric
+ratio is 0.8256, with independent-pair 95% interval [0.7514, 0.9071]; all five
+whole pairs pass the frozen 1.05 guard. Synchronous publication ratio is 0.4876
+[0.4327, 0.5472]. These are CPU replay costs, not GPU restore or serving gains.
+The matching installed wheel/runtime and fresh H20 launch pass independent
+review. The sole sixteen-cell cohort completes 48 full-layout restores and 96
+corruption controls, with normal SDK/Manager/controller/foreground SSH waits
+and unchanged frozen files. Native-only geometric ratio is 1.0567, with 95%
+interval [1.0437, 1.0770]; combined is 1.0538 [1.0466, 1.0612]. Both fail the
+unchanged 1.05 guard. Driver-only is 1.0033 [0.9981, 1.0109] and passes. The
+terminal status is `PILOT_OVERHEAD_FAIL`; dependent inference contention remains
+blocked. CPU retention does not qualify GPU restoration, serving or defaults.
+Prior valid failed cohorts and S3/S4/S5 limits remain unchanged. The KDA draft,
+fixed guards and complete evidence are outside Git at
 `/root/orbitkv-artifacts/s4-trace-publication-20261016/`.
 
 The first schema-4 row-varint candidate at `5fb3d61f` passes independent source
