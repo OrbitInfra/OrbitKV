@@ -557,7 +557,10 @@ def test_manager_importer_origin_is_identity_bound_and_inside_frozen_roots(fault
             campaign.validate_python_origin(text, expected, 17, time.monotonic() + 1)
 
 
-@pytest.mark.parametrize("fault", [None, "missing", "wrong-pid", "wrong-command", "wrong-port"])
+@pytest.mark.parametrize(
+    "fault",
+    [None, "missing", "wrong-pid", "wrong-command", "wrong-port", "no-sigterm", "no-marker"],
+)
 def test_native_cell_requires_command_record_bound_to_observed_manager(tmp_path, fault):
     cell, owner, observed = valid_evidence(tmp_path)
     cell.update(
@@ -585,8 +588,15 @@ def test_native_cell_requires_command_record_bound_to_observed_manager(tmp_path,
     helper = {"pid": 17, "gpu_module_file": cell["manager_python"]["gpu_module_file"]}
     (tmp_path / "manager.log").write_text(
         "CUDA registration Python runtime: " + json.dumps(runtime) + "\n"
-        "CUDA registration Python helper: " + json.dumps(helper) + "\n"
+        "CUDA registration Python helper: "
+        + json.dumps(helper)
+        + "\n"
+        + ("" if fault == "no-marker" else "SIGTERM received, shutting down\n")
     )
+    cleanup = tmp_path / "manager.log.cleanup.json"
+    row = json.loads(cleanup.read_text())
+    row["sigterm_sent"] = fault != "no-sigterm"
+    cleanup.write_text(json.dumps(row))
     for index in range(4):
         (tmp_path / f"{index}.native-release.json").write_text(json.dumps(dict(owner, closed=True)))
     start = {

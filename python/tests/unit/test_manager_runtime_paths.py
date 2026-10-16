@@ -77,7 +77,8 @@ def test_strict_manager_start_records_actual_command_and_keeps_failed_record_own
     binary.write_text(
         f"#!{sys.executable}\n"
         "import json,os,signal,sys\nfrom pathlib import Path\n"
-        "signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))\n"
+        "def stop(*_):\n print('SIGTERM received, shutting down', flush=True)\n sys.exit(0)\n"
+        "signal.signal(signal.SIGTERM, stop)\n"
         f"Path({str(actual)!r}).write_text(json.dumps({{'argv':sys.argv,'pid':os.getpid()}}))\n"
         "while True: signal.pause()\n"
     )
@@ -128,6 +129,10 @@ def test_strict_manager_start_records_actual_command_and_keeps_failed_record_own
             assert record["bootstrap_socket"] == str(tmp_path / "fixture.sock")
             assert record["environment"]["CUDA_VISIBLE_DEVICES"] == "GPU-CPU-fixture"
     finally:
-        result = server.stop_without_kill(timeout=5)
-        assert result["status"] == "exited" and result["returncode"] == 0
-        assert result["reaped"] is True and result["forced_cleanup"] is False
+        process = server.process
+        server.stop()
+        cleanup = json.loads((tmp_path / "manager.log.cleanup.json").read_text())
+        assert cleanup["pid"] == process.pid and cleanup["sigterm_sent"] is True
+        assert cleanup["exit_code"] == 0 and cleanup["reaped"] is True
+        assert cleanup["forced_kill"] is False
+        assert "SIGTERM received, shutting down" in (tmp_path / "manager.log").read_text()

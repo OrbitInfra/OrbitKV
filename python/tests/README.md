@@ -152,6 +152,8 @@ missing/duplicate origins, foreign paths and mismatched process identity.
 Strict Manager fixtures persist an actual argv/environment/listener/namespace
 startup record bound to PID/start ticks before readiness. Missing or mismatched
 records cannot pass the native gate; persistence failure retains the live owner.
+Native cleanup additionally requires the actual owned `sigterm_sent` record and
+the Manager's normal-shutdown marker; exit zero/reaped alone does not pass.
 The original controller
 and its counterexamples stay in the external artifact archive. It separates precheck
 from formal cells, preserves locks on unknown ownership and requires a distinct

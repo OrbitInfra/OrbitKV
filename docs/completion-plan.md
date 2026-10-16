@@ -618,6 +618,11 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   to match its observed Manager and cleanup log. This harness-only increment
   keeps the accepted wheel bytes unchanged and requires independent source and
   fresh launch rereview; all earlier rejected inputs remain preserved.
+  That source review carries the prior normal-shutdown evidence limit forward:
+  strict cleanup omitted the actual `sigterm_sent` field. The correction persists
+  it and requires both the owned SIGTERM record and the Manager's shutdown marker
+  in each native log. Exit zero/reaped without those proofs is refused. This is
+  normal process cleanup evidence, not device/RDMA physical termination.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

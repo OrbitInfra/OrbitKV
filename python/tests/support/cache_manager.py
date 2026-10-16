@@ -587,6 +587,7 @@ class CacheManagerProcess:
                 "start_ticks": int(record["start_ticks"]) if record["start_ticks"] else None,
                 "exit_code": process.returncode,
                 "forced_kill": False,
+                "sigterm_sent": record["sigterm_sent"],
                 "reaped": record["reaped"],
                 "remaining_processes": members,
                 "inspection_errors": errors,

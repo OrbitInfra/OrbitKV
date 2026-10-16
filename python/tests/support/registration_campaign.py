@@ -519,8 +519,11 @@ def validate_cell(
             start = startup.pop((row["pid"], row["start_ticks"]), None)
             if start is None or start["log_path"] != str(log.resolve()):
                 raise RuntimeError("Manager startup command is not bound to its cleanup log")
+            text = read_bytes(log, MAX_LOG_BYTES, deadline).decode(errors="replace")
+            if row.get("sigterm_sent") is not True or "SIGTERM received, shutting down" not in text:
+                raise RuntimeError("Missing actual normal Manager SIGTERM evidence")
             validate_python_origin(
-                read_bytes(log, MAX_LOG_BYTES, deadline).decode(errors="replace"),
+                text,
                 expected_origin,
                 row["pid"],
                 deadline,
