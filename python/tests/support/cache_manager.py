@@ -559,6 +559,7 @@ class CacheManagerProcess:
                         "LD_LIBRARY_PATH",
                         "CUDA_VISIBLE_DEVICES",
                         "MC_FORCE_TCP",
+                        "ORBITKV_CHANNEL_CONFIG",
                     )
                     if key in env
                 },

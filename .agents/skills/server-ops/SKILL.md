@@ -28,6 +28,11 @@ as well as present files. The embedded Manager's explicit Python environment
 must disable user-site and cover consumed system-site `.pth` files. Require its
 actual registry Torch/helper origin records and `sys.path`, plus mapped native
 library provenance; an independent venv import does not prove Manager loading.
+When an old channel domain is quarantined, unique service names do not isolate
+iceoryx2's global counter or stale-node cleanup. Use the same frozen absolute
+`ORBITKV_CHANNEL_CONFIG` for client and Manager with a separate private prefix
+and canonical root. The Rust channel owner consumes it before Node creation,
+independently of Manager cwd; recheck resource scope and READY before launch.
 
 For remote metadata scope, omission means `AllNamespaces`. Repeat
 `--metadata-namespace` only with complete storage namespaces logged by actual

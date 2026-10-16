@@ -718,6 +718,17 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   duplicate normalized names or original device/inode/slot identities. Its
   matched controls preserve valid zero/one observations; a new source/freeze
   rereview is required before consuming the wheel in a GPU gate.
+  Independent `3c3e1845` rereview accepts the consumed native observations and
+  strict consumer/package scope; hardware remains unqualified. The next fresh
+  GPU2 resource-scope review is BLOCKED by shared iceoryx2 global management and
+  stale-node cleanup, not by an inert controller alone. The channel candidate
+  consumes an explicit absolute `ORBITKV_CHANNEL_CONFIG` in both client and
+  Manager before Node creation. Its frozen private root/prefix separates the
+  persistent global counter and node/service names even with Manager cwd `/tmp`.
+  Missing, malformed, symlinked, oversized or out-of-root configuration fails
+  instead of falling back. Real two-process CPU roundtrip keeps default-domain
+  shared objects byte-identical. Native/package review and a new resource/READY
+  review remain required before GPU launch; old locks/remnants stay preserved.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

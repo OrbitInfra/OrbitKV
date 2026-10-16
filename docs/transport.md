@@ -103,6 +103,17 @@ changes do not supply allocation/page generations or physical DMA termination.
 
 ## Process channel
 
+An isolated deployment can set the same absolute `ORBITKV_CHANNEL_CONFIG` file
+for client and Manager. The Rust channel owner reads at most 64 KiB once per
+process and passes that config explicitly to both Node builders. The file must
+be regular and not symlinked, with an existing canonical absolute root, a private
+prefix and node/service directories inside the root. Invalid input refuses Node
+creation. Freeze the TOML bytes and domain resources for qualification; changing
+the file after first channel construction cannot rebind that process. This
+separates iceoryx2's persistent counter, shared resources and stale-node cleanup
+from a retained historical domain; unique service names alone do not. The default
+deployment still uses the dependency's standard configuration.
+
 ### Native TENT failure retention
 
 The pinned TENT C ABI's `tent_free_batch()` accepts a deferred free request; its
