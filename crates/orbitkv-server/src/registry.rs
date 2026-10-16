@@ -275,9 +275,7 @@ impl CudaTensorRegistry {
             let kwargs = pyo3::types::PyDict::new(py);
             kwargs.set_item("device", format!("cuda:{device_id}"))?;
             kwargs.set_item("dtype", dtype)?;
-            let tensor = torch
-                .getattr("tensor")?
-                .call((Vec::<u8>::new(),), Some(&kwargs))?;
+            let tensor = torch.getattr("empty")?.call(((0_u64,),), Some(&kwargs))?;
             tensor.call_method1(
                 "set_",
                 (

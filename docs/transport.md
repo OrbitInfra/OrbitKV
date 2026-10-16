@@ -56,7 +56,10 @@ are rejected; they do not share this allocation-owner contract.
 A native exporter-owner generation is distinct from the Manager registration
 and engine page-slot generations. The importer still uses the pinned PyTorch
 storage IPC primitive and holds the resulting tensor mapping until its owner
-retires. The old wrapper-byte field and helper/API are removed in this candidate.
+retires. The importer creates a zero-sized typed tensor with `torch.empty`, then
+binds the validated storage/view with `set_`; a Rust byte vector becomes Python
+bytes and cannot serve as an empty `torch.tensor` input. The old wrapper-byte
+field and helper/API are removed in this candidate.
 The client retains the exact storage objects used for initial geometry. It
 exports those objects, rather than reacquiring storage after a wait, and
 rechecks the tensor pointer, offset and layout before sending and after the

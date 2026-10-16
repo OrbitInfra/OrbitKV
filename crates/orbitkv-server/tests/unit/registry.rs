@@ -1,5 +1,59 @@
 use super::*;
 
+#[test]
+fn importer_constructs_an_empty_typed_view_instead_of_byte_input() {
+    Python::attach(|py| {
+        let source = std::ffi::CString::new(include_str!("registry_factory.py")).unwrap();
+        let fixture = pyo3::types::PyModule::from_code(
+            py,
+            &source,
+            pyo3::ffi::c_str!("registry_factory.py"),
+            pyo3::ffi::c_str!("registry_factory"),
+        )
+        .unwrap();
+        let modules = py.import("sys").unwrap().getattr("modules").unwrap();
+        let previous = modules.get_item("torch").ok();
+        modules
+            .set_item("torch", fixture.getattr("torch").unwrap())
+            .unwrap();
+        let old_error = fixture
+            .getattr("torch")
+            .unwrap()
+            .getattr("tensor")
+            .unwrap()
+            .call1((Vec::<u8>::new(),))
+            .unwrap_err();
+        assert!(old_error.to_string().contains("invalid data type 'bytes'"));
+        let registration = CudaIpcTensorRegistration {
+            format_version: 1,
+            allocation_kind: "torch-cuda-ipc-storage".into(),
+            allocation_handle: [vec![3, b'c'], vec![1; 64]].concat(),
+            device_uuid: "GPU-c4930667-4d65-aae5-8205-fe785c3654be".into(),
+            storage_size_bytes: 64,
+            view_offset_bytes: 4,
+            shape: vec![8],
+            strides: vec![1],
+            dtype: "float16".into(),
+            element_size: 2,
+            ref_counter_handle: b"/torch-counter".to_vec(),
+            export_owner_generation: vec![1; 16],
+            ..Default::default()
+        };
+        let result =
+            CudaTensorRegistry::materialize_tensor(0, &registration.device_uuid, &registration);
+        if let Some(previous) = previous {
+            modules.set_item("torch", previous).unwrap();
+        } else {
+            modules.del_item("torch").unwrap();
+        }
+        let tensor = result.unwrap();
+        assert_eq!(tensor.metadata.data_ptr, 4100);
+        assert_eq!(tensor.metadata.shape, vec![8]);
+        assert_eq!(tensor.metadata.strides, vec![1]);
+        assert_eq!(tensor.metadata.size_bytes, 60);
+    });
+}
+
 fn key(instance: &str, tp_rank: u32, pp_rank: u32, device: &str) -> ContextKey {
     ContextKey {
         instance_id: instance.into(),

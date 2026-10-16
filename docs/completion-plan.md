@@ -669,8 +669,19 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   thread wait results to their process owner, rejects extra/reused identities,
   and checks every traced task even when process polling missed it. The real
   old fast-exit counterexample now retains the controller, while the actual
-  threaded wait completes correctly. New source/CPU and launch review remain
-  required; all original controls and unlaunched freezes stay immutable.
+  threaded wait completes correctly. Independent `d6c059f5` source/CPU review
+  accepts that census; the second-host exact READY review accepts only the new
+  two-case installed local CUDA precheck. Its single launch fails in the first
+  registration before Publish/Restore: PyO3 converts the empty `Vec<u8>` passed
+  to `torch.tensor` into Python bytes, which Torch rejects. The correction calls
+  `torch.empty` with explicit zero-sized shape before binding the imported
+  storage. An actual registry-call CPU fixture reproduces the old byte-input
+  error and checks the replacement view geometry. A rebuilt matching wheel,
+  independent software review and new resource/launch acceptance are required.
+  The second case is unlaunched, formal launches remain zero, and the failed
+  host1 controller retains its GPU/control locks. Manager SIGTERM/wait exit zero
+  does not close the retained IPC-credit or physical-lifetime boundary. Preserve
+  the full failed precheck archive and every prior freeze/review.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
