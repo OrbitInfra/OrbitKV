@@ -534,9 +534,19 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   wrapper bytes; lifecycle 9 rejects the retired format. Manager validation
   occurs before device discovery/import. The client and both adapters consume
   the new call shape; exporter diagnostics use explicit counter identity.
-  Protocol/registry CPU rejection, source-only and native check/Clippy gates
-  pass. Export-credit failure ownership, final installed/native GPU bytes and
-  independent acceptance remain open. This does not close true allocation/page
+  The initial `10164d88` candidate is independently unaccepted: credits were
+  exported before duplicate checks, unknown replies lacked an attempt owner,
+  duplicate importer credits and Torch slot/integer domains were not guarded.
+  The correction reserves the client/key before export, arms per-credit rollback
+  and returns explicit generation-bound import dispositions. Unknown/partial
+  attempts retain client/tensors/credits in a process owner, bounded to 64
+  attempts, 4,096 credits per attempt and 1 TiB conservative tensor-storage
+  accounting. These physical-reference limits are separate from payload and
+  native descriptor budgets; native counters and generation/state diagnostics
+  make retention observable. ImporterOwned is not a termination receipt.
+  Protocol/registry, real UDS rejection and native owner CPU controls pass;
+  final matching installation, actual IPC-credit failure/repayment, GPU bytes
+  and independent acceptance remain open. This does not close true allocation/page
   generation, live Publish stalls or physical orphan reclamation. New evidence
   is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 

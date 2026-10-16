@@ -4,7 +4,7 @@ use std::sync::{Arc, Weak};
 
 use log::{info, warn};
 use orbitkv_core::{EngineError, OrbitKVEngine, TransferMode};
-use orbitkv_proto::proto::engine::CudaIpcTensorRegistration;
+use orbitkv_proto::proto::engine::{CudaCreditDisposition, CudaIpcTensorRegistration};
 use orbitkv_state::{AttentionRole, Scalar16, StorageFormat};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
@@ -46,24 +46,28 @@ pub(crate) struct Registration {
 pub(crate) struct ControlError {
     pub(crate) code: u16,
     pub(crate) message: String,
+    pub(crate) credit_disposition: CudaCreditDisposition,
 }
 impl ControlError {
     pub(crate) fn invalid_argument(message: impl Into<String>) -> Self {
         Self {
             code: 1,
             message: message.into(),
+            credit_disposition: CudaCreditDisposition::Unknown,
         }
     }
     fn failed_precondition(message: impl Into<String>) -> Self {
         Self {
             code: 2,
             message: message.into(),
+            credit_disposition: CudaCreditDisposition::Unknown,
         }
     }
     fn internal(message: impl Into<String>) -> Self {
         Self {
             code: 3,
             message: message.into(),
+            credit_disposition: CudaCreditDisposition::Unknown,
         }
     }
 }
@@ -186,6 +190,8 @@ impl LifecycleService {
         &self,
         req: Registration,
     ) -> Result<(i32, [u8; 16]), ControlError> {
+        let mut disposition = CudaCreditDisposition::NeverImported;
+        let result = async {
         let stopping = self.stopping.read().await;
         if *stopping {
             return Err(ControlError::failed_precondition(
@@ -266,9 +272,11 @@ impl LifecycleService {
             .registry
             .register_layers(context_key.clone(), layers)
             .await
-            .map_err(|message| {
-                ControlError::internal(format!("register tensor failed: {message}"))
+            .map_err(|error| {
+                disposition = error.disposition;
+                ControlError::internal(format!("register tensor failed: {}", error.message))
             })?;
+        disposition = CudaCreditDisposition::ImporterOwned;
         let manager_device_id = metadatas
             .first()
             .ok_or_else(|| ControlError::internal("GPU registration imported no tensors"))?
@@ -387,6 +395,11 @@ impl LifecycleService {
         };
 
         Ok((manager_device_id, registration_generation))
+        }.await;
+        result.map_err(|mut error: ControlError| {
+            error.credit_disposition = disposition;
+            error
+        })
     }
 
     fn validate_session_topology(

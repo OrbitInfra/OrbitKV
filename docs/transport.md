@@ -52,8 +52,23 @@ A native exporter-owner generation is distinct from the Manager registration
 and engine page-slot generations. The importer still uses the pinned PyTorch
 storage IPC primitive and holds the resulting tensor mapping until its owner
 retires. The old wrapper-byte field and helper/API are removed in this candidate.
-Source/CPU checks exist; IPC-credit errors, final installed GPU bytes and both
-adapter lifecycles require independent acceptance before promotion.
+Native registration reserves its client/key before creating any export. Each
+returned credit is charged to the attempt owner immediately; a never-sent export
+can be repaid exactly once. Register replies bind the export generation and
+explicit credit disposition. Only NeverImported permits repayment; importer
+ownership is a handoff, and Unknown never proves import or device termination.
+A failed, partial or lost reply retains the attempt's client, tensors and credits,
+even after caller/client destruction. Unregister refuses a pending/retained
+attempt rather than reporting completed cleanup. The process limits these
+attempts to 64, each with at most 4,096 tensors/credits, and conservatively charges
+at most 1 TiB of tensor storage bytes. These limits are separate from ordinary
+payload admission and existing transfer descriptor limits. Retention counters
+and per-generation states are available from the native client. The original
+unaccepted implementation and its negative review are preserved.
+
+Source/CPU checks exist; final installed GPU bytes, real IPC repayment/import
+failure and both adapter lifecycles still need independent acceptance. These
+changes do not supply allocation/page generations or physical DMA termination.
 
 ## Process channel
 

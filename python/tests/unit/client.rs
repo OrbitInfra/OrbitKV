@@ -151,3 +151,94 @@ fn registration_keeps_exporters_until_the_last_authority_is_dropped() {
         assert!(weak.call0().unwrap().is_none());
     });
 }
+
+#[test]
+#[ignore = "CPU registration entry control; requires authenticated channel fixture and explicit layout stub"]
+fn duplicate_registration_never_calls_the_cuda_exporter() {
+    use pyo3::ffi::c_str;
+    use pyo3::types::PyModule;
+    Python::initialize();
+    let mut process = ProcessOwner::start("pending-until-exit");
+    let client = native_client(Arc::clone(&process.client), [1; 16]);
+    Python::attach(|py| {
+        let fixture = PyModule::from_code(
+            py,
+            c_str!(
+                r#"
+from types import SimpleNamespace
+exports = 0
+class Storage:
+    def data_ptr(self): return 4096
+    def nbytes(self): return 64
+    def _share_cuda_(self):
+        global exports
+        exports += 1
+        raise AssertionError('duplicate registration created an export credit')
+class Tensor:
+    device = SimpleNamespace(type='cuda', index=3)
+    shape = (8,)
+    dtype = 'torch.float16'
+    def data_ptr(self): return 4096
+    def untyped_storage(self): return Storage()
+    def element_size(self): return 2
+    def storage_offset(self): return 0
+    def stride(self): return (1,)
+def device_uuid(device): return 'GPU-c4930667-4d65-aae5-8205-fe785c3654be'
+"#
+            ),
+            c_str!("duplicate_entry.py"),
+            c_str!("duplicate_entry"),
+        )
+        .unwrap();
+        let modules = py.import("sys").unwrap().getattr("modules").unwrap();
+        let previous = modules
+            .call_method1("get", ("orbitkv.client.gpu",))
+            .unwrap()
+            .unbind();
+        modules.set_item("orbitkv.client.gpu", &fixture).unwrap();
+        let tensor = fixture.getattr("Tensor").unwrap().call0().unwrap().unbind();
+        let result = client.register_context_batch(
+            py,
+            "same-instance".into(),
+            "namespace".into(),
+            1,
+            2,
+            1,
+            1,
+            3,
+            vec!["layer".into()],
+            vec![8],
+            vec![2],
+            vec![0],
+            vec![1],
+            "direct",
+            false,
+            None,
+            None,
+            None,
+            vec![tensor],
+        );
+        if previous.bind(py).is_none() {
+            modules.del_item("orbitkv.client.gpu").unwrap();
+        } else {
+            modules.set_item("orbitkv.client.gpu", previous).unwrap();
+        }
+        assert!(result.is_err());
+        assert_eq!(
+            fixture
+                .getattr("exports")
+                .unwrap()
+                .extract::<usize>()
+                .unwrap(),
+            0
+        );
+        assert!(!crate::registration::instance_pending(
+            &client.inner,
+            "same-instance"
+        ));
+        println!(
+            "actual_register_entry=1 local_duplicate_rejected=1 export_calls=0 CUDA_operations=0"
+        );
+    });
+    process.stop();
+}

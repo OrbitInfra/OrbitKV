@@ -10,8 +10,9 @@ use orbitkv_channel::{
 use orbitkv_core::transfer::local::{LocalRestoreExecutor, LocalTensor};
 use orbitkv_core::{PayloadArena, TransferMode as LocalTransferMode};
 use orbitkv_proto::proto::engine::{
-    ConfigureShardQueriesRequest, CudaIpcTensorRegistration, RegisterContextRequest,
-    RegisteredQueryTarget, SessionRequest, ShardQueryTarget, TransferMode, UnregisterRequest,
+    ConfigureShardQueriesRequest, CudaCreditDisposition, CudaIpcTensorRegistration,
+    CudaRegistrationReply, RegisterContextRequest, RegisteredQueryTarget, SessionRequest,
+    ShardQueryTarget, TransferMode, UnregisterRequest,
 };
 use prost::Message;
 use pyo3::{
@@ -311,6 +312,14 @@ impl PyCacheManagerClient {
         });
     }
 
+    fn retained_registration_attempts(&self) -> Vec<crate::registration::RetainedAttempt> {
+        crate::registration::retained_attempts()
+    }
+
+    fn registration_retention(&self) -> (usize, u64, usize) {
+        crate::registration::retention()
+    }
+
     #[getter]
     fn transport(&self) -> &'static str {
         "iceoryx2"
@@ -371,6 +380,7 @@ impl PyCacheManagerClient {
         let key = (instance_id.clone(), tp_rank, device_id);
         let count = layer_names.len();
         if count == 0
+            || count > 4096
             || [
                 tensors.len(),
                 num_blocks_list.len(),
@@ -388,7 +398,7 @@ impl PyCacheManagerClient {
         let mut device = None;
         let mut bindings = Vec::with_capacity(count);
         let mut gpu_tensors = Vec::with_capacity(count);
-        let export_owner_generation = uuid::Uuid::new_v4().into_bytes();
+        let mut retained_bytes = 0_u64;
         for (index, owner) in tensors.iter().enumerate() {
             let tensor = owner.bind(py);
             let tensor_device = tensor.getattr("device")?;
@@ -410,6 +420,9 @@ impl PyCacheManagerClient {
             let storage = tensor.call_method0("untyped_storage")?;
             let allocation = storage.call_method0("data_ptr")?.extract::<u64>()?;
             let size = storage.call_method0("nbytes")?.extract::<u64>()?;
+            retained_bytes = retained_bytes.checked_add(size).ok_or_else(|| {
+                PyValueError::new_err("CUDA registration retained bytes overflow")
+            })?;
             let offset = address
                 .checked_sub(allocation)
                 .filter(|offset| *offset < size)
@@ -432,7 +445,7 @@ impl PyCacheManagerClient {
                     .ok_or_else(|| PyValueError::new_err("unsupported CUDA tensor dtype"))?
                     .into(),
                 element_size,
-                export_owner_generation: export_owner_generation.to_vec(),
+                export_owner_generation: Vec::new(),
                 ..Default::default()
             };
             registration
@@ -474,26 +487,54 @@ impl PyCacheManagerClient {
             .import("orbitkv.client.gpu")?
             .call_method1("device_uuid", (device,))?
             .extract::<String>()?;
-        for (tensor, registration) in tensors.iter().zip(&mut gpu_tensors) {
-            let storage = tensor.bind(py).call_method0("untyped_storage")?;
-            let shared = storage.call_method0("_share_cuda_")?;
-            let shared = shared.cast::<PyTuple>()?;
-            if shared.len() != 8
-                || shared.get_item(0)?.extract::<usize>()? != device
-                || shared.get_item(2)?.extract::<u64>()? != registration.storage_size_bytes
-            {
-                return Err(PyValueError::new_err("invalid CUDA storage export tuple"));
+        let tensors = Arc::new(tensors);
+        let attempt = py.detach(|| {
+            let local = self
+                .local
+                .lock()
+                .map_err(|_| OrbitKVInternal::new_err("local executor lock poisoned"))?;
+            if local.contains_key(&key) {
+                return Err(PyValueError::new_err(
+                    "GPU context is already registered on this client",
+                ));
             }
-            registration.device_uuid = device_uuid.clone();
-            registration.allocation_handle = shared.get_item(1)?.extract()?;
-            registration.storage_allocation_offset_bytes = shared.get_item(3)?.extract()?;
-            registration.ref_counter_handle = shared.get_item(4)?.extract()?;
-            registration.ref_counter_offset = shared.get_item(5)?.extract()?;
-            registration.event_handle = shared.get_item(6)?.extract()?;
-            registration.event_sync_required = shared.get_item(7)?.extract()?;
-            registration
-                .validate(&device_uuid)
-                .map_err(PyValueError::new_err)?;
+            crate::registration::AttemptOwner::reserve(
+                Arc::clone(&self.inner),
+                key.clone(),
+                Arc::clone(&tensors),
+                retained_bytes,
+            )
+            .map_err(OrbitKVError::new_err)
+        })?;
+        let export_owner_generation = attempt.0;
+        let exported = (|| -> PyResult<()> {
+            for (tensor, registration) in tensors.iter().zip(&mut gpu_tensors) {
+                let storage = tensor.bind(py).call_method0("untyped_storage")?;
+                let shared = attempt.export(py, &storage)?;
+                let shared = shared.bind(py).cast::<PyTuple>()?;
+                if shared.len() != 8
+                    || shared.get_item(0)?.extract::<usize>()? != device
+                    || shared.get_item(2)?.extract::<u64>()? != registration.storage_size_bytes
+                {
+                    return Err(PyValueError::new_err("invalid CUDA storage export tuple"));
+                }
+                registration.export_owner_generation = export_owner_generation.to_vec();
+                registration.device_uuid = device_uuid.clone();
+                registration.allocation_handle = shared.get_item(1)?.extract()?;
+                registration.storage_allocation_offset_bytes = shared.get_item(3)?.extract()?;
+                registration.ref_counter_handle = shared.get_item(4)?.extract()?;
+                registration.ref_counter_offset = shared.get_item(5)?.extract()?;
+                registration.event_handle = shared.get_item(6)?.extract()?;
+                registration.event_sync_required = shared.get_item(7)?.extract()?;
+                registration
+                    .validate(&device_uuid)
+                    .map_err(PyValueError::new_err)?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = exported {
+            attempt.rollback(py)?;
+            return Err(error);
         }
         let ipc_counters = gpu_tensors
             .iter()
@@ -532,43 +573,70 @@ impl PyCacheManagerClient {
                 })
                 .collect(),
         };
-        let tensors = Arc::new(tensors);
         let retained = Arc::clone(&tensors);
         py.detach(|| {
             let mut local = self
                 .local
                 .lock()
                 .map_err(|_| OrbitKVInternal::new_err("local executor lock poisoned"))?;
-            if local.contains_key(&key) {
-                return Err(PyValueError::new_err(
-                    "GPU context is already registered on this client",
-                ));
-            }
+            attempt.submitted()?;
             let reply = self
                 .inner
                 .channel()
                 .lifecycle(LifecycleCommand::Register, &request.encode_to_vec())
                 .map_err(client_error)?;
+            let receipt = CudaRegistrationReply::decode(reply.payload.as_slice())
+                .map_err(|error| OrbitKVInternal::new_err(error.to_string()))?;
+            if receipt.export_owner_generation != export_owner_generation
+                || receipt.credits.len() != count
+            {
+                return Err(OrbitKVError::new_err(
+                    "CUDA registration receipt identity differs; owner retained",
+                ));
+            }
+            if receipt.status_code > u16::MAX as u32
+                || (receipt.status_code == 0
+                    && receipt
+                        .credits
+                        .iter()
+                        .any(|state| *state != CudaCreditDisposition::ImporterOwned as i32))
+            {
+                return Err(OrbitKVError::new_err(
+                    "invalid CUDA registration receipt; owner retained",
+                ));
+            }
+            Python::attach(|py| attempt.resolve(py, &receipt.credits))?;
+            if receipt.status_code != 0 {
+                return Err(client_error(ChannelError::Lifecycle {
+                    code: receipt.status_code as u16,
+                    message: receipt.message,
+                }));
+            }
+            if receipt
+                .credits
+                .iter()
+                .any(|state| *state != CudaCreditDisposition::ImporterOwned as i32)
+            {
+                return Err(OrbitKVError::new_err(
+                    "successful CUDA registration lacks importer receipt; owner retained",
+                ));
+            }
             let worker = (|| -> PyResult<LocalRestoreWorker> {
-                if reply.payload.len() != 20 + reply.fds.len() * 16 {
+                if receipt.arenas.len() != reply.fds.len() {
                     return Err(OrbitKVInternal::new_err(
                         "invalid payload arena registration reply",
                     ));
                 }
-                let manager_device_id =
-                    i32::from_le_bytes(reply.payload[..4].try_into().map_err(|_| {
-                        OrbitKVInternal::new_err("invalid Manager device identity")
-                    })?);
-                let registration_generation: [u8; 16] = reply.payload[4..20]
+                let manager_device_id = receipt.manager_device_id;
+                let registration_generation: [u8; 16] = receipt
+                    .registration_generation
+                    .as_slice()
                     .try_into()
                     .map_err(|_| OrbitKVInternal::new_err("invalid GPU registration generation"))?;
-                if registration_generation == [0; 16] {
+                if registration_generation == [0; 16] || manager_device_id < 0 {
                     return Err(OrbitKVInternal::new_err(
-                        "empty GPU registration generation",
+                        "invalid Manager registration identity",
                     ));
-                }
-                if manager_device_id < 0 {
-                    return Err(OrbitKVInternal::new_err("negative Manager device ordinal"));
                 }
                 if local
                     .values()
@@ -582,18 +650,15 @@ impl PyCacheManagerClient {
                     ));
                 }
                 let mut arenas = Vec::with_capacity(reply.fds.len());
-                for (metadata, fd) in reply.payload[20..].chunks_exact(16).zip(reply.fds) {
-                    let id = u64::from_le_bytes(
-                        metadata[..8]
-                            .try_into()
-                            .map_err(|_| OrbitKVInternal::new_err("invalid arena identity"))?,
-                    );
-                    let size = u64::from_le_bytes(
-                        metadata[8..]
-                            .try_into()
-                            .map_err(|_| OrbitKVInternal::new_err("invalid arena size"))?,
-                    );
-                    arenas.push(PayloadArena { id, size, fd });
+                for (metadata, fd) in receipt.arenas.into_iter().zip(reply.fds) {
+                    if metadata.id == 0 || metadata.size == 0 {
+                        return Err(OrbitKVInternal::new_err("invalid arena bounds"));
+                    }
+                    arenas.push(PayloadArena {
+                        id: metadata.id,
+                        size: metadata.size,
+                        fd,
+                    });
                 }
                 let mode = match transfer_mode {
                     TransferMode::Direct => LocalTransferMode::Direct,
@@ -632,6 +697,7 @@ impl PyCacheManagerClient {
             };
             let generation = worker.registration_generation;
             local.insert(key.clone(), Arc::new(worker));
+            attempt.accepted()?;
             Ok(PyGpuRegistration {
                 instance_id: key.0,
                 tp_rank,
@@ -761,6 +827,11 @@ impl PyCacheManagerClient {
                 .local
                 .lock()
                 .map_err(|_| OrbitKVInternal::new_err("local executor lock poisoned"))?;
+            if crate::registration::instance_pending(&self.inner, &instance_id) {
+                return Err(OrbitKVError::new_err(
+                    "CUDA registration attempt pending or retained; unregister refused",
+                ));
+            }
             for ((instance, _, _), worker) in local.iter() {
                 if instance == &instance_id {
                     worker.wait_drained();

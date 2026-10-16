@@ -125,6 +125,17 @@ unregister/close, and retain failed cleanup plus independent queued holds.
 The optional `ORBITKV_CLEANUP_SOURCE_ROOT` selects an archived source for the
 negative control; it never changes production lookup or admission.
 
+For explicit CUDA registration/credit-owner changes, run
+`registration::tests` and the actual duplicate-entry control in `client::tests`
+with the authenticated channel fixture below. CPU tests use a declared local
+Torch storage ABI stub to count exports and repayments; they never import a
+real CUDA mapping. Partial/lost-return controls preserve the owner, and repayment
+is not retried after an unknown return. Separately run the server lifecycle
+unit gate: actual UDS rejects bad registration with a generation-bound
+NeverImported disposition; this uses the explicit host-registration test shim
+and read-only driver discovery, not CUDA byte/DMA qualification. Actual installed
+Torch export/import/repayment and both engine GPU gates remain required.
+
 For producer-bound Publish registration changes, run `client::tests` with the
 same fixture and embedding environment. These controls pause a real native
 worker-lock lookup, replace the registration, and check stale/foreign-client

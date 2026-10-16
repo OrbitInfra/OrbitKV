@@ -1,4 +1,4 @@
-use orbitkv_proto::proto::engine::CudaIpcTensorRegistration;
+use orbitkv_proto::proto::engine::{CudaCreditDisposition, CudaIpcTensorRegistration};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -83,7 +83,9 @@ impl CudaTensorRegistry {
         &mut self,
         context_key: &ContextKey,
         layers: Vec<(String, CudaIpcTensorRegistration)>,
+        disposition: &mut CudaCreditDisposition,
     ) -> PyResult<Vec<TensorMetadata>> {
+        *disposition = CudaCreditDisposition::Unknown;
         if self.contexts.contains_key(context_key) {
             return Err(PyValueError::new_err(format!(
                 "context {context_key:?} is already registered"
@@ -133,6 +135,7 @@ impl CudaTensorRegistry {
                 .validate(device_uuid)
                 .map_err(PyValueError::new_err)?;
         }
+        *disposition = CudaCreditDisposition::NeverImported;
         let device_id = Python::attach(|py| {
             py.import("orbitkv.client.gpu")?
                 .call_method1("device_index_from_uuid", (device_uuid,))?
@@ -142,6 +145,7 @@ impl CudaTensorRegistry {
         context.export_owner_generation = export_owner_generation.cloned();
         let mut metadatas = Vec::with_capacity(layers.len());
         for (layer_name, registration) in layers {
+            *disposition = CudaCreditDisposition::Unknown;
             let layer_tensor = Self::materialize_tensor(device_id, device_uuid, &registration)?;
             let metadata = layer_tensor.metadata.clone();
 
@@ -157,6 +161,7 @@ impl CudaTensorRegistry {
         }
 
         self.contexts.insert(context_key.clone(), context);
+        *disposition = CudaCreditDisposition::ImporterOwned;
         Ok(metadatas)
     }
 
@@ -266,10 +271,19 @@ impl CudaTensorRegistry {
             let data_ptr: u64 = tensor.call_method0("data_ptr")?.extract()?;
             let actual_device: i32 = tensor.getattr("device")?.getattr("index")?.extract()?;
             let actual_size: u64 = storage.call_method0("nbytes")?.extract()?;
+            let base: u64 = storage.call_method0("data_ptr")?.extract()?;
+            let actual_offset: u64 = tensor.call_method0("storage_offset")?.extract()?;
+            let actual_dtype = tensor.getattr("dtype")?.str()?.to_string();
             let shape: Vec<usize> = tensor.getattr("shape")?.extract()?;
             let strides: Vec<usize> = tensor.call_method0("stride")?.extract()?;
             let element_size: u64 = tensor.call_method0("element_size")?.extract()?;
-            if actual_device != device_id
+            if base.checked_add(registration.view_offset_bytes) != Some(data_ptr)
+                || actual_offset.checked_mul(registration.element_size)
+                    != Some(registration.view_offset_bytes)
+                || data_ptr == 0
+                || !data_ptr.is_multiple_of(registration.element_size)
+                || actual_dtype != format!("torch.{}", registration.dtype)
+                || actual_device != device_id
                 || actual_size != registration.storage_size_bytes
                 || element_size != registration.element_size
                 || shape
@@ -308,6 +322,12 @@ impl CudaTensorRegistry {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct ImportFailure {
+    pub(crate) message: String,
+    pub(crate) disposition: CudaCreditDisposition,
+}
+
 /// Work submitted to the dedicated registry thread. Each carries a `oneshot`
 /// the actor uses to hand the result back to the awaiting caller.
 enum RegistryCommand {
@@ -317,7 +337,7 @@ enum RegistryCommand {
         layers: Vec<(String, CudaIpcTensorRegistration)>,
         // The `PyErr` is stringified on the actor thread (which holds the GIL),
         // so callers never need to touch the GIL to read an error message.
-        reply: oneshot::Sender<Result<Vec<TensorMetadata>, String>>,
+        reply: oneshot::Sender<Result<Vec<TensorMetadata>, ImportFailure>>,
     },
     DropInstance {
         instance_id: String,
@@ -371,7 +391,7 @@ impl RegistryHandle {
         &self,
         context_key: ContextKey,
         layers: Vec<(String, CudaIpcTensorRegistration)>,
-    ) -> Result<Vec<TensorMetadata>, String> {
+    ) -> Result<Vec<TensorMetadata>, ImportFailure> {
         let (reply, rx) = oneshot::channel();
         self.dispatch(RegistryCommand::RegisterLayers {
             context_key,
@@ -424,11 +444,15 @@ fn registry_actor(mut registry: CudaTensorRegistry, mut rx: mpsc::Receiver<Regis
                 layers,
                 reply,
             } => {
+                let mut disposition = CudaCreditDisposition::Unknown;
                 let result = registry
-                    .register_layers(&context_key, layers)
+                    .register_layers(&context_key, layers, &mut disposition)
                     // Stringify here, on the GIL-owning thread, so the gRPC
                     // handler never needs `Python::attach` just to read the message.
-                    .map_err(|err| Python::attach(|py| err.value(py).to_string()));
+                    .map_err(|err| ImportFailure {
+                        message: Python::attach(|py| err.value(py).to_string()),
+                        disposition,
+                    });
                 let _ = reply.send(result);
             }
             RegistryCommand::DropInstance { instance_id, reply } => {

@@ -33,7 +33,7 @@ fn register_layers_rejects_existing_context_before_materializing() {
         .contexts
         .insert(context.clone(), ContextState::new(7));
     let err = registry
-        .register_layers(&context, Vec::new())
+        .register_layers(&context, Vec::new(), &mut CudaCreditDisposition::Unknown)
         .expect_err("existing context must be rejected");
     let message = Python::attach(|py| err.value(py).to_string());
     assert!(message.contains("already registered"));
@@ -87,7 +87,10 @@ async fn actor_cleanup_preserves_the_other_instances_registration() {
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         assert_eq!(actor.drop_instance("a".into()).await, 0);
         let message = actor.register_layers(other, Vec::new()).await.unwrap_err();
-        assert!(message.contains("already registered"), "{message}");
+        assert!(
+            message.message.contains("already registered"),
+            "{message:?}"
+        );
         assert_eq!(actor.clear().await, 0);
     })
     .await
@@ -100,7 +103,11 @@ fn explicit_invalid_exports_are_refused_before_device_discovery_or_import() {
     let context = key("invalid", 0, 0, "GPU-c4930667-4d65-aae5-8205-fe785c3654be");
     let invalid = CudaIpcTensorRegistration::default();
     let error = registry
-        .register_layers(&context, vec![("kv".into(), invalid)])
+        .register_layers(
+            &context,
+            vec![("kv".into(), invalid)],
+            &mut CudaCreditDisposition::Unknown,
+        )
         .unwrap_err();
     let message = Python::attach(|py| error.value(py).to_string());
     assert!(
@@ -132,7 +139,11 @@ fn explicit_export_batch_cannot_mix_retained_owner_generations() {
     second.export_owner_generation = vec![2; 16];
     second.ref_counter_offset = 1;
     let error = registry
-        .register_layers(&context, vec![("k".into(), first), ("v".into(), second)])
+        .register_layers(
+            &context,
+            vec![("k".into(), first), ("v".into(), second)],
+            &mut CudaCreditDisposition::Unknown,
+        )
         .unwrap_err();
     let message = Python::attach(|py| error.value(py).to_string());
     assert!(message.contains("different owners"), "{message}");
@@ -166,6 +177,7 @@ fn one_export_credit_cannot_create_two_importer_owners() {
         .register_layers(
             &context,
             vec![("k".into(), first.clone()), ("v".into(), first)],
+            &mut CudaCreditDisposition::Unknown,
         )
         .unwrap_err();
     let message = Python::attach(|py| error.value(py).to_string());
@@ -174,4 +186,30 @@ fn one_export_credit_cannot_create_two_importer_owners() {
         "{message}"
     );
     assert!(registry.contexts.is_empty());
+}
+
+#[test]
+fn duplicate_credit_refusal_keeps_disposition_unknown() {
+    let mut registry = CudaTensorRegistry::empty();
+    let context = key(
+        "duplicate-credit",
+        0,
+        0,
+        "GPU-c4930667-4d65-aae5-8205-fe785c3654be",
+    );
+    let tensor = CudaIpcTensorRegistration {
+        ref_counter_handle: b"/existing-credit".to_vec(),
+        ..Default::default()
+    };
+    let mut disposition = CudaCreditDisposition::NeverImported;
+    assert!(
+        registry
+            .register_layers(
+                &context,
+                vec![("a".into(), tensor.clone()), ("b".into(), tensor)],
+                &mut disposition
+            )
+            .is_err()
+    );
+    assert_eq!(disposition, CudaCreditDisposition::Unknown);
 }

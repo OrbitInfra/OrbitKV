@@ -15,7 +15,10 @@ use tokio::sync::watch;
 use crate::cache::lifecycle::{ControlError, LifecycleService};
 use crate::cache::query_control::QueryControlService;
 use crate::cache::shards::ShardQueries;
-use crate::proto::engine::{RegisterContextRequest, SessionRequest, UnregisterRequest};
+use crate::proto::engine::{
+    CudaCreditDisposition, CudaPayloadArena, CudaRegistrationReply, RegisterContextRequest,
+    SessionRequest, UnregisterRequest,
+};
 
 pub(crate) async fn serve(
     stream: std::os::unix::net::UnixStream,
@@ -167,24 +170,55 @@ async fn dispatch(
         LifecycleCommand::Register => {
             let request = RegisterContextRequest::decode(payload)
                 .map_err(|e| ControlError::invalid_argument(e.to_string()))?;
-            let arenas = lifecycle.payload_arenas()?;
-            if arenas.len() > 64 {
-                return Err(ControlError::invalid_argument(
-                    "payload arena count exceeds session limit",
-                ));
+            let count = request.gpu_tensors.len();
+            let generation = request
+                .gpu_tensors
+                .first()
+                .map(|tensor| tensor.export_owner_generation.clone())
+                .unwrap_or_default();
+            let mut reply = CudaRegistrationReply {
+                export_owner_generation: generation,
+                credits: vec![CudaCreditDisposition::Unknown as i32; count],
+                ..Default::default()
+            };
+            let result = async {
+                let arenas = lifecycle.payload_arenas()?;
+                if arenas.len() > 64 {
+                    return Err(ControlError::invalid_argument(
+                        "payload arena count exceeds session limit",
+                    ));
+                }
+                let (device, generation) = lifecycle
+                    .register(crate::wire::registration(request))
+                    .await?;
+                Ok((device, generation, arenas))
             }
-            let (manager_device_id, registration_generation) = lifecycle
-                .register(crate::wire::registration(request))
-                .await?;
-            let mut body = Vec::with_capacity(20 + arenas.len() * 16);
-            body.extend_from_slice(&manager_device_id.to_le_bytes());
-            body.extend_from_slice(&registration_generation);
-            for arena in &arenas {
-                body.extend_from_slice(&arena.id.to_le_bytes());
-                body.extend_from_slice(&arena.size.to_le_bytes());
+            .await;
+            match result {
+                Ok((device, generation, arenas)) => {
+                    reply.manager_device_id = device;
+                    reply.registration_generation = generation.to_vec();
+                    reply
+                        .credits
+                        .fill(CudaCreditDisposition::ImporterOwned as i32);
+                    reply.arenas = arenas
+                        .iter()
+                        .map(|arena| CudaPayloadArena {
+                            id: arena.id,
+                            size: arena.size,
+                        })
+                        .collect();
+                    return Ok((reply.encode_to_vec(), arenas));
+                }
+                Err(error) => {
+                    reply.status_code = error.code as u32;
+                    reply.message = error.message;
+                    reply.credits.fill(error.credit_disposition as i32);
+                    return Ok((reply.encode_to_vec(), Vec::new()));
+                }
             }
-            return Ok((body, arenas));
         }
+
         LifecycleCommand::Unregister => {
             let request = UnregisterRequest::decode(payload)
                 .map_err(|e| ControlError::invalid_argument(e.to_string()))?;

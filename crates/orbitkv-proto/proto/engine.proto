@@ -84,6 +84,27 @@ message CudaIpcTensorRegistration {
   bytes export_owner_generation = 16;
 }
 
+enum CudaCreditDisposition {
+  CUDA_CREDIT_DISPOSITION_UNKNOWN = 0;
+  CUDA_CREDIT_DISPOSITION_NEVER_IMPORTED = 1;
+  CUDA_CREDIT_DISPOSITION_IMPORTER_OWNED = 2;
+}
+
+message CudaRegistrationReply {
+  uint32 status_code = 1;
+  string message = 2;
+  bytes export_owner_generation = 3;
+  repeated CudaCreditDisposition credits = 4;
+  int32 manager_device_id = 5;
+  bytes registration_generation = 6;
+  repeated CudaPayloadArena arenas = 7;
+}
+
+message CudaPayloadArena {
+  uint64 id = 1;
+  uint64 size = 2;
+}
+
 message UnregisterRequest {
   string instance_id = 1;
 }
