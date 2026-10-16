@@ -559,8 +559,17 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   grants GPU launch or physical lifetime qualification. A task-owned controller
   candidate separates precheck from formal admission, retains resource locks
   on unknown native ownership, rejects missing cleanup/log evidence and shares
-  one cumulative cleanup budget. Its CPU admission/evidence controls pass;
-  controller/source and exact resource/launch acceptance remain pending.
+  one cumulative cleanup budget. The initial `867e1923` controller is
+  independently ChangesRequired: adopted failures and missing logs could pass,
+  selected locks/READY identity could drift, loader/cache environment leaked,
+  and final ownership/deadline accounting ended too early. Its remediation
+  accounts for each observed child, requires exact associated native logs,
+  revalidates fd/path device+inode and fresh inventory at admission, binds the
+  grant to READY/controller identity, and retains ownership through final
+  durable evidence. Bounded evidence reads/parsing and all inventory/waits
+  consume the shared remaining cleanup deadline. CPU controls reject the
+  preserved original counterexamples; independent controller/source and exact
+  runtime/resource/launch acceptance remain pending.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

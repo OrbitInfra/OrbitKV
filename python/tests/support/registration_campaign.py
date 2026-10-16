@@ -10,18 +10,85 @@ import hashlib
 import json
 import os
 import signal
+import stat
 import subprocess
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+MAX_JSON_BYTES = 1024 * 1024
+MAX_LOG_BYTES = 32 * 1024 * 1024
+MAX_EVIDENCE_FILES = 4096
+MAX_OBSERVED_PROCESSES = 1024
 
-def digest(path: Path) -> str:
+
+def remaining(deadline: float | None) -> float:
+    if deadline is None:
+        return 10.0
+    value = deadline - time.monotonic()
+    if value <= 0:
+        raise TimeoutError("Shared evidence/cleanup deadline exhausted")
+    return value
+
+
+def read_bytes(path: Path, limit: int, deadline: float | None = None) -> bytes:
+    remaining(deadline)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
+            raise RuntimeError(f"Invalid or oversized evidence: {path}")
+        chunks = []
+        size = 0
+        while True:
+            remaining(deadline)
+            chunk = os.read(fd, min(65536, limit + 1 - size))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+            if size > limit:
+                raise RuntimeError(f"Evidence grew beyond its bound: {path}")
+        remaining(deadline)
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
+def read_json(path: Path, deadline: float | None = None) -> dict:
+    value = json.loads(read_bytes(path, MAX_JSON_BYTES, deadline))
+    remaining(deadline)
+    return value
+
+
+def evidence_paths(directory: Path, pattern: str, deadline: float | None = None) -> list[Path]:
+    paths = []
+    for index, path in enumerate(directory.rglob(pattern)):
+        remaining(deadline)
+        if index >= MAX_EVIDENCE_FILES or path.is_symlink() or not path.is_file():
+            raise RuntimeError("Invalid or excessive evidence paths")
+        if not path.resolve().is_relative_to(directory.resolve()):
+            raise RuntimeError("Evidence leaves the owned output directory")
+        paths.append(path)
+    remaining(deadline)
+    return sorted(paths)
+
+
+def digest(path: Path, deadline: float | None = None) -> str:
+    value = hashlib.sha256()
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        while True:
+            remaining(deadline)
+            chunk = stream.read(1024 * 1024)
+            if not chunk:
+                break
+            value.update(chunk)
+    remaining(deadline)
+    return value.hexdigest()
 
 
-def identity(pid: int) -> dict:
+def identity(pid: int, deadline: float | None = None) -> dict:
+    remaining(deadline)
     fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
     return {
         "pid": pid,
@@ -32,19 +99,32 @@ def identity(pid: int) -> dict:
     }
 
 
-def write(path: Path, value: dict) -> None:
+def write(path: Path, value: dict, deadline: float | None = None) -> None:
+    remaining(deadline)
     with path.open("x") as stream:
         json.dump(value, stream, indent=2, allow_nan=False)
         stream.write("\n")
         stream.flush()
+        remaining(deadline)
         os.fsync(stream.fileno())
+        remaining(deadline)
+    fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        remaining(deadline)
+        os.fsync(fd)
+        remaining(deadline)
+    finally:
+        os.close(fd)
 
 
-def descendants() -> list[dict]:
+def descendants(deadline: float | None = None) -> list[dict]:
     table = {}
-    for path in Path("/proc").glob("[0-9]*/stat"):
+    for index, path in enumerate(Path("/proc").glob("[0-9]*/stat")):
+        remaining(deadline)
+        if index >= 65536:
+            raise RuntimeError("Process inventory bound exceeded")
         try:
-            item = identity(int(path.parent.name))
+            item = identity(int(path.parent.name), deadline)
         except (FileNotFoundError, ProcessLookupError):
             continue
         table[item["pid"]] = item
@@ -58,7 +138,7 @@ def descendants() -> list[dict]:
         owned = larger
 
 
-def inventory(gpu_uuid: str) -> dict:
+def inventory(gpu_uuid: str, deadline: float | None = None) -> dict:
     gpu = (
         subprocess.run(
             [
@@ -70,7 +150,7 @@ def inventory(gpu_uuid: str) -> dict:
             ],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=min(10, remaining(deadline)),
             check=True,
         )
         .stdout.strip()
@@ -80,11 +160,12 @@ def inventory(gpu_uuid: str) -> dict:
         ["nvidia-smi", "--query-compute-apps=pid,gpu_uuid", "--format=csv,noheader"],
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=min(10, remaining(deadline)),
         check=True,
     ).stdout
     if len(gpu) != 2 or gpu[0].strip() != gpu_uuid:
         raise RuntimeError("GPU inventory does not match the frozen UUID")
+    remaining(deadline)
     return {
         "uuid": gpu_uuid,
         "memory_mib": int(gpu[1]),
@@ -92,19 +173,69 @@ def inventory(gpu_uuid: str) -> dict:
     }
 
 
-def check_inputs(contract: dict) -> None:
+def check_inputs(
+    contract: dict, locks: list[int] | None = None, deadline: float | None = None
+) -> None:
+    remaining(deadline)
     if Path("/proc/sys/kernel/random/boot_id").read_text().strip() != contract["boot_id"]:
         raise RuntimeError("Host boot identity changed")
     for path, expected in contract["input_sha256"].items():
-        if digest(Path(path)) != expected:
+        if digest(Path(path), deadline) != expected:
             raise RuntimeError(f"Frozen input changed: {path}")
     protected = contract["protected_gpu0"]
     if (
-        digest(Path(protected["quarantine"])) != protected["quarantine_sha256"]
+        digest(Path(protected["quarantine"]), deadline) != protected["quarantine_sha256"]
         or Path(protected["lease"]).stat().st_ino != protected["lease_inode"]
         or identity(protected["guardian_pid"])["start_ticks"] != protected["guardian_start_ticks"]
     ):
         raise RuntimeError("Protected resource identity changed")
+    if locks is not None and len(locks) != len(contract["locks"]):
+        raise RuntimeError("Resource descriptor count differs")
+    for index, resource in enumerate(contract["locks"]):
+        remaining(deadline)
+        metadata = Path(resource["path"]).lstat()
+        expected = (resource["device"], resource["inode"])
+        if not stat.S_ISREG(metadata.st_mode) or (metadata.st_dev, metadata.st_ino) != expected:
+            raise RuntimeError("Selected resource path identity changed")
+        if locks is not None:
+            held = os.fstat(locks[index])
+            if (held.st_dev, held.st_ino) != expected:
+                raise RuntimeError("Held resource descriptor differs from its frozen path")
+
+
+def cell_environment(cell: dict, gpu_uuid: str) -> dict:
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key.lower() not in ("http_proxy", "https_proxy", "all_proxy")
+        and not key.startswith(("PYTHON", "LD_", "CUDA_", "ORBITKV_", "MC_", "TENT_"))
+    }
+    env.update(cell["environment"])
+    if (
+        env.get("CUDA_VISIBLE_DEVICES") != gpu_uuid
+        or env.get("ORBITKV_TEST_STRICT_SHUTDOWN") != "1"
+        or env.get("MC_FORCE_TCP") != "1"
+        or any(key.startswith("LD_") and key != "LD_LIBRARY_PATH" for key in env)
+        or "PYTHONPYCACHEPREFIX" in env
+        or "PYTHONOPTIMIZE" in env
+    ):
+        raise RuntimeError("Frozen installed TCP/strict/GPU environment is invalid")
+    return env
+
+
+def validate_grant(grant: dict, ready: dict, ready_sha: str, phase: str, controller: dict) -> None:
+    if (
+        grant.get("approved") is not True
+        or grant.get("phase") != phase
+        or grant.get("contract_sha256") != ready["contract_sha256"]
+        or grant.get("ready_sha256") != ready_sha
+        or grant.get("controller_pid") != controller["pid"]
+        or grant.get("controller_start_ticks") != controller["start_ticks"]
+        or ready["controller"] != controller
+        or not isinstance(grant.get("review_sha256"), str)
+        or len(grant["review_sha256"]) != 64
+    ):
+        raise RuntimeError("Independent grant does not bind this READY/controller incarnation")
 
 
 def quarantine(root: Path, reason: str, locks: list[int]) -> None:
@@ -123,20 +254,43 @@ def quarantine(root: Path, reason: str, locks: list[int]) -> None:
             time.sleep(1)
 
 
-def validate_cell(cell: dict, directory: Path, pytest_owner: dict) -> None:
-    cases = list(ET.parse(directory / "junit.xml").getroot().iter("testcase"))
+def validate_cell(
+    cell: dict,
+    directory: Path,
+    pytest_owner: dict,
+    observed: list[dict] | None = None,
+    deadline: float | None = None,
+) -> None:
+    if observed is None:
+        raise RuntimeError("Observed native process ownership is required")
+    known = {(row["pid"], row["start_ticks"]): row for row in observed}
+    if len(known) != len(observed):
+        raise RuntimeError("Duplicate observed process identities")
+    primary = (pytest_owner["pid"], pytest_owner["start_ticks"])
+    if primary not in known:
+        raise RuntimeError("Waited pytest process was not observed")
+    cases = list(
+        ET.fromstring(read_bytes(directory / "junit.xml", MAX_JSON_BYTES, deadline)).iter(
+            "testcase"
+        )
+    )
+    remaining(deadline)
     if len(cases) != cell["passed"] or any(
         case.find(tag) is not None for case in cases for tag in ("failure", "error", "skipped")
     ):
         raise RuntimeError("Frozen pytest outcome differs")
-    receipts = list(directory.rglob("*.cleanup.json"))
+    receipts = evidence_paths(directory, "*.cleanup.json", deadline)
     if len(receipts) != cell["cleanup_receipts"]:
         raise RuntimeError("Missing native service cleanup receipts")
+    accounted = {primary}
+    service_logs = set()
     for path in receipts:
-        row = json.loads(path.read_text())
+        row = read_json(path, deadline)
         if (
             type(row.get("pid")) is not int
             or type(row.get("start_ticks")) is not int
+            or row["pid"] <= 0
+            or row["start_ticks"] <= 0
             or row.get("forced_kill") is not False
             or row.get("reaped") is not True
             or type(row.get("exit_code")) is not int
@@ -145,8 +299,43 @@ def validate_cell(cell: dict, directory: Path, pytest_owner: dict) -> None:
             or row.get("inspection_errors") != []
         ):
             raise RuntimeError(f"Native cleanup is not established: {path}")
-    for path in directory.rglob("*.log"):
-        text = path.read_text(errors="replace")
+        key = (row["pid"], row["start_ticks"])
+        if key not in known or key in accounted:
+            raise RuntimeError("Native receipt owner is unobserved or duplicated")
+        accounted.add(key)
+        log = Path(str(path).removesuffix(".cleanup.json"))
+        if log.suffix != ".log":
+            raise RuntimeError("Native cleanup receipt has no associated log")
+        service_logs.add(log)
+    for path in evidence_paths(directory, "ADOPTED-*.json", deadline):
+        row = read_json(path, deadline)
+        key = (row["pid"], row["start_ticks"])
+        if (
+            key not in known
+            or key in accounted
+            or row.get("actual_wait") is not True
+            or type(row.get("exit_code")) is not int
+            or row["exit_code"] not in cell["adopted_exit_codes"]
+        ):
+            raise RuntimeError("Adopted native exit was invalid, unobserved or duplicated")
+        accounted.add(key)
+    if accounted != set(known):
+        raise RuntimeError("Observed native children have no terminal receipt")
+    if not cell.get("log_sets"):
+        raise RuntimeError("Expected native log set is required")
+    expected_logs = set()
+    for declaration in cell["log_sets"]:
+        paths = evidence_paths(directory, declaration["pattern"], deadline)
+        if len(paths) != declaration["count"]:
+            raise RuntimeError("Expected native/worker logs are missing")
+        if expected_logs.intersection(paths):
+            raise RuntimeError("Declared native logs overlap")
+        expected_logs.update(paths)
+    logs = set(evidence_paths(directory, "*.log", deadline))
+    if logs != expected_logs or not service_logs <= logs or directory / "pytest.log" not in logs:
+        raise RuntimeError("Native log census or receipt association differs")
+    for path in logs:
+        text = read_bytes(path, MAX_LOG_BYTES, deadline).decode(errors="replace")
         if (
             "Traceback (most recent call last)" in text
             or "EngineDeadError" in text
@@ -154,11 +343,11 @@ def validate_cell(cell: dict, directory: Path, pytest_owner: dict) -> None:
         ):
             raise RuntimeError(f"Native/worker failure remains in log: {path}")
     if cell["kind"] == "native":
-        releases = list(directory.rglob("*.native-release.json"))
+        releases = evidence_paths(directory, "*.native-release.json", deadline)
         if len(releases) != 4:
             raise RuntimeError("Missing complete native client release receipts")
         for path in releases:
-            row = json.loads(path.read_text())
+            row = read_json(path, deadline)
             if (
                 row.get("pid") != pytest_owner["pid"]
                 or row.get("start_ticks") != pytest_owner["start_ticks"]
@@ -166,11 +355,11 @@ def validate_cell(cell: dict, directory: Path, pytest_owner: dict) -> None:
             ):
                 raise RuntimeError("Native client release identity differs")
     if cell["kind"] == "sglang-pool":
-        releases = list(directory.rglob("sglang-registration.native-release.json"))
+        releases = evidence_paths(directory, "sglang-registration.native-release.json", deadline)
         if len(releases) != 2:
             raise RuntimeError("Missing SGLang pool lifetime receipts")
         for path in releases:
-            row = json.loads(path.read_text())
+            row = read_json(path, deadline)
             if (
                 row.get("pid") != pytest_owner["pid"]
                 or row.get("start_ticks") != pytest_owner["start_ticks"]
@@ -182,11 +371,11 @@ def validate_cell(cell: dict, directory: Path, pytest_owner: dict) -> None:
             ):
                 raise RuntimeError("SGLang pool lifetime contract differs")
     if cell["kind"] == "credits":
-        credits = list(directory.rglob("*.credit-state.json"))
+        credits = evidence_paths(directory, "*.credit-state.json", deadline)
         if len(credits) != 2:
             raise RuntimeError("Missing explicit credit-state receipts")
         for path in credits:
-            row = json.loads(path.read_text())
+            row = read_json(path, deadline)
             if (
                 row.get("pid") != pytest_owner["pid"]
                 or row.get("start_ticks") != pytest_owner["start_ticks"]
@@ -194,8 +383,12 @@ def validate_cell(cell: dict, directory: Path, pytest_owner: dict) -> None:
                 or row.get("physical_fault_drain_claimed") is not False
             ):
                 raise RuntimeError("Credit receipt identity or scope differs")
-        partial = json.loads(next(directory.rglob("partial-export.credit-state.json")).read_text())
-        normal = json.loads(next(directory.rglob("duplicate-export.credit-state.json")).read_text())
+        partial = read_json(
+            evidence_paths(directory, "partial-export.credit-state.json", deadline)[0], deadline
+        )
+        normal = read_json(
+            evidence_paths(directory, "duplicate-export.credit-state.json", deadline)[0], deadline
+        )
         if (
             partial.get("framework_throw_retained") is not True
             or partial.get("unregister_refused") is not True
@@ -206,6 +399,7 @@ def validate_cell(cell: dict, directory: Path, pytest_owner: dict) -> None:
             or normal.get("unregister_succeeded") is not True
         ):
             raise RuntimeError("Credit repayment/retention contract failed")
+    remaining(deadline)
 
 
 def main() -> None:
@@ -214,7 +408,9 @@ def main() -> None:
     args = parser.parse_args()
     if not __debug__ or os.environ.get("PYTHONOPTIMIZE"):
         raise RuntimeError("Optimized controller execution is forbidden")
-    contract_bytes = args.contract.read_bytes()
+    if os.environ.get("LD_AUDIT") or os.environ.get("PYTHONPYCACHEPREFIX"):
+        raise RuntimeError("Controller startup contains an unfrozen loader/bytecode influence")
+    contract_bytes = read_bytes(args.contract, 16 * MAX_JSON_BYTES)
     contract_sha = hashlib.sha256(contract_bytes).hexdigest()
     contract = json.loads(contract_bytes)
     root = args.contract.parent
@@ -260,23 +456,25 @@ def main() -> None:
                 raise RuntimeError("Resource lock inode changed")
         if Path(contract["quarantine"]).exists():
             raise RuntimeError("GPU resource is quarantined")
-        before = inventory(contract["gpu_uuid"])
+        check_inputs(contract, locks)
+        before = inventory(contract["gpu_uuid"], time.monotonic() + 20)
         if before["memory_mib"] != 0 or before["compute"]:
             raise RuntimeError("GPU resource is in use")
-        write(
-            root / "READY.json",
-            {
-                "controller": identity(os.getpid()),
-                "contract_sha256": digest(args.contract),
-                "locks": [
-                    {"path": row["path"], "inode": os.fstat(fd).st_ino}
-                    for row, fd in zip(contract["locks"], locks, strict=True)
-                ],
-                "inventory": before,
-                "GPU_launches": 0,
-                "phase": contract["phase"],
-            },
-        )
+        controller = identity(os.getpid())
+        ready = {
+            "controller": controller,
+            "contract_sha256": contract_sha,
+            "locks": [
+                {"path": row["path"], "device": os.fstat(fd).st_dev, "inode": os.fstat(fd).st_ino}
+                for row, fd in zip(contract["locks"], locks, strict=True)
+            ],
+            "inventory": before,
+            "GPU_launches": 0,
+            "phase": contract["phase"],
+        }
+        ready_path = root / "READY.json"
+        write(ready_path, ready)
+        ready_sha = digest(ready_path)
         deadline = time.monotonic() + contract["review_wait_seconds"]
         approval = root / "LAUNCH-APPROVED.json"
         while not approval.exists():
@@ -288,48 +486,29 @@ def main() -> None:
             time.sleep(0.25)
         if approval.is_symlink() or args.contract.read_bytes() != contract_bytes:
             raise RuntimeError("Launch grant or frozen contract changed")
-        grant = json.loads(approval.read_text())
-        if (
-            grant["approved"] is not True
-            or grant["phase"] != contract["phase"]
-            or grant["contract_sha256"] != contract_sha
-            or len(grant["review_sha256"]) != 64
-        ):
-            raise RuntimeError("Independent launch grant differs")
+        check_inputs(contract, locks, deadline)
+        grant = read_json(approval, deadline)
+        if digest(ready_path, deadline) != ready_sha or identity(os.getpid()) != controller:
+            raise RuntimeError("READY or controller incarnation changed")
+        validate_grant(grant, ready, ready_sha, contract["phase"], controller)
+        fresh = inventory(contract["gpu_uuid"], deadline)
+        if fresh["memory_mib"] != 0 or fresh["compute"]:
+            raise RuntimeError("Resource is no longer quiet at grant admission")
         global_deadline = time.monotonic() + contract["campaign_seconds"]
         cleanup_spent = 0.0
         completed = []
         for cell in contract["cells"]:
             if time.monotonic() >= global_deadline or args.contract.read_bytes() != contract_bytes:
                 raise RuntimeError("Campaign budget exhausted or contract changed before admission")
-            check_inputs(contract)
+            check_inputs(contract, locks, global_deadline)
+            fresh = inventory(contract["gpu_uuid"], global_deadline)
+            if fresh["memory_mib"] != 0 or fresh["compute"]:
+                raise RuntimeError("GPU resource is in use before cell admission")
             if time.monotonic() >= global_deadline:
                 raise RuntimeError("Campaign budget exhausted by input verification")
             directory = root / cell["name"]
             directory.mkdir()
-            env = {
-                key: value
-                for key, value in os.environ.items()
-                if key.lower() not in ("http_proxy", "https_proxy", "all_proxy")
-                and key
-                not in (
-                    "PYTHONPATH",
-                    "PYTHONHOME",
-                    "PYTHONOPTIMIZE",
-                    "CUDA_VISIBLE_DEVICES",
-                    "LD_PRELOAD",
-                    "LD_LIBRARY_PATH",
-                )
-                and not key.startswith(("ORBITKV_", "MC_", "TENT_"))
-            }
-            env.update(cell["environment"])
-            if (
-                env.get("CUDA_VISIBLE_DEVICES") != contract["gpu_uuid"]
-                or env.get("ORBITKV_TEST_STRICT_SHUTDOWN") != "1"
-                or env.get("MC_FORCE_TCP") != "1"
-                or env.get("LD_PRELOAD")
-            ):
-                raise RuntimeError("Frozen installed TCP/strict/GPU environment is invalid")
+            env = cell_environment(cell, contract["gpu_uuid"])
             env["ORBITKV_TEST_GPU_LOCK_FDS"] = json.dumps(locks)
             env["PYTHONDONTWRITEBYTECODE"] = "1"
             with (directory / "pytest.log").open("x") as log:
@@ -344,23 +523,49 @@ def main() -> None:
                     start_new_session=True,
                     pass_fds=tuple(locks),
                 )
-                owner = identity(process.pid)
-                write(directory / "STARTED.json", owner)
                 deadline = min(global_deadline, time.monotonic() + cell["seconds"])
+                owner = identity(process.pid, deadline)
+                observed = {(owner["pid"], owner["start_ticks"]): owner}
+                write(directory / "STARTED.json", owner, deadline)
                 while process.poll() is None:
+                    for child in descendants(deadline):
+                        observed[(child["pid"], child["start_ticks"])] = child
+                        if len(observed) > MAX_OBSERVED_PROCESSES:
+                            raise RuntimeError("Observed process ownership bound exceeded")
+                        if child["parent"] == os.getpid() and child["pid"] != process.pid:
+                            pid, status = os.waitpid(child["pid"], os.WNOHANG)
+                            if pid:
+                                write(
+                                    directory / f"ADOPTED-{pid}.json",
+                                    dict(
+                                        child,
+                                        exit_code=os.waitstatus_to_exitcode(status),
+                                        actual_wait=True,
+                                    ),
+                                    deadline,
+                                )
                     if time.monotonic() >= deadline:
                         quarantine(
                             root, "Native process deadline without terminal ownership", locks
                         )
                     time.sleep(0.1)
-                code = process.wait()
-                write(directory / "WAIT.json", dict(owner, exit_code=code, actual_wait=True))
-            cleanup_started = time.monotonic()
-            cleanup_deadline = cleanup_started + max(
-                0.0, contract["cleanup_seconds"] - cleanup_spent
-            )
-            while descendants():
-                for child in descendants():
+                cleanup_started = time.monotonic()
+                cleanup_deadline = min(
+                    global_deadline,
+                    cleanup_started + max(0.0, contract["cleanup_seconds"] - cleanup_spent),
+                )
+                remaining(deadline)
+                code = process.wait(timeout=remaining(cleanup_deadline))
+                write(
+                    directory / "WAIT.json",
+                    dict(owner, exit_code=code, actual_wait=True),
+                    cleanup_deadline,
+                )
+            while descendants(cleanup_deadline):
+                for child in descendants(cleanup_deadline):
+                    observed[(child["pid"], child["start_ticks"])] = child
+                    if len(observed) > MAX_OBSERVED_PROCESSES:
+                        raise RuntimeError("Observed process ownership bound exceeded")
                     if child["parent"] == os.getpid():
                         pid, status = os.waitpid(child["pid"], os.WNOHANG)
                         if pid:
@@ -377,21 +582,41 @@ def main() -> None:
                         root, "Native descendants remain; cumulative cleanup exhausted", locks
                     )
                 time.sleep(0.1)
-            after = inventory(contract["gpu_uuid"])
+            check_inputs(contract, locks, cleanup_deadline)
+            after = inventory(contract["gpu_uuid"], cleanup_deadline)
             if after["memory_mib"] != 0 or after["compute"]:
                 quarantine(root, "GPU occupancy remains after owned-process waits", locks)
-            validate_cell(cell, directory, owner)
-            cleanup_spent += time.monotonic() - cleanup_started
-            if cleanup_spent > contract["cleanup_seconds"]:
-                quarantine(root, "Cumulative cleanup/oracle budget exceeded", locks)
-            active = False
+            write(
+                directory / "OBSERVED.json",
+                {"processes": list(observed.values())},
+                cleanup_deadline,
+            )
+            validate_cell(cell, directory, owner, list(observed.values()), cleanup_deadline)
+            remaining(cleanup_deadline)
             if code != 0:
                 raise RuntimeError("First invalid formal cell; no retries or replacement")
             completed.append(cell["name"])
-            write(directory / "COMPLETE.json", {"completed": True, "inventory": after})
-        check_inputs(contract)
+            write(
+                directory / "COMPLETE.json",
+                {"completed": True, "inventory": after},
+                cleanup_deadline,
+            )
+            cleanup_spent += time.monotonic() - cleanup_started
+            if cleanup_spent > contract["cleanup_seconds"]:
+                quarantine(root, "Cumulative cleanup/oracle budget exceeded", locks)
+        final_started = time.monotonic()
+        final_deadline = min(
+            global_deadline, final_started + max(0.0, contract["cleanup_seconds"] - cleanup_spent)
+        )
+        check_inputs(contract, locks, final_deadline)
+        if descendants(final_deadline):
+            raise RuntimeError("Native descendants remain before final integrity acceptance")
+        final_inventory = inventory(contract["gpu_uuid"], final_deadline)
+        if final_inventory["memory_mib"] != 0 or final_inventory["compute"]:
+            raise RuntimeError("GPU occupancy remains at final postflight")
         if time.monotonic() >= global_deadline:
             raise RuntimeError("Campaign budget exhausted before final acceptance")
+        check_inputs(contract, locks, final_deadline)
         write(
             root / "RESULT.json",
             {
@@ -401,8 +626,13 @@ def main() -> None:
                 "forced_cleanup": False,
                 "phase": contract["phase"],
                 "formal_cells": len(completed) if contract["phase"] == "formal" else 0,
+                "final_inventory": final_inventory,
             },
+            final_deadline,
         )
+        remaining(final_deadline)
+        check_inputs(contract, locks, final_deadline)
+        active = False
     except BaseException as error:
         if active:
             quarantine(root, repr(error), locks)

@@ -128,7 +128,11 @@ negative control; it never changes production lookup or admission.
 The installed registration campaign controller is
 `tests/support/registration_campaign.py`. Its CPU gate
 `pytest tests/unit/test_registration_campaign.py` checks real READY lock ownership
-and rejects missing/forced/unreaped/native-error evidence. It separates precheck
+and rejects missing/forced/unreaped/native-error evidence. It also checks
+adopted exit codes, expected logs, observed owner identities, selected lock
+replacement, READY/controller grant replay, loader/cache environment leakage,
+shared remaining deadlines and final-error retention. The original controller
+and its counterexamples stay in the external artifact archive. It separates precheck
 from formal cells, preserves locks on unknown ownership and requires a distinct
 independent grant matching the immutable contract. A source/CPU controller pass
 is not GPU launch approval; freeze and review the actual runtime/resources before
