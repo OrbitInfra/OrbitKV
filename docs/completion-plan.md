@@ -689,11 +689,21 @@ The distinct follow-up uses canonical column run-length/value pairs with an
 explicit row count and `uvarint-rle-base64-v1` tag. It preserves all fifteen
 unsigned values and their row order; the bounded reader restores named geometry
 for the unchanged checks. Capture, clocks, cumulative caps and synchronous flush
-remain unchanged. Source controls and actual CPU retention are separate from
-H20 qualification; no latency or default gain is claimed before those gates.
-The offline DMA fixture separately buffers JSON input; identical full compiler
-receipts are required, and its validation time is outside trace measurement.
-New implementation/evaluation evidence is at
+remain unchanged. Independent review accepts CPU retention at `afe30921`:
+all twenty cells, 720 replays and 87,091,200 reconstructed values pass. Whole
+candidate/baseline geometric ratio is 0.7370, with independent-pair 95% interval
+[0.6157, 0.8822]; every whole pair passes the frozen 1.05 guard. Staged encoding
+ratio is 0.6430. These are CPU replay results, not GPU restore or serving gains.
+
+The complete matching CUDA 13 wheel is built and installed in an isolated H20
+prefix with the original environment preserved. Consumed-import closure,
+independent runtime/READY/launch admission and one fresh sixteen-cell H20 cohort
+remain pending. Keep the complete byte/capture/drain controls and 5% guard; no
+backend/default, inference-contention or qualification promotion follows from
+CPU acceptance. The offline DMA fixture separately buffers JSON input; its
+identical full compiler receipt is independently accepted and its validation
+time stays outside trace measurement. Evidence, including the accepted CPU
+receipt and sealed raw census, is at
 `/root/orbitkv-artifacts/s4-rle-trace-20261016/`.
 
 - Profile actual adapter hashing/conversions, destination checks, fragmentation,

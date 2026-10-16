@@ -882,10 +882,25 @@ Archived schema-2/3 captures remain readable; the rejected unmerged prototype
 retains its own frozen reader instead of adding a permanent fallback.
 
 Capture, completion clocks and synchronous logging/flush remain unchanged.
-The candidate needs actual CPU retention and then a fresh matching H20 cohort
-with the unchanged 5% guard. The preceding failed cohorts and all
-ownership/backend/default limits remain. New evidence is outside Git under
-`/root/orbitkv-artifacts/s4-rle-trace-20261016/`.
+Independent review accepts the matched CPU retention result at `afe30921`.
+The same Intel Xeon Platinum 8457C/CPU-0 profile uses twenty fresh processes,
+five independent pairs per mode, four warm-up and eight measured sequences,
+and three complete parts per sequence. All 720 restores and 87,091,200 scalar
+values reconstruct exactly; all forty children and the controller are normally
+waited. Whole candidate/baseline geometric ratio is 0.7370, with independent-pair
+bootstrap 95% interval [0.6157, 0.8822]; all five whole pairs pass the predeclared
+1.05 guard. Staged encoding ratio is 0.6430. Median structured JSON payload per measured part (24 measured parts per
+process, excluding the logger prefix and newline) falls from 1,419,062 to
+457,225 bytes. This qualifies CPU retention only.
+
+The complete matching wheel is built and its isolated H20 installation and
+basic native import pass without initializing CUDA. Consumed-import closure,
+independent runtime/READY/launch review and the fresh sixteen-cell off/native/
+driver/on cohort with the unchanged 5% guard remain pending. The preceding
+failed cohorts and all ownership/backend/default limits remain. No GPU restore,
+inference-contention or serving improvement is established. New evidence,
+including the accepted CPU receipt and sealed 206-file raw census, is outside
+Git under `/root/orbitkv-artifacts/s4-rle-trace-20261016/`.
 
 The separate offline compiler uses buffered file input. Its output must remain
 byte-identical on the same complete captured geometry. This reduces validation
