@@ -575,8 +575,15 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   complete file census under each frozen root; extra files, target changes,
   duplicate/path-traversal declarations and nonregular inputs are rejected.
   Manifests are bounded to 64 MiB/200,000 files and consume the shared deadline.
-  This controller-only increment still requires independent acceptance; it
-  changes no production runtime bytes and grants no GPU launch or lifetime claim.
+  Independent `cfe1d520` review accepts that controller-only source/CPU increment
+  (32 controls, 441 source and 931 benchmark tests); production bytes are unchanged.
+  Actual H20 file rehash covers 128,595 files and all 123,907 prior dependency
+  entries match. Launch acceptance is still open. Startup verification now has
+  one 180-second deadline. A cell may select only its declared consumed runtime
+  roots for admission/postflight; startup, grant and final checks still cover
+  every root. This prevents unrelated engine file scans consuming the unchanged
+  cumulative 180-second cleanup budget. The admission increment requires review
+  before use, and grants no GPU lifetime or physical completion claim.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

@@ -301,24 +301,7 @@ def test_runtime_manifest_checks_bytes_targets_and_complete_census(tmp_path, fau
     manifest = tmp_path / "runtime.json"
     manifest.write_text(json.dumps({"root": str(root), "files": rows}))
     declaration = {"path": str(manifest), "sha256": campaign.digest(manifest)}
-    guard = tmp_path / "protected.lock"
-    guard.touch()
-    marker = tmp_path / "protected.json"
-    marker.write_text("CPU fixture")
-    contract = {
-        "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
-        "input_sha256": {},
-        "runtime_manifests": [declaration],
-        "locks": [],
-        "protected_gpu0": {
-            "quarantine": str(marker),
-            "quarantine_sha256": campaign.digest(marker),
-            "lease": str(guard),
-            "lease_inode": guard.stat().st_ino,
-            "guardian_pid": os.getpid(),
-            "guardian_start_ticks": campaign.identity(os.getpid())["start_ticks"],
-        },
-    }
+    contract = runtime_input_contract(tmp_path, [declaration])
     if fault == "payload":
         payload.write_bytes(b"changed CPU bytes")
     elif fault == "extra-file":
@@ -335,6 +318,87 @@ def test_runtime_manifest_checks_bytes_targets_and_complete_census(tmp_path, fau
     else:
         with pytest.raises(RuntimeError):
             campaign.check_inputs(contract, deadline=time.monotonic() + 1)
+
+
+def runtime_input_contract(directory, manifests):
+    guard = directory / "protected.lock"
+    guard.touch()
+    marker = directory / "protected.json"
+    marker.write_text("CPU fixture")
+    return {
+        "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+        "input_sha256": {},
+        "runtime_manifests": manifests,
+        "locks": [],
+        "protected_gpu0": {
+            "quarantine": str(marker),
+            "quarantine_sha256": campaign.digest(marker),
+            "lease": str(guard),
+            "lease_inode": guard.stat().st_ino,
+            "guardian_pid": os.getpid(),
+            "guardian_start_ticks": campaign.identity(os.getpid())["start_ticks"],
+        },
+    }
+
+
+def test_cell_checks_consumed_roots_and_final_checks_all_roots(tmp_path):
+    manifests = []
+    for name in ("vllm", "sglang"):
+        root = tmp_path / name
+        root.mkdir()
+        library = root / "native.so"
+        library.write_bytes(b"frozen CPU payload")
+        manifest = tmp_path / f"{name}.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "root": str(root),
+                    "files": [
+                        {
+                            "path": library.name,
+                            "realpath": str(library),
+                            "bytes": library.stat().st_size,
+                            "sha256": campaign.digest(library),
+                        }
+                    ],
+                }
+            )
+        )
+        manifests.append({"path": str(manifest), "sha256": campaign.digest(manifest)})
+    contract = runtime_input_contract(tmp_path, manifests)
+    selected = [manifests[0]["path"]]
+    campaign.check_inputs(contract, runtime_manifest_paths=selected)
+    for invalid in ([], ["undeclared"], selected * 2):
+        with pytest.raises(RuntimeError, match="runtime roots"):
+            campaign.check_inputs(contract, runtime_manifest_paths=invalid)
+    (tmp_path / "sglang/native.so").write_bytes(b"changed unused cell input")
+    campaign.check_inputs(contract, runtime_manifest_paths=selected)
+    with pytest.raises(RuntimeError, match="payload changed"):
+        campaign.check_inputs(contract)
+    (tmp_path / "vllm/native.so").write_bytes(b"changed used cell input")
+    with pytest.raises(RuntimeError, match="payload changed"):
+        campaign.check_inputs(contract, runtime_manifest_paths=selected)
+
+
+def test_expired_startup_verification_cannot_reach_resource_or_gpu_admission(monkeypatch):
+    now = [200.0]
+    monkeypatch.setattr(campaign.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(sys, "argv", [campaign.__file__, "/unused-CPU-contract"])
+
+    def read(_path, _limit, deadline):
+        assert deadline == 380.0
+        now[0] = 381.0
+        return b"{}"
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("Expired startup reached resource/GPU admission")
+
+    monkeypatch.setattr(campaign, "read_bytes", read)
+    monkeypatch.setattr(campaign, "check_inputs", unexpected)
+    monkeypatch.setattr(campaign, "inventory", unexpected)
+    monkeypatch.setattr(campaign.subprocess, "Popen", unexpected)
+    with pytest.raises(TimeoutError, match="deadline exhausted"):
+        campaign.main()
 
 
 def test_runtime_manifest_deadline_and_nonregular_inputs_cannot_pass(tmp_path):
@@ -458,12 +522,12 @@ def test_final_failure_enters_retention_while_real_lock_is_still_held(tmp_path, 
     check = campaign.check_inputs
     calls = 0
 
-    def verify(*args):
+    def verify(*args, **kwargs):
         nonlocal calls
         calls += 1
         if calls == 6 and fault == "final-integrity":
             raise RuntimeError("controlled final input-integrity failure")
-        check(*args)
+        check(*args, **kwargs)
 
     monkeypatch.setattr(campaign, "check_inputs", verify)
 

@@ -237,7 +237,10 @@ def inventory(gpu_uuid: str, deadline: float | None = None) -> dict:
 
 
 def check_inputs(
-    contract: dict, locks: list[int] | None = None, deadline: float | None = None
+    contract: dict,
+    locks: list[int] | None = None,
+    deadline: float | None = None,
+    runtime_manifest_paths: list[str] | None = None,
 ) -> None:
     remaining(deadline)
     if Path("/proc/sys/kernel/random/boot_id").read_text().strip() != contract["boot_id"]:
@@ -245,7 +248,20 @@ def check_inputs(
     for path, expected in contract["input_sha256"].items():
         if digest(Path(path), deadline) != expected:
             raise RuntimeError(f"Frozen input changed: {path}")
-    for manifest in contract.get("runtime_manifests", []):
+    manifests = contract.get("runtime_manifests", [])
+    if runtime_manifest_paths is not None:
+        available = {manifest["path"]: manifest for manifest in manifests}
+        if (
+            not isinstance(runtime_manifest_paths, list)
+            or not runtime_manifest_paths
+            or any(not isinstance(path, str) for path in runtime_manifest_paths)
+            or len(set(runtime_manifest_paths)) != len(runtime_manifest_paths)
+            or len(available) != len(manifests)
+            or not set(runtime_manifest_paths) <= set(available)
+        ):
+            raise RuntimeError("Cell runtime roots differ from the frozen declarations")
+        manifests = [available[path] for path in runtime_manifest_paths]
+    for manifest in manifests:
         check_runtime_manifest(manifest, deadline)
     protected = contract["protected_gpu0"]
     if (
@@ -468,6 +484,7 @@ def validate_cell(
 
 
 def main() -> None:
+    startup_deadline = time.monotonic() + 180
     parser = argparse.ArgumentParser()
     parser.add_argument("contract", type=Path)
     args = parser.parse_args()
@@ -475,9 +492,10 @@ def main() -> None:
         raise RuntimeError("Optimized controller execution is forbidden")
     if os.environ.get("LD_AUDIT") or os.environ.get("PYTHONPYCACHEPREFIX"):
         raise RuntimeError("Controller startup contains an unfrozen loader/bytecode influence")
-    contract_bytes = read_bytes(args.contract, 16 * MAX_JSON_BYTES)
+    contract_bytes = read_bytes(args.contract, 16 * MAX_JSON_BYTES, startup_deadline)
     contract_sha = hashlib.sha256(contract_bytes).hexdigest()
     contract = json.loads(contract_bytes)
+    remaining(startup_deadline)
     root = args.contract.parent
     if contract["phase"] not in ("precheck", "formal"):
         raise RuntimeError("Unknown registration gate phase")
@@ -508,7 +526,7 @@ def main() -> None:
     for number in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
         signal.signal(number, signal.SIG_IGN)
     try:
-        check_inputs(contract)
+        check_inputs(contract, deadline=startup_deadline)
         cpus = contract["cpus"]
         if not cpus or not set(cpus) <= os.sched_getaffinity(0):
             raise RuntimeError("Frozen CPU affinity is unavailable")
@@ -521,8 +539,8 @@ def main() -> None:
                 raise RuntimeError("Resource lock inode changed")
         if Path(contract["quarantine"]).exists():
             raise RuntimeError("GPU resource is quarantined")
-        check_inputs(contract, locks)
-        before = inventory(contract["gpu_uuid"], time.monotonic() + 20)
+        check_inputs(contract, locks, startup_deadline)
+        before = inventory(contract["gpu_uuid"], min(startup_deadline, time.monotonic() + 20))
         if before["memory_mib"] != 0 or before["compute"]:
             raise RuntimeError("GPU resource is in use")
         controller = identity(os.getpid())
@@ -538,8 +556,8 @@ def main() -> None:
             "phase": contract["phase"],
         }
         ready_path = root / "READY.json"
-        write(ready_path, ready)
-        ready_sha = digest(ready_path)
+        write(ready_path, ready, startup_deadline)
+        ready_sha = digest(ready_path, startup_deadline)
         deadline = time.monotonic() + contract["review_wait_seconds"]
         approval = root / "LAUNCH-APPROVED.json"
         while not approval.exists():
@@ -565,7 +583,7 @@ def main() -> None:
         for cell in contract["cells"]:
             if time.monotonic() >= global_deadline or args.contract.read_bytes() != contract_bytes:
                 raise RuntimeError("Campaign budget exhausted or contract changed before admission")
-            check_inputs(contract, locks, global_deadline)
+            check_inputs(contract, locks, global_deadline, cell.get("runtime_manifest_paths"))
             fresh = inventory(contract["gpu_uuid"], global_deadline)
             if fresh["memory_mib"] != 0 or fresh["compute"]:
                 raise RuntimeError("GPU resource is in use before cell admission")
@@ -647,7 +665,7 @@ def main() -> None:
                         root, "Native descendants remain; cumulative cleanup exhausted", locks
                     )
                 time.sleep(0.1)
-            check_inputs(contract, locks, cleanup_deadline)
+            check_inputs(contract, locks, cleanup_deadline, cell.get("runtime_manifest_paths"))
             after = inventory(contract["gpu_uuid"], cleanup_deadline)
             if after["memory_mib"] != 0 or after["compute"]:
                 quarantine(root, "GPU occupancy remains after owned-process waits", locks)

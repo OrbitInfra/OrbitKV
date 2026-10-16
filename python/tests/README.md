@@ -136,6 +136,10 @@ use the consumed input check to reject payload changes, extra installed files,
 symlink target drift, changed manifests, duplicate/traversal entries and
 nonregular input. Each frozen root has a complete file census, file sizes,
 resolved targets and SHA256 values; manifests have a 64 MiB/200,000-file bound.
+Startup verification has one 180-second deadline. Cell admission/postflight can
+select only declared roots consumed by that cell; startup, grant and final input
+checks retain the complete manifest set. Freeze and review each cell's consumer
+root selection as part of launch acceptance, with the unchanged cleanup budget.
 The original controller
 and its counterexamples stay in the external artifact archive. It separates precheck
 from formal cells, preserves locks on unknown ownership and requires a distinct
