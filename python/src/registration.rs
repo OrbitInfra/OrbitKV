@@ -60,7 +60,7 @@ impl AttemptOwner {
             .try_fold(bytes, |total, attempt| total.checked_add(attempt.bytes));
         if attempts.len() >= MAX_ATTEMPTS
             || tensors.is_empty()
-            || tensors.len() > MAX_CREDITS
+            || tensors.len() > MAX_CREDITS * 2
             || total.is_none_or(|total| total > MAX_RETAINED_BYTES)
         {
             return Err("CUDA registration retention admission limit reached".into());

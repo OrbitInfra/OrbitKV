@@ -544,6 +544,12 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   accounting. These physical-reference limits are separate from payload and
   native descriptor budgets; native counters and generation/state diagnostics
   make retention observable. ImporterOwned is not a termination receipt.
+  The subsequent `b7df7670` audit found a same-size storage-rebinding gap:
+  first-pass geometry could select A while post-wait export selected B.
+  The correction retains/exports the original storage and checks pointer,
+  storage offset and layout before submission and after reply. Suballocation
+  alignment is checked before import. This remains registration-time fencing,
+  not a page-slot reuse generation or a device-termination receipt.
   Protocol/registry, real UDS rejection and native owner CPU controls pass;
   final matching installation, actual IPC-credit failure/repayment, GPU bytes
   and independent acceptance remain open. This does not close true allocation/page

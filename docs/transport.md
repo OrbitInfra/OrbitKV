@@ -52,6 +52,11 @@ A native exporter-owner generation is distinct from the Manager registration
 and engine page-slot generations. The importer still uses the pinned PyTorch
 storage IPC primitive and holds the resulting tensor mapping until its owner
 retires. The old wrapper-byte field and helper/API are removed in this candidate.
+The client retains the exact storage objects used for initial geometry. It
+exports those objects, rather than reacquiring storage after a wait, and
+rechecks the tensor pointer, offset and layout before sending and after the
+import reply. A changed tensor binding is rejected; possibly imported work
+remains retained. Registered engine pools must keep their binding immutable.
 Native registration reserves its client/key before creating any export. Each
 returned credit is charged to the attempt owner immediately; a never-sent export
 can be repaid exactly once. Register replies bind the export generation and

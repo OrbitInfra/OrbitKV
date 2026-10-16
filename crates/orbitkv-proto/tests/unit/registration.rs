@@ -34,7 +34,7 @@ fn explicit_registration_preserves_storage_suballocation_and_strided_view() {
 
 #[test]
 fn malformed_registration_is_rejected_before_import() {
-    for case in 0..14 {
+    for case in 0..15 {
         let mut value = registration();
         let expected = value.device_uuid.clone();
         match case {
@@ -55,6 +55,7 @@ fn malformed_registration_is_rejected_before_import() {
                 value.shape = vec![1];
                 value.strides = vec![u64::MAX];
             }
+            14 => value.storage_allocation_offset_bytes = 1,
             _ => unreachable!(),
         }
         assert!(value.validate(&expected).is_err(), "case {case}");

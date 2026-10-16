@@ -242,3 +242,82 @@ def device_uuid(device): return 'GPU-c4930667-4d65-aae5-8205-fe785c3654be'
     });
     process.stop();
 }
+
+#[test]
+fn storage_rebinding_cannot_change_the_retained_registration_allocation() {
+    use pyo3::ffi::c_str;
+    use pyo3::types::PyModule;
+    Python::initialize();
+    Python::attach(|py| {
+        let fixture = PyModule::from_code(
+            py,
+            c_str!(
+                r#"
+from types import SimpleNamespace
+import weakref
+class Storage:
+    def __init__(self, address): self.address = address
+    def data_ptr(self): return self.address
+    def nbytes(self): return 64
+class Tensor:
+    device = SimpleNamespace(index=0)
+    dtype = 'torch.float16'
+    shape = (8,)
+    def __init__(self): self.storage = Storage(4096)
+    def data_ptr(self): return self.storage.data_ptr()
+    def storage_offset(self): return 0
+    def stride(self): return (1,)
+    def element_size(self): return 2
+tensor = Tensor()
+original_storage = weakref.ref(tensor.storage)
+"#
+            ),
+            c_str!("storage_rebind.py"),
+            c_str!("storage_rebind"),
+        )
+        .unwrap();
+        let tensor = fixture.getattr("tensor").unwrap();
+        let storage = tensor.getattr("storage").unwrap();
+        let tensors = vec![tensor.clone().unbind()];
+        let storages = vec![storage.clone().unbind()];
+        let layout = CudaIpcTensorRegistration {
+            storage_size_bytes: 64,
+            shape: vec![8],
+            strides: vec![1],
+            dtype: "float16".into(),
+            element_size: 2,
+            ..Default::default()
+        };
+        validate_export_snapshot(py, &tensors, &storages, &[4096], &[layout.clone()], 0).unwrap();
+        let replacement = fixture.getattr("Storage").unwrap().call1((8192,)).unwrap();
+        tensor.setattr("storage", replacement).unwrap();
+        drop(storage);
+        assert!(
+            !fixture
+                .getattr("original_storage")
+                .unwrap()
+                .call0()
+                .unwrap()
+                .is_none()
+        );
+        assert!(validate_export_snapshot(py, &tensors, &storages, &[4096], &[layout], 0).is_err());
+        assert_eq!(
+            storages[0]
+                .bind(py)
+                .call_method0("data_ptr")
+                .unwrap()
+                .extract::<u64>()
+                .unwrap(),
+            4096
+        );
+        drop(storages);
+        assert!(
+            fixture
+                .getattr("original_storage")
+                .unwrap()
+                .call0()
+                .unwrap()
+                .is_none()
+        );
+    });
+}

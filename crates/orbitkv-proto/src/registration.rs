@@ -43,6 +43,8 @@ impl CudaIpcTensorRegistration {
         if self.element_size != width
             || self.storage_size_bytes == 0
             || !self.view_offset_bytes.is_multiple_of(width)
+            || !self.storage_allocation_offset_bytes.is_multiple_of(width)
+            || self.storage_allocation_offset_bytes > i64::MAX as u64
             || self.shape.is_empty()
             || self.shape.len() > 8
             || self.shape.len() != self.strides.len()

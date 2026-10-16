@@ -57,6 +57,48 @@ impl PyChannelCallObservation {
     }
 }
 
+fn validate_export_snapshot(
+    py: Python<'_>,
+    tensors: &[Py<PyAny>],
+    storages: &[Py<PyAny>],
+    allocations: &[u64],
+    layouts: &[CudaIpcTensorRegistration],
+    device: usize,
+) -> PyResult<()> {
+    for (((tensor, storage), allocation), layout) in
+        tensors.iter().zip(storages).zip(allocations).zip(layouts)
+    {
+        let tensor = tensor.bind(py);
+        let storage = storage.bind(py);
+        let base = storage.call_method0("data_ptr")?.extract::<u64>()?;
+        let pointer = tensor.call_method0("data_ptr")?.extract::<u64>()?;
+        let offset = tensor.call_method0("storage_offset")?.extract::<u64>()?;
+        let size = storage.call_method0("nbytes")?.extract::<u64>()?;
+        let shape = tensor.getattr("shape")?.extract::<Vec<u64>>()?;
+        let strides = tensor.call_method0("stride")?.extract::<Vec<u64>>()?;
+        let dtype = tensor.getattr("dtype")?.str()?.to_string();
+        let ordinal = tensor
+            .getattr("device")?
+            .getattr("index")?
+            .extract::<usize>()?;
+        if base != *allocation
+            || size != layout.storage_size_bytes
+            || base.checked_add(layout.view_offset_bytes) != Some(pointer)
+            || offset.checked_mul(layout.element_size) != Some(layout.view_offset_bytes)
+            || shape != layout.shape
+            || strides != layout.strides
+            || dtype != format!("torch.{}", layout.dtype)
+            || ordinal != device
+            || tensor.call_method0("element_size")?.extract::<u64>()? != layout.element_size
+        {
+            return Err(PyValueError::new_err(
+                "CUDA tensor or retained storage changed during registration",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn publish_request(
     instance_id: String,
     tp_rank: u32,
@@ -398,6 +440,8 @@ impl PyCacheManagerClient {
         let mut device = None;
         let mut bindings = Vec::with_capacity(count);
         let mut gpu_tensors = Vec::with_capacity(count);
+        let mut storages = Vec::with_capacity(count);
+        let mut allocations = Vec::with_capacity(count);
         let mut retained_bytes = 0_u64;
         for (index, owner) in tensors.iter().enumerate() {
             let tensor = owner.bind(py);
@@ -463,6 +507,8 @@ impl PyCacheManagerClient {
             }
             registration.view_offset_bytes = declared_offset;
             gpu_tensors.push(registration);
+            storages.push(storage.unbind());
+            allocations.push(allocation);
             bindings.push(
                 LocalTensor::new(
                     layer_names[index].clone(),
@@ -488,6 +534,12 @@ impl PyCacheManagerClient {
             .call_method1("device_uuid", (device,))?
             .extract::<String>()?;
         let tensors = Arc::new(tensors);
+        let mut exporter_owners = tensors
+            .iter()
+            .map(|tensor| tensor.clone_ref(py))
+            .collect::<Vec<_>>();
+        exporter_owners.extend(storages.iter().map(|storage| storage.clone_ref(py)));
+        let exporter_owners = Arc::new(exporter_owners);
         let attempt = py.detach(|| {
             let local = self
                 .local
@@ -501,16 +553,16 @@ impl PyCacheManagerClient {
             crate::registration::AttemptOwner::reserve(
                 Arc::clone(&self.inner),
                 key.clone(),
-                Arc::clone(&tensors),
+                Arc::clone(&exporter_owners),
                 retained_bytes,
             )
             .map_err(OrbitKVError::new_err)
         })?;
         let export_owner_generation = attempt.0;
         let exported = (|| -> PyResult<()> {
-            for (tensor, registration) in tensors.iter().zip(&mut gpu_tensors) {
-                let storage = tensor.bind(py).call_method0("untyped_storage")?;
-                let shared = attempt.export(py, &storage)?;
+            validate_export_snapshot(py, &tensors, &storages, &allocations, &gpu_tensors, device)?;
+            for (storage, registration) in storages.iter().zip(&mut gpu_tensors) {
+                let shared = attempt.export(py, storage.bind(py))?;
                 let shared = shared.bind(py).cast::<PyTuple>()?;
                 if shared.len() != 8
                     || shared.get_item(0)?.extract::<usize>()? != device
@@ -530,6 +582,7 @@ impl PyCacheManagerClient {
                     .validate(&device_uuid)
                     .map_err(PyValueError::new_err)?;
             }
+            validate_export_snapshot(py, &tensors, &storages, &allocations, &gpu_tensors, device)?;
             Ok(())
         })();
         if let Err(error) = exported {
@@ -540,6 +593,7 @@ impl PyCacheManagerClient {
             .iter()
             .map(|tensor| (tensor.ref_counter_handle.clone(), tensor.ref_counter_offset))
             .collect();
+        let snapshot_layouts = gpu_tensors.clone();
         let request = RegisterContextRequest {
             instance_id,
             namespace,
@@ -573,7 +627,7 @@ impl PyCacheManagerClient {
                 })
                 .collect(),
         };
-        let retained = Arc::clone(&tensors);
+        let retained = Arc::clone(&exporter_owners);
         py.detach(|| {
             let mut local = self
                 .local
@@ -622,6 +676,16 @@ impl PyCacheManagerClient {
                 ));
             }
             let worker = (|| -> PyResult<LocalRestoreWorker> {
+                Python::attach(|py| {
+                    validate_export_snapshot(
+                        py,
+                        &tensors,
+                        &storages,
+                        &allocations,
+                        &snapshot_layouts,
+                        device,
+                    )
+                })?;
                 if receipt.arenas.len() != reply.fds.len() {
                     return Err(OrbitKVInternal::new_err(
                         "invalid payload arena registration reply",
@@ -670,7 +734,7 @@ impl PyCacheManagerClient {
                 LocalRestoreWorker::new(
                     Arc::clone(&self.inner),
                     executor,
-                    tensors,
+                    exporter_owners,
                     Arc::clone(&self.completions),
                     arena_count,
                     manager_device_id,
