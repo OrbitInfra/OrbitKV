@@ -679,6 +679,22 @@ needs independent code/runtime/launch review and a newly frozen cohort; complete
 cohorts are not retried or replaced. Inference contention and further
 kernel/default promotion remain blocked; S3/S4/S5 limits are unchanged.
 
+**Bounded synchronous publication: implemented; qualification pending.**
+The candidate groups already-drained diagnostic JSON lines into
+synchronous log messages of at most 64 KiB. Keep opening records on the original
+pre-submission path, all tagged JSON lines in order, intact oversized records,
+and terminal publication plus logger flush before returning. Clock placement,
+cumulative capture budgets and physical ownership remain unchanged. Measure
+chunk assembly and terminal-tail publication inside the existing whole-operation
+and staged publication clocks; retain at most 64 KiB of publication payload
+storage per trace, allocated lazily inside the measured path. Allocator bookkeeping
+and temporary serialization storage remain separate measured costs. Log event
+grouping changes; compatibility is limited to tested line-preserving loggers.
+Independent design/source review and a fresh CPU comparison against merged
+`6a00e221` precede any new matching installed-wheel H20 qualification. The KDA
+draft, predeclared guards and baseline observations are outside Git at
+`/root/orbitkv-artifacts/s4-trace-publication-20261016/`.
+
 The first schema-4 row-varint candidate at `5fb3d61f` passes independent source
 and complete CPU-data review, but fails its predeclared retention criteria.
 All twenty processes preserve 720 restores and every recorded value; the whole

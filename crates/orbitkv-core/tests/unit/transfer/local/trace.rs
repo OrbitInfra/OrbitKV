@@ -60,7 +60,10 @@ fn completed_part_is_published_before_process_exit() {
     if let Some(path) = std::env::var_os(CHILD_LOG) {
         use std::io::Write;
 
-        struct CaptureLogger(std::sync::Mutex<std::io::BufWriter<std::fs::File>>);
+        struct CaptureLogger {
+            output: std::sync::Mutex<std::io::BufWriter<std::fs::File>>,
+            messages: std::sync::Mutex<Vec<(usize, String, String)>>,
+        }
 
         impl log::Log for CaptureLogger {
             fn enabled(&self, _: &log::Metadata<'_>) -> bool {
@@ -68,29 +71,73 @@ fn completed_part_is_published_before_process_exit() {
             }
 
             fn log(&self, record: &log::Record<'_>) {
-                writeln!(self.0.lock().unwrap(), "{}", record.args()).unwrap();
+                let fields = record.args().to_string();
+                self.messages.lock().unwrap().push((
+                    fields.len(),
+                    record.target().into(),
+                    record.level().to_string(),
+                ));
+                writeln!(self.output.lock().unwrap(), "{fields}").unwrap();
             }
 
             fn flush(&self) {
-                self.0.lock().unwrap().flush().unwrap();
+                self.output.lock().unwrap().flush().unwrap();
             }
         }
 
-        let file = std::fs::File::create(path).unwrap();
-        log::set_logger(Box::leak(Box::new(CaptureLogger(std::sync::Mutex::new(
-            std::io::BufWriter::with_capacity(1024 * 1024, file),
-        )))))
-        .unwrap();
+        let path = std::path::PathBuf::from(path);
+        let file = std::fs::File::create(&path).unwrap();
+        let logger = Box::leak(Box::new(CaptureLogger {
+            output: std::sync::Mutex::new(std::io::BufWriter::with_capacity(1024 * 1024, file)),
+            messages: std::sync::Mutex::new(Vec::new()),
+        }));
+        log::set_logger(logger).unwrap();
         log::set_max_level(log::LevelFilter::Info);
-        let mut trace = LocalCopyTrace::new(0, Ok(usize::MAX), 100);
-        let copies = copies();
-        trace.begin_part(2, true);
-        bindings(&mut trace, &copies);
-        for copy in &copies {
-            let index = trace.begin_batch(&[*copy], "direct").unwrap();
-            trace.finish_batch(index, 17, true);
+        let mut trace = LocalCopyTrace::new(0, Ok(usize::MAX), 16384);
+        let large = |count: u64, size: u64| {
+            (0..count)
+                .map(|index| CopyDesc {
+                    device: 0x10000 + index * size,
+                    host: (0x100100 + index * size) as *mut u8,
+                    host_device: 0x200100 + index * size,
+                    size: size as usize,
+                    device_allocation: 7,
+                    host_registration: 0x100000,
+                })
+                .collect::<Vec<_>>()
+        };
+        let parts = [
+            large(256, 64),
+            Vec::new(),
+            copies().to_vec(),
+            large(4096, 4),
+        ];
+        for (sequence, copies) in parts.iter().enumerate() {
+            trace.begin_part(copies.len(), true);
+            bindings(&mut trace, copies);
+            if sequence == 3 {
+                for batch in [&copies[..1], &copies[1..2], &copies[2..]] {
+                    let index = trace.begin_batch(batch, "direct").unwrap();
+                    trace.finish_batch(index, 17, true);
+                }
+            } else {
+                for copy in copies {
+                    let index = trace.begin_batch(&[*copy], "direct").unwrap();
+                    trace.finish_batch(index, 17, true);
+                }
+            }
+            trace.finish_part(31, true);
+            assert_eq!(trace.publication_len, 0);
+            assert_eq!(trace.publication.as_ref().unwrap().len(), PUBLICATION_BYTES);
+            assert!(trace.invalid.is_none());
         }
+        // An invalid final part must also publish its terminal tail.
+        trace.begin_part(16384, true);
         trace.finish_part(31, true);
+        assert_eq!(trace.publication_len, 0);
+        assert!(trace.closed);
+        let messages = serde_json::to_vec(&*logger.messages.lock().unwrap()).unwrap();
+        std::fs::write(path.with_extension("messages.json"), messages).unwrap();
         // A released engine can end the process without running destructors.
         std::process::exit(0);
     }
@@ -106,16 +153,142 @@ fn completed_part_is_published_before_process_exit() {
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
-    let events: Vec<serde_json::Value> = std::fs::read_to_string(path)
+    let events: Vec<serde_json::Value> = std::fs::read_to_string(&path)
         .unwrap()
         .lines()
-        .map(|line| serde_json::from_str(line.strip_prefix("local_raw_copy ").unwrap()).unwrap())
+        .map(|line| serde_json::from_str(line.strip_prefix(RECORD_TAG).unwrap()).unwrap())
         .collect();
-    assert_eq!(events.len(), 5);
-    assert_eq!(events[0]["stage"], "local_raw_copy_open");
-    assert_eq!(events[4]["stage"], "local_raw_copy_complete");
-    assert_eq!(events[4]["complete"], true);
-    assert_eq!(events[4]["descriptors"], 2);
+    let messages: Vec<(usize, String, String)> =
+        serde_json::from_slice(&std::fs::read(path.with_extension("messages.json")).unwrap())
+            .unwrap();
+    assert!(messages.len() < events.len());
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.0 > PUBLICATION_BYTES)
+            .count(),
+        1
+    );
+    assert!(messages.iter().all(|(_, target, level)| target
+        == "orbitkv_core::transfer::local::trace"
+        && level == "INFO"));
+    let mut start = 0;
+    for (sequence, (descriptors, batches, reserved)) in [
+        (256, 256, 513),
+        (256, 256, 514),
+        (258, 258, 519),
+        (4354, 261, 8712),
+        (4354, 261, 8712),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let end = events[start..]
+            .iter()
+            .position(|event| event["stage"] == "local_raw_copy_complete")
+            .unwrap()
+            + start;
+        let part = &events[start..=end];
+        assert_eq!(part[0]["stage"], "local_raw_copy_open");
+        assert_eq!(part[0]["sequence"], sequence);
+        assert_eq!(part[part.len() - 2]["stage"], "local_raw_copy_part");
+        let footer = part.last().unwrap();
+        assert_eq!(footer["parts"], sequence + 1);
+        assert_eq!(footer["descriptors"], descriptors);
+        assert_eq!(footer["batches"], batches);
+        assert_eq!(footer["records_reserved"], reserved);
+        assert_eq!(footer["complete"], sequence < 4);
+        if sequence == 4 {
+            assert_eq!(footer["invalid_reason"], "capacity_exceeded");
+        }
+        for (index, batch) in part[1..part.len() - 2].iter().enumerate() {
+            assert_eq!(batch["batch_id"], index);
+            let rows = batch["copy_rows"].as_u64().unwrap() as usize;
+            let geometry = decoded_geometry(&batch["copies"], rows);
+            for (offset, row) in geometry.as_array().unwrap().iter().enumerate() {
+                let (copy_index, size) = match sequence {
+                    0 => (index, 64),
+                    2 => (index * 1024, 4),
+                    3 => (if index == 2 { offset + 2 } else { index }, 4),
+                    _ => unreachable!(),
+                };
+                let stride = copy_index * size;
+                assert_eq!(
+                    row,
+                    &serde_json::json!([
+                        0x10000 + stride,
+                        0x100100 + stride,
+                        0x200100 + stride,
+                        if sequence == 2 { 4096 } else { size },
+                        7,
+                        0x100000,
+                        0x10000,
+                        65536,
+                        stride,
+                        2,
+                        65536,
+                        3,
+                        256,
+                        16384,
+                        256 + stride,
+                    ])
+                );
+            }
+        }
+        start = end + 1;
+    }
+    assert_eq!(start, events.len());
+    assert_eq!(events.len(), 276);
+    assert_eq!(events[270]["copy_rows"], 4094);
+}
+
+#[test]
+fn publication_capacity_exact_fit_overflow_and_terminal_tails() {
+    for frame_bytes in [
+        PUBLICATION_BYTES - 1,
+        PUBLICATION_BYTES,
+        PUBLICATION_BYTES + 1,
+    ] {
+        let fields = format!("\"{}\"", "x".repeat(frame_bytes - RECORD_TAG.len() - 2));
+        let mut publication = None;
+        let mut used = 0;
+        assert!(LocalCopyTrace::publish_fields(
+            &fields,
+            false,
+            &mut publication,
+            &mut used
+        ));
+        assert_eq!(
+            used,
+            if frame_bytes > PUBLICATION_BYTES {
+                0
+            } else {
+                frame_bytes
+            }
+        );
+        assert!(LocalCopyTrace::publish_fields(
+            "{}",
+            false,
+            &mut publication,
+            &mut used
+        ));
+        assert_eq!(used, RECORD_TAG.len() + 2);
+        let buffer = publication.as_ref().unwrap();
+        assert_eq!(buffer.len(), PUBLICATION_BYTES);
+        assert_eq!(&buffer[..used], b"local_raw_copy {}");
+        assert!(LocalCopyTrace::publish_fields(
+            "{}",
+            true,
+            &mut publication,
+            &mut used
+        ));
+        assert_eq!(used, 0);
+        assert_eq!(publication.as_ref().unwrap().len(), PUBLICATION_BYTES);
+        publication.as_mut().unwrap()[0] = 255;
+        used = 1;
+        assert!(!LocalCopyTrace::publish_pending(&publication, &mut used));
+        assert_eq!(used, 0);
+    }
 }
 
 fn bindings(trace: &mut LocalCopyTrace, copies: &[CopyDesc]) {
@@ -160,6 +333,7 @@ fn captures_actual_submitted_order_and_one_shared_part_drain() {
     let copies = copies();
     trace.begin_part_with(2, true, |event| {
         values.push(record(event));
+        true
     });
     bindings(&mut trace, &copies);
     for copy in copies.iter().rev() {
@@ -168,6 +342,7 @@ fn captures_actual_submitted_order_and_one_shared_part_drain() {
     }
     trace.finish_part_with(31, true, |event| {
         values.push(record(event));
+        true
     });
     assert_eq!(values.len(), 5);
     assert_eq!(values[1]["copies"][0][8], 4096);
@@ -227,7 +402,14 @@ fn captures_actual_submitted_order_and_one_shared_part_drain() {
 
 #[test]
 fn partial_failure_overflow_missing_submission_and_missing_drain_are_invalid() {
-    for mode in ["failure", "overflow", "lost_batch", "no_drain", "no_pitch"] {
+    for mode in [
+        "failure",
+        "overflow",
+        "lost_batch",
+        "no_drain",
+        "no_pitch",
+        "publication",
+    ] {
         let pitch = if mode == "no_pitch" {
             Err("driver".into())
         } else {
@@ -238,6 +420,7 @@ fn partial_failure_overflow_missing_submission_and_missing_drain_are_invalid() {
         let copies = copies();
         trace.begin_part_with(2, true, |event| {
             values.push(record(event));
+            true
         });
         bindings(&mut trace, &copies);
         if let Some(index) = trace.begin_batch(&copies[..1], "direct") {
@@ -250,9 +433,19 @@ fn partial_failure_overflow_missing_submission_and_missing_drain_are_invalid() {
         }
         if mode != "no_drain" {
             trace.finish_part_with(31, mode != "failure", |event| {
+                let published =
+                    mode != "publication" || !matches!(&event, TraceRecord::Batch { .. });
                 values.push(record(event));
+                published
             });
             assert_eq!(values.last().unwrap()["complete"], false, "{mode}");
+            if mode == "publication" {
+                assert_eq!(
+                    values.last().unwrap()["invalid_reason"],
+                    "capture_publication_failed"
+                );
+                assert!(trace.closed);
+            }
         } else {
             assert_eq!(values.len(), 1);
             assert_eq!(values[0]["stage"], "local_raw_copy_open");
@@ -266,9 +459,11 @@ fn empty_managed_parts_are_preserved_without_inventing_h2d_bytes() {
     let mut values = Vec::new();
     trace.begin_part_with(0, true, |event| {
         values.push(record(event));
+        true
     });
     trace.finish_part_with(19, true, |event| {
         values.push(record(event));
+        true
     });
     assert_eq!(values.len(), 3);
     assert_eq!(values[1]["planned_descriptors"], 0);
@@ -285,6 +480,7 @@ fn publishing_a_part_does_not_replenish_the_executor_budget() {
         let start = values.len();
         trace.begin_part_with(2, true, |event| {
             values.push(record(event));
+            true
         });
         bindings(&mut trace, &copies);
         if let Some(index) = trace.begin_batch(&copies, "direct") {
@@ -292,6 +488,7 @@ fn publishing_a_part_does_not_replenish_the_executor_budget() {
         }
         trace.finish_part_with(31, true, |event| {
             values.push(record(event));
+            true
         });
         assert_eq!(values[start]["sequence"], sequence);
         assert_eq!(values[start]["records_before"], (sequence * 5).min(10));
@@ -305,9 +502,11 @@ fn publishing_a_part_does_not_replenish_the_executor_budget() {
     let count = values.len();
     trace.begin_part_with(0, true, |event| {
         values.push(record(event));
+        true
     });
     trace.finish_part_with(31, true, |event| {
         values.push(record(event));
+        true
     });
     assert_eq!(values.len(), count);
 }
@@ -380,6 +579,7 @@ fn compact_geometry_preserves_unsigned_values_and_declares_every_field() {
                 "source_offset",
             ])
         );
+        true
     });
 }
 

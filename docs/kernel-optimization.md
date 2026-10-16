@@ -925,3 +925,34 @@ The separate offline compiler uses buffered file input. Its output must remain
 byte-identical on the same complete captured geometry. This reduces validation
 work outside the native profile clock; it is not a trace, restore or serving
 performance result.
+
+### Bounded synchronous trace publication
+
+The follow-up to merged `6a00e221` groups complete, already-drained schema-4
+JSON lines into synchronous log messages of at most 64 KiB, including tags and
+internal newline separators. Opening records keep their original direct path
+before submission. A larger individual frame first drains preceding records
+and is emitted intact. Every completion, including empty and invalid parts,
+publishes its tail before the existing logger flush and return. Serialization
+and allocation failures invalidate the capture without changing physical copy
+results or resource ownership.
+
+A trace lazily allocates and reuses one fixed 64-KiB payload slice. The bound
+excludes allocator bookkeeping, temporary JSON/RLE encoding and downstream
+logger storage; allocation and assembly remain inside publication and inclusive
+operation clocks. The staged CPU profile calls the same production publisher,
+including chunk-boundary and final-tail writes, and reports retained payload
+bytes separately. The whole profile still uses the real trace owner methods.
+
+This changes `log::Record` grouping, counts and per-event metadata. Qualification
+covers the pinned plain-text logger and tested line-preserving embedding logger;
+JSON-escaping or truncating embedding loggers require their own capture check.
+The actual Info target stays `orbitkv_core::transfer::local::trace`. Synchronous
+flush does not add a persistence guarantee to the logger interface. Full reader
+and production-compiler verification remain required.
+
+Independent design review accepts this bounded implementation scope. Fresh CPU
+retention and matching installed-runtime/H20 qualification are pending; prior
+valid observation-overhead failures and S3/S4/S5 limits are unchanged. The KDA
+draft, fixed guards, original input and gate outputs are kept outside Git under
+`/root/orbitkv-artifacts/s4-trace-publication-20261016/`.

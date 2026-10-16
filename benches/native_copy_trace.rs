@@ -157,6 +157,8 @@ fn captured_geometry_profile() {
             Ok(number(&parts[0].records[0], "max_pitch") as usize),
             number(&parts[0].records[0], "limit") as usize,
         );
+        let mut publication = None;
+        let mut publication_len = 0;
         for (index, part) in parts.iter().enumerate() {
             let footer = &part.records[part.records.len() - 2];
             let planned = number(footer, "planned_descriptors") as usize;
@@ -165,14 +167,27 @@ fn captured_geometry_profile() {
             let mut publish_ns = 0_u64;
             let mut encoded_bytes = 0_usize;
             let mut encode = |record: TraceRecord<'_>| {
+                let open = matches!(&record, TraceRecord::Open { .. });
+                let complete = matches!(&record, TraceRecord::Complete { .. });
                 let started = Instant::now();
                 let fields = serde_json::to_string(&record).unwrap();
                 encoding_ns += started.elapsed().as_nanos() as u64;
                 encoded_bytes += fields.len();
                 let started = Instant::now();
-                log::info!(target: "orbitkv_core::transfer::local::trace", "local_raw_copy {fields}");
+                let success = if open {
+                    log::info!(target: "orbitkv_core::transfer::local::trace", "local_raw_copy {fields}");
+                    true
+                } else {
+                    LocalCopyTrace::publish_fields(
+                        &fields,
+                        complete,
+                        &mut publication,
+                        &mut publication_len,
+                    )
+                };
                 drop(fields);
                 publish_ns += started.elapsed().as_nanos() as u64;
+                success
             };
             let total_started = Instant::now();
             let started = Instant::now();
@@ -218,13 +233,21 @@ fn captured_geometry_profile() {
             let flush_ns = started.elapsed().as_nanos() as u64;
             let total_ns = total_started.elapsed().as_nanos() as u64;
             assert!(trace.invalid.is_none());
+            assert_eq!(trace.publication_len, 0);
+            assert_eq!(publication_len, 0);
+            let publication_bytes = if mode == "whole" {
+                trace.publication.as_ref().map_or(0, |buffer| buffer.len())
+            } else {
+                publication.as_ref().map_or(0, |buffer| buffer.len())
+            };
+            assert_eq!(publication_bytes, PUBLICATION_BYTES);
             samples.push(json!({
                 "sequence": sequence, "warmup": sequence < 4, "part": index,
                 "open_ns": open_ns, "geometry_ns": geometry_ns,
                 "batch_capture_ns": batch_capture_ns, "finish_ns": finish_ns,
                 "encoding_ns": encoding_ns, "publish_ns": publish_ns, "flush_ns": flush_ns,
                 "total_ns": total_ns, "records": part.records.len(), "descriptors": planned,
-                "encoded_bytes": encoded_bytes,
+                "encoded_bytes": encoded_bytes, "publication_bytes": publication_bytes,
             }));
         }
     }
