@@ -124,7 +124,7 @@ fn explicit_export_batch_cannot_mix_retained_owner_generations() {
     let first = CudaIpcTensorRegistration {
         format_version: 1,
         allocation_kind: "torch-cuda-ipc-storage".into(),
-        allocation_handle: vec![1; 64],
+        allocation_handle: [vec![3, b'c'], vec![1; 64]].concat(),
         device_uuid: context.device_uuid.clone(),
         storage_size_bytes: 64,
         shape: vec![8],
@@ -162,7 +162,7 @@ fn one_export_credit_cannot_create_two_importer_owners() {
     let first = CudaIpcTensorRegistration {
         format_version: 1,
         allocation_kind: "torch-cuda-ipc-storage".into(),
-        allocation_handle: vec![1; 64],
+        allocation_handle: [vec![3, b'c'], vec![1; 64]].concat(),
         device_uuid: context.device_uuid.clone(),
         storage_size_bytes: 64,
         shape: vec![8],

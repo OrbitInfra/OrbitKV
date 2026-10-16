@@ -17,8 +17,12 @@ impl CudaIpcTensorRegistration {
         {
             return Err("CUDA registration GPU UUID is invalid or differs from its owner".into());
         }
-        if self.allocation_handle.len() != 64
-            || self.export_owner_generation.len() != 16
+        // Selected PyTorch exports a version/type envelope around cudaMalloc's
+        // 64-byte CUDA handle. Expandable-segment handles have a different owner.
+        if self.allocation_handle.len() != 66 || self.allocation_handle[..2] != [3, b'c'] {
+            return Err("unsupported PyTorch CUDA allocation handle envelope".into());
+        }
+        if self.export_owner_generation.len() != 16
             || self.export_owner_generation.iter().all(|byte| *byte == 0)
             || self.ref_counter_handle.is_empty()
             || self.ref_counter_handle.len() > 255

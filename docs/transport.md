@@ -48,6 +48,11 @@ versioned protobuf storage/view metadata. The native client exports retained
 tensors directly; Manager validation precedes CUDA device discovery/import.
 Storage suballocation and tensor view offsets are separate; dtype/element size,
 shape/stride extent, handles, ref-counter and readiness event are checked.
+The selected PyTorch 2.13 ordinary storage export includes a version-3,
+`cudaMalloc` type envelope around the 64-byte CUDA allocation handle. Registration
+validates the complete 66-byte envelope and passes it unchanged to PyTorch's
+importer. Bare legacy handles, unknown versions and expandable-segment exports
+are rejected; they do not share this allocation-owner contract.
 A native exporter-owner generation is distinct from the Manager registration
 and engine page-slot generations. The importer still uses the pinned PyTorch
 storage IPC primitive and holds the resulting tensor mapping until its owner

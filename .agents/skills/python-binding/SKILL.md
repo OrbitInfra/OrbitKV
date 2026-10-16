@@ -27,6 +27,11 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   resolved ordinal for Publish/Restore. Do not reuse the client's ordinal on the
   Manager or convert a UUID into an ordinal with physical `nvidia-smi` ordering.
   Lifecycle protocol 9 requires matching installed client and Manager artifacts.
+  The selected Torch 2.13 cudaMalloc IPC storage handle has a version/type
+  envelope around the native CUDA handle. Keep the validated 66-byte version-3
+  cudaMalloc export unchanged through the importer; bare legacy and expandable
+  handles are outside this owner contract. Real installed export/import controls
+  remain necessary even when synthetic metadata validation passes.
 
 Use the gate table in `AGENTS.md`: default Python tests must remain source-only;
 native lifecycle changes need process integration, and consumed adapter changes

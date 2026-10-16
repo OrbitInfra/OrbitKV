@@ -5,7 +5,7 @@ fn registration() -> CudaIpcTensorRegistration {
     CudaIpcTensorRegistration {
         format_version: 1,
         allocation_kind: "torch-cuda-ipc-storage".into(),
-        allocation_handle: vec![1; 64],
+        allocation_handle: [vec![3, b'c'], vec![1; 64]].concat(),
         device_uuid: "GPU-c4930667-4d65-aae5-8205-fe785c3654be".into(),
         storage_size_bytes: 128,
         storage_allocation_offset_bytes: 512,
@@ -34,7 +34,7 @@ fn explicit_registration_preserves_storage_suballocation_and_strided_view() {
 
 #[test]
 fn malformed_registration_is_rejected_before_import() {
-    for case in 0..15 {
+    for case in 0..18 {
         let mut value = registration();
         let expected = value.device_uuid.clone();
         match case {
@@ -56,6 +56,9 @@ fn malformed_registration_is_rejected_before_import() {
                 value.strides = vec![u64::MAX];
             }
             14 => value.storage_allocation_offset_bytes = 1,
+            15 => value.allocation_handle = vec![1; 64],
+            16 => value.allocation_handle[0] = 2,
+            17 => value.allocation_handle[1] = b'e',
             _ => unreachable!(),
         }
         assert!(value.validate(&expected).is_err(), "case {case}");

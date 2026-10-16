@@ -623,6 +623,18 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   it and requires both the owned SIGTERM record and the Manager's shutdown marker
   in each native log. Exit zero/reaped without those proofs is refused. This is
   normal process cleanup evidence, not device/RDMA physical termination.
+  Independent `640e4aee` source/CPU and exact READY launch reviews accepted a
+  single native precheck. Its first real registration fails before Publish or
+  Restore: the selected Torch 2.13 cudaMalloc storage handle is a version/type
+  envelope, while the validator incorrectly required a bare 64-byte CUDA handle.
+  The original test error/Manager SIGTERM/reap and retained controller/resource
+  quarantine are archived; no formal cell or hardware pass is claimed. The new
+  validator accepts only the complete version-3 cudaMalloc envelope, unchanged
+  through the importer, and rejects legacy/unknown/expandable forms. This is a
+  production correction requiring a new wheel, independent source/package
+  review and new launch inputs. Actual Manager prefix/CUTLASS search-path
+  declarations also require correction from the retained runtime observation.
+  No resource/quarantine release is inferred from empty GPU inventory.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
