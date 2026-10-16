@@ -136,16 +136,12 @@ fn completed_part_is_published_before_process_exit() {
             trace.finish_part(31, true);
             assert_eq!(trace.publication_len, 0);
             assert_eq!(trace.publication.as_ref().unwrap().len(), PUBLICATION_BYTES);
-            assert!(trace.encoding.is_empty());
-            assert!(trace.encoding.capacity() <= ENCODING_BYTES);
             assert!(trace.invalid.is_none());
         }
         // An invalid final part must also publish its terminal tail.
         trace.begin_part(16384, true);
         trace.finish_part(31, true);
         assert_eq!(trace.publication_len, 0);
-        assert!(trace.encoding.is_empty());
-        assert!(trace.encoding.capacity() <= ENCODING_BYTES);
         assert!(trace.closed);
         if let Some(logger) = logger {
             let messages = serde_json::to_vec(&*logger.messages.lock().unwrap()).unwrap();
@@ -264,55 +260,6 @@ fn completed_part_is_published_before_process_exit() {
         assert_eq!(events.len(), 276);
         assert_eq!(events[270]["copy_rows"], 4094);
     }
-}
-
-#[test]
-fn json_workspace_preserves_bytes_reuses_storage_and_releases_oversized_records() {
-    let mut trace = LocalCopyTrace::new(0, Ok(usize::MAX), 16384);
-    let copies: Vec<_> = (0..4096)
-        .map(|index| CopyDesc {
-            device: 0x10000 + index * 4,
-            host: (0x100100 + index * 4) as *mut u8,
-            host_device: 0x200100 + index * 4,
-            size: 4,
-            ..copies()[0]
-        })
-        .collect();
-    trace.begin_part_with(copies.len(), true, |_| true);
-    bindings(&mut trace, &copies);
-    let batch = trace.begin_batch(&copies, "direct").unwrap();
-    trace.finish_batch(batch, 17, true);
-    let mut encoding = Vec::new();
-    let mut previous = None;
-    let mut oversized = 0;
-    let mut records = 0;
-    trace.finish_part_with(31, true, |record| {
-        let expected = serde_json::to_vec(&record).unwrap();
-        let fields = LocalCopyTrace::encode_record(record, &mut encoding).unwrap();
-        assert_eq!(fields.as_bytes(), expected);
-        let storage = (encoding.as_ptr(), encoding.capacity());
-        if let Some(previous) = previous {
-            assert_eq!(storage, previous);
-        }
-        let large = encoding.capacity() > ENCODING_BYTES;
-        LocalCopyTrace::recycle_encoding(&mut encoding);
-        assert!(encoding.is_empty());
-        assert!(encoding.capacity() <= ENCODING_BYTES);
-        if large {
-            assert!(expected.len() > ENCODING_BYTES);
-            assert_eq!(encoding.capacity(), 0);
-            oversized += 1;
-            previous = None;
-        } else {
-            assert_eq!((encoding.as_ptr(), encoding.capacity()), storage);
-            previous = Some(storage);
-        }
-        records += 1;
-        true
-    });
-    assert!(trace.invalid.is_none());
-    assert_eq!(oversized, 1);
-    assert_eq!(records, 3);
 }
 
 #[test]

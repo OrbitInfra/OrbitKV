@@ -10,7 +10,6 @@ use super::{CopyDesc, LocalTensor, RawCopy};
 static NEXT_TRACE: AtomicU64 = AtomicU64::new(1);
 
 const PUBLICATION_BYTES: usize = 64 * 1024;
-const ENCODING_BYTES: usize = 64 * 1024;
 const RECORD_TAG: &str = "local_raw_copy ";
 
 const COPY_FIELDS: [&str; 15] = [
@@ -176,7 +175,6 @@ pub(super) struct LocalCopyTrace {
     geometry: HashMap<u64, Geometry>,
     publication: Option<Box<[u8]>>,
     publication_len: usize,
-    encoding: Vec<u8>,
 }
 
 impl LocalCopyTrace {
@@ -200,7 +198,6 @@ impl LocalCopyTrace {
             geometry: HashMap::new(),
             publication: None,
             publication_len: 0,
-            encoding: Vec::new(),
         }
     }
 
@@ -366,18 +363,11 @@ impl LocalCopyTrace {
         }
         let mut publication = self.publication.take();
         let mut publication_len = std::mem::take(&mut self.publication_len);
-        let mut encoding = std::mem::take(&mut self.encoding);
         self.finish_part_with(host_drain_ns, success, |record| {
-            Self::write_buffered(
-                record,
-                &mut publication,
-                &mut publication_len,
-                &mut encoding,
-            )
+            Self::write_buffered(record, &mut publication, &mut publication_len)
         });
         self.publication = publication;
         self.publication_len = publication_len;
-        self.encoding = encoding;
         log::logger().flush();
     }
 
@@ -546,45 +536,20 @@ impl LocalCopyTrace {
         success
     }
 
-    fn encode_record<'a>(
-        record: TraceRecord<'_>,
-        encoding: &'a mut Vec<u8>,
-    ) -> Result<&'a str, serde_json::Error> {
-        encoding.clear();
-        if encoding.capacity() == 0 {
-            encoding
-                .try_reserve_exact(ENCODING_BYTES)
-                .map_err(serde::ser::Error::custom)?;
-        }
-        serde_json::to_writer(&mut *encoding, &record)?;
-        std::str::from_utf8(encoding).map_err(serde::ser::Error::custom)
-    }
-
-    fn recycle_encoding(encoding: &mut Vec<u8>) {
-        if encoding.capacity() > ENCODING_BYTES {
-            *encoding = Vec::new();
-        } else {
-            encoding.clear();
-        }
-    }
-
     fn write_buffered(
         record: TraceRecord<'_>,
         publication: &mut Option<Box<[u8]>>,
         used: &mut usize,
-        encoding: &mut Vec<u8>,
     ) -> bool {
         let complete = matches!(&record, TraceRecord::Complete { .. });
-        let success = match Self::encode_record(record, encoding) {
-            Ok(fields) => Self::publish_fields(fields, complete, publication, used),
+        match serde_json::to_string(&record) {
+            Ok(fields) => Self::publish_fields(&fields, complete, publication, used),
             Err(error) => {
                 Self::publish_pending(publication, used);
                 log::error!("Cannot serialize local raw-copy capture: {error}");
                 false
             }
-        };
-        Self::recycle_encoding(encoding);
-        success
+        }
     }
 }
 

@@ -159,7 +159,6 @@ fn captured_geometry_profile() {
         );
         let mut publication = None;
         let mut publication_len = 0;
-        let mut encoding = Vec::new();
         for (index, part) in parts.iter().enumerate() {
             let footer = &part.records[part.records.len() - 2];
             let planned = number(footer, "planned_descriptors") as usize;
@@ -171,16 +170,7 @@ fn captured_geometry_profile() {
                 let open = matches!(&record, TraceRecord::Open { .. });
                 let complete = matches!(&record, TraceRecord::Complete { .. });
                 let started = Instant::now();
-                let open_fields = if open {
-                    Some(serde_json::to_string(&record).unwrap())
-                } else {
-                    None
-                };
-                let fields = if let Some(fields) = &open_fields {
-                    fields.as_str()
-                } else {
-                    LocalCopyTrace::encode_record(record, &mut encoding).unwrap()
-                };
+                let fields = serde_json::to_string(&record).unwrap();
                 encoding_ns += started.elapsed().as_nanos() as u64;
                 encoded_bytes += fields.len();
                 let started = Instant::now();
@@ -189,14 +179,13 @@ fn captured_geometry_profile() {
                     true
                 } else {
                     LocalCopyTrace::publish_fields(
-                        fields,
+                        &fields,
                         complete,
                         &mut publication,
                         &mut publication_len,
                     )
                 };
-                drop(open_fields);
-                LocalCopyTrace::recycle_encoding(&mut encoding);
+                drop(fields);
                 publish_ns += started.elapsed().as_nanos() as u64;
                 success
             };
@@ -252,13 +241,6 @@ fn captured_geometry_profile() {
                 publication.as_ref().map_or(0, |buffer| buffer.len())
             };
             assert_eq!(publication_bytes, PUBLICATION_BYTES);
-            let workspace = if mode == "whole" {
-                &trace.encoding
-            } else {
-                &encoding
-            };
-            assert!(workspace.is_empty());
-            assert!(workspace.capacity() <= ENCODING_BYTES);
             samples.push(json!({
                 "sequence": sequence, "warmup": sequence < 4, "part": index,
                 "open_ns": open_ns, "geometry_ns": geometry_ns,
@@ -266,7 +248,6 @@ fn captured_geometry_profile() {
                 "encoding_ns": encoding_ns, "publish_ns": publish_ns, "flush_ns": flush_ns,
                 "total_ns": total_ns, "records": part.records.len(), "descriptors": planned,
                 "encoded_bytes": encoded_bytes, "publication_bytes": publication_bytes,
-                "encoding_workspace_bytes": workspace.capacity(), "encoding_workspace_len": workspace.len(),
             }));
         }
     }
