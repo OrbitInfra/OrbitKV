@@ -679,6 +679,23 @@ needs independent code/runtime/launch review and a newly frozen cohort; complete
 cohorts are not retried or replaced. Inference contention and further
 kernel/default promotion remain blocked; S3/S4/S5 limits are unchanged.
 
+**JSON workspace candidate: rejected by its fixed CPU comparison.**
+The candidate at `b16bead2` reuses at most 64 KiB of JSON workspace in the
+existing owner without changing canonical bytes, record order, clocks, capture
+caps or synchronous flush. All twenty fixed CPU cells preserve 720 replays and
+87,091,200 geometry values, with normal profile/compiler/controller waits and
+unchanged frozen inputs. Staged encoding ratio is 0.8040, with independent-pair
+95% interval [0.7117, 0.9147], but whole-capture ratio is 1.0333
+[0.9134, 1.1688]; two whole pairs exceed 1.05. The candidate fails its
+predeclared whole-capture guards and is not retained. Production source is
+restored to the merged `2d6c77ac` baseline; the rejected source, binaries and
+complete failed cohort remain outside Git at
+`/root/orbitkv-artifacts/s4-trace-json-workspace-20261016/`.
+No H20 cohort or dependent inference-contention run is admitted; prior results
+and S3/S4/S5 limits remain unchanged. Inspect capture allocation, memory footprint and whole-operation
+variance before selecting another bounded candidate; the component improvement
+does not establish a whole-path gain or identify the cause of failure.
+
 **Bounded synchronous publication: CPU retention accepted; H20 overhead FAIL.**
 The candidate groups already-drained diagnostic JSON lines into
 synchronous log messages of at most 64 KiB. Keep opening records on the original

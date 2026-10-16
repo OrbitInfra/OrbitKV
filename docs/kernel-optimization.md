@@ -984,3 +984,31 @@ reclamation. Per-part timers still exclude eventual trace-owner destruction.
 Prior valid failed cohorts and S3/S4/S5 limits remain unchanged. The KDA draft,
 fixed guards, original input, complete raw data and reviews are outside Git under
 `/root/orbitkv-artifacts/s4-trace-publication-20261016/`.
+
+
+### JSON workspace candidate rejected
+
+The candidate at `b16bead2` reuses a JSON workspace in the existing native trace
+owner after physical drain. It retains at most 64 KiB at each record boundary
+and discards oversized storage after synchronous publication. The original
+opening path, canonical RLE/JSON bytes, capture caps, completion clocks and
+terminal flush remain unchanged. Memory bounds, actual default/buffered logger
+controls and the source/CPU-launch gate pass independent review.
+
+The sole fixed twenty-cell CPU comparison completes 720 replays, 94,320 records
+and 87,091,200 reconstructed geometry values. All forty profile/compiler children
+and the controller/outer session exit normally, with all frozen inputs unchanged.
+Staged encoding geometric ratio is 0.8040, with independent-process-pair 95%
+interval [0.7117, 0.9147]. Whole-capture ratio is 1.0333 [0.9134, 1.1688], with
+two pairs above 1.05. The component improvement does not pass the predeclared
+whole-capture retention guards. The candidate is rejected and production code
+returns to the merged `2d6c77ac` baseline.
+
+No H20 run, replacement CPU cell or relaxed threshold is authorized by this
+result. Stage differences do not establish
+whether allocator/cache effects or external variability caused the whole-path
+failure. Further work must inspect whole capture and memory costs before selecting
+a distinct candidate. Earlier H20 failures, the unchanged 5% observation guard and
+S3/S4/S5 limits remain binding. The rejected source, executable, fixed contract
+and complete failed data remain outside Git at
+`/root/orbitkv-artifacts/s4-trace-json-workspace-20261016/`.
