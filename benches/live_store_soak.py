@@ -418,7 +418,9 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
                     target = _metadata(source_manager)["inventory_sequence"]
                     source_owner = registrations["source"]["owner"]["incarnation"]
                     _until(
-                        lambda target=target, source_owner=source_owner, consumer_manager=consumer_manager: (
+                        lambda target=target,
+                        source_owner=source_owner,
+                        consumer_manager=consumer_manager: (
                             (status := _owner_status(consumer_manager, source_owner))
                             and status["fresh"]
                             and status["applied_sequence"] >= target
