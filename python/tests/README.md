@@ -186,7 +186,9 @@ and its counterexamples stay in the external artifact archive. It separates prec
 from formal cells, preserves locks on unknown ownership and requires a distinct
 independent grant matching the immutable contract. A source/CPU controller pass
 is not GPU launch approval; freeze and review the actual runtime/resources before
-execution. Runtime outputs and contracts belong outside this checkout.
+execution. Independent runtime roots use at most two file readers, share the
+original deadline, and join all readers before returning or propagating an error;
+per-file hashes, targets and the complete census remain mandatory. Runtime outputs and contracts belong outside this checkout.
 
 For explicit CUDA registration/credit-owner changes, run
 `registration::tests` and the actual duplicate-entry control in `client::tests`

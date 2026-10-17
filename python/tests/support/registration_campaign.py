@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from uuid import UUID
 
@@ -318,8 +319,20 @@ def check_inputs(
         ):
             raise RuntimeError("Cell runtime roots differ from the frozen declarations")
         manifests = [available[path] for path in runtime_manifest_paths]
-    for manifest in manifests:
-        check_runtime_manifest(manifest, deadline)
+    if len(manifests) < 2:
+        for manifest in manifests:
+            check_runtime_manifest(manifest, deadline)
+    else:
+        executor = ThreadPoolExecutor(max_workers=2)
+        try:
+            readers = [
+                executor.submit(check_runtime_manifest, manifest, deadline)
+                for manifest in manifests
+            ]
+            for reader in readers:
+                reader.result()
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
     if "mutable_runtime_domain" in contract:
         domain = contract["mutable_runtime_domain"]
         root = Path(domain["root"])

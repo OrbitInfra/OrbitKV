@@ -860,6 +860,15 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   budget controls precede independent repair review. A new wheel and matching
   installed core/engine gates remain required; the earlier SGLang acceptance
   applies to its original wheel, and PR #251 remains merge-blocked.
+  Independent review accepts `6ee6cdca` source/CPU accounting and the newly built
+  wheel for package/CPU installation only. The first core-runtime CPU preparation
+  exceeds its unchanged integrity-work margin (209.71 seconds projected); removing
+  redundant hashes already covered by exact complete manifests reduces it to
+  162.56 seconds, still above the 160-second guard. Both preparations remain
+  failed; no controller, lease or GPU workload starts. A test-only candidate
+  checks at most two independent roots concurrently under the same deadline,
+  joins all readers on failure, and retains all file/census and 180-second cleanup
+  guards. It needs independent source/CPU/runtime acceptance before READY.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
   without a control RPC or taking a blocked Publish/lifecycle lock. Restore

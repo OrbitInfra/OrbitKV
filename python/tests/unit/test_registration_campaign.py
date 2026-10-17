@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -640,6 +641,77 @@ def test_cell_checks_consumed_roots_and_final_checks_all_roots(tmp_path):
     (tmp_path / "vllm/native.so").write_bytes(b"changed used cell input")
     with pytest.raises(RuntimeError, match="payload changed"):
         campaign.check_inputs(contract, runtime_manifest_paths=selected)
+
+
+def test_failed_parallel_root_check_joins_other_readers(tmp_path, monkeypatch):
+    manifests = []
+    for name in ("bad", "held"):
+        root = tmp_path / name
+        root.mkdir()
+        library = root / "native.so"
+        library.write_bytes(b"frozen CPU payload")
+        manifest = tmp_path / f"{name}.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "root": str(root),
+                    "files": [
+                        {
+                            "path": library.name,
+                            "realpath": str(library),
+                            "bytes": library.stat().st_size,
+                            "sha256": campaign.digest(library),
+                        }
+                    ],
+                }
+            )
+        )
+        manifests.append({"path": str(manifest), "sha256": campaign.digest(manifest)})
+    contract = runtime_input_contract(tmp_path, manifests)
+    (tmp_path / "bad/native.so").write_bytes(b"changed CPU bytes")
+    entered, failed, release, closed, finished = (threading.Event() for _ in range(5))
+    check = campaign.check_runtime_manifest
+    deadline = time.monotonic() + 5
+    errors = []
+
+    def verify(declaration, received_deadline):
+        assert received_deadline == deadline
+        if declaration == manifests[0]:
+            assert entered.wait(2)
+            try:
+                check(declaration, received_deadline)
+            finally:
+                failed.set()
+        else:
+            try:
+                with (tmp_path / "held/native.so").open("rb"):
+                    entered.set()
+                    assert release.wait(2)
+                    check(declaration, received_deadline)
+            finally:
+                closed.set()
+
+    def verify_all():
+        try:
+            campaign.check_inputs(contract, deadline=deadline)
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(campaign, "check_runtime_manifest", verify)
+    caller = threading.Thread(target=verify_all)
+    caller.start()
+    try:
+        assert entered.wait(2)
+        assert failed.wait(2)
+        assert not finished.wait(0.05), "Integrity failure returned with a live file reader"
+    finally:
+        release.set()
+        caller.join(3)
+    assert not caller.is_alive() and finished.is_set() and closed.is_set()
+    assert len(errors) == 1 and isinstance(errors[0], RuntimeError)
+    assert "payload changed" in str(errors[0])
 
 
 def test_expired_startup_verification_cannot_reach_resource_or_gpu_admission(monkeypatch):
