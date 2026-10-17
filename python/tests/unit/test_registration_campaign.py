@@ -758,6 +758,8 @@ def test_manager_importer_origin_is_identity_bound_and_inside_frozen_roots(fault
         "runtime-omission",
         "runtime-omit-both",
         "runtime-required-absent",
+        "overlay-no-proof",
+        "overlay-wrong-code",
         "no-credit",
         "credit-owner",
         "credit-replaced",
@@ -814,6 +816,18 @@ def test_native_cell_requires_command_record_bound_to_observed_manager(tmp_path,
             "bytes": 1,
             "sha256": "d" * 64,
         }
+    elif fault in ("overlay-no-proof", "overlay-wrong-code"):
+        manager_runtime["files"][1].update(device=2, mapped_device=1, mapped_inode=8)
+        if fault == "overlay-wrong-code":
+            manager_runtime["files"][1]["executable_regions"] = [
+                {
+                    "start": 8192,
+                    "end": 12288,
+                    "file_offset": 0,
+                    "file_sha256": "a" * 64,
+                    "mapped_sha256": "b" * 64,
+                }
+            ]
     if fault != "no-runtime":
         (tmp_path / "manager.manager-runtime.json").write_text(json.dumps(manager_runtime))
     credit = {

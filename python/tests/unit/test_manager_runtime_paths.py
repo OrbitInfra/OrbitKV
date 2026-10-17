@@ -137,9 +137,15 @@ def test_strict_manager_start_records_actual_command_and_keeps_failed_record_own
                             metadata.st_ino,
                         )
             if unavailable_identity:
-                with pytest.raises(RuntimeError, match="mapped runtime path was replaced"):
-                    server.record_runtime()
-                assert not list(tmp_path.glob("*.manager-runtime.json"))
+                server.record_runtime()
+                runtime = json.loads(next(tmp_path.glob("*.manager-runtime.json")).read_text())
+                for row in runtime["files"]:
+                    if row["device"] != row["mapped_device"]:
+                        assert row["executable_regions"]
+                        assert all(
+                            region["file_sha256"] == region["mapped_sha256"]
+                            for region in row["executable_regions"]
+                        )
             else:
                 server.record_runtime()
                 runtime = json.loads(next(tmp_path.glob("*.manager-runtime.json")).read_text())
@@ -243,6 +249,77 @@ def test_runtime_hash_is_bound_to_the_opened_mapped_inode(tmp_path, monkeypatch,
                 assert row["inode"] == library.stat().st_ino
                 assert row["sha256"] == registration_campaign.digest(library)
             assert process.poll() is None
+    finally:
+        process.terminate()
+        assert process.wait(timeout=5) == 0
+
+
+@pytest.mark.parametrize("corrupt_mapping", [False, True])
+def test_overlay_runtime_requires_actual_complete_executable_bytes(tmp_path, corrupt_mapping):
+    library = tmp_path / "mapped-executable.so"
+    library.write_bytes(b"A" * 4096)
+    ready = tmp_path / "ready"
+    code = (
+        "import mmap,os,signal,sys\nfrom pathlib import Path\n"
+        "f=open(sys.argv[1],'rb');m=mmap.mmap(f.fileno(),0,flags=mmap.MAP_PRIVATE,prot=mmap.PROT_READ|mmap.PROT_EXEC)\n"
+        "if sys.argv[3]=='1':\n"
+        " import ctypes\n"
+        " # Test-only code page is never executed. Mutate the actual private mapping.\n"
+        " libc=ctypes.CDLL(None);libc.mprotect.argtypes=[ctypes.c_void_p,ctypes.c_size_t,ctypes.c_int]\n"
+        " line=next(s for s in Path('/proc/self/maps').read_text().splitlines() if s.endswith(' '+sys.argv[1]))\n"
+        " address=int(line.split('-')[0],16)\n"
+        " if libc.mprotect(address,4096,mmap.PROT_READ|mmap.PROT_WRITE|mmap.PROT_EXEC)!=0:raise RuntimeError('mprotect failed')\n"
+        " ctypes.memset(address,66,4096)\n"
+        " if libc.mprotect(address,4096,mmap.PROT_READ|mmap.PROT_EXEC)!=0:raise RuntimeError('mprotect restore failed')\n"
+        "signal.signal(signal.SIGTERM,lambda *_:sys.exit(0))\n"
+        "Path(sys.argv[2]).write_text('ready')\nwhile True:signal.pause()\n"
+    )
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            "-c",
+            code,
+            str(library),
+            str(ready),
+            str(int(corrupt_mapping)),
+        ],
+        start_new_session=True,
+    )
+    server = CacheManagerProcess(port=12345, log_path=tmp_path / "manager.log")
+    server.process = process
+    server._process_start_ticks = str(registration_campaign.identity(process.pid)["start_ticks"])
+    server._log_path = tmp_path / "manager.log"
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.exists():
+            assert process.poll() is None and time.monotonic() < deadline
+            time.sleep(0.01)
+        metadata = library.stat()
+        line = next(
+            s
+            for s in cache_manager.Path(f"/proc/{process.pid}/maps").read_text().splitlines()
+            if s.endswith(" " + str(library))
+        )
+        major, minor = (int(part, 16) for part in line.split()[3].split(":"))
+        if metadata.st_dev == os.makedev(major, minor):
+            pytest.skip("Control specifically tests differing overlay devices")
+        if corrupt_mapping:
+            with pytest.raises(RuntimeError, match="Actual mapped executable bytes differ"):
+                server.record_runtime()
+            assert not list(tmp_path.glob("*.manager-runtime.json"))
+        else:
+            server.record_runtime()
+            runtime = json.loads(next(tmp_path.glob("*.manager-runtime.json")).read_text())
+            row = next(row for row in runtime["files"] if row["path"] == str(library))
+            assert row["device"] != row["mapped_device"]
+            assert len(row["executable_regions"]) == 1
+            region = row["executable_regions"][0]
+            assert region["end"] - region["start"] == 4096
+            assert region["file_sha256"] == region["mapped_sha256"]
+        assert process.poll() is None
     finally:
         process.terminate()
         assert process.wait(timeout=5) == 0

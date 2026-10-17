@@ -591,6 +591,7 @@ class CacheManagerProcess:
         raw = read_bytes(Path(f"/proc/{process.pid}/maps"), 1024 * 1024, deadline).decode()
         executable = Path(f"/proc/{process.pid}/exe").resolve(strict=True)
         paths = {}
+        executable_regions = {}
         for line in raw.splitlines():
             fields = line.split(maxsplit=5)
             if len(fields) == 6 and fields[5].startswith("/"):
@@ -604,9 +605,13 @@ class CacheManagerProcess:
                 if name in paths and paths[name] != mapped_identity:
                     raise RuntimeError("Manager mapped runtime identities conflict")
                 paths[name] = mapped_identity
+                if "x" in fields[1]:
+                    start, end = (int(value, 16) for value in fields[0].split("-"))
+                    executable_regions.setdefault(name, []).append((start, end, int(fields[2], 16)))
         if not paths or len(paths) > 2048:
             raise RuntimeError("Manager mapped file inventory is empty or exceeds its bound")
         files = []
+        mapped_code_bytes = 0
         for name in sorted(paths):
             remaining(deadline)
             path = Path(name)
@@ -614,11 +619,49 @@ class CacheManagerProcess:
             fd = os.open(resolved, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             try:
                 metadata = os.fstat(fd)
-                if (
-                    not stat.S_ISREG(metadata.st_mode)
-                    or (metadata.st_dev, metadata.st_ino) != paths[name]
-                ):
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_ino != paths[name][1]:
                     raise RuntimeError("Manager mapped runtime path was replaced")
+                code_regions = []
+                if metadata.st_dev != paths[name][0]:
+                    regions = executable_regions.get(name, [])
+                    if not regions:
+                        raise RuntimeError(
+                            "Mapped runtime identity differs without executable proof"
+                        )
+                    memory = os.open(f"/proc/{process.pid}/mem", os.O_RDONLY | os.O_NONBLOCK)
+                    try:
+                        for start, end, offset in regions:
+                            mapped_code_bytes += end - start
+                            if mapped_code_bytes > 512 * 1024 * 1024:
+                                raise RuntimeError("Mapped executable evidence exceeds byte bound")
+                            expected_hash = hashlib.sha256()
+                            actual_hash = hashlib.sha256()
+                            position = 0
+                            while position < end - start:
+                                remaining(deadline)
+                                count = min(1024 * 1024, end - start - position)
+                                expected = os.pread(fd, count, offset + position)
+                                actual = os.pread(memory, count, start + position)
+                                # The last executable page can contain zero padding beyond the file.
+                                expected += bytes(count - len(expected))
+                                if len(actual) != count or actual != expected:
+                                    raise RuntimeError(
+                                        "Actual mapped executable bytes differ from the file"
+                                    )
+                                expected_hash.update(expected)
+                                actual_hash.update(actual)
+                                position += count
+                            code_regions.append(
+                                {
+                                    "start": start,
+                                    "end": end,
+                                    "file_offset": offset,
+                                    "file_sha256": expected_hash.hexdigest(),
+                                    "mapped_sha256": actual_hash.hexdigest(),
+                                }
+                            )
+                    finally:
+                        os.close(memory)
                 value = hashlib.sha256()
                 while True:
                     remaining(deadline)
@@ -645,6 +688,9 @@ class CacheManagerProcess:
                     "inode": metadata.st_ino,
                     "bytes": metadata.st_size,
                     "sha256": value.hexdigest(),
+                    "mapped_device": paths[name][0],
+                    "mapped_inode": paths[name][1],
+                    "executable_regions": code_regions,
                 }
             )
         if (

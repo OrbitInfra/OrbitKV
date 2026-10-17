@@ -780,9 +780,38 @@ def validate_cell(
                     or mapped.get("realpath") != expected.get("realpath")
                     or mapped.get("bytes") != expected.get("bytes")
                     or mapped.get("sha256") != expected.get("sha256")
-                    or (mapped.get("device"), mapped.get("inode")) != mapped_paths[mapped["path"]]
+                    or (
+                        mapped.get("mapped_device", mapped.get("device")),
+                        mapped.get("mapped_inode", mapped.get("inode")),
+                    )
+                    != mapped_paths[mapped["path"]]
                 ):
                     raise RuntimeError("Manager actually mapped an unfrozen runtime input")
+                if mapped.get("device") != mapped_paths[mapped["path"]][0]:
+                    expected_regions = []
+                    for line in row["maps"].splitlines():
+                        fields = line.split(maxsplit=5)
+                        if len(fields) == 6 and fields[5] == mapped["path"] and "x" in fields[1]:
+                            start, end = (int(value, 16) for value in fields[0].split("-"))
+                            expected_regions.append((start, end, int(fields[2], 16)))
+                    regions = mapped.get("executable_regions", [])
+                    if (
+                        not expected_regions
+                        or [
+                            (region.get("start"), region.get("end"), region.get("file_offset"))
+                            for region in regions
+                        ]
+                        != expected_regions
+                        or any(
+                            not isinstance(region.get("mapped_sha256"), str)
+                            or not re.fullmatch("[0-9a-f]{64}", region["mapped_sha256"])
+                            or region["mapped_sha256"] != region.get("file_sha256")
+                            for region in regions
+                        )
+                    ):
+                        raise RuntimeError(
+                            "Overlay runtime lacks complete actual executable-byte proof"
+                        )
         startup = {}
         for path in starts:
             row = read_json(path, deadline)

@@ -767,6 +767,16 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   lock and rechecks its FD/path afterward. Real CPU mutation controls reject
   both original races. Prior rejected inputs remain archived; new independent
   source/CPU review is required before a new resource freeze.
+  Independent GPU2 exact launch review refuses the frozen runtime because its
+  overlay map device and opened-file device differ despite matching inodes and
+  bytes. No GPU starts; its denied controller is actually waited and releases
+  only its new locks. A harness follow-up preserves both identities and, on that
+  mismatch, reads every executable region from the live Manager's memory and
+  compares it with the same opened file descriptor. Full code bytes, offsets,
+  hashes, unchanged maps and bounded deadlines are mandatory; mutated or missing
+  proof is rejected. This is executable provenance, not mutable data equivalence
+  or physical DMA termination. New independent source/CPU and exact runtime
+  review remain required; the original rejected freeze is immutable.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

@@ -158,7 +158,12 @@ sizes and hashes. Each native cell freezes `runtime_mapped_files`; the result
 oracle joins every recorded library to its actual maps device/inode and frozen
 path/target/digest. Missing, foreign, omitted or replaced inputs refuse success.
 Capture has one 30-second deadline and never releases the process on evidence
-failure. Overlay map/path identities that cannot be joined remain unqualified.
+failure. A differing overlay device view retains both identities and requires
+complete executable mapping bytes read from the live child to match the same
+opened file's segments. Missing or corrupt code proof refuses capture; a name,
+inode or file hash alone cannot substitute. Code reads share the 30-second
+deadline and a 512 MiB aggregate bound. This qualifies executable provenance,
+not mutable data values or physical device completion.
 These snapshots do not reconstruct historical mappings or prove physical drain.
 Native cleanup additionally requires the actual owned `sigterm_sent` record and
 the Manager's normal-shutdown marker; exit zero/reaped alone does not pass.
