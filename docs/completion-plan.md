@@ -727,6 +727,17 @@ Retain every sample and the historical CPU0 A/A failure; do not interpret this a
 an established probe cost, root cause or CPU ranking. No new candidate, H20 run
 or dependent inference contention is admitted.
 
+**Measurement-method preparation (2026-10-17): archive description only.**
+All 32 sealed baseline A/A cells and 768 measured parts are reproduced without
+new native/GPU runs. The posthoc sequence contrast does not qualify a method or
+change any prior FAIL. Before another same-binary instrumentation comparison,
+predeclare balanced within-process order, independent restarted-process units,
+both CPUs, original 5% guards and complete geometry/byte/drain controls. Obtain
+method/source and launch review before collection. This calibration cannot
+validate earlier between-binary optimization comparisons or promote serving.
+The description and reproduction remain outside Git at
+`/root/orbitkv-artifacts/s4-paired-measurement-preparation-20261017/`.
+
 **Bounded synchronous publication: CPU retention accepted; H20 overhead FAIL.**
 The candidate groups already-drained diagnostic JSON lines into
 synchronous log messages of at most 64 KiB. Keep opening records on the original
@@ -893,6 +904,22 @@ or relaxed log rule is installed, and the support matrix is unchanged.
 immutable local static PEFT identity at `47fea821`; the official dense query-control
 handshake at `1ab67a58`. These do not qualify live weight changes, dynamic adapter
 mutation or physical multi-rank recovery.
+
+**Public worker preparation (2026-10-17): upstream contribution; adoption open.**
+The isolated SGLang candidate at `ae5f357e` adds an optional registered-backend
+preparation callback before every runner in `TpModelWorker.init_cuda_graphs`.
+It preserves original factories, selects the published backend and passes the
+original worker and decode-capture flag. Invalid registration is rejected before
+insertion, and preparation failure stops before capture. The candidate-source
+registry/worker suite passes 32 CPU tests.
+[SGLang issue #44855](https://github.com/sgl-project/sglang/issues/44855) and
+[draft PR #44856](https://github.com/sgl-project/sglang/pull/44856) track the generic
+interface proposal; independent review accepts only contribution CPU scope.
+No OrbitKV runtime, engine pin or installed engine file is changed. Real GPU
+capture/replay, released adoption and eager/graph restore plus page-reuse gates
+remain open; keep the private pre-capture Hook and separate pending-admission
+protection. Complete contribution and review evidence stays outside Git at
+`/root/orbitkv-artifacts/s5-sglang-worker-preparation-20261017/`.
 
 - Replace SGLang's private graph-initialization and pending-query admission hooks
   with consumed public lifecycle interfaces. Document their behavior and released

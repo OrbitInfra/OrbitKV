@@ -92,6 +92,31 @@ The frozen `--shutdown-timeout 30` gate retains its failure and quarantine;
 normal API exits do not qualify physical drain. No expected-error filter,
 upstream runtime patch or new support claim is applied.
 
+## 2026-10-17 public worker preparation contribution
+
+The selected runtime stays on official SGLang 0.5.21. An isolated contribution
+against main `4fc86f73` adds optional `prepare_worker(worker, capture_decode_cuda_graph)`
+to registered radix backends and invokes it before all runners in the existing
+worker graph initializer. Two-argument registration and factory identity remain
+unchanged; dispatch reads the published backend. Invalid callbacks are rejected
+before insertion and preparation errors propagate before runner initialization.
+[SGLang issue #44855](https://github.com/sgl-project/sglang/issues/44855) and
+[draft PR #44856](https://github.com/sgl-project/sglang/pull/44856) track the generic
+interface proposal; independent review accepts only contribution CPU scope.
+
+The 32 candidate-source CPU tests use actual registry/runtime-context code and
+the real worker method with recording collaborators. They cover selected-only
+preparation, raw/published configuration differences, repeated calls, multiple
+workers/runners, both capture flags and failure ordering. The existing local
+dependency environment has SGLang distribution metadata 0.5.20; the candidate
+checkout supplies tested SGLang modules. This is not installed 0.5.21 or GPU
+qualification. No installed engine, OrbitKV Hook, package pin or submodule is
+changed. Direct runner recapture and `ensure_decode_cuda_graphs` remain outside
+the proposed boundary. Consume a supported released callback and pass actual
+eager/graph restoration, cancellation and page-reuse gates before Hook removal.
+Pending-ticket admission remains a separate interface task. Evidence stays at
+`/root/orbitkv-artifacts/s5-sglang-worker-preparation-20261017/`.
+
 ## Released integration boundaries
 
 | Engine | Consumed interface | Ownership |
@@ -126,7 +151,7 @@ The older 0.5.20 links below preserve the original interface research:
 
 | Internal target or bridge | What it protects | Official replacement / disposition | Removal gate |
 | --- | --- | --- | --- |
-| `TpModelWorker.init_cuda_graphs` BEFORE | Installs stable external CUDA events before capture so replay waits for restored layers | Factory is too late: Scheduler captures graphs in `init_model_worker` before constructing tree cache. Keep the guarded Hook. | A released pre-capture linker construction callback; rerun actual eager/graph restore and page-reuse gates |
+| `TpModelWorker.init_cuda_graphs` BEFORE | Installs stable external CUDA events before capture so replay waits for restored layers | Factory is too late: Scheduler captures graphs in `init_model_worker` before constructing tree cache. Keep the guarded Hook. | A released pre-capture worker preparation callback, consumed by the adapter; rerun actual eager/graph restore and page-reuse gates |
 | `PrefillAdder.add_one_req` AROUND | Defers pending SSD/peer queries without treating pending as miss; preserves rank agreement and cache admission | External-linker lookup returns ready boundaries, without an asynchronous pending ticket. Keep the guarded Hook. | Released pending-lookup/admission contract; cold/partial/full, timeout, cancellation and rank gates |
 | `Scheduler._add_request_to_queue` AROUND (opt-in) | Starts optional preparation/warming for waiting requests | No consumed public enqueue callback. Disabled unless `ORBITKV_PREPARE_REQUESTS=1` or `ORBITKV_QUEUE_WARMUP=1`. | Released enqueue callback or removal of the optional optimization with matched workload checks |
 | `RecoveryLinkerWrapper` / recurrent component override | Origin/boundary/rank translation, held destination locks and checkpoint release | Public component override is consumed; generic recurrent lifecycle remains incomplete upstream. Keep correctness ownership; broad model support remains unqualified. | Released component semantics and exact checkpoint/window bytes under abort/preemption |
