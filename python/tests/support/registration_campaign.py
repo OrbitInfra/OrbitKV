@@ -300,22 +300,79 @@ def check_inputs(
             or not isinstance(snapshot.get("locks"), list)
             or len(snapshot["files"]) > 4096
             or len(snapshot["locks"]) > 64
+            or not isinstance(snapshot.get("processes", []), list)
+            or len(snapshot.get("processes", [])) > 64
         ):
             raise RuntimeError("Protected snapshot evidence exceeds its bound")
+        for process in [snapshot.get("owner"), *snapshot.get("processes", [])]:
+            if (
+                not isinstance(process, dict)
+                or set(process) != {"pid", "parent", "group", "session", "start_ticks"}
+                or any(type(value) is not int or value < 0 for value in process.values())
+                or process["pid"] <= 0
+                or process["start_ticks"] <= 0
+            ):
+                raise RuntimeError("Protected process identity schema is invalid")
         if identity(snapshot["owner"]["pid"], deadline) != snapshot["owner"]:
             raise RuntimeError("Protected owner incarnation changed")
         for declaration in snapshot["files"]:
             remaining(deadline)
-            path = Path(declaration["path"])
-            metadata = path.lstat()
             if (
-                not stat.S_ISREG(metadata.st_mode)
-                or (metadata.st_dev, metadata.st_ino, metadata.st_size)
-                != (declaration["device"], declaration["inode"], declaration["bytes"])
-                or digest(path, deadline) != declaration["sha256"]
+                not isinstance(declaration, dict)
+                or not isinstance(declaration.get("path"), str)
+                or not Path(declaration["path"]).is_absolute()
+                or any(
+                    type(declaration.get(field)) is not int or declaration[field] < 0
+                    for field in ("device", "inode", "bytes")
+                )
+                or not isinstance(declaration.get("sha256"), str)
+                or not re.fullmatch("[0-9a-f]{64}", declaration["sha256"])
             ):
-                raise RuntimeError("Protected immutable file changed")
+                raise RuntimeError("Protected file identity schema is invalid")
+            path = Path(declaration["path"])
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                metadata = os.fstat(fd)
+                expected = (declaration["device"], declaration["inode"], declaration["bytes"])
+                if (
+                    not stat.S_ISREG(metadata.st_mode)
+                    or (metadata.st_dev, metadata.st_ino, metadata.st_size) != expected
+                ):
+                    raise RuntimeError("Protected immutable file changed")
+                value = hashlib.sha256()
+                size = 0
+                while True:
+                    remaining(deadline)
+                    chunk = os.read(fd, min(1024 * 1024, declaration["bytes"] + 1 - size))
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > declaration["bytes"]:
+                        raise RuntimeError("Protected file grew during hashing")
+                    value.update(chunk)
+                final = os.fstat(fd)
+                current = path.lstat()
+                if (
+                    value.hexdigest() != declaration["sha256"]
+                    or (current.st_dev, current.st_ino, current.st_size) != expected
+                    or not stat.S_ISREG(current.st_mode)
+                    or (final.st_mtime_ns, final.st_ctime_ns, final.st_size)
+                    != (metadata.st_mtime_ns, metadata.st_ctime_ns, metadata.st_size)
+                ):
+                    raise RuntimeError("Protected immutable file changed while inspected")
+            finally:
+                os.close(fd)
         for lock in snapshot["locks"]:
+            if (
+                not isinstance(lock, dict)
+                or not isinstance(lock.get("path"), str)
+                or not Path(lock["path"]).is_absolute()
+                or any(
+                    type(lock.get(field)) is not int or lock[field] < 0
+                    for field in ("device", "inode", "fd")
+                )
+            ):
+                raise RuntimeError("Protected lock identity schema is invalid")
             path = Path(f"/proc/{snapshot['owner']['pid']}/fd/{lock['fd']}")
             metadata = path.stat()
             fields = read_bytes(
@@ -324,12 +381,28 @@ def check_inputs(
                 deadline,
             ).decode()
             rows = [row.split() for row in fields.splitlines() if row.startswith("lock:")]
+            expected_key = (
+                f"{os.major(lock['device']):02x}:{os.minor(lock['device']):02x}:{lock['inode']}"
+            )
+            final = path.stat()
+            pathname = Path(lock["path"]).lstat()
+            ino_rows = [
+                row.partition(":")[2].strip()
+                for row in fields.splitlines()
+                if row.startswith("ino:")
+            ]
             if (
                 os.readlink(path) != lock["path"]
                 or (metadata.st_dev, metadata.st_ino) != (lock["device"], lock["inode"])
                 or len(rows) != 1
+                or len(rows[0]) != 9
                 or rows[0][2:6] != ["FLOCK", "ADVISORY", "WRITE", str(snapshot["owner"]["pid"])]
                 or rows[0][-2:] != ["0", "EOF"]
+                or rows[0][6] != expected_key
+                or (final.st_dev, final.st_ino) != (lock["device"], lock["inode"])
+                or (pathname.st_dev, pathname.st_ino) != (lock["device"], lock["inode"])
+                or not stat.S_ISREG(pathname.st_mode)
+                or ino_rows != [str(lock["inode"])]
             ):
                 raise RuntimeError("Protected exclusive lock ownership changed")
         for protected_process in snapshot.get("processes", []):

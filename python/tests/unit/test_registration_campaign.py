@@ -97,8 +97,10 @@ def test_cpu_ready_owner_holds_then_normally_releases_real_resource_locks(tmp_pa
         assert not Path(f"/proc/{record['controller']['pid']}").exists()
 
 
-@pytest.mark.parametrize("fault", [None, "owner", "file", "lock-fd", "unlocked"])
-def test_protected_snapshot_binds_real_lock_owner_and_immutable_bytes(tmp_path, fault):
+@pytest.mark.parametrize(
+    "fault", [None, "owner", "file", "lock-fd", "unlocked", "file-reopen", "lock-reuse"]
+)
+def test_protected_snapshot_binds_real_lock_owner_and_immutable_bytes(tmp_path, monkeypatch, fault):
     protected = tmp_path / "protected"
     protected.write_bytes(b"original evidence")
     lease = tmp_path / "protected.lock"
@@ -141,6 +143,33 @@ def test_protected_snapshot_binds_real_lock_owner_and_immutable_bytes(tmp_path, 
             snapshot["locks"][0]["inode"] += 1
         elif fault == "unlocked":
             fcntl.flock(lock, fcntl.LOCK_UN)
+        elif fault in ("file-reopen", "lock-reuse"):
+            opened = os.open
+            trigger = (
+                str(protected)
+                if fault == "file-reopen"
+                else f"/proc/{os.getpid()}/fdinfo/{lock.fileno()}"
+            )
+            mutated = False
+
+            def race(path, flags, *args, **kwargs):
+                nonlocal mutated
+                if str(path) == trigger and not mutated:
+                    mutated = True
+                    if fault == "file-reopen":
+                        replacement = tmp_path / "replacement"
+                        replacement.write_bytes(protected.read_bytes())
+                        os.replace(replacement, protected)
+                    else:
+                        fcntl.flock(lock, fcntl.LOCK_UN)
+                        lease.unlink()
+                        fd = opened(lease, os.O_RDWR | os.O_CREAT, 0o600)
+                        os.dup2(fd, lock.fileno())
+                        os.close(fd)
+                        fcntl.flock(lock, fcntl.LOCK_EX)
+                return opened(path, flags, *args, **kwargs)
+
+            monkeypatch.setattr(os, "open", race)
         if fault is None:
             campaign.check_inputs(contract, deadline=time.monotonic() + 1)
         else:

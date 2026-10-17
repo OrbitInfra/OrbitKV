@@ -760,6 +760,13 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   fdinfo exclusive WRITE FLOCKs before and after admission. These snapshots add
   preservation checks to the existing controller; they cannot release or repair
   an old credit/native lifetime. Independent source/CPU acceptance is required.
+  Independent `0d0e5f79` review reproduces protected-file replacement and lock
+  FD reuse races. The repair opens protected files without following symlinks,
+  checks and hashes the same FD, then rechecks descriptor and pathname identity.
+  It joins fdinfo's inode and exact FLOCK device/inode/owner/range to the declared
+  lock and rechecks its FD/path afterward. Real CPU mutation controls reject
+  both original races. Prior rejected inputs remain archived; new independent
+  source/CPU review is required before a new resource freeze.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
