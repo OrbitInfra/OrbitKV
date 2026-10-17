@@ -758,6 +758,9 @@ def test_manager_importer_origin_is_identity_bound_and_inside_frozen_roots(fault
         "runtime-omission",
         "runtime-omit-both",
         "runtime-required-absent",
+        "runtime-code-over-bound",
+        "runtime-code-empty",
+        "runtime-code-reversed",
         "overlay-no-proof",
         "overlay-wrong-code",
         "overlay-opened-inode",
@@ -812,6 +815,19 @@ def test_native_cell_requires_command_record_bound_to_observed_manager(tmp_path,
     elif fault == "runtime-omit-both":
         manager_runtime["files"].pop()
         manager_runtime["maps"] = manager_runtime["maps"].splitlines()[0] + "\n"
+    elif fault in ("runtime-code-over-bound", "runtime-code-empty", "runtime-code-reversed"):
+        start = 8192
+        end = (
+            start + campaign.MAX_MAPPED_EXECUTABLE_BYTES + 4096
+            if fault == "runtime-code-over-bound"
+            else start
+            if fault == "runtime-code-empty"
+            else start - 4096
+        )
+        manager_runtime["maps"] = (
+            manager_runtime["maps"].splitlines()[0]
+            + f"\n{start:x}-{end:x} r-xp 00000000 00:01 8 /frozen/lib.so\n"
+        )
     elif fault == "runtime-required-absent":
         cell["runtime_mapped_files"]["/frozen/required.so"] = {
             "realpath": "/frozen/required.so",

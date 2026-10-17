@@ -579,7 +579,13 @@ class CacheManagerProcess:
 
     def record_runtime(self) -> None:
         """Capture the live Manager's mapped file identities after registration."""
-        from .registration_campaign import identity, read_bytes, remaining, write
+        from .registration_campaign import (
+            MAX_MAPPED_EXECUTABLE_BYTES,
+            identity,
+            read_bytes,
+            remaining,
+            write,
+        )
 
         deadline = time.monotonic() + 30
         process = self.process
@@ -592,6 +598,7 @@ class CacheManagerProcess:
         executable = Path(f"/proc/{process.pid}/exe").resolve(strict=True)
         paths = {}
         executable_regions = {}
+        executable_bytes = 0
         for line in raw.splitlines():
             fields = line.split(maxsplit=5)
             if len(fields) == 6 and fields[5].startswith("/"):
@@ -607,11 +614,15 @@ class CacheManagerProcess:
                 paths[name] = mapped_identity
                 if "x" in fields[1]:
                     start, end = (int(value, 16) for value in fields[0].split("-"))
+                    if end <= start:
+                        raise RuntimeError("Invalid Manager executable mapping range")
+                    executable_bytes += end - start
+                    if executable_bytes > MAX_MAPPED_EXECUTABLE_BYTES:
+                        raise RuntimeError("Mapped executable evidence exceeds byte bound")
                     executable_regions.setdefault(name, []).append((start, end, int(fields[2], 16)))
         if not paths or len(paths) > 2048:
             raise RuntimeError("Manager mapped file inventory is empty or exceeds its bound")
         files = []
-        mapped_code_bytes = 0
         for name in sorted(paths):
             remaining(deadline)
             path = Path(name)
@@ -631,9 +642,6 @@ class CacheManagerProcess:
                     memory = os.open(f"/proc/{process.pid}/mem", os.O_RDONLY | os.O_NONBLOCK)
                     try:
                         for start, end, offset in regions:
-                            mapped_code_bytes += end - start
-                            if mapped_code_bytes > 512 * 1024 * 1024:
-                                raise RuntimeError("Mapped executable evidence exceeds byte bound")
                             expected_hash = hashlib.sha256()
                             actual_hash = hashlib.sha256()
                             position = 0

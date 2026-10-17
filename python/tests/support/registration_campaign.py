@@ -25,6 +25,7 @@ MAX_EVIDENCE_FILES = 4096
 MAX_OBSERVED_PROCESSES = 1024
 MAX_RUNTIME_MANIFEST_BYTES = 64 * 1024 * 1024
 MAX_RUNTIME_FILES = 200000
+MAX_MAPPED_EXECUTABLE_BYTES = 4 * 1024 * 1024 * 1024
 
 
 def remaining(deadline: float | None) -> float:
@@ -749,6 +750,7 @@ def validate_cell(
                 raise RuntimeError("Manager runtime record identity or mappings differ")
             runtime_owners.add(key)
             mapped_paths = {}
+            executable_bytes = 0
             for line in row["maps"].splitlines():
                 remaining(deadline)
                 fields = line.split(maxsplit=5)
@@ -764,6 +766,13 @@ def validate_cell(
                     if name in mapped_paths and mapped_paths[name] != value:
                         raise RuntimeError("Manager runtime mapping identities conflict")
                     mapped_paths[name] = value
+                    if "x" in fields[1]:
+                        start, end = (int(part, 16) for part in fields[0].split("-"))
+                        if end <= start:
+                            raise RuntimeError("Invalid Manager executable mapping range")
+                        executable_bytes += end - start
+                        if executable_bytes > MAX_MAPPED_EXECUTABLE_BYTES:
+                            raise RuntimeError("Mapped executable evidence exceeds byte bound")
             if (
                 not mapped_paths
                 or set(mapped_paths) != set(frozen_files)

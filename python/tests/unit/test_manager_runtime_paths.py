@@ -339,3 +339,87 @@ def test_overlay_runtime_requires_actual_complete_executable_bytes(
     finally:
         process.terminate()
         assert process.wait(timeout=5) == 0
+
+
+@pytest.mark.parametrize("control", ["complete", "changed-tail", "over-bound"])
+def test_large_runtime_code_proof_is_complete_and_bounded(tmp_path, monkeypatch, control):
+    library = tmp_path / "large-executable.so"
+    size = (
+        registration_campaign.MAX_MAPPED_EXECUTABLE_BYTES + 4096
+        if control == "over-bound"
+        else 513 * 1024 * 1024
+    )
+    with library.open("wb") as file:
+        file.truncate(size)
+        file.seek(0)
+        file.write(b"A" * 4096)
+        file.seek(size - 4096)
+        file.write(b"Z" * 4096)
+    ready = tmp_path / "ready"
+    code = (
+        "import mmap,signal,sys\nfrom pathlib import Path\n"
+        "f=open(sys.argv[1],'rb');m=mmap.mmap(f.fileno(),0,flags=mmap.MAP_PRIVATE,prot=mmap.PROT_READ|mmap.PROT_EXEC)\n"
+        "if sys.argv[3]=='changed-tail':\n"
+        " import ctypes\n"
+        " libc=ctypes.CDLL(None);libc.mprotect.argtypes=[ctypes.c_void_p,ctypes.c_size_t,ctypes.c_int]\n"
+        " line=next(s for s in Path('/proc/self/maps').read_text().splitlines() if s.endswith(' '+sys.argv[1]))\n"
+        " address=int(line.split('-')[0],16)+len(m)-4096\n"
+        " if libc.mprotect(address,4096,mmap.PROT_READ|mmap.PROT_WRITE|mmap.PROT_EXEC)!=0:raise RuntimeError('mprotect failed')\n"
+        " ctypes.memset(address,66,4096)\n"
+        " if libc.mprotect(address,4096,mmap.PROT_READ|mmap.PROT_EXEC)!=0:raise RuntimeError('mprotect restore failed')\n"
+        "signal.signal(signal.SIGTERM,lambda *_:sys.exit(0))\n"
+        "Path(sys.argv[2]).write_text('ready')\nwhile True:signal.pause()\n"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-I", "-S", "-B", "-c", code, str(library), str(ready), control],
+        start_new_session=True,
+    )
+    server = CacheManagerProcess(port=12345, log_path=tmp_path / "manager.log")
+    server.process = process
+    server._process_start_ticks = str(registration_campaign.identity(process.pid)["start_ticks"])
+    server._log_path = tmp_path / "manager.log"
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.exists():
+            assert process.poll() is None and time.monotonic() < deadline
+            time.sleep(0.01)
+        line = next(
+            s
+            for s in cache_manager.Path(f"/proc/{process.pid}/maps").read_text().splitlines()
+            if s.endswith(" " + str(library))
+        )
+        major, minor = (int(part, 16) for part in line.split()[3].split(":"))
+        if library.stat().st_dev == os.makedev(major, minor):
+            pytest.skip("Control requires an actual differing overlay device view")
+        pread = os.pread
+        reads = []
+
+        def observed_read(fd, count, offset):
+            assert count <= 1024 * 1024
+            reads.append(count)
+            return pread(fd, count, offset)
+
+        monkeypatch.setattr(os, "pread", observed_read)
+        if control == "over-bound":
+            with pytest.raises(RuntimeError, match="exceeds byte bound"):
+                server.record_runtime()
+            assert reads == []
+        elif control == "changed-tail":
+            with pytest.raises(RuntimeError, match="Actual mapped executable bytes differ"):
+                server.record_runtime()
+            assert sum(reads) >= 2 * size
+        else:
+            server.record_runtime()
+            runtime = json.loads(next(tmp_path.glob("*.manager-runtime.json")).read_text())
+            row = next(row for row in runtime["files"] if row["path"] == str(library))
+            assert sum(part["end"] - part["start"] for part in row["executable_regions"]) == size
+            assert all(
+                part["file_sha256"] == part["mapped_sha256"] for part in row["executable_regions"]
+            )
+            assert sum(reads) >= 2 * size
+        if control != "complete":
+            assert not list(tmp_path.glob("*.manager-runtime.json"))
+        assert process.poll() is None
+    finally:
+        process.terminate()
+        assert process.wait(timeout=5) == 0

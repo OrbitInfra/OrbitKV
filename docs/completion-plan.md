@@ -783,6 +783,16 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   and validates opened inode against recorded/parsed mapped identities in both
   branches. Original controls remain rejected evidence; a new independent review
   must accept the corrected source before another launch freeze.
+  The new `ae7b3b66` source/CPU review accepts both corrections, but its new
+  exact GPU2 launch review finds a separate prelaunch proof-budget incompatibility:
+  the complete frozen runtime has about 1.80 GB of executable mappings while
+  the collector permits 512 MiB. GPU and formal launches remain zero. The new
+  harness candidate bounds complete executable ranges at 4 GiB before any code
+  read, with the unchanged shared 30-second deadline and 1 MiB read chunks; its
+  result oracle enforces the same range cap. This changes evidence capacity,
+  not payload/admission policy or a qualification threshold. Real CPU mapping
+  controls, independent source acceptance and a new exact freeze/launch review
+  are required. Preserve the incompatible freeze and denied READY unchanged.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

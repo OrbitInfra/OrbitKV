@@ -162,7 +162,11 @@ failure. A differing overlay device view retains both identities and requires
 complete executable mapping bytes read from the live child to match the same
 opened file's segments. Missing or corrupt code proof refuses capture; a name,
 inode or file hash alone cannot substitute. Code reads share the 30-second
-deadline and a 512 MiB aggregate bound. This qualifies executable provenance,
+deadline and a 4 GiB aggregate executable range bound, checked before the first
+code read and independently by the result oracle. Reads use 1 MiB chunks; the
+bound counts mapped bytes, not collector scratch allocation. The complete
+Torch/CUDA runtime exceeds the prior 512 MiB limit, so the finite evidence
+capacity covers that runtime without omitting any executable region. This qualifies executable provenance,
 not mutable data values or physical device completion.
 These snapshots do not reconstruct historical mappings or prove physical drain.
 Native cleanup additionally requires the actual owned `sigterm_sent` record and
