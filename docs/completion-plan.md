@@ -531,8 +531,9 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   `6ee6cdca`, test harness `949d0dd5`, wheel SHA256 `0a05a5c9…` (PR
   [#251](https://github.com/feichai0017/orbitkv/pull/251)). Versioned protobuf
   storage/view metadata replaces the framework pickle wrapper; lifecycle 9
-  requires matching client and Manager packages. Validation precedes CUDA
-  discovery/import. The native owner reserves the client/key before export,
+  requires matching client and Manager packages. Per-registration metadata
+  validation precedes device resolution/import. The native owner reserves the
+  client/key before export,
   retains the original storage binding and per-layer owners/credits, and checks
   generation-bound import dispositions. Uncertain or partial attempts retain
   their client/tensors/credits. Repayment requires the original held counter
@@ -540,12 +541,12 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   counter is not physical device completion.
   Retention is bounded to 64 attempts, 4,096 tensors/credits per attempt and
   1 TiB of conservatively accounted storage. Identical `(base, bytes)` aliases
-  are charged once inside a validated single-device batch, fixing released
-  vLLM's repeated charge for shared layer backing. Different extents, overlaps,
+  are charged once inside a validated single-device batch, avoiding repeated
+  OrbitKV accounting of vLLM's shared layer backing. Different extents, overlaps,
   attempts and every layer's ownership remain independent.
   Matching H20 installed gates pass four core cells/seven cases; official
-  vLLM 0.31.0 Qwen3-8B TP1/PP1 V1/direct DRAM passes six cases with one
-  inapplicable hybrid-model skip; official SGLang 0.5.21 Qwen3-8B TP1/PP1
+  vLLM 0.31.0 Qwen3-8B TP1/PP1 V1/direct DRAM with CUDA Graph NONE passes
+  six cases with one inapplicable hybrid-model skip; official SGLang 0.5.21 Qwen3-8B TP1/PP1
   direct DRAM/io_uring SSD passes both recovery cases. These checks cover
   retained-credit controls, native Restore bytes, producer-stream fencing,
   released-pool retirement, model output and restart recovery under their
@@ -948,8 +949,8 @@ or relaxed log rule is installed, and the support matrix is unchanged.
 
 **Explicit-registration wheel cutover (2026-10-17):** the new installed
 registration prerequisite and matching official-release model regression pass
-from the same frozen wheel: vLLM dense V1/direct DRAM and SGLang direct DRAM/
-io_uring SSD, all TP1/PP1 with Qwen3-8B. The current vLLM native baseline/save/
+from the same frozen wheel: vLLM dense V1/direct DRAM with CUDA Graph NONE, and
+SGLang direct DRAM/io_uring SSD, all TP1/PP1 with Qwen3-8B. The current vLLM native baseline/save/
 restart logs also pass the unchanged strict validator; the historical Noop
 shutdown failure above keeps its failed verdict. Exact profiles and independent
 reviews are tracked under [S3](#s3--transfer-lifetime-and-generation-safe-ownership).
