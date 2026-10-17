@@ -722,6 +722,11 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   and after, preserving absent-before explicitly, and requires advancing actual
   reads. Both readiness outcomes remain separate from formal qualification;
   the SSD failure owner and evidence require scoped disposition.
+  Read-counter candidate `8c9056dd` is rejected because missing before fields
+  and replayed initial counters could satisfy all three rounds. The correction
+  requires exact counter key sets and successive cumulative intervals: after
+  advances in every round, later before values are present and cannot fall below
+  the preceding after. Original CPU counterexamples remain preserved.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-
