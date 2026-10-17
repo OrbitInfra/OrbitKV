@@ -526,349 +526,41 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   [PR #246](https://github.com/feichai0017/orbitkv/pull/246).
   Healthy completion does not close physical faults, allocation/page generation
   or S3. Original failures and native IPC/helper-exit limits remain preserved.
-- Replace the remaining framework CUDA IPC pickle interpretation in the Manager
-  with explicit validated registration data; remove the retired wire/API path.
-  This coherent candidate is in progress on the isolated
-  `fix/s3-explicit-registration-20261016` branch from main `98f8faf9`.
-  Protobuf storage/view metadata and retained native tensor export replace
-  wrapper bytes; lifecycle 9 rejects the retired format. Manager validation
-  occurs before device discovery/import. The client and both adapters consume
-  the new call shape; exporter diagnostics use explicit counter identity.
-  The initial `10164d88` candidate is independently unaccepted: credits were
-  exported before duplicate checks, unknown replies lacked an attempt owner,
-  duplicate importer credits and Torch slot/integer domains were not guarded.
-  The correction reserves the client/key before export, arms per-credit rollback
-  and returns explicit generation-bound import dispositions. Unknown/partial
-  attempts retain client/tensors/credits in a process owner, bounded to 64
-  attempts, 4,096 credits per attempt and 1 TiB conservative tensor-storage
-  accounting. These physical-reference limits are separate from payload and
-  native descriptor budgets; native counters and generation/state diagnostics
-  make retention observable. ImporterOwned is not a termination receipt.
-  The subsequent `b7df7670` audit found a same-size storage-rebinding gap:
-  first-pass geometry could select A while post-wait export selected B.
-  The correction retains/exports the original storage and checks pointer,
-  storage offset and layout before submission and after reply. Suballocation
-  alignment is checked before import. This remains registration-time fencing,
-  not a page-slot reuse generation or a device-termination receipt.
-  Protocol/registry, real UDS rejection and native owner CPU controls pass;
-  final matching installation, actual IPC-credit failure/repayment, GPU bytes
-  and independent acceptance remain open. This does not close true allocation/page
-  generation, live Publish stalls or physical orphan reclamation. Independent
-  `cf4ea6f9` review accepts the repaired software/CPU/installed-import scope;
-  `b8c360c2` accepts the real-credit test source and receipt contract. Neither
-  grants GPU launch or physical lifetime qualification. A task-owned controller
-  candidate separates precheck from formal admission, retains resource locks
-  on unknown native ownership, rejects missing cleanup/log evidence and shares
-  one cumulative cleanup budget. The initial `867e1923` controller is
-  independently ChangesRequired: adopted failures and missing logs could pass,
-  selected locks/READY identity could drift, loader/cache environment leaked,
-  and final ownership/deadline accounting ended too early. Its remediation
-  accounts for each observed child, requires exact associated native logs,
-  revalidates fd/path device+inode and fresh inventory at admission, binds the
-  grant to READY/controller identity, and retains ownership through final
-  durable evidence. Bounded evidence reads/parsing and all inventory/waits
-  consume the shared remaining cleanup deadline. CPU controls reject the
-  preserved original counterexamples. Independent `3228e80c` review accepts
-  controller source/CPU scope (24 controls, 433 source and 931 benchmark tests).
-  Exact runtime/resource/launch acceptance remains pending. Runtime manifests
-  now bind each installed file's bytes, digest and resolved target plus the
-  complete file census under each frozen root; extra files, target changes,
-  duplicate/path-traversal declarations and nonregular inputs are rejected.
-  Manifests are bounded to 64 MiB/200,000 files and consume the shared deadline.
-  Independent `cfe1d520` review accepts that controller-only source/CPU increment
-  (32 controls, 441 source and 931 benchmark tests); production bytes are unchanged.
-  Actual H20 file rehash covers 128,595 files and all 123,907 prior dependency
-  entries match. Launch acceptance is still open. Startup verification now has
-  one 180-second deadline. A cell may select only its declared consumed runtime
-  roots for admission/postflight; startup, grant and final checks still cover
-  every root. This prevents unrelated engine file scans consuming the unchanged
-  cumulative 180-second cleanup budget. The admission increment requires review
-  before use, and grants no GPU lifetime or physical completion claim.
-  Independent `058b6cc2` review found a startup boundary gap: the final file
-  metadata check could cross its deadline before affinity/resource admission.
-  That freeze stays unaccepted and unlaunched. The repair checks the deadline
-  after input verification and around each resource admission. A real local
-  last-stat counterexample fails the old source and passes the repaired owner.
-  The new installed prefixes also remove duplicate OrbitKV distribution
-  metadata caused by the earlier dependency `.pth`; both final package/native
-  probes and ELF closure pass without CUDA/Manager launch. New exact source,
-  runtime/resource/READY review and hardware gates remain required.
-  The first `fa729d86` READY is also held before GPU launch: its detached starter
-  lacks a task-owned controller wait/reap receipt. The next controller helper
-  keeps a durable supervisory parent, records real child identity and wait status,
-  propagates nonzero exits and leaves a quarantined child alive. This is healthy
-  launch/evidence supervision, not controller-crash or physical DMA termination
-  qualification. New source/CPU and exact launch review are required.
-  The withdrawn launch review also rejects unmanifested system-site `.pth`
-  execution and the unguarded default Python ZIP search path. The repair uses
-  `-I -S` for the pure control process, checks declared absent inputs, and requires
-  actual Manager Torch/helper import origins plus `sys.path` at the existing
-  registry boundary. System sites consumed by the embedded `/usr` interpreter
-  must be frozen, with user-site disabled; missing, duplicate or out-of-root
-  runtime evidence refuses qualification. This startup diagnostic changes the
-  Manager artifact, so a matching rebuilt wheel and fresh independent software,
-  runtime/resource/READY and launch reviews are required before GPU admission.
-  Independent Codex reviews accept the supervisor source/CPU at `4fac546d` and
-  the rebuilt interpreter/provenance software and installed import at `c4fef136`.
-  The next exact c4fef READY launch review remains ChangesRequired: actual Manager
-  argv was only held in fixture memory. Its grant is denied before GPU/Manager
-  launch. The remedy durably records actual argv, public runtime environment,
-  listener/namespace and PID/start ticks after construction, retaining ownership
-  if record persistence fails. The native oracle requires each startup record
-  to match its observed Manager and cleanup log. This harness-only increment
-  keeps the accepted wheel bytes unchanged and requires independent source and
-  fresh launch rereview; all earlier rejected inputs remain preserved.
-  That source review carries the prior normal-shutdown evidence limit forward:
-  strict cleanup omitted the actual `sigterm_sent` field. The correction persists
-  it and requires both the owned SIGTERM record and the Manager's shutdown marker
-  in each native log. Exit zero/reaped without those proofs is refused. This is
-  normal process cleanup evidence, not device/RDMA physical termination.
-  Independent `640e4aee` source/CPU and exact READY launch reviews accepted a
-  single native precheck. Its first real registration fails before Publish or
-  Restore: the selected Torch 2.13 cudaMalloc storage handle is a version/type
-  envelope, while the validator incorrectly required a bare 64-byte CUDA handle.
-  The original test error/Manager SIGTERM/reap and retained controller/resource
-  quarantine are archived; no formal cell or hardware pass is claimed. The new
-  validator accepts only the complete version-3 cudaMalloc envelope, unchanged
-  through the importer, and rejects legacy/unknown/expandable forms. This is a
-  production correction requiring a new wheel, independent source/package
-  review and new launch inputs. Actual Manager prefix/CUTLASS search-path
-  declarations also require correction from the retained runtime observation.
-  No resource/quarantine release is inferred from empty GPU inventory.
-  Independent failed-result review also finds that the framework counter-release
-  helper can swallow mapping errors. Normal return/internal Repaid therefore
-  cannot establish credit reconciliation. The native-owner follow-up holds the
-  original counter file, requires its unchanged identity and exclusive slot,
-  and observes one-to-zero repayment before removing ownership. Silent/no-op,
-  lost return, replaced/missing files remain retained without retry. CPU controls
-  use actual task-owned shared-memory counter files and preserve the framework
-  stub's scope. Independent source/package and real credit acceptance remain
-  required; old failed-run credit and child evidence is still missing.
-  Independent `bfd72221` source/CPU/installed-import review accepts the repayment
-  correction. The existing Forge task's selected stage is now `95601664`; its
-  second RUNNING executor is reachable and has distinct boot/GPU identities,
-  with no task quarantine or held resource lock in the read-only survey. The
-  first host's GPU0/GPU1/control quarantine remains unchanged. The next harness
-  contract declares an explicit list of protected local resources rather than
-  assuming GPU0 is quarantined on every host; an empty list still requires a
-  complete independently reviewed resource survey. New freeze/launch review
-  and actual credit/byte gates remain open, and no old resource is released.
-  Independent source/CPU review accepts `bad63760`. The next harness increment
-  records process events for the cell and its native helpers. An observed child
-  reaped by its actual parent may be accounted only by one successful traced
-  wait plus its matching child exit; missing/duplicate/nonzero evidence refuses
-  success. The tracer preserves the pytest leader PID and owns no cache state.
-  Its exact binary/dependencies and all process output must be frozen and reviewed
-  before use. This is exit evidence, not a physical transfer termination proof;
-  it cannot reconstruct the original failed child's missing status.
-  Independent `bf7bf241` review is ChangesRequired: a short-lived nonzero child
-  missed by `/proc` sampling could pass, one trace could cover repeated PID
-  incarnations, conflicting exits were not fully rejected, and thread waits
-  were looked up under the wrong task. The repair builds a complete bounded
-  census from actual creation events and normal exit records, joins parent
-  thread wait results to their process owner, rejects extra/reused identities,
-  and checks every traced task even when process polling missed it. The real
-  old fast-exit counterexample now retains the controller, while the actual
-  threaded wait completes correctly. Independent `d6c059f5` source/CPU review
-  accepts that census; the second-host exact READY review accepts only the new
-  two-case installed local CUDA precheck. Its single launch fails in the first
-  registration before Publish/Restore: PyO3 converts the empty `Vec<u8>` passed
-  to `torch.tensor` into Python bytes, which Torch rejects. The correction calls
-  `torch.empty` with explicit zero-sized shape before binding the imported
-  storage. An actual registry-call CPU fixture reproduces the old byte-input
-  error and checks the replacement view geometry. A rebuilt matching wheel,
-  independent software review and new resource/launch acceptance are required.
-  The second case is unlaunched, formal launches remain zero, and the failed
-  host1 controller retains its GPU/control locks. Manager SIGTERM/wait exit zero
-  does not close the retained IPC-credit or physical-lifetime boundary. Preserve
-  the full failed precheck archive and every prior freeze/review.
-  Independent `c49157cb` software/CPU/installed-import review accepts the empty
-  typed-view correction; the extension, Python consumers and TENT libraries are
-  unchanged. Failed-result review accepts only its failed-evidence disposition,
-  with resource handoff NOT_ACCEPTED: seven shared-memory remnants, unknown IPC
-  credit and missing historical Manager maps remain unresolved. A follow-up
-  records actual live Manager maps after registration success or failure and
-  checks library path, mapped identity, size and digest against frozen inputs.
-  Missing, foreign, omitted or replaced mappings refuse success; capture and
-  validation consume bounded deadlines and retain process ownership on error.
-  Overlay device identities that cannot be joined are refused. This harness
-  increment needs independent source/CPU review before a fresh launch; it cannot
-  reconstruct old maps or prove device termination. Original credit identity
-  evidence and safe resource admission remain separate prerequisites.
-  Independent review of `a8c3b2b6` reproduced incomplete-census and pathname-hash
-  races; that freeze remains unaccepted. The next repair requires equality with
-  the complete frozen mapped-library set and hashes the same opened descriptor
-  whose device/inode matched the maps, checking file metadata and path identity
-  again afterward. Original failures and overlay limitations remain preserved.
-  Independent `79bcceb0` source/CPU rereview accepts both corrections, including
-  the real descriptor-race and complete-census counterfactuals. The next native
-  observation increment exposes original counter File device/inode/name/slot
-  and value observations for retained attempts, and returns an immutable credit
-  snapshot with a successful registration. Missing or replaced paths are
-  explicit observations, never repayment or physical-drain evidence. Successful
-  handoff closes the extra diagnostic descriptors after snapshot construction;
-  unknown attempts retain their existing owners and budgets. The strict native
-  fixture persists these records on both registration outcomes before runtime
-  capture. This increment requires independent native/package review and real
-  GPU consumption; it adds no release action or historical reconciliation.
-  Independent `2572a63c` review accepts the native counter observations and
-  package checks only as evidence, but requests changes to the strict consumer:
-  generation/number types, native counter-name domains and aliased physical
-  slots could pass. The follow-up enforces the native JSON domains and rejects
-  duplicate normalized names or original device/inode/slot identities. Its
-  matched controls preserve valid zero/one observations; a new source/freeze
-  rereview is required before consuming the wheel in a GPU gate.
-  Independent `3c3e1845` rereview accepts the consumed native observations and
-  strict consumer/package scope; hardware remains unqualified. The next fresh
-  GPU2 resource-scope review is BLOCKED by shared iceoryx2 global management and
-  stale-node cleanup, not by an inert controller alone. The channel candidate
-  consumes an explicit absolute `ORBITKV_CHANNEL_CONFIG` in both client and
-  Manager before Node creation. Its frozen private root/prefix separates the
-  persistent global counter and node/service names even with Manager cwd `/tmp`.
-  Missing, malformed, symlinked, oversized or out-of-root configuration fails
-  instead of falling back. Real two-process CPU roundtrip keeps default-domain
-  shared objects byte-identical. Native/package review and a new resource/READY
-  review remain required before GPU launch; old locks/remnants stay preserved.
-  Independent `e7077986` review remains ChangesRequired: node/service and
-  intermediate symlinks could escape, and a regular-file root entered Node
-  creation before failing. The correction requires an actual canonical directory
-  root and existing nonsymlink directory components before construction,
-  snapshots their identities and rechecks them before later Nodes. It also
-  checks configuration metadata after reading and bounds CPU process readiness
-  and waits. The whole private directory chain must remain task-owned and
-  immutable through the dependency's path-based operations; the code does not
-  fence privileged concurrent renames atomically. Real process controls reject
-  the original escapes and file root before a shared counter is created. New
-  package/freeze/software and resource reviews remain required.
-  Independent `8921fa3a` review confirms the directory corrections but rejects
-  the process-test output owner: stderr inherited by an abandoned echo could
-  block after its parent exited. The harness remedy writes output to owned files
-  and keeps a pidfd-bound echo owner through error paths. Its READY-failure
-  control records actual error-path SIGTERM/wait and explicit CPU fixture cleanup,
-  separately from successful channel Shutdown. Production wheel bytes are
-  unchanged; a new exact source/package rereview is required before launch.
-  Independent `133e5a59` review confirms bounded file output and pidfd-bound
-  wait cleanup, but finds that PID-only prefix deletion could remove a
-  pre-existing unrelated SHM marker. The test correction chooses a fresh
-  PID/time namespace, checks that it starts empty and preserves error-path IPC
-  remnants without inferring ownership from their basename. A new rereview is
-  required; the failed control and every historical resource remain archived.
-  Independent `18e30418` review accepts the combined private IPC software/package
-  and fault-output/namespace boundary. GPU2 resource admission still needs a new
-  freeze and review. The controller follow-up checks protected old owner and
-  supervisor incarnations, complete immutable file identities/hashes, and actual
-  fdinfo exclusive WRITE FLOCKs before and after admission. These snapshots add
-  preservation checks to the existing controller; they cannot release or repair
-  an old credit/native lifetime. Independent source/CPU acceptance is required.
-  Independent `0d0e5f79` review reproduces protected-file replacement and lock
-  FD reuse races. The repair opens protected files without following symlinks,
-  checks and hashes the same FD, then rechecks descriptor and pathname identity.
-  It joins fdinfo's inode and exact FLOCK device/inode/owner/range to the declared
-  lock and rechecks its FD/path afterward. Real CPU mutation controls reject
-  both original races. Prior rejected inputs remain archived; new independent
-  source/CPU review is required before a new resource freeze.
-  Independent GPU2 exact launch review refuses the frozen runtime because its
-  overlay map device and opened-file device differ despite matching inodes and
-  bytes. No GPU starts; its denied controller is actually waited and releases
-  only its new locks. A harness follow-up preserves both identities and, on that
-  mismatch, reads every executable region from the live Manager's memory and
-  compares it with the same opened file descriptor. Full code bytes, offsets,
-  hashes, unchanged maps and bounded deadlines are mandatory; mutated or missing
-  proof is rejected. This is executable provenance, not mutable data equivalence
-  or physical DMA termination. New independent source/CPU and exact runtime
-  review remain required; the original rejected freeze is immutable.
-  Independent `54164e43` review reproduces an interior short-read padding false
-  equality and a result-oracle opened-inode omission/regression. The repair
-  requires the exact file-backed byte count before padding a proven EOF tail,
-  and validates opened inode against recorded/parsed mapped identities in both
-  branches. Original controls remain rejected evidence; a new independent review
-  must accept the corrected source before another launch freeze.
-  The new `ae7b3b66` source/CPU review accepts both corrections, but its new
-  exact GPU2 launch review finds a separate prelaunch proof-budget incompatibility:
-  the complete frozen runtime has about 1.80 GB of executable mappings while
-  the collector permits 512 MiB. GPU and formal launches remain zero. The new
-  harness candidate bounds complete executable ranges at 4 GiB before any code
-  read, with the unchanged shared 30-second deadline and 1 MiB read chunks; its
-  result oracle enforces the same range cap. This changes evidence capacity,
-  not payload/admission policy or a qualification threshold. Real CPU mapping
-  controls, independent source acceptance and a new exact freeze/launch review
-  are required. Preserve the incompatible freeze and denied READY unchanged.
-  New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
-  Independent source/CPU review accepts the `e9865c08` evidence-capacity delta.
-  Its first installed precheck remains failed: the declared 117 mapped files
-  differed from the actual 78. A separate predeclared consumed-runtime freeze
-  then passes one GPU3 precheck with both native CUDA parameterizations: explicit
-  registration, Publish and four full 128 KiB restores into cleared destinations.
-  The unchanged CPU result oracle, complete mapped executable provenance and
-  normal Manager/client release pass independent result review. This accepts
-  healthy local registration/Publish/Restore only. Final credit repayment,
-  partial-export retention, both adapter lifecycles and physical termination
-  remain open; the preserved PID1 supervisor zombie and IPC remnants are not
-  reclamation or GPU-reuse proof. That precheck launched no formal cells.
-  Accepted evidence is under `codex-gpu3-e986-precheck-result-1/` in that artifact root.
-  The integrated installed-wheel cohort at `1c077ae0` has independent acceptance
-  for its bounded registration prerequisite: four H20 cells/seven cases cover
-  partial-export credit repayment and conservative throw retention, duplicate
-  registration rejection, complete native Restore byte assertions, vLLM producer
-  stream fencing and released SGLang pool retirement with independent holders.
-  All seven Managers, native children, the controller and its foreground SSH
-  owner have literal normal waits. Frozen runtime checks and the selected GPU's
-  empty postflight pass. One CUDA IPC producer warning and a 65,536-byte uncertain
-  throw attempt remain explicit limits; physical fault reclamation, engine page
-  generations, model serving and performance remain unqualified. Evidence is at
+- Explicit CUDA registration is implemented and independently accepted for its
+  bounded code/CPU and matching healthy installed profile at production
+  `6ee6cdca`, test harness `949d0dd5`, wheel SHA256 `0a05a5c9…` (PR
+  [#251](https://github.com/feichai0017/orbitkv/pull/251)). Versioned protobuf
+  storage/view metadata replaces the framework pickle wrapper; lifecycle 9
+  requires matching client and Manager packages. Validation precedes CUDA
+  discovery/import. The native owner reserves the client/key before export,
+  retains the original storage binding and per-layer owners/credits, and checks
+  generation-bound import dispositions. Uncertain or partial attempts retain
+  their client/tensors/credits. Repayment requires the original held counter
+  identity and an observed one-to-zero transition; an importer handoff or zero
+  counter is not physical device completion.
+  Retention is bounded to 64 attempts, 4,096 tensors/credits per attempt and
+  1 TiB of conservatively accounted storage. Identical `(base, bytes)` aliases
+  are charged once inside a validated single-device batch, fixing released
+  vLLM's repeated charge for shared layer backing. Different extents, overlaps,
+  attempts and every layer's ownership remain independent.
+  Matching H20 installed gates pass four core cells/seven cases; official
+  vLLM 0.31.0 Qwen3-8B TP1/PP1 V1/direct DRAM passes six cases with one
+  inapplicable hybrid-model skip; official SGLang 0.5.21 Qwen3-8B TP1/PP1
+  direct DRAM/io_uring SSD passes both recovery cases. These checks cover
+  retained-credit controls, native Restore bytes, producer-stream fencing,
+  released-pool retirement, model output and restart recovery under their
+  respective frozen contracts. Literal service/controller/foreground waits,
+  installed input hashes and selected-resource postflight are independently
+  checked. They establish healthy scoped correctness, not complete lifecycle,
+  physical-fault reclamation, page generations, RDMA/GDS or performance gains.
+  Core and SGLang IPC warnings, uncertain throw retention and official
+  engine-internal termination limits remain explicit in the accepted reports.
+  Full frozen inputs, original failures, retained old owners and independent
+  reports are preserved under
   `/root/orbitkv-artifacts/s3-installed-registration-completion-20261017/`.
-  The next bounded delivery is the matching installed official-engine model E2E
-  gate before merging [PR #251](https://github.com/feichai0017/orbitkv/pull/251),
-  with a fresh runtime freeze and launch review. Historical failed cohorts,
-  frozen thresholds and retained old resources keep their original status.
-  The matching SGLang part now has independent acceptance from the same installed
-  wheel: official 0.5.21, Qwen3-8B TP1/PP1, direct copy, DRAM and io_uring SSD.
-  Both model cases pass native-HBM bypass, flush/restart recovery, concurrent
-  prefixes, changed-identity cold controls, positive restore/read counters and
-  same-engine output assertions. All eight service owners have literal normal
-  waits; the complete archive and unchanged runtime/model hashes are verified.
-  Six CUDA IPC warnings and the official engine's internal SIGKILL statuses
-  remain limits. This is functional recovery acceptance, not complete native
-  termination, computed-KV byte dumps, physical faults or performance evidence.
-  The matching vLLM gate stops during the official Noop baseline's initial
-  Inductor compilation: the frozen Triton `ptxas` has mode 0600 and `execve`
-  returns `EACCES`. Pytest, API and EngineCore exit one; no OrbitKV Manager,
-  save or load is evaluated. Missing normal service receipts leave the controller
-  and its original GPU6 quarantine/lease held, even though GPU memory is empty.
-  The complete failed cohort remains separate and the PR stays merge-blocked.
-  This initialization failure is distinct from the known terminal Noop traceback.
-  The next bounded delivery is compiler executable admission and a CPU-verified
-  supported `TRITON_PTXAS_PATH`, followed only after independent acceptance by a
-  separately frozen matching model cohort. Preserve the old bundle, failure,
-  guards and retained owners; a fresh cohort does not revise its verdict.
-  Compiler executable admission and supported system `TRITON_PTXAS_PATH` pass
-  independent source/CPU/runtime review at `64f53af2`. Its separate GPU5 model
-  cohort gets through native Noop compilation, generation and normal API exit,
-  then fails OrbitKV startup with `CUDA registration retention admission limit
-  reached`. There are zero functional model passes: literal service waits are
-  baseline API 0, Manager 0 and OrbitKV API 1; no load service starts. The
-  controller, original lease and quarantine remain held; this is a failed snapshot,
-  not normal campaign completion. The complete archive passes independent review.
-  Released vLLM allocates one dense backing pool for layer views; registration
-  incorrectly charged its full `storage.nbytes()` once per layer. The frozen
-  Qwen3-8B config has 36 layers. Logged geometry implies a 61,681,434,624-byte
-  pool and 2,220,531,646,464-byte old charge; these are source/geometry calculations,
-  not a measured storage dump. The bounded repair charges identical `(base, bytes)`
-  once within a validated single-device batch. Different bases/extents, overlaps,
-  across-attempt totals, 1 TiB/credit/attempt caps and all per-layer owners/exports
-  remain conservative. CPU regression, historical-sum mutation and real-owner
-  budget controls precede independent repair review. A new wheel and matching
-  installed core/engine gates remain required; the earlier SGLang acceptance
-  applies to its original wheel, and PR #251 remains merge-blocked.
-  Independent review accepts `6ee6cdca` source/CPU accounting and the newly built
-  wheel for package/CPU installation only. The first core-runtime CPU preparation
-  exceeds its unchanged integrity-work margin (209.71 seconds projected); removing
-  redundant hashes already covered by exact complete manifests reduces it to
-  162.56 seconds, still above the 160-second guard. Both preparations remain
-  failed; no controller, lease or GPU workload starts. A test-only candidate
-  checks at most two independent roots concurrently under the same deadline,
-  joins all readers on failure, and retains all file/census and 180-second cleanup
-  guards. It needs independent source/CPU/runtime acceptance before READY.
+  The [immutable pre-acceptance record](https://github.com/feichai0017/orbitkv/blob/949d0dd50e149f9a2b74d738838719a589f481ac/docs/completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
+  retains the earlier failed candidates, source fixes, runtime closures and
+  rejected launch preparations. This summary does not revise their verdicts.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
   without a control RPC or taking a blocked Publish/lifecycle lock. Restore
@@ -880,7 +572,8 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   its local DMA-result eventfd. SGLang probing and actual GPU/fault gates remain
   open; peer exit still does not fence active engine DMA or release pages.
 - Add a bounded operational response to a live Manager that never completes a
-  Publish, preserving held pages until drain or established process death.
+  Publish, preserving held pages until matched completion or independently
+  established physical termination. Process death alone is not a DMA fence.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-
@@ -1254,11 +947,16 @@ The earlier missing-Manager-binary attempt also remains failed. No fork patch
 or relaxed log rule is installed, and the support matrix is unchanged.
 
 **Explicit-registration wheel cutover (2026-10-17):** the new installed
-registration prerequisite and matching real-model regression are tracked under
-[S3](#s3--transfer-lifetime-and-generation-safe-ownership). Recheck the actual
-artifact for each newly claimed engine/media profile. Healthy output and recovery
-assertions do not replace strict native shutdown, physical lifetime or fault
-qualification, and prior failed cohorts keep their original verdicts.
+registration prerequisite and matching official-release model regression pass
+from the same frozen wheel: vLLM dense V1/direct DRAM and SGLang direct DRAM/
+io_uring SSD, all TP1/PP1 with Qwen3-8B. The current vLLM native baseline/save/
+restart logs also pass the unchanged strict validator; the historical Noop
+shutdown failure above keeps its failed verdict. Exact profiles and independent
+reviews are tracked under [S3](#s3--transfer-lifetime-and-generation-safe-ownership).
+Recheck the actual artifact for each newly claimed engine/media profile. Healthy
+output and recovery assertions do not replace strict native shutdown, physical
+lifetime or fault qualification, and prior failed cohorts keep their original
+verdicts.
 
 ### S5.3 — Public lifecycle and hybrid-state contracts
 
