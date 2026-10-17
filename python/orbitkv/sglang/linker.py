@@ -151,6 +151,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self._completed_loads: queue.Queue[list[str]] = queue.Queue()
         self._load_error: Exception | None = None
         self._completed_offloads: queue.Queue[bool] = queue.Queue()
+        self._last_publish_warning = 0.0
         self._load_thread = threading.Thread(
             target=self._load_worker, daemon=True, name="orbitkv-sglang-load"
         )
@@ -558,6 +559,21 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 self._offload_queue.task_done()
 
     def num_completed_offloads(self) -> int:
+        try:
+            progress = self.client.publish_progress()
+            if progress.active and (progress.overdue or progress.retained):
+                now = time.monotonic()
+                if now - self._last_publish_warning >= 60:
+                    self._last_publish_warning = now
+                    logger.warning(
+                        "OrbitKV Publish still holds pages: active=%s retained=%s interval_s=%s Manager_alive=%s",
+                        progress.active,
+                        progress.retained,
+                        progress.active_interval_seconds,
+                        progress.manager_alive,
+                    )
+        except Exception:
+            logger.debug("OrbitKV Publish activity unavailable", exc_info=True)
         return self._completed_offloads.qsize()
 
     def pop_completed_offload(self) -> bool:

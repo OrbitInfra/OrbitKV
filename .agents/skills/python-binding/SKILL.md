@@ -13,6 +13,11 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   `python/orbitkv/orbitkv.pyi`. Update stubs when an exposed API changes. Verify
   actual call sites rather than restoring removed aliases or client facades.
 - Common client ownership: `crates/orbitkv-channel/src/cache_client.rs`.
+- `publish_progress()` is a local, immediate activity observation, independent
+  of blocked descriptor/lifecycle locks. Contention is an unavailable error.
+  Its active interval, overdue bit, retained count and pidfd liveness are never
+  completion receipts. Keep engine pages held while synchronous `save` runs;
+  callers must not turn diagnostic failure into save completion.
 - Engine callback changes: use `.agents/skills/engine-integration/SKILL.md` and
   `docs/adapters.md`; release targets and current qualification are distinct.
 - Model/layout identity and hybrid recovery are shared contracts. Do not equate

@@ -51,7 +51,7 @@ pub use cache_protocol::{
     ShardQueryResponse,
 };
 #[cfg(target_os = "linux")]
-pub use client::{ChannelClient, ChannelError};
+pub use client::{ChannelClient, ChannelError, PublishProgress};
 #[cfg(target_os = "linux")]
 pub use completion::{
     CompletionError, GrantState, RESTORE_COMPLETION_SLOTS, RESTORE_ERROR_BYTES, RESTORE_PLAN_BYTES,

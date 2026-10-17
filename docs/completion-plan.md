@@ -630,6 +630,14 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
 - Add a bounded operational response to a live Manager that never completes a
   Publish, preserving held pages until matched completion or independently
   established physical termination. Process death alone is not a DMA fence.
+  The next local-observation substage exposes synchronous Publish activity,
+  explicit retention, elapsed active interval and authenticated pidfd liveness
+  independently of the descriptor/lifecycle locks. Contention is an unavailable
+  observation, not zero active work. Official vLLM/SGLang completion polls consume
+  it for bounded diagnostics only; neither overdue nor process exit completes
+  an offload. The synchronous call and page holds remain in place. This is not
+  the asynchronous pending-handle response or page-generation implementation;
+  those require their own consumed ownership and installed engine gates.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-

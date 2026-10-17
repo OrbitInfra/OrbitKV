@@ -3,7 +3,7 @@ use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rustix::net::sockopt::socket_peercred;
 use rustix::process::{PidfdFlags, pidfd_open};
@@ -42,6 +42,28 @@ pub enum ChannelError {
     GpuPeerUnobservable,
     #[error("Cache Manager rejected lifecycle operation ({code}): {message}")]
     Lifecycle { code: u16, message: String },
+    #[error("Publish activity observation is temporarily unavailable")]
+    PublishObservationUnavailable,
+    #[error("Publish caller admission is full")]
+    PublishAdmissionFull,
+}
+
+const MAX_PUBLISH_CALLERS: usize = 1024;
+
+#[derive(Clone, Debug, Default)]
+pub struct PublishProgress {
+    pub active: usize,
+    pub retained: usize,
+    pub active_interval: Duration,
+    pub overdue: bool,
+    pub manager_alive: Option<bool>,
+}
+
+#[derive(Default)]
+struct PublishActivity {
+    active: usize,
+    retained: usize,
+    started: Option<Instant>,
 }
 
 pub struct ChannelClient {
@@ -52,6 +74,7 @@ pub struct ChannelClient {
     lifecycle_lock: Mutex<()>,
     poisoned: AtomicBool,
     peer_process: Option<OwnedFd>,
+    publish_activity: Mutex<PublishActivity>,
 }
 
 impl ChannelClient {
@@ -80,6 +103,7 @@ impl ChannelClient {
             lifecycle_lock: Mutex::new(()),
             poisoned: AtomicBool::new(false),
             peer_process,
+            publish_activity: Mutex::new(PublishActivity::default()),
         })
     }
 
@@ -97,6 +121,28 @@ impl ChannelClient {
         crate::transport::peer_exited(peer)
             .map(|exited| !exited)
             .map_err(Into::into)
+    }
+
+    /// Local activity plus pidfd liveness; never a device completion receipt.
+    pub fn publish_progress(&self) -> Result<PublishProgress, ChannelError> {
+        let activity = self
+            .publish_activity
+            .try_lock()
+            .map_err(|_| ChannelError::PublishObservationUnavailable)?;
+        let elapsed = activity
+            .started
+            .map_or(Duration::ZERO, |started| started.elapsed());
+        Ok(PublishProgress {
+            active: activity.active,
+            retained: activity.retained,
+            active_interval: elapsed,
+            overdue: activity.active != 0 && elapsed >= self.options.timeout,
+            manager_alive: self
+                .peer_process
+                .as_ref()
+                .map(|peer| crate::transport::peer_exited(peer).map(|exited| !exited))
+                .transpose()?,
+        })
     }
 
     /// Registration and liveness metadata use UDS, independently of the hot descriptor slot.
@@ -296,18 +342,51 @@ impl ChannelClient {
             .as_ref()
             .ok_or(ChannelError::GpuPeerUnobservable)?;
         let payloads = publish_payloads(request, self.bootstrap.info_ref().slot_capacity)?;
-        for payload in payloads {
-            // One logical publish can use several descriptor generations.
-            // Every chunk retains the source pages until its D2H completes.
-            let call = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                self.call_descriptor(CommandCode::Publish, request_id, &payload, 0, Some(peer))
-            }));
-            match call {
-                Ok(result) => result?,
-                Err(_) => TransportClient::retain_unproven_publish(request_id),
-            };
+        {
+            let mut activity = self
+                .publish_activity
+                .lock()
+                .map_err(|_| ChannelError::PublishObservationUnavailable)?;
+            if activity.active >= MAX_PUBLISH_CALLERS {
+                return Err(ChannelError::PublishAdmissionFull);
+            }
+            activity.active += 1;
+            activity.started.get_or_insert_with(Instant::now);
         }
-        Ok(())
+        let result = (|| {
+            for payload in payloads {
+                // One logical publish can use several descriptor generations.
+                // Every chunk retains the source pages until its D2H completes.
+                let call = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.call_descriptor(CommandCode::Publish, request_id, &payload, 0, Some(peer))
+                }));
+                match call {
+                    Ok(result) => result?,
+                    Err(_) => {
+                        self.mark_publish_retained();
+                        TransportClient::retain_unproven_publish(request_id)
+                    }
+                };
+            }
+            Ok(())
+        })();
+        let mut activity = self
+            .publish_activity
+            .lock()
+            .map_err(|_| ChannelError::PublishObservationUnavailable)?;
+        activity.active -= 1;
+        if activity.active == 0 {
+            activity.started = None;
+        }
+        result
+    }
+
+    fn mark_publish_retained(&self) {
+        let mut activity = self
+            .publish_activity
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        activity.retained += 1;
     }
 
     pub fn restore_submit(
@@ -448,6 +527,7 @@ impl ChannelClient {
             Ok(payload)
         })();
         if retain {
+            self.mark_publish_retained();
             TransportClient::retain_unproven_publish(request_id);
         }
         result
