@@ -1101,9 +1101,26 @@ both metrics and both CPUs. Do not pool parts or CPUs. This bounds only the
 observed incremental thread-versus-off cost within this new executable; it does
 not calibrate shared changes, omitted serialization or total process overhead.
 
-The diagnostic is implemented; calibration and independent terminal review are
-pending. Exact contracts, rejected controls and subsequent raw evidence belong
-outside Git at `/root/orbitkv-artifacts/s4-trace-thread-clock-20261017/`.
+The sole fixed cohort completes 32 valid cells, 1,152 replay parts and
+139,345,920 reconstructed geometry values. All 64 profile/compiler children and
+the controller exit normally, with frozen inputs unchanged. Its result is
+`PROBE_OVERHEAD_UNQUALIFIED`:
+
+| CPU | Metric | Thread/off geometric ratio | Four-block 95% interval | Guard |
+| --- | --- | ---: | --- | --- |
+| 0 | Existing total | 1.0852 | [1.0012, 1.1762] | FAIL |
+| 0 | Enclosing observed | 1.0861 | [1.0015, 1.1777] | FAIL |
+| 2 | Existing total | 1.0137 | [1.0107, 1.0166] | PASS |
+| 2 | Enclosing observed | 1.0140 | [1.0111, 1.0170] | PASS |
+
+CPU0 also has adjacent and block ratios above 1.05; both metrics fail all three
+checks there. The mandatory conjunction therefore fails. Keep all valid samples;
+no retry, replacement or revised threshold is applied. CPU0's earlier A/A failure
+prevents attributing this contrast to a stable probe effect. Raw CPU/residual
+observations remain descriptive and cannot select another production candidate.
+The opt-in diagnostic is implemented, not qualified as a low-overhead probe.
+Exact contracts, controls, raw evidence and independent reviews belong outside
+Git at `/root/orbitkv-artifacts/s4-trace-thread-clock-20261017/`.
 The previous CPU0 A/A failure and rejected candidates remain unchanged. Even a
 calibration pass does not identify a root cause, select a preferred CPU or
 qualify an optimization, GPU restore, serving, a copy default or S3 lifetime.
