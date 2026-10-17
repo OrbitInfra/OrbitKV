@@ -934,6 +934,33 @@ remain open; keep the private pre-capture Hook and separate pending-admission
 protection. Complete contribution and review evidence stays outside Git at
 `/root/orbitkv-artifacts/s5-sglang-worker-preparation-20261017/`.
 
+**Public pending lookup (2026-10-17): implemented contribution; adoption open.**
+The isolated SGLang candidate `c950c381` on upstream `bce7b27a` allows `None` for
+pending lookup and preserves `[]` for a completed miss. Current-match state
+reaches the native `PrefillAdder` guard before budgets, locks or destination
+loads, allowing ready requests to continue. Readiness shares slot zero of the
+existing sparse-boundary MIN reduction; a local miss is not cancelled while
+another rank remains pending. Native abort and session/disabled/HBM bypasses
+retire lookup-only interest and old hit markers. Lookup cancellation errors keep
+the existing queued/started-load cleanup responsibility; they do not prove DMA
+drain. Only actually admitted requests occupy the native LoRA batch set. Backends
+retain terminal results and the original finite deadline across rematches, and
+own input validation plus stale callbacks. Earlier Scheduler capacity/preemption
+checks keep their existing order; the guard protects `PrefillAdder` operations.
+
+The eight affected source CPU suites pass 165 tests and 66 subtests, with 16
+explicit CUDA-fixture skips. Genuine module paths, uninitialized CUDA and all
+3,722 unchanged installed Python files are recorded; borrowed SGLang distribution
+metadata is 0.5.20, separate from tested candidate source and selected 0.5.21.
+[SGLang issue #44872](https://github.com/sgl-project/sglang/issues/44872) and
+[draft PR #44873](https://github.com/sgl-project/sglang/pull/44873) track the
+independently accepted contribution CPU scope. Evidence, including
+baseline counterexamples and earlier failed fixture runs, stays at
+`/root/orbitkv-artifacts/s5-sglang-pending-admission-20261017/`.
+No installed engine, OrbitKV runtime Hook, engine pin or backend default changes.
+Real GPU/rank/model/cancellation/page-reuse gates and released adoption remain
+open. Static LoRA admission validation remains a separate protected behavior.
+
 - Replace SGLang's private graph-initialization and pending-query admission hooks
   with consumed public lifecycle interfaces. Document their behavior and released
   alternatives; never remove cancellation/page-reuse protection merely for cleanup.

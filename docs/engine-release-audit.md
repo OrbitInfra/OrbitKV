@@ -117,6 +117,38 @@ eager/graph restoration, cancellation and page-reuse gates before Hook removal.
 Pending-ticket admission remains a separate interface task. Evidence stays at
 `/root/orbitkv-artifacts/s5-sglang-worker-preparation-20261017/`.
 
+## 2026-10-17 public pending lookup contribution
+
+An isolated proposal against SGLang main `bce7b27a`, candidate `c950c381`, adds a
+pending result to the existing external-linker contract. `None` remains pending;
+`[]` is a terminal miss. `MatchResult` and the actual request adoption path carry
+current readiness to the first prefill-admission guard. The existing sparse MIN
+mask also carries readiness, so a local miss cannot bypass or restart a peer's
+pending query. Ready synchronous backends keep their existing result behavior.
+
+Lookup-only cancellation reaches actual abort and session/disabled/HBM/unusable
+match paths, retiring obsolete markers without detaching accepted loads. Its
+exception path preserves queued-load cancellation and started-load references.
+Only actually appended requests occupy the Scheduler LoRA batch set. Earlier
+capacity/preemption checks keep their existing order; the no-budget/lock/load
+mutation guarantee is local to `PrefillAdder`. Async backends retain terminal
+results and original finite deadlines across polls, validate changed inputs and
+fence retired callbacks; this is not a new physical cancellation or drain protocol.
+The eight affected CPU suites pass 165 tests plus 66 subtests; 16 CUDA fixtures
+skip. Candidate modules and genuine dependency identities are recorded, CUDA is
+uninitialized, and all 3,722 installed SGLang Python files stay unchanged. The
+borrowed environment's distribution metadata remains 0.5.20; this does not
+qualify installed 0.5.21. Independent review accepts contribution CPU scope:
+[SGLang issue #44872](https://github.com/sgl-project/sglang/issues/44872) and
+[draft PR #44873](https://github.com/sgl-project/sglang/pull/44873).
+Evidence stays at `/root/orbitkv-artifacts/s5-sglang-pending-admission-20261017/`.
+
+Official release pins and both private safety Hooks remain. Released adoption,
+actual GPU/model/rank behavior, timeout/cancellation and page-reuse gates are
+required before consuming the interface. Static LoRA admission validation needs
+its own replacement even after pending-query admission becomes public. No
+performance, kernel/default or broader lifecycle support is claimed.
+
 ## Released integration boundaries
 
 | Engine | Consumed interface | Ownership |
