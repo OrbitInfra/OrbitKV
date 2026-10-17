@@ -753,6 +753,13 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   PID/time namespace, checks that it starts empty and preserves error-path IPC
   remnants without inferring ownership from their basename. A new rereview is
   required; the failed control and every historical resource remain archived.
+  Independent `18e30418` review accepts the combined private IPC software/package
+  and fault-output/namespace boundary. GPU2 resource admission still needs a new
+  freeze and review. The controller follow-up checks protected old owner and
+  supervisor incarnations, complete immutable file identities/hashes, and actual
+  fdinfo exclusive WRITE FLOCKs before and after admission. These snapshots add
+  preservation checks to the existing controller; they cannot release or repair
+  an old credit/native lifetime. Independent source/CPU acceptance is required.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

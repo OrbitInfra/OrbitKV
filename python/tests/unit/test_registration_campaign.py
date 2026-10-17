@@ -97,6 +97,57 @@ def test_cpu_ready_owner_holds_then_normally_releases_real_resource_locks(tmp_pa
         assert not Path(f"/proc/{record['controller']['pid']}").exists()
 
 
+@pytest.mark.parametrize("fault", [None, "owner", "file", "lock-fd", "unlocked"])
+def test_protected_snapshot_binds_real_lock_owner_and_immutable_bytes(tmp_path, fault):
+    protected = tmp_path / "protected"
+    protected.write_bytes(b"original evidence")
+    lease = tmp_path / "protected.lock"
+    with lease.open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        owner = campaign.identity(os.getpid())
+        metadata = protected.stat()
+        snapshot = {
+            "owner": owner,
+            "files": [
+                {
+                    "path": str(protected),
+                    "device": metadata.st_dev,
+                    "inode": metadata.st_ino,
+                    "bytes": metadata.st_size,
+                    "sha256": campaign.digest(protected),
+                }
+            ],
+            "locks": [
+                {
+                    "path": str(lease),
+                    "fd": lock.fileno(),
+                    "device": lease.stat().st_dev,
+                    "inode": lease.stat().st_ino,
+                }
+            ],
+        }
+        contract = {
+            "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+            "input_sha256": {},
+            "protected_resources": [],
+            "locks": [],
+            "protected_snapshots": [snapshot],
+        }
+        if fault == "owner":
+            owner["start_ticks"] += 1
+        elif fault == "file":
+            protected.write_bytes(b"modified evidence")
+        elif fault == "lock-fd":
+            snapshot["locks"][0]["inode"] += 1
+        elif fault == "unlocked":
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        if fault is None:
+            campaign.check_inputs(contract, deadline=time.monotonic() + 1)
+        else:
+            with pytest.raises(RuntimeError):
+                campaign.check_inputs(contract, deadline=time.monotonic() + 1)
+
+
 def test_supervisor_records_real_nonzero_controller_exit_without_gpu_launch(tmp_path):
     path, env, lease = cpu_ready_inputs(tmp_path)
     contract = json.loads(path.read_text())

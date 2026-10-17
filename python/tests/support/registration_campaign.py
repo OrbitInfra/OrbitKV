@@ -290,6 +290,53 @@ def check_inputs(
             != protected["guardian_start_ticks"]
         ):
             raise RuntimeError("Protected resource identity changed")
+    snapshots = contract.get("protected_snapshots", [])
+    if not isinstance(snapshots, list) or len(snapshots) > 64:
+        raise RuntimeError("Invalid protected owner snapshots")
+    for snapshot in snapshots:
+        if (
+            not isinstance(snapshot, dict)
+            or not isinstance(snapshot.get("files"), list)
+            or not isinstance(snapshot.get("locks"), list)
+            or len(snapshot["files"]) > 4096
+            or len(snapshot["locks"]) > 64
+        ):
+            raise RuntimeError("Protected snapshot evidence exceeds its bound")
+        if identity(snapshot["owner"]["pid"], deadline) != snapshot["owner"]:
+            raise RuntimeError("Protected owner incarnation changed")
+        for declaration in snapshot["files"]:
+            remaining(deadline)
+            path = Path(declaration["path"])
+            metadata = path.lstat()
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or (metadata.st_dev, metadata.st_ino, metadata.st_size)
+                != (declaration["device"], declaration["inode"], declaration["bytes"])
+                or digest(path, deadline) != declaration["sha256"]
+            ):
+                raise RuntimeError("Protected immutable file changed")
+        for lock in snapshot["locks"]:
+            path = Path(f"/proc/{snapshot['owner']['pid']}/fd/{lock['fd']}")
+            metadata = path.stat()
+            fields = read_bytes(
+                Path(f"/proc/{snapshot['owner']['pid']}/fdinfo/{lock['fd']}"),
+                MAX_JSON_BYTES,
+                deadline,
+            ).decode()
+            rows = [row.split() for row in fields.splitlines() if row.startswith("lock:")]
+            if (
+                os.readlink(path) != lock["path"]
+                or (metadata.st_dev, metadata.st_ino) != (lock["device"], lock["inode"])
+                or len(rows) != 1
+                or rows[0][2:6] != ["FLOCK", "ADVISORY", "WRITE", str(snapshot["owner"]["pid"])]
+                or rows[0][-2:] != ["0", "EOF"]
+            ):
+                raise RuntimeError("Protected exclusive lock ownership changed")
+        for protected_process in snapshot.get("processes", []):
+            if identity(protected_process["pid"], deadline) != protected_process:
+                raise RuntimeError("Protected supervisory process changed")
+        if identity(snapshot["owner"]["pid"], deadline) != snapshot["owner"]:
+            raise RuntimeError("Protected owner changed during inspection")
     if locks is not None and len(locks) != len(contract["locks"]):
         raise RuntimeError("Resource descriptor count differs")
     for index, resource in enumerate(contract["locks"]):
