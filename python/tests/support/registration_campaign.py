@@ -808,7 +808,7 @@ def validate_cell(
             or "panicked at" in text
         ):
             raise RuntimeError(f"Native/worker failure remains in log: {path}")
-    if cell["kind"] == "native":
+    if cell["kind"] in ("native", "pending-save-bytes"):
         expected_origin = cell.get("manager_python")
         if not expected_origin:
             raise RuntimeError("Frozen Manager Python origin contract is required")
@@ -969,8 +969,13 @@ def validate_cell(
             for row in [read_json(path, deadline)]
         }:
             raise RuntimeError("Manager runtime records do not match actual cleanup owners")
-        credits = evidence_paths(directory, "registration.credit-owner.json", deadline)
-        if len(credits) != len(receipts):
+        pending_bytes = cell["kind"] == "pending-save-bytes"
+        credits = evidence_paths(
+            directory,
+            "round-*.credit-owner.json" if pending_bytes else "registration.credit-owner.json",
+            deadline,
+        )
+        if len(credits) != (6 if pending_bytes else len(receipts)):
             raise RuntimeError("Missing original registration credit snapshots")
         for path in credits:
             row = read_json(path, deadline)
@@ -1036,16 +1041,73 @@ def validate_cell(
                 physical_slots.add(physical)
                 identities.add((normalized, offset))
         releases = evidence_paths(directory, "*.native-release.json", deadline)
-        if len(releases) != 4:
+        if len(releases) != (3 if pending_bytes else 4):
             raise RuntimeError("Missing complete native client release receipts")
         for path in releases:
             row = read_json(path, deadline)
-            if (
-                row.get("pid") != pytest_owner["pid"]
-                or row.get("start_ticks") != pytest_owner["start_ticks"]
-                or row.get("closed") is not True
-            ):
+            valid = (
+                (
+                    row.get("owner") == pytest_owner
+                    and row.get("unregistered") is True
+                    and row.get("physical_fault_termination_claimed") is False
+                )
+                if pending_bytes
+                else (
+                    row.get("pid") == pytest_owner["pid"]
+                    and row.get("start_ticks") == pytest_owner["start_ticks"]
+                    and row.get("closed") is True
+                )
+            )
+            if not valid:
                 raise RuntimeError("Native client release identity differs")
+        if pending_bytes:
+            closed = evidence_paths(directory, "clients.native-close.json", deadline)
+            if len(closed) != 1:
+                raise RuntimeError("Missing complete native Save client close receipt")
+            close = read_json(closed[0], deadline)
+            if (
+                close.get("owner") != pytest_owner
+                or close.get("closed") is not True
+                or close.get("normal_unregister") is not True
+            ):
+                raise RuntimeError("Native Save client close was not established")
+            summaries = evidence_paths(directory, "PENDING-SAVE-BYTES.json", deadline)
+            if len(summaries) != 1:
+                raise RuntimeError("Missing installed Save byte summary")
+            rows = json.loads(read_bytes(summaries[0], MAX_JSON_BYTES, deadline))
+            tier = cell.get("tier")
+            if tier not in ("dram", "ssd-uring") or not isinstance(rows, list) or len(rows) != 3:
+                raise RuntimeError("Invalid Save byte medium or round count")
+            for index, row in enumerate(rows):
+                if (
+                    row.get("round") != index
+                    or row.get("copied_bytes") != 16384
+                    or row.get("observed_bytes") != 32768
+                    or row.get("full_oracle") is not True
+                    or row.get("mutation_rejected") is not True
+                    or row.get("normal_unregister") is not True
+                    or row.get("tier") != tier
+                ):
+                    raise RuntimeError("Installed Save byte oracle differs")
+                payload = summaries[0].parent / f"round-{index}.payload.bin"
+                raw = read_bytes(payload, 32768, deadline)
+                if len(raw) != 32768 or hashlib.sha256(raw).hexdigest() != row.get("sha256"):
+                    raise RuntimeError("Installed Save payload archive differs")
+                expected = bytearray([167] * 32768)
+                for source, target in zip((0, 2, 4, 6), (1, 3, 5, 7), strict=True):
+                    expected[target * 4096 : (target + 1) * 4096] = bytes(
+                        (source * 4096 + offset + source * 37 + index * 71) % 251
+                        for offset in range(4096)
+                    )
+                if raw != expected:
+                    raise RuntimeError("Recomputed installed Save payload/sentinel oracle failed")
+                release = read_json(
+                    summaries[0].parent / f"round-{index}.native-release.json", deadline
+                )
+                if release.get("source") != row.get("source_identity") or release.get(
+                    "consumer"
+                ) != row.get("consumer_identity"):
+                    raise RuntimeError("Save payload and release identities differ")
     if cell["kind"] == "sglang-pool":
         releases = evidence_paths(directory, "sglang-registration.native-release.json", deadline)
         if len(releases) != 2:
@@ -1187,12 +1249,28 @@ def main() -> None:
     if contract["schema"] != "orbitkv.explicit-registration-campaign.v1":
         raise RuntimeError("Unknown campaign schema")
     expected = (
-        [("native", 2)]
-        if contract["phase"] == "precheck"
-        else [("credits", 2), ("native", 2), ("vllm-worker", 1), ("sglang-pool", 2)]
+        [("pending-save-bytes", 1), ("pending-save-bytes", 1)]
+        if contract.get("qualification") == "pending-save-bytes-v1"
+        else (
+            [("native", 2)]
+            if contract["phase"] == "precheck"
+            else [("credits", 2), ("native", 2), ("vllm-worker", 1), ("sglang-pool", 2)]
+        )
     )
     if [(cell["kind"], cell["passed"]) for cell in contract["cells"]] != expected:
         raise RuntimeError("Frozen registration gate cells differ")
+    if contract.get("qualification") == "pending-save-bytes-v1":
+        if [cell.get("tier") for cell in contract["cells"]] != ["dram", "ssd-uring"]:
+            raise RuntimeError("Frozen installed Save medium order differs")
+        for cell in contract["cells"]:
+            argv = cell.get("argv", [])
+            if (
+                argv.count("--ssd-backend") != 1
+                or argv[argv.index("--ssd-backend") + 1] != "uring"
+                or argv.count("--ssd-read-path") != 1
+                or argv[argv.index("--ssd-read-path") + 1] != "uring"
+            ):
+                raise RuntimeError("Installed Save gate requires explicit io_uring configuration")
     for field, maximum in (
         ("review_wait_seconds", 3600),
         ("campaign_seconds", 7200),

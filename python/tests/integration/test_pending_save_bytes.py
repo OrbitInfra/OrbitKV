@@ -238,3 +238,14 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
             assert success, message
         consumer.close()
         source.close()
+        write(
+            tmp_path / "clients.native-close.json",
+            {
+                "owner": identity(os.getpid()),
+                "source": source_id,
+                "consumer": consumer_id,
+                "closed": True,
+                "normal_unregister": not source_registered and not consumer_registered,
+            },
+            time.monotonic() + 30,
+        )

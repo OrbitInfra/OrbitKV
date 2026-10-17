@@ -688,6 +688,14 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   missing ownership metrics and requires actual SSD read bytes after source
   DRAM eviction. This reusable gate awaits exact source review, runtime
   readiness and independent launch acceptance; no hardware result is claimed.
+  Source-only acceptance at `870aed65` covers the strict byte/metric/unregister
+  oracle and recorded registration/runtime evidence. The next controller update
+  consumes exactly DRAM then io_uring cells, verifies six credit snapshots,
+  three normal release receipts and both client closes, and independently
+  recomputes each complete payload/sentinel from archived bytes. Missing,
+  corrupted or false release evidence rejects success. Its CPU controls and
+  code review do not substitute for the new runtime/resource freeze or launch
+  acceptance; historical failures remain unchanged.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-
