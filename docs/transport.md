@@ -399,6 +399,10 @@ never mark engine pages complete. At most 1,024 callers enter one channel's
 Publish activity; the existing Save worker budget separately bounds accepted
 Manager work. The original synchronous caller remains held until its established
 completion path; an asynchronous operational return requires a later owner API.
+Independent `26884461` code/CPU and candidate-package API acceptance covers this
+diagnostic scope. Per-poll native/pidfd overhead and debug logging overhead are
+unmeasured; neither package loading nor the controlled SGLang method qualifies
+Manager/GPU operation, asynchronous completion or physical fault reclamation.
 This Publish partitioning does not yet partition oversized raw Restore plans.
 
 Rust `CacheClient`, exposed directly by PyO3 as `CacheManagerClient`, owns query
