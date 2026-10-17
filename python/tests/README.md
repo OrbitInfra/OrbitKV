@@ -192,8 +192,12 @@ For explicit CUDA registration/credit-owner changes, run
 `registration::tests` and the actual duplicate-entry control in `client::tests`
 with the authenticated channel fixture below. CPU tests use a declared local
 Torch storage ABI stub to count exports and repayments; they never import a
-real CUDA mapping. Partial/lost-return controls preserve the owner, and repayment
-is not retried after an unknown return. Separately run the server lifecycle
+real CUDA mapping. Shared-storage controls cover exact aliases, different bases,
+extents, partial overlap, overflow and actual attempt-budget admission, including
+the 36-layer Qwen3-8B shared-pool geometry. Exact aliases reduce only same-batch
+byte charging; per-layer owners/credits and cross-attempt caps stay unchanged.
+Partial/lost-return controls preserve the owner, and repayment is not retried
+after an unknown return. Separately run the server lifecycle
 unit gate: actual UDS rejects bad registration with a generation-bound
 NeverImported disposition; this uses the explicit host-registration test shim
 and read-only driver discovery, not CUDA byte/DMA qualification. Actual installed

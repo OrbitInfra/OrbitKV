@@ -452,7 +452,6 @@ impl PyCacheManagerClient {
         let mut gpu_tensors = Vec::with_capacity(count);
         let mut storages = Vec::with_capacity(count);
         let mut allocations = Vec::with_capacity(count);
-        let mut retained_bytes = 0_u64;
         for (index, owner) in tensors.iter().enumerate() {
             let tensor = owner.bind(py);
             let tensor_device = tensor.getattr("device")?;
@@ -474,9 +473,6 @@ impl PyCacheManagerClient {
             let storage = tensor.call_method0("untyped_storage")?;
             let allocation = storage.call_method0("data_ptr")?.extract::<u64>()?;
             let size = storage.call_method0("nbytes")?.extract::<u64>()?;
-            retained_bytes = retained_bytes.checked_add(size).ok_or_else(|| {
-                PyValueError::new_err("CUDA registration retained bytes overflow")
-            })?;
             let offset = address
                 .checked_sub(allocation)
                 .filter(|offset| *offset < size)
@@ -539,6 +535,13 @@ impl PyCacheManagerClient {
                 "device_id must match the tensors' client-local CUDA ordinal",
             ));
         }
+        let retained_bytes = crate::registration::retained_storage_bytes(
+            allocations
+                .iter()
+                .copied()
+                .zip(gpu_tensors.iter().map(|tensor| tensor.storage_size_bytes)),
+        )
+        .map_err(PyValueError::new_err)?;
         let device_uuid = py
             .import("orbitkv.client.gpu")?
             .call_method1("device_uuid", (device,))?

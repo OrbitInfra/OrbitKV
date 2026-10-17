@@ -1,6 +1,6 @@
 //! Native ownership of CUDA exports until registration has an import receipt.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{FileExt, MetadataExt, OpenOptionsExt};
@@ -46,6 +46,21 @@ enum CreditState {
     Unknown,
     ImporterOwned,
     Repaid,
+}
+
+pub(crate) fn retained_storage_bytes(
+    storages: impl IntoIterator<Item = (u64, u64)>,
+) -> Result<u64, &'static str> {
+    let mut seen = HashSet::new();
+    let mut total = 0_u64;
+    for (base, bytes) in storages {
+        if seen.insert((base, bytes)) {
+            total = total
+                .checked_add(bytes)
+                .ok_or("CUDA registration retained bytes overflow")?;
+        }
+    }
+    Ok(total)
 }
 
 pub(crate) struct AttemptOwner(pub(crate) [u8; 16]);

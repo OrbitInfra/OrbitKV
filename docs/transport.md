@@ -83,7 +83,11 @@ A failed, partial or lost reply retains the attempt's client, tensors and credit
 even after caller/client destruction. Unregister refuses a pending/retained
 attempt rather than reporting completed cleanup. The process limits these
 attempts to 64, each with at most 4,096 tensors/credits, and conservatively charges
-at most 1 TiB of tensor storage bytes. These limits are separate from ordinary
+at most 1 TiB of tensor storage bytes. Within one validated single-device batch,
+exact `(storage base, storage bytes)` aliases are charged once; different extents
+and partially overlapping ranges remain conservatively additive. Each layer
+still retains its tensor/storage owners and its own export credit. Attempts
+remain independently charged, including failed attempts with uncertain credits. These limits are separate from ordinary
 payload admission and existing transfer descriptor limits. Retention counters
 and per-generation states are available from the native client. The original
 unaccepted implementation and its negative review are preserved.

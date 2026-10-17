@@ -841,6 +841,25 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   supported `TRITON_PTXAS_PATH`, followed only after independent acceptance by a
   separately frozen matching model cohort. Preserve the old bundle, failure,
   guards and retained owners; a fresh cohort does not revise its verdict.
+  Compiler executable admission and supported system `TRITON_PTXAS_PATH` pass
+  independent source/CPU/runtime review at `64f53af2`. Its separate GPU5 model
+  cohort gets through native Noop compilation, generation and normal API exit,
+  then fails OrbitKV startup with `CUDA registration retention admission limit
+  reached`. There are zero functional model passes: literal service waits are
+  baseline API 0, Manager 0 and OrbitKV API 1; no load service starts. The
+  controller, original lease and quarantine remain held; this is a failed snapshot,
+  not normal campaign completion. The complete archive passes independent review.
+  Released vLLM allocates one dense backing pool for layer views; registration
+  incorrectly charged its full `storage.nbytes()` once per layer. The frozen
+  Qwen3-8B config has 36 layers. Logged geometry implies a 61,681,434,624-byte
+  pool and 2,220,531,646,464-byte old charge; these are source/geometry calculations,
+  not a measured storage dump. The bounded repair charges identical `(base, bytes)`
+  once within a validated single-device batch. Different bases/extents, overlaps,
+  across-attempt totals, 1 TiB/credit/attempt caps and all per-layer owners/exports
+  remain conservative. CPU regression, historical-sum mutation and real-owner
+  budget controls precede independent repair review. A new wheel and matching
+  installed core/engine gates remain required; the earlier SGLang acceptance
+  applies to its original wheel, and PR #251 remains merge-blocked.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
   without a control RPC or taking a blocked Publish/lifecycle lock. Restore
