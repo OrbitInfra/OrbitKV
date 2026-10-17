@@ -52,7 +52,12 @@ def wait_idle(http_port, names):
         time.sleep(0.01)
 
 
-@pytest.mark.parametrize("channel_server", ["dram", "ssd"], indirect=True)
+@pytest.mark.parametrize(
+    "channel_server",
+    [{"tier": "dram", "installed": True}, {"tier": "ssd", "installed": True}],
+    ids=["dram", "ssd"],
+    indirect=True,
+)
 def test_installed_pending_save_has_exact_payload_and_normal_release(
     channel_server, tmp_path, request
 ):
