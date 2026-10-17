@@ -51,6 +51,7 @@ class SaveTask:
     boundary_job_ids: list[int] = field(default_factory=list)
     native_handle: object | None = None
     native_completed: bool = False
+    native_attempted: bool = False
 
 
 @dataclass
@@ -682,6 +683,10 @@ class WorkerAdapter:
             stream.wait_event(event)
 
     def wait_for_save(self) -> None:
+        if self._retained_save_tasks:
+            raise RuntimeError(
+                "native Save completion unknown; new source pages cannot be admitted"
+            )
         restore = self._restore
         if restore is not None:
             try:
@@ -828,7 +833,7 @@ class WorkerAdapter:
         finally:
             # A returned failed completion can release pages; missing completion
             # retains the task and its engine lifecycle instead.
-            if all(task.native_handle is None or task.native_completed for task in batch):
+            if all(not task.native_attempted or task.native_completed for task in batch):
                 self._complete_save_requests(all_request_ids)
                 if all_boundary_job_ids:
                     with self._save_completion_lock:
@@ -874,6 +879,12 @@ class WorkerAdapter:
             registration = batch[0].registration
             if registration is None or any(task.registration is not registration for task in batch):
                 raise RuntimeError("save batch spans different GPU registrations")
+            if self._retained_save_tasks:
+                raise RuntimeError("previous native Save completion remains unknown")
+            # Record the conservative attempt before native admission. No Python
+            # allocation/iteration after launch may classify this as unsubmitted.
+            for task in batch:
+                task.native_attempted = True
             handle = self._client.start_save(registration, saves_list)
             for task in batch:
                 task.native_handle = handle
@@ -901,7 +912,7 @@ class WorkerAdapter:
                 "[OrbitKVConnector] Save data-plane exception: %s (continuing without save)",
                 e,
             )
-            if any(task.native_handle is not None and not task.native_completed for task in batch):
+            if any(task.native_attempted and not task.native_completed for task in batch):
                 raise RuntimeError("Save completion unknown; engine pages remain held") from e
 
         save_duration = time.perf_counter() - save_start

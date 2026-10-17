@@ -69,7 +69,7 @@ def test_publish_activity_does_not_complete_offloads(linker, alive):
     assert linker.num_completed_offloads() == 1
 
 
-@pytest.mark.parametrize("failure", ["pending", "exception"])
+@pytest.mark.parametrize("failure", ["pending", "exception", "start"])
 def test_native_save_wait_failure_does_not_complete_offload(linker, failure):
     import queue
 
@@ -84,11 +84,15 @@ def test_native_save_wait_failure_does_not_complete_offload(linker, failure):
         )
     else:
         linker.client.wait_save.side_effect = RuntimeError("wait failed")
+    if failure == "start":
+        linker.client.start_save.side_effect = MemoryError("unknown handoff")
     linker._offload_queue.put((object(), [], MagicMock()))
     linker._offload_queue.put(None)
     linker._offload_worker()
     assert linker._completed_offloads.empty()
-    assert linker._retained_offloads[0][1] is handle
+    if failure != "start":
+        assert linker._retained_offloads[0][1] is handle
+    assert len(linker._retained_offloads) == 1
     with pytest.raises(RuntimeError, match="pages remain held"):
         linker.reset()
 

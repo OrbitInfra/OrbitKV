@@ -94,7 +94,7 @@ def test_publish_progress_never_completes_held_engine_pages(alive):
     assert not completion.is_set()
 
 
-@pytest.mark.parametrize("failure", ["pending", "exception"])
+@pytest.mark.parametrize("failure", ["pending", "exception", "start"])
 def test_native_save_wait_failure_keeps_engine_pages_and_registration(failure):
     worker = make_worker()
     worker._registered_layers = ["layer"]
@@ -107,11 +107,15 @@ def test_native_save_wait_failure_keeps_engine_pages_and_registration(failure):
         )
     else:
         worker._client.wait_save.side_effect = RuntimeError("wait failed")
+    if failure == "start":
+        worker._client.start_save.side_effect = MemoryError("unknown handoff")
     with pytest.raises(RuntimeError, match="engine pages remain held"):
         process_next_save(worker)
     assert not completion.is_set()
     assert not worker.get_transfer_results({"request"}).finished_sending
-    assert worker._retained_save_tasks[0].native_handle is handle
+    assert worker._retained_save_tasks[0].native_attempted
+    if failure != "start":
+        assert worker._retained_save_tasks[0].native_handle is handle
     with pytest.raises(RuntimeError, match="pages remain held"):
         worker.unregister_context()
 
