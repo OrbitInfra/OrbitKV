@@ -2,9 +2,12 @@
 
 use std::io::{BufRead, BufReader};
 use std::process::{Command as ProcessCommand, Stdio};
+use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime};
 
 use orbitkv_channel::{CallOptions, Command, CommandCode, StatusCode, TransportClient};
+
+static DEFAULT_DOMAIN_ACCESS: Mutex<()> = Mutex::new(());
 
 fn wait(child: &mut std::process::Child) -> std::process::ExitStatus {
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -58,6 +61,7 @@ impl Drop for EchoOwner {
 
 #[test]
 fn request_response_crosses_a_real_process_boundary() {
+    let _default_domain = DEFAULT_DOMAIN_ACCESS.lock().unwrap();
     let nonce = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
@@ -137,6 +141,7 @@ fn private_domain_child() {
 
 #[test]
 fn private_domain_is_consumed_by_both_processes_without_touching_default_shm() {
+    let _default_domain = DEFAULT_DOMAIN_ACCESS.lock().unwrap();
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("domain");
     std::fs::create_dir(&root).unwrap();
