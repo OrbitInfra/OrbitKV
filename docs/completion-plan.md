@@ -664,6 +664,13 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   the complete Python handoff before spawning native work and rechecks retained
   offloads after queue join. It requires a new exact freeze and independent
   review; the prior passing CPU controls do not close those findings.
+  Follow-up review of `88254d91` found a vLLM post-launch handle-attachment
+  window: Python iteration failure could leave task markers unset and report
+  completion. The next correction marks a conservative native attempt on every
+  task before launch. Unknown start/attachment/wait outcomes retain adapter
+  completion and reject further source admission; SGLang uses the same attempt
+  boundary. Prelaunch and receipt-proven errors remain distinct. Preserve both
+  rejected freezes and new independent controls.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-

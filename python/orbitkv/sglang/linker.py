@@ -511,6 +511,10 @@ class OrbitKVLinker(UnifiedCacheLinker):
             ) from self._load_error
 
     def offload(self, transfers: list[PoolTransfer]) -> bool:
+        if self._retained_offloads:
+            raise RuntimeError(
+                "native Save completion unknown; new source pages cannot be admitted"
+            )
         by_name = {transfer.name: transfer for transfer in transfers}
         if (
             len(by_name) != len(transfers)
@@ -550,8 +554,10 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 success = False
                 handle = None
                 completed = False
+                attempted = False
                 try:
                     ready.synchronize()
+                    attempted = True
                     handle = self.client.start_save(registration, saves)
                     status = self.client.wait_save(handle)
                     if not status.done:
@@ -562,7 +568,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
                         logger.error("OrbitKV SGLang GPU offload failed: %s", message)
                 except Exception:
                     logger.exception("OrbitKV SGLang GPU offload failed")
-                if handle is None or completed:
+                if not attempted or completed:
                     self._completed_offloads.put(success)
                 else:
                     self._retained_offloads.append((task, handle))
