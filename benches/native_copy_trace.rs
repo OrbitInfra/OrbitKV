@@ -255,6 +255,32 @@ fn load(path: &str) -> Vec<InputPart> {
     parts
 }
 
+fn profile_schedule(
+    probe: &str,
+    contrast: Option<&str>,
+    order: Option<&str>,
+) -> io::Result<Vec<(Option<char>, bool)>> {
+    if !matches!(probe, "off" | "thread") {
+        return Err(invalid_probe("unknown probe mode"));
+    }
+    match (contrast, order) {
+        (None, None) => Ok(vec![(None, probe == "thread"); 12]),
+        (Some(contrast @ ("aa" | "ab")), Some(order @ ("ABBABAAB" | "BAABABBA")))
+            if probe == "off" =>
+        {
+            Ok(order
+                .chars()
+                .take(4)
+                .chain(order.chars())
+                .map(|arm| (Some(arm), contrast == "ab" && arm == 'B'))
+                .collect())
+        }
+        _ => Err(invalid_probe(
+            "interleaved contrast/order must be paired; fixed probe must be off",
+        )),
+    }
+}
+
 #[test]
 #[ignore = "explicit CPU profile; requires captured trace input and fresh output paths"]
 fn captured_geometry_profile() {
@@ -267,9 +293,18 @@ fn captured_geometry_profile() {
         Err(std::env::VarError::NotPresent) => "off".to_owned(),
         Err(error) => panic!("invalid probe mode: {error}"),
     };
-    assert!(matches!(probe.as_str(), "off" | "thread"));
-    let probe_enabled = probe == "thread";
-    let cpu_resolution_ns = probe_enabled.then(|| thread_clock(true).unwrap());
+    let optional = |name| match std::env::var(name) {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(error) => panic!("invalid profile setting: {error}"),
+    };
+    let contrast = optional("ORBITKV_TRACE_PROFILE_CONTRAST");
+    let order = optional("ORBITKV_TRACE_PROFILE_ORDER");
+    let schedule = profile_schedule(&probe, contrast.as_deref(), order.as_deref()).unwrap();
+    let cpu_resolution_ns = schedule
+        .iter()
+        .any(|(_, enabled)| *enabled)
+        .then(|| thread_clock(true).unwrap());
     let parts = load(&input);
     let descriptors: Vec<Vec<Vec<CopyDesc>>> = parts
         .iter()
@@ -293,7 +328,7 @@ fn captured_geometry_profile() {
     let profile_tid = unsafe { libc::syscall(libc::SYS_gettid) };
     assert!(profile_tid > 0);
     let mut samples = Vec::new();
-    for sequence in 0..12 {
+    for (sequence, (arm, probe_enabled)) in schedule.into_iter().enumerate() {
         let mut trace = LocalCopyTrace::new(
             number(&parts[0].records[0], "device") as usize,
             Ok(number(&parts[0].records[0], "max_pitch") as usize),
@@ -423,7 +458,7 @@ fn captured_geometry_profile() {
                 publication.as_ref().map_or(0, |buffer| buffer.len())
             };
             assert_eq!(publication_bytes, PUBLICATION_BYTES);
-            samples.push(json!({
+            let mut sample = json!({
                 "sequence": sequence, "warmup": sequence < 4, "part": index,
                 "open_ns": open_ns, "geometry_ns": geometry_ns,
                 "batch_capture_ns": batch_capture_ns, "finish_ns": finish_ns,
@@ -432,11 +467,17 @@ fn captured_geometry_profile() {
                 "observed_begin_ns": observed_begin_ns, "observed_end_ns": observed_end_ns,
                 "total_begin_ns": total_begin_ns, "thread": thread, "records": part.records.len(), "descriptors": planned,
                 "encoded_bytes": encoded_bytes, "publication_bytes": publication_bytes,
-            }));
+            });
+            if let Some(arm) = arm {
+                sample["arm"] = json!(arm);
+                sample["probe"] = json!(if probe_enabled { "thread" } else { "off" });
+            }
+            samples.push(sample);
         }
     }
-    let result = json!({
-        "schema": 2, "mode": mode, "input": input, "probe": probe,
+    let mut result = json!({
+        "schema": if contrast.is_some() { 3 } else { 2 }, "mode": mode, "input": input,
+        "probe": if contrast.is_some() { "per-sequence" } else { &probe },
         "thread_cpu_resolution_ns": cpu_resolution_ns, "profile_tid": profile_tid,
         "wall_epoch": "Instant profile epoch; stamp wall offsets are relative to total_begin_ns",
         "thread_probe_scope": "Six CLOCK_THREAD_CPUTIME_ID reads bracketed by Instant wall reads relative to total start; adjacent intervals include timer bookkeeping. Signed residual is not proven scheduler wait. RUSAGE_THREAD encloses the part outside total_ns; observed_ns includes both calls. Result serialization and trace constructor/destructor remain excluded.",
@@ -445,6 +486,10 @@ fn captured_geometry_profile() {
         "samples": samples,
         "scope": "CPU geometry replay; no CUDA, DMA, ownership or serving qualification",
     });
+    if let Some(contrast) = contrast {
+        result["contrast"] = json!(contrast);
+        result["order"] = json!(order.unwrap());
+    }
     use std::io::Write;
     let mut file = std::fs::OpenOptions::new()
         .write(true)

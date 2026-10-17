@@ -77,3 +77,39 @@ fn thread_usage_is_checked_and_real_clock_reads_are_monotonic() {
     };
     assert!(synthetic.delta(smaller).is_err());
 }
+
+#[test]
+fn interleaved_probe_schedule_preserves_legacy_and_balances_complete_sequences() {
+    assert_eq!(
+        profile_schedule("off", None, None).unwrap(),
+        vec![(None, false); 12]
+    );
+    assert_eq!(
+        profile_schedule("thread", None, None).unwrap(),
+        vec![(None, true); 12]
+    );
+    for contrast in ["aa", "ab"] {
+        for order in ["ABBABAAB", "BAABABBA"] {
+            let actual = profile_schedule("off", Some(contrast), Some(order)).unwrap();
+            let expected: Vec<_> = order.chars().take(4).chain(order.chars()).collect();
+            assert_eq!(actual.len(), 12);
+            for ((arm, enabled), expected) in actual.iter().zip(expected) {
+                assert_eq!(*arm, Some(expected));
+                assert_eq!(*enabled, contrast == "ab" && expected == 'B');
+            }
+            for pair in actual[4..].chunks_exact(2) {
+                assert_ne!(pair[0].0, pair[1].0);
+            }
+        }
+    }
+    for (probe, contrast, order) in [
+        ("unknown", None, None),
+        ("off", Some("aa"), None),
+        ("off", None, Some("ABBABAAB")),
+        ("thread", Some("ab"), Some("ABBABAAB")),
+        ("off", Some("unknown"), Some("ABBABAAB")),
+        ("off", Some("aa"), Some("ABABABAB")),
+    ] {
+        assert!(profile_schedule(probe, contrast, order).is_err());
+    }
+}

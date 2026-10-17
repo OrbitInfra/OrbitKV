@@ -1445,3 +1445,27 @@ run after the measured process exits. Capture budgets, submission/drain clocks
 and synchronous publication/flush are unchanged. Use the same complete byte,
 drain and observation-overhead gates; smaller output alone does not qualify
 application performance.
+
+
+For prospective within-process CPU trace calibration, freeze the benchmark-only
+native test ELF, captured input, accepted canonical encoding, production layout
+validator, maintained controller/readers, runtime dependencies and a fixed
+contract outside the checkout. Obtain independent method/source and launch
+review before collecting data. `benches.native_trace_calibration` owns the
+16-process order, complete validation, actual child waits and independent
+process bootstrap; it requires the reviewed input-index hash and one-use
+launch admission. See [the interleaved measurement contract](../docs/kernel-optimization.md#prospective-interleaved-calibration).
+
+The native profile's opt-in variables are
+`ORBITKV_TRACE_PROFILE_CONTRAST=aa|ab` and
+`ORBITKV_TRACE_PROFILE_ORDER=ABBABAAB|BAABABBA`, together with fixed probe `off`
+and mode `whole`. Both settings are required together; invalid or mixed fixed
+probe settings are rejected. They select schema 3 and preserve the original
+schema 2 behavior when absent. Do not run ad hoc samples before freezing the
+cohort or treat these CPU times as GPU/serving performance.
+
+Run the lightweight contract and direct-child cleanup tests with:
+
+```bash
+python -m pytest benches/tests/test_native_trace_calibration.py
+```

@@ -1124,3 +1124,42 @@ Git at `/root/orbitkv-artifacts/s4-trace-thread-clock-20261017/`.
 The previous CPU0 A/A failure and rejected candidates remain unchanged. Even a
 calibration pass does not identify a root cause, select a preferred CPU or
 qualify an optimization, GPU restore, serving, a copy default or S3 lifetime.
+
+
+### Prospective interleaved calibration
+
+The CPU trace profile accepts an opt-in `aa` (off/off) or `ab` (off/thread)
+contrast with `ABBABAAB` or `BAABABBA` sequence order. Four warmup sequences
+use the first four labels; eight measured sequences restart at the beginning
+of the complete order. Each complete three-part sequence keeps one arm/probe
+and a fresh trace owner. Schema 3 records the actual arm and probe for every
+part. The original fixed-probe schema 2 remains the default. Stage clocks,
+enclosing `observed_ns`, synchronous publication/flush, caps, geometry and
+constructor/destructor exclusions remain intact. Labels and result JSON are
+constructed outside the enclosing clock.
+
+The maintained `benches.native_trace_calibration` controller validates full
+stable geometry, canonical encoded bytes, identities, drain clocks and the
+production layout compiler receipt after every cell. A frozen input index and
+independent launch receipt admit one fixed 16-process cohort: four restarted
+processes for each CPU0/CPU2 and A/A/A/B stratum, with two complementary orders
+of each kind. A cell error stops collection and preserves its evidence; a
+valid performance failure never causes a replacement.
+
+For both `total_ns` and `observed_ns`, each measured sequence contributes the
+median of its three part values. Four adjacent B/A contrasts produce one
+geometric process estimate. Bootstrap uncertainty uses four whole restarted
+process estimates per CPU/contrast, 20,000 draws and seed 20261017; parts and
+CPUs are never pooled. A/A requires every adjacent ratio, process estimate
+and entire 95% interval in `[1/1.05, 1.05]`. A/B requires every adjacent ratio
+and process estimate at most 1.05 and the interval upper bound at most 1.05.
+Both CPUs and both metrics must pass A/A before A/B can be usable. These are
+prospective sequence units, distinct from the historical process-median units.
+
+A passing result bounds only this median projection within the declared
+cohort. It does not bound every part, the sum of the three parts, the former
+24-part process median, or whole-process overhead. Carry-over, shared-host
+scheduling and frequency remain uncontrolled. This method cannot validate old
+between-binary optimization comparisons, reverse prior failures or promote a
+GPU, kernel default or serving path. Raw parts and all failed controls remain
+in the selected external artifact directory.
