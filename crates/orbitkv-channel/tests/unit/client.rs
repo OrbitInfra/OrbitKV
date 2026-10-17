@@ -2,6 +2,261 @@ use super::*;
 use crate::PublishLayer;
 
 #[test]
+fn publish_send_failures_preserve_only_possibly_submitted_sources() {
+    use std::process::Command;
+    use std::time::Instant;
+
+    for mode in ["uncertain-delivery", "not-submitted"] {
+        let directory = tempfile::tempdir_in("/var/tmp").unwrap();
+        let root = directory.path().join("ipc");
+        std::fs::create_dir(&root).unwrap();
+        let config = directory.path().join("channel.toml");
+        let input = format!(
+            "[global]\nroot-path={:?}\nprefix=\"send_proof_\"\n\
+             [defaults.request-response]\nenable-safe-overflow-for-requests=false\n",
+            root.to_str().unwrap()
+        );
+        let parsed: iceoryx2::config::Config = toml::from_str(&input).unwrap();
+        for name in [
+            parsed.global.node.directory.as_str(),
+            parsed.global.service.directory.as_str(),
+        ] {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+        }
+        std::fs::write(&config, input).unwrap();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "client::tests::publish_send_retention_child",
+                "--nocapture",
+            ])
+            .env("ORBITKV_CHANNEL_CONFIG", config)
+            .env("ORBITKV_SEND_PROOF_DIRECTORY", directory.path())
+            .env("ORBITKV_SEND_PROOF_MODE", mode)
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                let status = child.wait().unwrap();
+                panic!("Publish send control {mode} exceeded deadline: {status}");
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        assert!(status.success(), "Publish send control {mode}: {status}");
+        println!("publish_send_control={mode} actual_wait=true exit=0 no_DMA=true");
+    }
+}
+
+#[test]
+#[ignore = "isolated CPU process for publish_send_failures_preserve_only_possibly_submitted_sources"]
+#[allow(
+    unsafe_code,
+    reason = "The isolated CPU fixture injects only a thread-local queue wait error."
+)]
+fn publish_send_retention_child() {
+    use std::sync::mpsc;
+    use std::time::Instant;
+
+    use iceoryx2::port::SendError;
+    use iceoryx2::port::client::RequestSendError;
+    use iceoryx2::prelude::*;
+
+    use crate::{BootstrapServer, Response, TransportServer};
+
+    struct SourceOwner(std::path::PathBuf);
+    impl Drop for SourceOwner {
+        fn drop(&mut self) {
+            std::fs::write(&self.0, b"released").unwrap();
+        }
+    }
+
+    let directory =
+        std::path::PathBuf::from(std::env::var_os("ORBITKV_SEND_PROOF_DIRECTORY").unwrap());
+    let mode = std::env::var("ORBITKV_SEND_PROOF_MODE").unwrap();
+    let name = format!("orbitkv/test/send-proof/{}", std::process::id());
+    let server = TransportServer::bind(&name).unwrap();
+    let bootstrap =
+        BootstrapServer::bind(directory.join("s.sock"), &name, 91, 65536, 4096).unwrap();
+    let peer = std::thread::spawn(move || bootstrap.accept().unwrap());
+    let client = Arc::new(
+        ChannelClient::connect(
+            directory.join("s.sock"),
+            CallOptions {
+                timeout: Duration::from_millis(5),
+                spin_iterations: 0,
+            },
+        )
+        .unwrap(),
+    );
+    let _session = peer.join().unwrap();
+    let config: iceoryx2::config::Config = toml::from_str(
+        &std::fs::read_to_string(std::env::var_os("ORBITKV_CHANNEL_CONFIG").unwrap()).unwrap(),
+    )
+    .unwrap();
+    let node = NodeBuilder::new()
+        .config(&config)
+        .create::<ipc_threadsafe::Service>()
+        .unwrap();
+    let service = node
+        .service_builder(&name.as_str().try_into().unwrap())
+        .request_response::<crate::WireMessage, crate::WireMessage>()
+        .open()
+        .unwrap();
+    assert!(!service.static_config().has_safe_overflow_for_requests());
+    assert_eq!(service.static_config().max_active_requests_per_client(), 4);
+    assert_eq!(service.static_config().max_servers(), 1);
+    // Establish the actual receiver connection before filling its queue.
+    assert!(!server.try_serve(Response::ok).unwrap());
+    let request = PublishRequest {
+        instance_id: "send-proof".into(),
+        registration_generation: [1; 16],
+        tp_rank: 0,
+        pp_rank: 0,
+        device_id: 0,
+        layers: vec![],
+    };
+    let marker = directory.join("source-released");
+    let source = SourceOwner(marker.clone());
+
+    if mode == "not-submitted" {
+        let mut workers = Vec::new();
+        let mut replies = Vec::new();
+        for request_id in 1..=4 {
+            let client = Arc::clone(&client);
+            workers.push(std::thread::spawn(move || {
+                client.client.call(
+                    Command::ping(request_id, 91),
+                    CallOptions {
+                        timeout: Duration::from_secs(5),
+                        spin_iterations: 0,
+                    },
+                )
+            }));
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while replies.len() < request_id as usize {
+                assert!(Instant::now() < deadline);
+                server
+                    .try_serve_deferred_for_epoch(91, |command, reply| {
+                        replies.push((command, reply));
+                        Ok(())
+                    })
+                    .unwrap();
+                std::thread::yield_now();
+            }
+        }
+        let error = client.publish(9, &request).unwrap_err();
+        assert!(matches!(
+            error,
+            ChannelError::Transport(TransportError::RequestSend(
+                RequestSendError::ExceedsMaxActiveRequests
+            ))
+        ));
+        drop(source);
+        assert!(marker.exists());
+        assert!(!server.try_serve(Response::ok).unwrap());
+        for (command, reply) in replies {
+            reply.send(Response::ok(command)).unwrap();
+        }
+        for worker in workers {
+            assert!(worker.join().unwrap().is_ok());
+        }
+    } else {
+        assert_eq!(mode, "uncertain-delivery");
+        for request_id in 1..=4 {
+            assert!(matches!(
+                client
+                    .client
+                    .call(Command::ping(request_id, 91), client.options),
+                Err(TransportError::Timeout { .. })
+            ));
+        }
+        let (attempted, attempt) = mpsc::channel();
+        let (returned, result) = mpsc::channel();
+        let publisher = Arc::clone(&client);
+        std::thread::spawn(move || {
+            let mut filter = [
+                libc::sock_filter {
+                    code: 0x20,
+                    jt: 0,
+                    jf: 0,
+                    k: 0,
+                },
+                libc::sock_filter {
+                    code: 0x15,
+                    jt: 0,
+                    jf: 1,
+                    k: libc::SYS_clock_nanosleep as u32,
+                },
+                libc::sock_filter {
+                    code: 0x06,
+                    jt: 0,
+                    jf: 0,
+                    k: 0x00050000 | libc::EINTR as u32,
+                },
+                libc::sock_filter {
+                    code: 0x06,
+                    jt: 0,
+                    jf: 0,
+                    k: 0x7fff0000,
+                },
+            ];
+            let program = libc::sock_fprog {
+                len: filter.len() as u16,
+                filter: filter.as_mut_ptr(),
+            };
+            // Limit the fault to this CPU fixture thread's adaptive queue wait.
+            unsafe {
+                assert_eq!(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), 0);
+                assert_eq!(libc::prctl(libc::PR_SET_SECCOMP, 2, &program), 0);
+            }
+            let error = publisher
+                .client
+                .call(Command::ping(8, 91), publisher.options)
+                .unwrap_err();
+            assert!(
+                matches!(
+                    error,
+                    TransportError::RequestSend(RequestSendError::SendError(
+                        SendError::InternalError
+                    ))
+                ),
+                "{error:?}"
+            );
+            attempted.send(()).unwrap();
+            let outcome = publisher.publish(9, &request);
+            drop(source);
+            returned.send(outcome).unwrap();
+        });
+        attempt.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(matches!(
+            result.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        assert!(!marker.exists());
+        let (completed, completion) = mpsc::channel();
+        let other = std::thread::spawn(move || {
+            completed.send(client.release(10, vec![])).unwrap();
+        });
+        assert!(matches!(
+            completion
+                .recv_timeout(Duration::from_secs(2))
+                .expect("closed session must reject another caller without waiting for Publish"),
+            Err(ChannelError::SessionRequiresReconnect)
+        ));
+        other.join().unwrap();
+        assert!(matches!(result.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        assert!(!marker.exists());
+        // Only this isolated no-DMA fixture process ends the parked caller.
+    }
+}
+
+#[test]
 fn publish_chunks_preserve_all_layers_and_pages_within_the_slot_limit() {
     let request = PublishRequest {
         instance_id: "qwen3-8b".to_string(),

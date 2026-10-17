@@ -2046,6 +2046,7 @@ name = "orbitkv-channel"
 version = "0.1.0"
 dependencies = [
  "iceoryx2",
+ "libc",
  "log",
  "memmap2",
  "orbitkv-common",

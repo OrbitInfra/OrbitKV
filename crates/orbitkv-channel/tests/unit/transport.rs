@@ -204,7 +204,7 @@ fn missing_request_service_reports_the_effective_discovery_path() {
     assert!(error.contains(&name), "{error}");
     assert!(error.contains("pattern=RequestResponse"), "{error}");
     assert!(
-        error.contains(Config::global_config().global.service_dir().as_str()),
+        error.contains(process_config().unwrap().global.service_dir().as_str()),
         "{error}"
     );
     assert!(error.contains("metadata=Err("), "{error}");
@@ -215,12 +215,40 @@ fn missing_request_service_reports_the_effective_discovery_path() {
 }
 
 #[test]
+fn request_service_rejects_additional_manager_recipients() {
+    let server = TransportServer::bind(&service_name("single-manager")).unwrap();
+    assert_eq!(server._service.static_config().max_servers(), 1);
+    assert!(server._service.server_builder().create().is_err());
+
+    let name = service_name("multiple-managers");
+    let node = NodeBuilder::new()
+        .config(process_config().unwrap())
+        .create::<ThreadSafeIpcService>()
+        .unwrap();
+    let _service = node
+        .service_builder(&name.as_str().try_into().unwrap())
+        .request_response::<WireMessage, WireMessage>()
+        .max_servers(2)
+        .create()
+        .unwrap();
+    assert!(matches!(
+        TransportClient::connect(&name),
+        Err(TransportError::Service(error))
+            if error == "process channel requests require exactly one Manager recipient"
+    ));
+}
+
+#[test]
 fn request_doorbell_is_required_and_scoped_to_the_manager_service() {
     let name = service_name("missing-wake");
-    let node = NodeBuilder::new().create::<ThreadSafeIpcService>().unwrap();
+    let node = NodeBuilder::new()
+        .config(process_config().unwrap())
+        .create::<ThreadSafeIpcService>()
+        .unwrap();
     let _bare_requests = node
         .service_builder(&name.as_str().try_into().unwrap())
         .request_response::<WireMessage, WireMessage>()
+        .max_servers(1)
         .create()
         .unwrap();
     let error = match TransportClient::connect(&name) {

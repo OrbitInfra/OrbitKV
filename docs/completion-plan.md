@@ -563,6 +563,27 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   retains the earlier failed candidates, source fixes, runtime closures and
   rejected launch preparations. This summary does not revise their verdicts.
 
+- Publish retains the existing synchronous caller, descriptors and source owners
+  after unproven transport errors, invalid acknowledgements, Manager process exit
+  or a caught Rust unwind. Fallible stderr diagnostics avoid a panicking logger
+  on the final retention path. Request-send errors retain their native type:
+  only loan, pre-delivery connection and active-request admission failures prove
+  no submission. A send error may follow delivery and cannot be treated as a
+  blanket pre-submission exception. Request services enforce one Manager
+  recipient at creation and check that exact configuration when opening.
+  On an unproven reply or transport error, Publish closes its session and releases
+  the shared descriptor lock before retaining the original caller. Other callers on that same
+  ChannelClient reject the closed session without reusing its descriptor slot.
+  Real CPU process controls cover queue-delivery interruption, source ownership,
+  pre-admission rejection, valid late completion, peer exit, malformed replies
+  and logger unwind. The historical unsafe send-exception mutation must fail
+  the same source-retention control. This is transport-boundary hardening,
+  tracked in [PR #259](https://github.com/feichai0017/orbitkv/pull/259).
+  Manager worker/reply loss can still produce a consumed Internal response
+  without physical drain proof; that owner gap, bounded live-stall response,
+  finite parked-operation admission, page generations and physical reclamation
+  remain open. New installed-package or GPU/fault qualification cannot be
+  inherited from the earlier registration wheel or these CPU controls.
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
   without a control RPC or taking a blocked Publish/lifecycle lock. Restore
   readiness and pending-result checks consume that observation. A live stalled
@@ -765,7 +786,7 @@ or dependent inference contention is admitted.
 
 **Measurement-method preparation (2026-10-17): archive description only.**
 All 32 sealed baseline A/A cells and 768 measured parts are reproduced without
-new native/GPU runs. The posthoc sequence contrast does not qualify a method or
+new native/GPU runs. The post hoc sequence contrast does not qualify a method or
 change any prior FAIL. Before another same-binary instrumentation comparison,
 predeclare balanced within-process order, independent restarted-process units,
 both CPUs, original 5% guards and complete geometry/byte/drain controls. Obtain

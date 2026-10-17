@@ -299,8 +299,13 @@ impl ChannelClient {
         for payload in payloads {
             // One logical publish can use several descriptor generations.
             // Every chunk retains the source pages until its D2H completes.
-            let _ =
-                self.call_descriptor(CommandCode::Publish, request_id, &payload, 0, Some(peer))?;
+            let call = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.call_descriptor(CommandCode::Publish, request_id, &payload, 0, Some(peer))
+            }));
+            match call {
+                Ok(result) => result?,
+                Err(_) => TransportClient::retain_unproven_publish(request_id),
+            };
         }
         Ok(())
     }
@@ -374,83 +379,78 @@ impl ChannelClient {
         operation_id: u64,
         peer: Option<&OwnedFd>,
     ) -> Result<Vec<u8>, ChannelError> {
-        let _call = self
-            .call_lock
-            .lock()
-            .map_err(|_| BootstrapError::Arena(crate::ArenaError::Poisoned))?;
-        if self.poisoned.load(Ordering::Acquire) {
-            return Err(ChannelError::SessionRequiresReconnect);
-        }
-        let descriptor = self.bootstrap.write_request(payload)?;
-        let info = self.bootstrap.info_ref();
-        let command = Command {
-            code,
-            request_id,
-            session_epoch: info.session_epoch,
-            descriptor,
-            arg0: info.client_token,
-            arg1: operation_id,
-        };
-        let call = match peer {
-            Some(peer) => self.client.call_until_peer_exit(
-                command,
-                self.options,
-                peer,
-                self.bootstrap.reply_notification_fd(),
-            ),
-            None => self.client.call(command, self.options),
-        };
-        let response = match call {
-            Ok(response) => response,
-            Err(error) => {
-                self.close();
-                if let Some(peer) = peer
-                    && !matches!(
-                        error,
-                        TransportError::PeerExited { .. } | TransportError::Send(_)
-                    )
-                {
-                    TransportClient::wait_for_peer_exit(peer);
+        let mut retain = false;
+        let result = (|| {
+            let _call = self
+                .call_lock
+                .lock()
+                .map_err(|_| BootstrapError::Arena(crate::ArenaError::Poisoned))?;
+            if self.poisoned.load(Ordering::Acquire) {
+                return Err(ChannelError::SessionRequiresReconnect);
+            }
+            let descriptor = self.bootstrap.write_request(payload)?;
+            let info = self.bootstrap.info_ref();
+            let command = Command {
+                code,
+                request_id,
+                session_epoch: info.session_epoch,
+                descriptor,
+                arg0: info.client_token,
+                arg1: operation_id,
+            };
+            let call = match peer {
+                Some(peer) => self.client.call_until_peer_exit(
+                    command,
+                    self.options,
+                    peer,
+                    self.bootstrap.reply_notification_fd(),
+                ),
+                None => self.client.call(command, self.options),
+            };
+            let response = match call {
+                Ok(response) => response,
+                Err(error) => {
+                    self.close();
+                    retain = peer.is_some() && !error.request_not_submitted();
+                    return Err(error.into());
                 }
-                return Err(error.into());
+            };
+            // Invalid replies cannot end source ownership after device submission.
+            let mut ambiguous = || {
+                self.close();
+                retain = peer.is_some();
+            };
+            if response.status != StatusCode::Ok {
+                if response.value1 & RESPONSE_FLAG_REQUEST_CONSUMED != 0 {
+                    self.bootstrap
+                        .complete_request(descriptor)
+                        .inspect_err(|_| ambiguous())?;
+                } else {
+                    self.close();
+                    retain = peer.is_some() && response.status != StatusCode::StaleSession;
+                }
+                return Err(ChannelError::Status(response.status));
             }
-        };
-        // A malformed acknowledgement is not evidence that the peer stopped
-        // reading publish sources. Poison the session and fence its process.
-        let ambiguous = || {
-            self.close();
-            if let Some(peer) = peer {
-                log::error!(
-                    "publish acknowledgement is invalid; holding source pages until Cache Manager exits"
-                );
-                TransportClient::wait_for_peer_exit(peer);
+            if response.value1 & RESPONSE_FLAG_REQUEST_CONSUMED == 0 {
+                ambiguous();
+                return Err(ChannelError::SessionRequiresReconnect);
             }
-        };
-        if response.status != StatusCode::Ok {
-            if response.value1 & RESPONSE_FLAG_REQUEST_CONSUMED != 0 {
+            if code == CommandCode::Restore {
                 self.bootstrap
                     .complete_request(descriptor)
                     .inspect_err(|_| ambiguous())?;
-            } else {
-                self.close();
+                return Ok(Vec::new());
             }
-            return Err(ChannelError::Status(response.status));
-        }
-        if response.value1 & RESPONSE_FLAG_REQUEST_CONSUMED == 0 {
-            ambiguous();
-            return Err(ChannelError::SessionRequiresReconnect);
-        }
-        if code == CommandCode::Restore {
-            self.bootstrap
-                .complete_request(descriptor)
+            let payload = self
+                .bootstrap
+                .read_response(descriptor, response.descriptor)
                 .inspect_err(|_| ambiguous())?;
-            return Ok(Vec::new());
+            Ok(payload)
+        })();
+        if retain {
+            TransportClient::retain_unproven_publish(request_id);
         }
-        let payload = self
-            .bootstrap
-            .read_response(descriptor, response.descriptor)
-            .inspect_err(|_| ambiguous())?;
-        Ok(payload)
+        result
     }
 }
 

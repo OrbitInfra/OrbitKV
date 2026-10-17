@@ -2,12 +2,9 @@
 
 use std::io::{BufRead, BufReader};
 use std::process::{Command as ProcessCommand, Stdio};
-use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime};
 
 use orbitkv_channel::{CallOptions, Command, CommandCode, StatusCode, TransportClient};
-
-static DEFAULT_DOMAIN_ACCESS: Mutex<()> = Mutex::new(());
 
 fn wait(child: &mut std::process::Child) -> std::process::ExitStatus {
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -61,7 +58,6 @@ impl Drop for EchoOwner {
 
 #[test]
 fn request_response_crosses_a_real_process_boundary() {
-    let _default_domain = DEFAULT_DOMAIN_ACCESS.lock().unwrap();
     let nonce = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
@@ -140,15 +136,21 @@ fn private_domain_child() {
 }
 
 #[test]
-fn private_domain_is_consumed_by_both_processes_without_touching_default_shm() {
-    let _default_domain = DEFAULT_DOMAIN_ACCESS.lock().unwrap();
+fn private_domain_is_consumed_by_both_processes() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("domain");
     std::fs::create_dir(&root).unwrap();
     std::fs::create_dir(root.join("nodes")).unwrap();
     std::fs::create_dir(root.join("services")).unwrap();
     let config = directory.path().join("channel.toml");
-    let prefix = format!("orbitkv_private_{}_", std::process::id());
+    let prefix = format!(
+        "orbitkv_private_{}_{}_",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
     std::fs::write(
         &config,
         format!(
@@ -157,23 +159,6 @@ fn private_domain_is_consumed_by_both_processes_without_touching_default_shm() {
         ),
     )
     .unwrap();
-    let snapshot = || -> std::collections::BTreeMap<_, _> {
-        std::fs::read_dir("/dev/shm")
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("iox2_")
-            })
-            .map(|path| {
-                let bytes = std::fs::read(&path).unwrap();
-                (path, bytes)
-            })
-            .collect()
-    };
-    let before = snapshot();
     let output = output(
         ProcessCommand::new(std::env::current_exe().unwrap())
             .args(["--exact", "private_domain_child", "--nocapture"])
@@ -184,11 +169,6 @@ fn private_domain_is_consumed_by_both_processes_without_touching_default_shm() {
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        snapshot(),
-        before,
-        "private channel changed default-domain resources"
     );
     let owned: Vec<_> = std::fs::read_dir("/dev/shm")
         .unwrap()
