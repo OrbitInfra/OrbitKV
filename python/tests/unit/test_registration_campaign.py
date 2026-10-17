@@ -1147,6 +1147,8 @@ def test_native_credit_oracle_refuses_malformed_types_and_aliased_slots(
         "ssd-regressed",
         "ssd-nan",
         "ssd-boolean",
+        "ssd-before-missing",
+        "ssd-read-replay",
     ],
 )
 def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
@@ -1199,12 +1201,12 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
                 "normal_unregister": True,
                 "tier": "ssd-uring" if ssd else "dram",
                 "read_before": {
-                    "orbitkv_ssd_prefetch_bytes_total": None,
-                    "orbitkv_ssd_uring_read_operations_total": None,
+                    "orbitkv_ssd_prefetch_bytes_total": index * 16384 if index else None,
+                    "orbitkv_ssd_uring_read_operations_total": index * 4 if index else None,
                 },
                 "read_after": {
-                    "orbitkv_ssd_prefetch_bytes_total": 16384,
-                    "orbitkv_ssd_uring_read_operations_total": 4,
+                    "orbitkv_ssd_prefetch_bytes_total": (index + 1) * 16384,
+                    "orbitkv_ssd_uring_read_operations_total": (index + 1) * 4,
                 },
                 "source_identity": "source",
                 "consumer_identity": "consumer",
@@ -1272,6 +1274,11 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
             rows[0]["read_before"][name] = 16384
         elif fault == "ssd-nan":
             rows[0]["read_after"][name] = float("nan")
+        elif fault == "ssd-before-missing":
+            rows[0]["read_before"] = {}
+        elif fault == "ssd-read-replay":
+            rows[1]["read_before"] = rows[0]["read_before"]
+            rows[1]["read_after"] = rows[0]["read_after"]
         else:
             rows[0]["read_after"][name] = True
         (tmp_path / "PENDING-SAVE-BYTES.json").write_text(json.dumps(rows))

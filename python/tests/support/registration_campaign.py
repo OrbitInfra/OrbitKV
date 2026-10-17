@@ -1092,6 +1092,7 @@ def validate_cell(
             if tier not in ("dram", "ssd-uring") or not isinstance(rows, list) or len(rows) != 3:
                 raise RuntimeError("Invalid Save byte medium or round count")
             previous_release = 0
+            previous_reads = {}
             for index, row in enumerate(rows):
                 if (
                     not isinstance(row, dict)
@@ -1122,11 +1123,24 @@ def validate_cell(
                     reads_before, reads_after = row.get("read_before"), row.get("read_after")
                     if not isinstance(reads_before, dict) or not isinstance(reads_after, dict):
                         raise RuntimeError("Missing actual io_uring read evidence")
+                    expected_read_keys = {
+                        "orbitkv_ssd_prefetch_bytes_total",
+                        "orbitkv_ssd_uring_read_operations_total",
+                    }
+                    if (
+                        set(reads_before) != expected_read_keys
+                        or set(reads_after) != expected_read_keys
+                    ):
+                        raise RuntimeError("Missing exact io_uring read counter fields")
                     for name in (
                         "orbitkv_ssd_prefetch_bytes_total",
                         "orbitkv_ssd_uring_read_operations_total",
                     ):
                         before, after = reads_before.get(name), reads_after.get(name)
+                        if index and (before is None or before < previous_reads[name]):
+                            raise RuntimeError(
+                                "io_uring read counter interval regressed or disappeared"
+                            )
                         if (
                             type(after) not in (int, float)
                             or not math.isfinite(after)
@@ -1142,6 +1156,7 @@ def validate_cell(
                             )
                         ):
                             raise RuntimeError("No advancing io_uring read evidence")
+                        previous_reads[name] = after
                 for role, instance in (("source", source_id), ("consumer", consumer_id)):
                     credit = read_json(
                         summaries[0].parent / f"round-{index}-{role}.credit-owner.json", deadline
