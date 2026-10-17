@@ -79,6 +79,24 @@ pub enum TransferMode {
     Kernel,
 }
 
+pub(crate) fn retain_gpu_work() -> ! {
+    use std::io::Write;
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "GPU transfer has no completion proof; retaining device and payload owners"
+    );
+    loop {
+        std::thread::park_timeout(std::time::Duration::from_secs(60));
+    }
+}
+
+pub(super) fn contain_gpu_unwind<R>(operation: impl FnOnce() -> R) -> R {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)) {
+        Ok(result) => result,
+        Err(_) => retain_gpu_work(),
+    }
+}
+
 pub(crate) fn finish_gpu_transfer(
     stream: &Arc<CudaStream>,
     submitted: Result<(), String>,
@@ -86,9 +104,12 @@ pub(crate) fn finish_gpu_transfer(
     // A backend can fail after enqueueing part of a batch. Keep both host
     // allocations and GPU mappings alive until even that partial work drains.
     if let Err(error) = stream.synchronize() {
-        log::error!("Cannot establish GPU transfer completion: {error}; terminating Cache Manager");
-        // Returning an error would let clients recycle pages still used by DMA.
-        std::process::abort();
+        use std::io::Write;
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "GPU synchronization failed: {error}"
+        );
+        retain_gpu_work();
     }
     submitted.map_err(crate::EngineError::Storage)
 }
@@ -126,11 +147,13 @@ pub(crate) fn copy_and_drain(
 ) -> Result<(), crate::EngineError> {
     let diagnostic = orbitkv_common::timeline::diagnostic_enabled() && !copies.is_empty();
     let started = diagnostic.then(std::time::Instant::now);
-    let submitted = if to_device {
-        backend.h2d(copies, stream)
-    } else {
-        backend.d2h(copies, stream)
-    };
+    let submitted = contain_gpu_unwind(|| {
+        if to_device {
+            backend.h2d(copies, stream)
+        } else {
+            backend.d2h(copies, stream)
+        }
+    });
     let cpu_submit_ns = started.map(|started| started.elapsed().as_nanos() as u64);
     let drain_started = diagnostic.then(std::time::Instant::now);
     let result = finish_gpu_transfer(stream, submitted);

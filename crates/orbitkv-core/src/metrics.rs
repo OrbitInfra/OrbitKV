@@ -93,6 +93,11 @@ pub(crate) struct CoreMetrics {
     // GPU <-> CPU transfer
     pub save_bytes: Counter<u64>,
     pub save_duration_seconds: Histogram<f64>,
+    pub save_active_operations: UpDownCounter<i64>,
+    pub save_active_metadata_bytes: UpDownCounter<i64>,
+    pub save_active_logical_bytes: UpDownCounter<i64>,
+    pub save_retained_operations: UpDownCounter<i64>,
+    pub save_admission_rejections: Counter<u64>,
 
     pub load_bytes: Counter<u64>,
     pub load_duration_seconds: Histogram<f64>,
@@ -504,6 +509,23 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .with_description("Save operation latency in seconds")
                 .with_boundaries(duration_seconds_boundaries())
                 .build(),
+            save_active_operations: meter.i64_up_down_counter("orbitkv_save_active_operations")
+                .with_description("Save worker admissions without a physical completion receipt")
+                .build(),
+            save_active_metadata_bytes: meter.i64_up_down_counter("orbitkv_save_active_metadata_bytes")
+                .with_unit("bytes")
+                .with_description("Charged SaveTask and request-vector metadata; excludes physical payload allocations")
+                .build(),
+            save_active_logical_bytes: meter.i64_up_down_counter("orbitkv_save_active_logical_bytes")
+                .with_unit("bytes")
+                .with_description("Logical GPU source bytes in admitted Saves; not unique physical residency or a payload cap")
+                .build(),
+            save_retained_operations: meter.i64_up_down_counter("orbitkv_save_retained_operations")
+                .with_description("Save admissions retained after reply or admission-owner loss; parked sync/unwind remains active")
+                .build(),
+            save_admission_rejections: meter.u64_counter("orbitkv_save_admission_rejections")
+                .with_description("Saves rejected before worker submission by the process operation or metadata budget")
+                .build(),
 
             load_bytes: meter
                 .u64_counter("orbitkv_load_bytes")
@@ -724,6 +746,10 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
             &metrics.ssd_read_pinned_bytes,
             &metrics.ssd_write_queue_pending,
             &metrics.ssd_write_inflight,
+            &metrics.save_active_operations,
+            &metrics.save_active_metadata_bytes,
+            &metrics.save_active_logical_bytes,
+            &metrics.save_retained_operations,
         ] {
             counter.add(0, &[]);
         }

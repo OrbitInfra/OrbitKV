@@ -234,7 +234,7 @@ fn save_blocks(
                 },
             ));
         }
-        let copied = (|| {
+        let copied = crate::transfer::contain_gpu_unwind(|| {
             for (source, saved) in &allocated {
                 // SAFETY: all pinned destinations are exclusive and retained through drain.
                 unsafe {
@@ -250,7 +250,7 @@ fn save_blocks(
                 .map_err(|e| e.to_string())?;
             }
             Ok(())
-        })();
+        });
         finish_gpu_transfer(stream, copied)?;
         for (index, (_, mut saved_segment)) in allocated.into_iter().enumerate() {
             let input = &inputs[offset + index];
