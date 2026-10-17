@@ -727,6 +727,12 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   requires exact counter key sets and successive cumulative intervals: after
   advances in every round, later before values are present and cannot fall below
   the preceding after. Original CPU counterexamples remain preserved.
+  The installed gate performs six registrations per Manager. Its origin oracle
+  requires a frozen exact helper-record count and identical process/path records
+  across those registrations; missing, extra or changed helpers reject the cell.
+  This admits repeated evidence only for the declared count, without weakening
+  the one-runtime-origin contract. Runtime verification disables bytecode writes;
+  new census/contract versions preserve earlier failed input checks.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-
