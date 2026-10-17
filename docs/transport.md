@@ -236,7 +236,7 @@ size-sealed. Descriptor request/response generations advance monotonically,
 including when a slot is reused by a replacement session.
 
 After bootstrap, the persistent UDS carries epoch-checked lifecycle version
-**4** frames, with a 64 MiB metadata limit. Registration reuses protobuf metadata
+**9** frames, with a 64 MiB metadata limit. Registration reuses protobuf metadata
 without HTTP/2 or gRPC. A successful GPU registration reply also attaches
 payload arena FDs, identities, and sizes with `SCM_RIGHTS`. The engine validates
 the seals and independently maps and CUDA-registers each backing. This setup

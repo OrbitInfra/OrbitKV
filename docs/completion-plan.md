@@ -783,7 +783,7 @@ or dependent inference contention is admitted.
 
 **Measurement-method preparation (2026-10-17): archive description only.**
 All 32 sealed baseline A/A cells and 768 measured parts are reproduced without
-new native/GPU runs. The posthoc sequence contrast does not qualify a method or
+new native/GPU runs. The post hoc sequence contrast does not qualify a method or
 change any prior FAIL. Before another same-binary instrumentation comparison,
 predeclare balanced within-process order, independent restarted-process units,
 both CPUs, original 5% guards and complete geometry/byte/drain controls. Obtain

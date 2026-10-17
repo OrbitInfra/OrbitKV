@@ -186,7 +186,11 @@ and its counterexamples stay in the external artifact archive. It separates prec
 from formal cells, preserves locks on unknown ownership and requires a distinct
 independent grant matching the immutable contract. A source/CPU controller pass
 is not GPU launch approval; freeze and review the actual runtime/resources before
-execution. Independent runtime roots use at most two file readers, share the
+execution. Publish a grant only after writing and fsyncing a complete temporary
+file in the destination directory, then atomically linking it to the grant path
+without overwriting an existing grant. The controller reads that path once;
+partial or invalid JSON is a fail-stop error, not a retried publication.
+Independent runtime roots use at most two file readers, share the
 original deadline, and join all readers before returning or propagating an error;
 per-file hashes, targets and the complete census remain mandatory. Runtime outputs and contracts belong outside this checkout.
 
