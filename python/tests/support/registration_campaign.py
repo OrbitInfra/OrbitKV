@@ -8,6 +8,7 @@ import ctypes
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import signal
@@ -1128,10 +1129,16 @@ def validate_cell(
                         before, after = reads_before.get(name), reads_after.get(name)
                         if (
                             type(after) not in (int, float)
+                            or not math.isfinite(after)
                             or after <= 0
                             or (
                                 before is not None
-                                and (type(before) not in (int, float) or after <= before)
+                                and (
+                                    type(before) not in (int, float)
+                                    or not math.isfinite(before)
+                                    or before < 0
+                                    or after <= before
+                                )
                             )
                         ):
                             raise RuntimeError("No advancing io_uring read evidence")

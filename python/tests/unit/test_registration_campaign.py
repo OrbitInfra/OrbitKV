@@ -1142,6 +1142,11 @@ def test_native_credit_oracle_refuses_malformed_types_and_aliased_slots(
         "float-round",
         "credit-identity",
         "chronology",
+        "ssd-valid",
+        "ssd-missing",
+        "ssd-regressed",
+        "ssd-nan",
+        "ssd-boolean",
     ],
 )
 def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
@@ -1158,7 +1163,8 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
     monkeypatch.setattr(campaign, "validate_cell", validate)
     args, kwargs = captured[0]
     cell, directory, owner, observed = args
-    cell.update(kind="pending-save-bytes", tier="dram")
+    ssd = fault is not None and fault.startswith("ssd-")
+    cell.update(kind="pending-save-bytes", tier="ssd-uring" if ssd else "dram")
     credit = json.loads((tmp_path / "registration.credit-owner.json").read_text())
     (tmp_path / "registration.credit-owner.json").unlink()
     for path in tmp_path.glob("*.native-release.json"):
@@ -1191,7 +1197,15 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
                 "full_oracle": True,
                 "mutation_rejected": True,
                 "normal_unregister": True,
-                "tier": "dram",
+                "tier": "ssd-uring" if ssd else "dram",
+                "read_before": {
+                    "orbitkv_ssd_prefetch_bytes_total": None,
+                    "orbitkv_ssd_uring_read_operations_total": None,
+                },
+                "read_after": {
+                    "orbitkv_ssd_prefetch_bytes_total": 16384,
+                    "orbitkv_ssd_uring_read_operations_total": 4,
+                },
                 "source_identity": "source",
                 "consumer_identity": "consumer",
                 "sha256": hashlib.sha256(payload).hexdigest(),
@@ -1250,7 +1264,18 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
         row = json.loads(path.read_text())
         row["completed_mono_ns"] = 1
         path.write_text(json.dumps(row))
-    if fault is None:
+    elif ssd and fault != "ssd-valid":
+        name = "orbitkv_ssd_prefetch_bytes_total"
+        if fault == "ssd-missing":
+            rows[0].pop("read_after")
+        elif fault == "ssd-regressed":
+            rows[0]["read_before"][name] = 16384
+        elif fault == "ssd-nan":
+            rows[0]["read_after"][name] = float("nan")
+        else:
+            rows[0]["read_after"][name] = True
+        (tmp_path / "PENDING-SAVE-BYTES.json").write_text(json.dumps(rows))
+    if fault is None or fault == "ssd-valid":
         validate(*args, **kwargs)
     else:
         with pytest.raises(RuntimeError):
