@@ -381,10 +381,11 @@ without reusing the slot; the original source owner remains held.
 Only a matched valid result following the Manager copy drain, or
 a proven never-submitted send failure, permits return. This conservative
 retention still blocks the caller; bounded operational responses and adapter
-page-generation consumers remain separate pending work. Manager GPU-worker
-disappearance or reply loss can still produce a consumed Internal response
-without an independently established physical drain; that existing gap is not
-qualified by the transport caller-retention controls. Publish batches split to
+page-generation consumers remain separate pending work. The independently
+accepted SaveTask correction keeps a lost worker reply pending and retains
+admission instead of publishing a consumed error. Its code/CPU and package-load
+acceptance does not establish installed GPU or physical fault completion.
+Publish batches split to
 the negotiated descriptor slot capacity, retaining matching page ranges across
 layers until all chunks finish.
 This Publish partitioning does not yet partition oversized raw Restore plans.
