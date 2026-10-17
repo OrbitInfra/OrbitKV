@@ -1126,6 +1126,80 @@ def test_native_credit_oracle_refuses_malformed_types_and_aliased_slots(
         validate(*args, **kwargs)
 
 
+@pytest.mark.parametrize(
+    "fault", [None, "payload", "sentinel", "release", "close", "credit", "rounds"]
+)
+def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
+    tmp_path, monkeypatch, fault
+):
+    import hashlib
+
+    captured = []
+    validate = campaign.validate_cell
+    monkeypatch.setattr(
+        campaign, "validate_cell", lambda *args, **kwargs: captured.append((args, kwargs))
+    )
+    test_native_cell_requires_command_record_bound_to_observed_manager(tmp_path, None)
+    monkeypatch.setattr(campaign, "validate_cell", validate)
+    args, kwargs = captured[0]
+    cell, directory, owner, observed = args
+    cell.update(kind="pending-save-bytes", tier="dram")
+    credit = json.loads((tmp_path / "registration.credit-owner.json").read_text())
+    (tmp_path / "registration.credit-owner.json").unlink()
+    for path in tmp_path.glob("*.native-release.json"):
+        path.unlink()
+    rows = []
+    for index in range(3):
+        for role in ["source", "consumer"]:
+            (tmp_path / f"round-{index}-{role}.credit-owner.json").write_text(json.dumps(credit))
+        payload = bytearray([167] * 32768)
+        for source, target in zip((0, 2, 4, 6), (1, 3, 5, 7), strict=True):
+            payload[target * 4096 : (target + 1) * 4096] = bytes(
+                (source * 4096 + offset + source * 37 + index * 71) % 251 for offset in range(4096)
+            )
+        if fault in ("payload", "sentinel") and index == 0:
+            payload[4096 if fault == "payload" else 0] ^= 1
+        (tmp_path / f"round-{index}.payload.bin").write_bytes(payload)
+        rows.append(
+            {
+                "round": index,
+                "copied_bytes": 16384,
+                "observed_bytes": 32768,
+                "full_oracle": True,
+                "mutation_rejected": True,
+                "normal_unregister": True,
+                "tier": "dram",
+                "source_identity": "source",
+                "consumer_identity": "consumer",
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+        )
+        (tmp_path / f"round-{index}.native-release.json").write_text(
+            json.dumps(
+                {
+                    "owner": owner,
+                    "unregistered": fault != "release",
+                    "source": "source",
+                    "consumer": "consumer",
+                    "physical_fault_termination_claimed": False,
+                }
+            )
+        )
+    (tmp_path / "clients.native-close.json").write_text(
+        json.dumps({"owner": owner, "closed": fault != "close", "normal_unregister": True})
+    )
+    (tmp_path / "PENDING-SAVE-BYTES.json").write_text(
+        json.dumps(rows[:2] if fault == "rounds" else rows)
+    )
+    if fault == "credit":
+        (tmp_path / "round-0-source.credit-owner.json").unlink()
+    if fault is None:
+        validate(*args, **kwargs)
+    else:
+        with pytest.raises(RuntimeError):
+            validate(*args, **kwargs)
+
+
 def test_expired_or_oversized_oracle_cannot_get_success(tmp_path, monkeypatch):
     cell, owner, observed = valid_evidence(tmp_path)
     with pytest.raises(TimeoutError):
