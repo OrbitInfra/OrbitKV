@@ -357,7 +357,10 @@ admission failures prove no submission. Other send errors may follow delivery
 and cannot release source pages, even with one configured recipient.
 Ambiguous/malformed replies and post-submit transport errors retain the source
 owner even after confirmed Manager exit. Process liveness cannot prove CUDA
-completion. Only a matched valid result following the Manager copy drain, or
+completion. Before parking on these errors, the client closes the session and
+releases its descriptor lock. Other descriptor callers on that same client fail
+without reusing the slot; the original source owner remains held.
+Only a matched valid result following the Manager copy drain, or
 a proven never-submitted send failure, permits return. This conservative
 retention still blocks the caller; bounded operational responses and adapter
 page-generation consumers remain separate pending work. Manager GPU-worker

@@ -178,6 +178,7 @@ fn publish_send_retention_child() {
         }
         let (attempted, attempt) = mpsc::channel();
         let (returned, result) = mpsc::channel();
+        let publisher = Arc::clone(&client);
         std::thread::spawn(move || {
             let mut filter = [
                 libc::sock_filter {
@@ -214,9 +215,9 @@ fn publish_send_retention_child() {
                 assert_eq!(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), 0);
                 assert_eq!(libc::prctl(libc::PR_SET_SECCOMP, 2, &program), 0);
             }
-            let error = client
+            let error = publisher
                 .client
-                .call(Command::ping(8, 91), client.options)
+                .call(Command::ping(8, 91), publisher.options)
                 .unwrap_err();
             assert!(
                 matches!(
@@ -228,7 +229,7 @@ fn publish_send_retention_child() {
                 "{error:?}"
             );
             attempted.send(()).unwrap();
-            let outcome = client.publish(9, &request);
+            let outcome = publisher.publish(9, &request);
             drop(source);
             returned.send(outcome).unwrap();
         });
@@ -237,6 +238,19 @@ fn publish_send_retention_child() {
             result.recv_timeout(Duration::from_millis(50)),
             Err(mpsc::RecvTimeoutError::Timeout)
         ));
+        assert!(!marker.exists());
+        let (completed, completion) = mpsc::channel();
+        let other = std::thread::spawn(move || {
+            completed.send(client.release(10, vec![])).unwrap();
+        });
+        assert!(matches!(
+            completion
+                .recv_timeout(Duration::from_secs(2))
+                .expect("closed session must reject another caller without waiting for Publish"),
+            Err(ChannelError::SessionRequiresReconnect)
+        ));
+        other.join().unwrap();
+        assert!(matches!(result.try_recv(), Err(mpsc::TryRecvError::Empty)));
         assert!(!marker.exists());
         // Only this isolated no-DMA fixture process ends the parked caller.
     }

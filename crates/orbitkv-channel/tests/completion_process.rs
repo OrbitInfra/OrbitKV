@@ -544,8 +544,9 @@ fn publish_retention_child() {
     }
     let source = SourceOwner(directory.join("source-released"), vec![37; 4096]);
     let (returned, result) = mpsc::channel();
+    let publisher_client = Arc::clone(&client);
     let publisher = std::thread::spawn(move || {
-        let outcome = client.publish(
+        let outcome = publisher_client.publish(
             1,
             &PublishRequest {
                 instance_id: "test".into(),
@@ -582,6 +583,20 @@ fn publish_retention_child() {
             std::thread::sleep(Duration::from_millis(1));
         }
         assert!(result.recv_timeout(Duration::from_millis(50)).is_err());
+        assert!(!directory.join("source-released").exists());
+        let (returned, other_result) = mpsc::channel();
+        let other = std::thread::spawn(move || {
+            returned.send(client.release(2, vec![])).unwrap();
+        });
+        let error = other_result
+            .recv_timeout(Duration::from_secs(2))
+            .expect("retained Publish must not hold the descriptor lock")
+            .unwrap_err();
+        if mode != "logger-unwind" {
+            assert!(matches!(error, ChannelError::SessionRequiresReconnect));
+        }
+        other.join().unwrap();
+        assert!(result.try_recv().is_err());
         assert!(!directory.join("source-released").exists());
     }
     peer.wait_for_success();

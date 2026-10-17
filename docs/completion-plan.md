@@ -571,6 +571,9 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   no submission. A send error may follow delivery and cannot be treated as a
   blanket pre-submission exception. Request services enforce one Manager
   recipient at creation and check that exact configuration when opening.
+  On an unproven reply or transport error, Publish closes its session and releases
+  the shared descriptor lock before retaining the original caller. Other callers on that same
+  ChannelClient reject the closed session without reusing its descriptor slot.
   Real CPU process controls cover queue-delivery interruption, source ownership,
   pre-admission rejection, valid late completion, peer exit, malformed replies
   and logger unwind. The historical unsafe send-exception mutation must fail
