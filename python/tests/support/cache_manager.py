@@ -642,6 +642,11 @@ class CacheManagerProcess:
                                 count = min(1024 * 1024, end - start - position)
                                 expected = os.pread(fd, count, offset + position)
                                 actual = os.pread(memory, count, start + position)
+                                file_count = min(
+                                    count, max(0, metadata.st_size - offset - position)
+                                )
+                                if len(expected) != file_count:
+                                    raise RuntimeError("Mapped executable file read was short")
                                 # The last executable page can contain zero padding beyond the file.
                                 expected += bytes(count - len(expected))
                                 if len(actual) != count or actual != expected:

@@ -780,6 +780,11 @@ def validate_cell(
                     or mapped.get("realpath") != expected.get("realpath")
                     or mapped.get("bytes") != expected.get("bytes")
                     or mapped.get("sha256") != expected.get("sha256")
+                    or type(mapped.get("device")) is not int
+                    or mapped["device"] < 0
+                    or type(mapped.get("inode")) is not int
+                    or mapped["inode"] <= 0
+                    or mapped["inode"] != mapped_paths[mapped["path"]][1]
                     or (
                         mapped.get("mapped_device", mapped.get("device")),
                         mapped.get("mapped_inode", mapped.get("inode")),

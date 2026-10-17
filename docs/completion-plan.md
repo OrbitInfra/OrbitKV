@@ -777,6 +777,12 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   proof is rejected. This is executable provenance, not mutable data equivalence
   or physical DMA termination. New independent source/CPU and exact runtime
   review remain required; the original rejected freeze is immutable.
+  Independent `54164e43` review reproduces an interior short-read padding false
+  equality and a result-oracle opened-inode omission/regression. The repair
+  requires the exact file-backed byte count before padding a proven EOF tail,
+  and validates opened inode against recorded/parsed mapped identities in both
+  branches. Original controls remain rejected evidence; a new independent review
+  must accept the corrected source before another launch freeze.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

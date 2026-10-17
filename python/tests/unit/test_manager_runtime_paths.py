@@ -254,22 +254,25 @@ def test_runtime_hash_is_bound_to_the_opened_mapped_inode(tmp_path, monkeypatch,
         assert process.wait(timeout=5) == 0
 
 
-@pytest.mark.parametrize("corrupt_mapping", [False, True])
-def test_overlay_runtime_requires_actual_complete_executable_bytes(tmp_path, corrupt_mapping):
+@pytest.mark.parametrize("corrupt_mapping", [False, True, "short-read"])
+def test_overlay_runtime_requires_actual_complete_executable_bytes(
+    tmp_path, monkeypatch, corrupt_mapping
+):
     library = tmp_path / "mapped-executable.so"
     library.write_bytes(b"A" * 4096)
     ready = tmp_path / "ready"
     code = (
         "import mmap,os,signal,sys\nfrom pathlib import Path\n"
         "f=open(sys.argv[1],'rb');m=mmap.mmap(f.fileno(),0,flags=mmap.MAP_PRIVATE,prot=mmap.PROT_READ|mmap.PROT_EXEC)\n"
-        "if sys.argv[3]=='1':\n"
+        "if sys.argv[3] in ('1','2'):\n"
         " import ctypes\n"
         " # Test-only code page is never executed. Mutate the actual private mapping.\n"
         " libc=ctypes.CDLL(None);libc.mprotect.argtypes=[ctypes.c_void_p,ctypes.c_size_t,ctypes.c_int]\n"
         " line=next(s for s in Path('/proc/self/maps').read_text().splitlines() if s.endswith(' '+sys.argv[1]))\n"
         " address=int(line.split('-')[0],16)\n"
         " if libc.mprotect(address,4096,mmap.PROT_READ|mmap.PROT_WRITE|mmap.PROT_EXEC)!=0:raise RuntimeError('mprotect failed')\n"
-        " ctypes.memset(address,66,4096)\n"
+        " if sys.argv[3]=='1':ctypes.memset(address,66,4096)\n"
+        " else:ctypes.memset(address+2048,0,2048)\n"
         " if libc.mprotect(address,4096,mmap.PROT_READ|mmap.PROT_EXEC)!=0:raise RuntimeError('mprotect restore failed')\n"
         "signal.signal(signal.SIGTERM,lambda *_:sys.exit(0))\n"
         "Path(sys.argv[2]).write_text('ready')\nwhile True:signal.pause()\n"
@@ -284,7 +287,7 @@ def test_overlay_runtime_requires_actual_complete_executable_bytes(tmp_path, cor
             code,
             str(library),
             str(ready),
-            str(int(corrupt_mapping)),
+            "2" if corrupt_mapping == "short-read" else str(int(corrupt_mapping)),
         ],
         start_new_session=True,
     )
@@ -306,7 +309,20 @@ def test_overlay_runtime_requires_actual_complete_executable_bytes(tmp_path, cor
         major, minor = (int(part, 16) for part in line.split()[3].split(":"))
         if metadata.st_dev == os.makedev(major, minor):
             pytest.skip("Control specifically tests differing overlay devices")
-        if corrupt_mapping:
+        if corrupt_mapping == "short-read":
+            pread = os.pread
+
+            def short(fd, count, offset):
+                value = pread(fd, count, offset)
+                if os.fstat(fd).st_ino == metadata.st_ino and count == 4096 and offset == 0:
+                    return value[:2048]
+                return value
+
+            monkeypatch.setattr(os, "pread", short)
+            with pytest.raises(RuntimeError, match="file read was short"):
+                server.record_runtime()
+            assert not list(tmp_path.glob("*.manager-runtime.json"))
+        elif corrupt_mapping:
             with pytest.raises(RuntimeError, match="Actual mapped executable bytes differ"):
                 server.record_runtime()
             assert not list(tmp_path.glob("*.manager-runtime.json"))
