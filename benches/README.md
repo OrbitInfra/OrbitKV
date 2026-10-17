@@ -1407,6 +1407,28 @@ cannot be added to infer GPU restore overhead or promote a transfer backend.
 See the [profile result and limits](../docs/kernel-optimization.md#native-trace-cpu-profile).
 
 
+Set `ORBITKV_TRACE_PROFILE_PROBE=thread` for opt-in calling-thread CPU diagnostics;
+omission or `off` disables the per-part probes, and unknown values fail. Sample
+schema 2 includes the mode, profile TID and CPU-clock resolution. Six CPU-clock
+readings surround open, geometry, batch capture, finish and flush, each bracketed
+by wall reads. Raw stamps and signed wall-minus-CPU interval bounds are retained;
+these windows include timer bookkeeping and are not identical to the historical
+stage timers. In whole mode, synchronous publication flush remains in `finish`;
+the separate explicit flush window does almost no work.
+
+`total_ns` includes six clock probes. `observed_ns` also encloses two
+`RUSAGE_THREAD` snapshots and preserves raw envelope timestamps. Both exclude
+JSON result construction, trace construction/destruction and input preparation.
+The coarse snapshots report enclosing context switches and faults; they do not
+count allocations or identify the cause of a stage's latency. Off/thread
+calibration uses the same newly built executable, validates every raw bracket,
+usage delta, canonical geometry row and production-compiler result, and guards
+both timing metrics independently. Never subtract these CPU windows from
+unmatched original stage timers or clamp a negative residual to zero. See the
+[diagnostic contract](../docs/kernel-optimization.md#thread-cpu-decomposition)
+before using observations to choose another candidate.
+
+
 Schema-4 engine-local captures encode all fifteen unsigned geometry values in
 column order as canonical positive run-length/unsigned-value LEB128 pairs,
 then Base64, with the `uvarint-rle-base64-v1` tag and exact row count. Each

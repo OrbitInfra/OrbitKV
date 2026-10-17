@@ -1064,3 +1064,46 @@ experiments or establish why earlier comparisons varied. Shared cgroup throttle
 counts do not increase during these native windows, but this cannot exclude
 scheduler, frequency, allocator or cache effects inside the part clocks.
 Earlier rejected candidates and H20 failures retain their original status.
+
+
+### Thread CPU decomposition
+
+The explicit native trace CPU profile provides an opt-in `thread` probe, with
+`off` as the default. This is benchmark-only schema 2; the production trace owner,
+schema-4 bytes and ownership contracts are unchanged. Six
+[`CLOCK_THREAD_CPUTIME_ID`](https://man7.org/linux/man-pages/man2/clock_gettime.2.html)
+reads sample the actual profile thread. Each CPU stamp is bracketed by monotonic
+wall reads; retain all raw values. For start `(sb, cs, sa)` and end `(eb, ce, ea)`,
+CPU time is `ce-cs`, wall bounds are `[eb-sa, ea-sb]`, and signed residual bounds
+subtract that CPU delta from both endpoints. Whole-window bounds use the first
+and last stamps directly. A residual is not proof of scheduler wait; clock
+accounting, blocking, descheduling and probe bookkeeping remain possible factors.
+CPU time can also change with frequency or cache behavior.
+
+Two enclosing
+[`RUSAGE_THREAD`](https://man7.org/linux/man-pages/man2/getrusage.2.html)
+snapshots retain context-switch and page-fault counters outside the existing
+`total_ns` boundary. The additional `observed_ns` envelope includes these calls
+as well as all six CPU probes. Both modes retain reconstructible envelope
+endpoints. Probes sit between original stage clocks, so CPU windows include
+bookkeeping and do not exactly match the original stage intervals. In whole
+mode, actual synchronous log flush belongs to finish. Serialization, preparation,
+trace construction and destruction remain outside both metrics.
+
+The fixed calibration uses one executable for off/thread in 32 whole-profile
+processes, with four balanced ABBA/BAAB blocks separately on CPU0 and CPU2.
+Each process retains four warm-up/eight measured three-part sequences. For both
+`total_ns` and `observed_ns`, take the median of 24 measured parts per process, form
+adjacent B/A contrasts and four-process block ratios, then bootstrap the four
+complete blocks per CPU with 20,000 draws and seed 20261017. Every adjacent/block
+ratio and the 95% interval upper endpoint must be at most 1.05, separately for
+both metrics and both CPUs. Do not pool parts or CPUs. This bounds only the
+observed incremental thread-versus-off cost within this new executable; it does
+not calibrate shared changes, omitted serialization or total process overhead.
+
+The diagnostic is implemented; calibration and independent terminal review are
+pending. Exact contracts, rejected controls and subsequent raw evidence belong
+outside Git at `/root/orbitkv-artifacts/s4-trace-thread-clock-20261017/`.
+The previous CPU0 A/A failure and rejected candidates remain unchanged. Even a
+calibration pass does not identify a root cause, select a preferred CPU or
+qualify an optimization, GPU restore, serving, a copy default or S3 lifetime.

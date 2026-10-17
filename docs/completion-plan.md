@@ -710,6 +710,17 @@ and complete evidence at `/root/orbitkv-artifacts/s4-trace-aa-diagnosis-20261016
 Declare and validate subsequent measurement conditions before another candidate;
 no CPU setting, GPU run or dependent inference-contended experiment is promoted.
 
+**Thread CPU decomposition: implemented; calibration pending.**
+The explicit CPU benchmark adds opt-in calling-thread CPU stamps and enclosing
+context-switch/fault counters. Keep the production owner and original stage
+clocks unchanged. Independently calibrate off/thread in the same newly built
+executable using 32 fixed processes, guarding both the existing total and an
+outer envelope that includes the resource probes, separately at CPU0 and CPU2.
+Preserve signed, matched-endpoint residuals and complete geometry validation.
+The [measurement contract](kernel-optimization.md#thread-cpu-decomposition)
+precedes the sole cohort; implementation does not yet establish probe usability
+or authorize another candidate, H20 run or dependent inference contention.
+
 **Bounded synchronous publication: CPU retention accepted; H20 overhead FAIL.**
 The candidate groups already-drained diagnostic JSON lines into
 synchronous log messages of at most 64 KiB. Keep opening records on the original
