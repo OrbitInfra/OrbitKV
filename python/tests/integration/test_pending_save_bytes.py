@@ -6,6 +6,7 @@ normal-path gate does not establish failed CUDA/RDMA/SSD physical termination.
 
 import hashlib
 import json
+import os
 import time
 import uuid
 
@@ -13,6 +14,7 @@ import pytest
 import requests
 
 from tests.support.metrics import fetch_orbitkv_metrics
+from tests.support.registration_campaign import identity, write
 
 pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 
@@ -51,13 +53,22 @@ def wait_idle(http_port, names):
 
 
 @pytest.mark.parametrize("channel_server", ["dram", "ssd"], indirect=True)
-def test_installed_pending_save_has_exact_payload_and_normal_release(channel_server, tmp_path):
+def test_installed_pending_save_has_exact_payload_and_normal_release(
+    channel_server, tmp_path, request
+):
     import torch
 
     from orbitkv import BlockHashes, CacheManagerClient, QueryReady
 
     if not torch.cuda.is_available():
         pytest.fail("Installed byte qualification requires a working CUDA GPU")
+    if channel_server.ssd_cache_path is not None:
+        assert request.config.getoption("--ssd-backend") == "uring", (
+            "SSD byte gate requires explicit io_uring backend"
+        )
+        assert request.config.getoption("--ssd-read-path") == "uring", (
+            "SSD byte gate requires explicit io_uring restore"
+        )
     namespace = f"pending-bytes-{uuid.uuid4().hex}"
     source = CacheManagerClient(channel_server.bootstrap_socket)
     consumer = CacheManagerClient(channel_server.bootstrap_socket)
@@ -82,6 +93,17 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(channel_ser
             torch.cuda.synchronize()
             source_registration = register(source, source_id, namespace, source_tensor)
             source_registered = True
+            write(
+                tmp_path / f"round-{round_id}-source.credit-owner.json",
+                {
+                    "owner": identity(os.getpid()),
+                    "instance_id": source_id,
+                    "evidence": json.loads(source_registration.ipc_credit_evidence),
+                },
+                time.monotonic() + 30,
+            )
+            if round_id == 0:
+                channel_server.record_runtime()
             writes_before = fetch_orbitkv_metrics(channel_server.http_port).get(
                 "orbitkv_ssd_write_bytes_total", 0
             )
@@ -92,7 +114,8 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(channel_ser
             handle = source.start_save(source_registration, [("bytes", source_indices, hashes)])
             status = source.wait_save(handle, timeout=30)
             assert status.done and status.success, status.message
-            source.unregister_context(source_id)
+            success, message = source.unregister_context(source_id)
+            assert success, message
             source_registered = False
             del handle, source_registration
             idle_names = [
@@ -126,6 +149,15 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(channel_ser
             torch.cuda.synchronize()
             consumer_registration = register(consumer, consumer_id, namespace, target)
             consumer_registered = True
+            write(
+                tmp_path / f"round-{round_id}-consumer.credit-owner.json",
+                {
+                    "owner": identity(os.getpid()),
+                    "instance_id": consumer_id,
+                    "evidence": json.loads(consumer_registration.ipc_credit_evidence),
+                },
+                time.monotonic() + 30,
+            )
             io_before = fetch_orbitkv_metrics(channel_server.http_port)
             deadline = time.monotonic() + 30
             while True:
@@ -161,7 +193,8 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(channel_ser
                     after["orbitkv_ssd_read_bytes_total"]
                     > io_before["orbitkv_ssd_read_bytes_total"]
                 )
-            consumer.unregister_context(consumer_id)
+            success, message = consumer.unregister_context(consumer_id)
+            assert success, message
             consumer_registered = False
             del consumer_registration, restore
             wait_idle(channel_server.http_port, idle_names + ["orbitkv_query_reserved_bytes"])
@@ -181,13 +214,27 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(channel_ser
                     "normal_unregister": True,
                 }
             )
+            write(
+                tmp_path / f"round-{round_id}.native-release.json",
+                {
+                    "owner": identity(os.getpid()),
+                    "source": source_id,
+                    "consumer": consumer_id,
+                    "unregistered": True,
+                    "completed_mono_ns": time.monotonic_ns(),
+                    "physical_fault_termination_claimed": False,
+                },
+                time.monotonic() + 30,
+            )
         (tmp_path / "PENDING-SAVE-BYTES.json").write_text(json.dumps(records, indent=2) + "\n")
     finally:
         # Manager must stay alive through native release. Unknown work keeps the
         # ordinary owners waiting; the external controller retains its locks.
         if consumer_registered:
-            consumer.unregister_context(consumer_id)
+            success, message = consumer.unregister_context(consumer_id)
+            assert success, message
         if source_registered:
-            source.unregister_context(source_id)
+            success, message = source.unregister_context(source_id)
+            assert success, message
         consumer.close()
         source.close()
