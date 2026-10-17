@@ -1344,9 +1344,38 @@ impl PyCacheManagerClient {
         py: Python<'_>,
         registration: &PyGpuRegistration,
         saves: Vec<(String, Vec<u32>, Vec<Vec<u8>>)>,
-    ) -> PyResult<PySaveHandle> {
+    ) -> PyResult<Py<PySaveHandle>> {
+        let worker = py.detach(|| self.registered_worker(registration))?;
+        let request = publish_request(
+            registration.instance_id.clone(),
+            registration.tp_rank,
+            registration.pp_rank,
+            worker.manager_device_id,
+            registration.generation,
+            saves,
+        );
+        let bytes = save_request_bytes(&request)?;
+        let pending = Arc::new(PendingSave {
+            instance: registration.instance_id.clone(),
+            bytes,
+            result: Mutex::new(None),
+            completed: Condvar::new(),
+        });
+        let operation_id = self
+            .next_save
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |id| id.checked_add(1))
+            .map_err(|_| OrbitKVInternal::new_err("Save operation identity exhausted"))?;
+        // Allocate the Python handoff before any native submission. The returned
+        // Py object needs no fallible object allocation after spawning work.
+        let handle = Py::new(
+            py,
+            PySaveHandle {
+                operation_id,
+                owner: Arc::downgrade(&self.inner),
+                pending: Arc::clone(&pending),
+            },
+        )?;
         py.detach(|| {
-            let worker = self.registered_worker(registration)?;
             let local = self
                 .local
                 .lock()
@@ -1364,21 +1393,6 @@ impl PyCacheManagerClient {
                     "GPU registration retired before Save admission",
                 ));
             }
-            let request = publish_request(
-                registration.instance_id.clone(),
-                registration.tp_rank,
-                registration.pp_rank,
-                worker.manager_device_id,
-                registration.generation,
-                saves,
-            );
-            let bytes = save_request_bytes(&request)?;
-            let pending = Arc::new(PendingSave {
-                instance: registration.instance_id.clone(),
-                bytes,
-                result: Mutex::new(None),
-                completed: Condvar::new(),
-            });
             let mut owned = self
                 .saves
                 .lock()
@@ -1400,10 +1414,6 @@ impl PyCacheManagerClient {
                     "process Save owner admission is full",
                 ));
             }
-            let operation_id = self
-                .next_save
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |id| id.checked_add(1))
-                .map_err(|_| OrbitKVInternal::new_err("Save operation identity exhausted"))?;
             owned.insert(operation_id, Arc::clone(&pending));
             usage.0 += 1;
             usage.1 += bytes;
@@ -1437,12 +1447,9 @@ impl PyCacheManagerClient {
             }
             drop(owned);
             drop(local);
-            Ok(PySaveHandle {
-                operation_id,
-                owner: Arc::downgrade(&self.inner),
-                pending,
-            })
-        })
+            Ok(())
+        })?;
+        Ok(handle)
     }
 
     fn poll_save(&self, py: Python<'_>, handle: &PySaveHandle) -> PyResult<RestoreStatus> {

@@ -596,6 +596,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self.layer_done_counter.cancel_pending()
         self._load_queue.join()
         self._offload_queue.join()
+        if self._retained_offloads:
+            raise RuntimeError("native Save completion unknown; offload pages remain held")
         for rid in list(self._pending_queries):
             self.cancel_query(rid)
         self._expired_queries.clear()

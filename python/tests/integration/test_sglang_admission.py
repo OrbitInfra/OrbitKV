@@ -93,6 +93,21 @@ def test_native_save_wait_failure_does_not_complete_offload(linker, failure):
         linker.reset()
 
 
+def test_reset_rechecks_retained_save_after_join(linker):
+    import queue
+
+    linker._retained_offloads = []
+    linker.layer_done_counter = MagicMock()
+    linker._load_queue = queue.Queue()
+    linker._offload_queue = MagicMock()
+    linker._offload_queue.join.side_effect = lambda: linker._retained_offloads.append(
+        (object(), object())
+    )
+    with pytest.raises(RuntimeError, match="pages remain held"):
+        linker.reset()
+    linker.layer_done_counter.reset.assert_not_called()
+
+
 def transfer(keys):
     from sglang.srt.mem_cache.hicache_storage import PoolName
 
