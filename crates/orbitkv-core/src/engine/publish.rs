@@ -721,6 +721,7 @@ impl OrbitKVEngine {
         let returned_layers = trace_future!(
             "save.gpu_copy",
             gpu_context.worker_pool().batch_save(
+                Arc::clone(&instance),
                 gpu_save_layers,
                 ssd_writes,
                 codec_groups,

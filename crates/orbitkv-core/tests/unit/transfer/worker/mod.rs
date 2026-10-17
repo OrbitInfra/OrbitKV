@@ -1,5 +1,55 @@
 use super::*;
 
+fn empty_save_instance() -> Arc<InstanceContext> {
+    Arc::new(InstanceContext::new("cpu-save".into(), "cpu-save".into(), 1, 1, false).unwrap())
+}
+
+#[test]
+fn save_admission_retains_lost_owners_and_releases_only_completed_work() {
+    let usage = Arc::new(Mutex::new(SaveUsage::default()));
+    let admissions = (0..MAX_SAVE_OPERATIONS)
+        .map(|_| SaveAdmission::reserve(Arc::clone(&usage), 128, 4096).unwrap())
+        .collect::<Vec<_>>();
+    assert!(SaveAdmission::reserve(Arc::clone(&usage), 1, 0).is_err());
+    let retained = admissions[0].clone();
+    retained.retain();
+    retained.retain();
+    assert_eq!(usage.lock().retained, 1);
+    admissions[1].complete();
+    admissions[1].complete();
+    let replacement = SaveAdmission::reserve(Arc::clone(&usage), 128, 4096).unwrap();
+    drop(replacement);
+    assert_eq!(usage.lock().operations, MAX_SAVE_OPERATIONS);
+    assert_eq!(usage.lock().retained, 2);
+    assert!(SaveAdmission::reserve(Arc::clone(&usage), 1, 0).is_err());
+    for admission in &admissions {
+        admission.complete();
+    }
+    drop(admissions);
+    drop(retained);
+    let state = usage.lock();
+    assert_eq!(state.operations, 1, "lost receipt must stay charged");
+    assert_eq!(state.retained, 1);
+    assert_eq!(state.metadata_bytes, 128);
+    assert_eq!(state.logical_bytes, 4096);
+}
+
+#[test]
+fn save_metadata_budget_counts_spare_capacity_and_rejects_overflow() {
+    let usage = Arc::new(Mutex::new(SaveUsage::default()));
+    let full = SaveAdmission::reserve(Arc::clone(&usage), MAX_SAVE_METADATA_BYTES, 0).unwrap();
+    assert!(SaveAdmission::reserve(Arc::clone(&usage), 1, 0).is_err());
+    assert!(SaveAdmission::reserve(Arc::clone(&usage), usize::MAX, 0).is_err());
+    full.complete();
+    let spare = Vec::<SaveGroup>::with_capacity(17);
+    let (bytes, logical) = save_shape(&Vec::new(), &Vec::new(), &spare).unwrap();
+    assert_eq!(logical, 0);
+    assert_eq!(
+        bytes,
+        std::mem::size_of::<SaveTask>() + spare.capacity() * std::mem::size_of::<SaveGroup>()
+    );
+}
+
 #[test]
 fn decode_restore_admission_is_device_scoped_and_bounded() {
     let admission = device_restore_admission(i32::MAX - 20);
@@ -70,6 +120,8 @@ fn save_task_owns_shared_admission_until_terminal_drop() {
             storage: None,
             numa: NumaNode::UNKNOWN,
             ssd_admission: Some(permit),
+            admission: SaveAdmission::acquire(std::mem::size_of::<SaveTask>(), 0).unwrap(),
+            _instance: empty_save_instance(),
             #[cfg(feature = "tracing")]
             trace_ctx: None,
         },
@@ -113,6 +165,7 @@ async fn shared_admission_saturation_falls_back_before_worker_submission() {
             drained: OnceCell::new(),
         };
         let mut saving = Box::pin(pool.batch_save(
+            empty_save_instance(),
             Vec::new(),
             Vec::new(),
             vec![SaveGroup {
@@ -304,7 +357,11 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     };
     let error = pool.submit(queued_load(), false).unwrap_err();
     assert!(error.to_string().contains("draining"));
-    assert!(pool.batch_save(vec![], vec![], vec![], None).await.is_err());
+    assert!(
+        pool.batch_save(empty_save_instance(), vec![], vec![], vec![], None)
+            .await
+            .is_err()
+    );
     load_ack.send(Ok(())).unwrap();
     tokio::task::yield_now().await;
     assert!(
@@ -694,4 +751,183 @@ fn managed_restore_retains_sources_and_reservations_through_partial_submission_d
         crate::QueryAdmission::Admitted(_)
     ));
     assert_eq!(stream.clone_dtoh(&target).unwrap(), vec![0x5a; 32]);
+}
+
+#[tokio::test]
+async fn submitted_save_reply_loss_is_not_a_completed_error() {
+    let (load_tx, _load_rx) = mpsc::unbounded_channel();
+    let (save_tx, mut save_rx) = mpsc::unbounded_channel();
+    let pool = GpuWorkerPool {
+        device_id: i32::MAX - 31,
+        numa_node: NumaNode::UNKNOWN,
+        transfer_mode: TransferMode::Direct,
+        load_tx,
+        save_tx,
+        ssd_tx: Mutex::new(None),
+        ssd_host_tx: Mutex::new(None),
+        codec_write_tx: Mutex::new(None),
+        ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
+        decode_restore_admission: device_restore_admission(i32::MAX - 31),
+        cufile_worker_admission: Arc::new(Semaphore::new(1)),
+        cufile_worker_owner: Mutex::new(None),
+        closed: Mutex::new(false),
+        drained: OnceCell::new(),
+    };
+    let owner = Arc::new(vec![37; 4096]);
+    let observed_owner = Arc::downgrade(&owner);
+    let saving = async {
+        let _held = owner;
+        pool.batch_save(empty_save_instance(), vec![], vec![], vec![], None)
+            .await
+    };
+    tokio::pin!(saving);
+    assert!(futures::poll!(saving.as_mut()).is_pending());
+    let Some(WorkerCommand::Save(task, _)) = save_rx.recv().await else {
+        panic!("expected admitted SaveTask");
+    };
+    let admission = Arc::clone(&task.admission);
+    // Real queue/oneshot boundary; no allocation, CUDA executor or DMA is created.
+    drop(task.reply);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(20), saving.as_mut())
+            .await
+            .is_err(),
+        "lost worker response fabricated completed error without physical drain"
+    );
+    assert!(
+        observed_owner.upgrade().is_some(),
+        "admitted caller owner was lost"
+    );
+    assert!(admission.retained.load(Ordering::Acquire));
+    assert!(!admission.completed.load(Ordering::Acquire));
+}
+
+#[tokio::test]
+async fn save_completion_receipt_releases_admission_after_queued_no_dma_work() {
+    let (load_tx, _load_rx) = mpsc::unbounded_channel();
+    let (save_tx, mut save_rx) = mpsc::unbounded_channel();
+    let pool = GpuWorkerPool {
+        device_id: i32::MAX - 32,
+        numa_node: NumaNode::UNKNOWN,
+        transfer_mode: TransferMode::Direct,
+        load_tx,
+        save_tx,
+        ssd_tx: Mutex::new(None),
+        ssd_host_tx: Mutex::new(None),
+        codec_write_tx: Mutex::new(None),
+        ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
+        decode_restore_admission: device_restore_admission(i32::MAX - 32),
+        cufile_worker_admission: Arc::new(Semaphore::new(1)),
+        cufile_worker_owner: Mutex::new(None),
+        closed: Mutex::new(false),
+        drained: OnceCell::new(),
+    };
+    let instance = empty_save_instance();
+    let observed_instance = Arc::downgrade(&instance);
+    let mut saving = Box::pin(pool.batch_save(instance, Vec::new(), Vec::new(), Vec::new(), None));
+    assert!(futures::poll!(saving.as_mut()).is_pending());
+    let Some(WorkerCommand::Save(task, _)) = save_rx.recv().await else {
+        panic!("expected SaveTask");
+    };
+    let admission = Arc::clone(&task.admission);
+    assert!(!admission.completed.load(Ordering::Acquire));
+    drop(saving);
+    assert!(
+        observed_instance.upgrade().is_some(),
+        "SaveTask must hold registration after caller cancellation"
+    );
+    // Empty payload means this queue control submits no CUDA or SSD operation.
+    // Production calls complete only after the respective worker drain boundary.
+    task.admission.complete();
+    assert!(task.reply.send(Ok(task.layers)).is_err());
+    drop(task._instance);
+    assert!(observed_instance.upgrade().is_none());
+    assert!(admission.completed.load(Ordering::Acquire));
+    *pool.closed.lock() = true;
+    assert!(
+        pool.batch_save(
+            empty_save_instance(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None
+        )
+        .await
+        .is_err()
+    );
+}
+
+#[test]
+fn save_queue_admission_is_bounded_in_a_fresh_process() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "transfer::worker::drain_tests::save_queue_admission_child",
+            "--nocapture",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert!(String::from_utf8(output.stdout).unwrap().contains(
+        "save_queue_saturation=1024 receipt_repaid=true lost_owner_charged=true no_DMA=true"
+    ));
+}
+
+#[tokio::test]
+#[ignore = "isolated CPU queue budget control with no CUDA allocations or DMA"]
+async fn save_queue_admission_child() {
+    let (load_tx, _load_rx) = mpsc::unbounded_channel();
+    let (save_tx, mut save_rx) = mpsc::unbounded_channel();
+    let pool = GpuWorkerPool {
+        device_id: i32::MAX - 33,
+        numa_node: NumaNode::UNKNOWN,
+        transfer_mode: TransferMode::Direct,
+        load_tx,
+        save_tx,
+        ssd_tx: Mutex::new(None),
+        ssd_host_tx: Mutex::new(None),
+        codec_write_tx: Mutex::new(None),
+        ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
+        decode_restore_admission: device_restore_admission(i32::MAX - 33),
+        cufile_worker_admission: Arc::new(Semaphore::new(1)),
+        cufile_worker_owner: Mutex::new(None),
+        closed: Mutex::new(false),
+        drained: OnceCell::new(),
+    };
+    let mut pending = Vec::new();
+    for _ in 0..MAX_SAVE_OPERATIONS {
+        let mut saving =
+            Box::pin(pool.batch_save(empty_save_instance(), vec![], vec![], vec![], None));
+        assert!(futures::poll!(saving.as_mut()).is_pending());
+        pending.push(saving);
+    }
+    assert!(
+        pool.batch_save(empty_save_instance(), vec![], vec![], vec![], None)
+            .await
+            .is_err()
+    );
+    assert_eq!(save_rx.len(), MAX_SAVE_OPERATIONS);
+    let Some(WorkerCommand::Save(task, _)) = save_rx.recv().await else {
+        panic!("expected SaveTask");
+    };
+    let admission = Arc::clone(&task.admission);
+    // These empty-payload tasks have no physical device operation to drain.
+    task.admission.complete();
+    assert!(task.reply.send(Ok(task.layers)).is_ok());
+    assert!(pending.remove(0).await.is_ok());
+    let mut replacement =
+        Box::pin(pool.batch_save(empty_save_instance(), vec![], vec![], vec![], None));
+    assert!(futures::poll!(replacement.as_mut()).is_pending());
+    drop(replacement);
+    drop(pending);
+    drop(save_rx);
+    assert_eq!(admission.usage.lock().operations, MAX_SAVE_OPERATIONS);
+    assert_eq!(admission.usage.lock().retained, MAX_SAVE_OPERATIONS);
+    assert!(
+        pool.batch_save(empty_save_instance(), vec![], vec![], vec![], None)
+            .await
+            .is_err()
+    );
+    println!("save_queue_saturation=1024 receipt_repaid=true lost_owner_charged=true no_DMA=true");
 }

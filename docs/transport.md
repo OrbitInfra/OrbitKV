@@ -331,12 +331,30 @@ worker branch is removed. See [engine-local Restore](engine-local-restore.md)
 for full ownership, limits, and pending qualification gates.
 
 Both native and Manager executors drain accepted copy work after partial
-enqueue failure. If CUDA cannot establish completion, the owning process
-terminates without reporting reusable pages. A wait timeout or dropped Python
+enqueue failure. The SaveTask owner candidate retains its source, destination
+and admission owners after reply loss or an execution unwind. Failed Manager
+stream or codec synchronization retains the call instead of using process exit
+as completion evidence. Engine-local Restore failure handling remains separate. A wait timeout or dropped Python
 handle does not cancel accepted work; the connector must retain logical
 GPU-page assignments until a terminal result. A proven drained failure can use
 vLLM's single-cache-group recomputation path; hybrid failures retain their
 existing fail-closed engine semantics.
+
+A missing GPU save worker reply leaves the admitted Publish future pending.
+The caller retains its instance and imported GPU context; no consumed error is
+published from reply loss alone. The SaveTask execution boundary borrows its
+resources across raw/codec operations and contains an ordinary Rust unwind.
+SaveTask also owns the registered instance through caller-future cancellation.
+The shared process admission limits accepted Save operations to 1,024 and retained
+request metadata to 32 MiB, including vector spare capacity. Worker completion
+and proven pre-submit rejection repay the charge; reply loss and loss of logical
+admission owners do not. Active operation, metadata and logical-byte gauges
+remain charged on parked sync/unwind paths, and reply/owner loss additionally
+increments the retained-operation gauge. Logical bytes describe requested GPU
+ranges and are distinct from physical pool/SSD/GPU budgets. Arbitrary SSD worker
+unwind has not gained a physical termination proof.
+This preserves software ownership; it does not prove that a failed device access
+ended. Actual GPU fault gates and bounded operational reporting remain separate.
 
 ### Publish and query control
 

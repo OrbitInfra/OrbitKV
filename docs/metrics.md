@@ -42,6 +42,18 @@ the metrics again does not reset active ownership. Readiness and drain checks
 must still reject missing required gauges; an absent series is not evidence of
 zero outstanding work.
 
+Save worker admission exports initialized `orbitkv_save_active_operations`,
+`orbitkv_save_active_metadata_bytes`, `orbitkv_save_active_logical_bytes` and
+`orbitkv_save_retained_operations` gauges. The process limit is 1,024 accepted
+operations and 32 MiB of SaveTask/request-vector metadata, including spare
+capacity. Worker completion or proven pre-submit rejection releases the charge;
+reply/owner loss keeps it charged and marks retained work. Parked stream/codec
+sync and ordinary-unwind paths remain visible as active work. Logical bytes
+count requested GPU ranges, including overlapping requests; they neither measure
+unique physical residency nor impose a payload budget. Existing allocation,
+SSD, query and GPU owners retain their separate physical limits.
+`orbitkv_save_admission_rejections_total` counts pre-worker budget refusals.
+
 The source shutdown candidate exposes `orbitkv_peer_retained_source_pools_total`
 and `orbitkv_peer_retained_source_pool_bytes_total` when the peer transport owner
 initializes. Both start at zero. Failure to prove source drain retains the exact

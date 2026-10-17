@@ -17,6 +17,7 @@ use crate::cost::{
     CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
     enabled, record_resource_evidence, shadow,
 };
+use crate::engine::instance::InstanceContext;
 use crate::memory::numa::{NumaNode, pin_thread_to_numa_node};
 use crate::metrics::core_metrics;
 use crate::planning::restore::RestorePlan;
@@ -121,6 +122,8 @@ pub(crate) struct SaveTask {
     pub storage: Option<Arc<crate::storage::Storage>>,
     pub numa: NumaNode,
     pub ssd_admission: Option<OwnedSemaphorePermit>,
+    admission: Arc<SaveAdmission>,
+    _instance: Arc<InstanceContext>,
     #[cfg(feature = "tracing")]
     pub trace_ctx: Option<::fastrace::prelude::SpanContext>,
 }
@@ -150,6 +153,166 @@ pub(crate) struct GpuWorkerPool {
 }
 
 const MAX_DEVICE_RESTORES: usize = 128;
+const MAX_SAVE_OPERATIONS: usize = 1024;
+const MAX_SAVE_METADATA_BYTES: usize = 32 * 1024 * 1024;
+
+#[derive(Default)]
+struct SaveUsage {
+    operations: usize,
+    metadata_bytes: usize,
+    logical_bytes: u64,
+    retained: usize,
+}
+
+struct SaveAdmission {
+    usage: Arc<Mutex<SaveUsage>>,
+    metadata_bytes: usize,
+    logical_bytes: u64,
+    completed: std::sync::atomic::AtomicBool,
+    retained: std::sync::atomic::AtomicBool,
+}
+
+impl SaveAdmission {
+    fn acquire(metadata_bytes: usize, logical_bytes: u64) -> Result<Arc<Self>, EngineError> {
+        static USAGE: LazyLock<Arc<Mutex<SaveUsage>>> =
+            LazyLock::new(|| Arc::new(Mutex::new(SaveUsage::default())));
+        Self::reserve(Arc::clone(&USAGE), metadata_bytes, logical_bytes)
+    }
+
+    fn reserve(
+        usage: Arc<Mutex<SaveUsage>>,
+        metadata_bytes: usize,
+        logical_bytes: u64,
+    ) -> Result<Arc<Self>, EngineError> {
+        let mut state = usage.lock();
+        let metadata = state.metadata_bytes.checked_add(metadata_bytes);
+        let logical = state.logical_bytes.checked_add(logical_bytes);
+        if state.operations >= MAX_SAVE_OPERATIONS
+            || metadata.is_none_or(|bytes| bytes > MAX_SAVE_METADATA_BYTES)
+            || logical.is_none_or(|bytes| bytes > i64::MAX as u64)
+        {
+            core_metrics().save_admission_rejections.add(1, &[]);
+            return Err(EngineError::Storage("GPU save admission is full".into()));
+        }
+        state.operations += 1;
+        state.metadata_bytes += metadata_bytes;
+        state.logical_bytes += logical_bytes;
+        drop(state);
+        core_metrics().save_active_operations.add(1, &[]);
+        core_metrics()
+            .save_active_metadata_bytes
+            .add(metadata_bytes as i64, &[]);
+        core_metrics()
+            .save_active_logical_bytes
+            .add(logical_bytes as i64, &[]);
+        Ok(Arc::new(Self {
+            usage,
+            metadata_bytes,
+            logical_bytes,
+            completed: std::sync::atomic::AtomicBool::new(false),
+            retained: std::sync::atomic::AtomicBool::new(false),
+        }))
+    }
+
+    fn retain(&self) {
+        let mut usage = self.usage.lock();
+        if !self.completed.load(Ordering::Acquire) && !self.retained.swap(true, Ordering::AcqRel) {
+            usage.retained += 1;
+            core_metrics().save_retained_operations.add(1, &[]);
+        }
+    }
+
+    fn complete(&self) {
+        let mut usage = self.usage.lock();
+        if self.completed.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        usage.operations -= 1;
+        usage.metadata_bytes -= self.metadata_bytes;
+        usage.logical_bytes -= self.logical_bytes;
+        if self.retained.load(Ordering::Acquire) {
+            usage.retained -= 1;
+            core_metrics().save_retained_operations.add(-1, &[]);
+        }
+        core_metrics().save_active_operations.add(-1, &[]);
+        core_metrics()
+            .save_active_metadata_bytes
+            .add(-(self.metadata_bytes as i64), &[]);
+        core_metrics()
+            .save_active_logical_bytes
+            .add(-(self.logical_bytes as i64), &[]);
+    }
+}
+
+impl Drop for SaveAdmission {
+    fn drop(&mut self) {
+        // Loss of every logical owner is not completion evidence. Keep the
+        // process budget charged even when no worker can deliver a receipt.
+        self.retain();
+    }
+}
+
+#[allow(
+    clippy::ptr_arg,
+    reason = "admission charges retained vector capacity, not just populated elements"
+)]
+fn save_shape(
+    layers: &Vec<LayerTransferData>,
+    ssd_writes: &Vec<GpuWrite>,
+    codec_groups: &Vec<SaveGroup>,
+) -> Result<(usize, u64), EngineError> {
+    let overflow = || EngineError::InvalidArgument("GPU save shape overflow".into());
+    let mut metadata = std::mem::size_of::<SaveTask>();
+    let mut logical = 0u64;
+    let mut charge = |count: usize, size: usize| -> Result<(), EngineError> {
+        metadata = metadata
+            .checked_add(count.checked_mul(size).ok_or_else(overflow)?)
+            .ok_or_else(overflow)?;
+        Ok(())
+    };
+    charge(layers.capacity(), std::mem::size_of::<LayerTransferData>())?;
+    for layer in layers {
+        charge(layer.layer_name.capacity(), 1)?;
+        charge(
+            layer.blocks.capacity(),
+            std::mem::size_of::<TransferBlock>(),
+        )?;
+        for block in &layer.blocks {
+            let bytes = match layer
+                .layout
+                .block_copies(block.block_idx)
+                .map_err(EngineError::Storage)?
+            {
+                BlockCopies::Contiguous(copy) => copy.bytes,
+                BlockCopies::Split { k, v } => k.bytes.checked_add(v.bytes).ok_or_else(overflow)?,
+            };
+            logical = logical.checked_add(bytes as u64).ok_or_else(overflow)?;
+        }
+    }
+    charge(ssd_writes.capacity(), std::mem::size_of::<GpuWrite>())?;
+    for write in ssd_writes {
+        charge(
+            write.batches.capacity(),
+            std::mem::size_of::<crate::storage::ssd::cufile::IoBatch>(),
+        )?;
+        for batch in &write.batches {
+            charge(
+                batch.copies.capacity(),
+                std::mem::size_of::<crate::storage::ssd::cufile::CopyRange>(),
+            )?;
+        }
+    }
+    charge(codec_groups.capacity(), std::mem::size_of::<SaveGroup>())?;
+    for group in codec_groups {
+        charge(group.key.namespace.capacity(), 1)?;
+        charge(group.key.hash.capacity(), 1)?;
+        charge(
+            group.blocks.capacity(),
+            std::mem::size_of::<(usize, usize)>(),
+        )?;
+    }
+    Ok((metadata, logical))
+}
 
 struct DeviceRestoreAdmission {
     permits: Arc<Semaphore>,
@@ -464,11 +627,14 @@ impl GpuWorkerPool {
 
     pub(crate) async fn batch_save(
         &self,
+        instance: Arc<InstanceContext>,
         layers: Vec<LayerTransferData>,
         mut ssd_writes: Vec<GpuWrite>,
         mut codec_groups: Vec<SaveGroup>,
         storage: Option<Arc<crate::storage::Storage>>,
     ) -> Result<Vec<LayerTransferData>, EngineError> {
+        let (metadata_bytes, logical_bytes) = save_shape(&layers, &ssd_writes, &codec_groups)?;
+        let admission = SaveAdmission::acquire(metadata_bytes, logical_bytes)?;
         let (reply, receiver) = oneshot::channel();
         if (!ssd_writes.is_empty() || !codec_groups.is_empty()) && !self.own_cufile_worker() {
             ssd_writes.clear();
@@ -511,6 +677,8 @@ impl GpuWorkerPool {
                     ssd_writes,
                     codec_groups,
                     ssd_admission,
+                    admission: Arc::clone(&admission),
+                    _instance: instance,
                     storage,
                     numa: self.numa_node,
                     #[cfg(feature = "tracing")]
@@ -519,10 +687,22 @@ impl GpuWorkerPool {
                 observation,
             ),
             disk,
-        )?;
-        receiver
-            .await
-            .map_err(|_| EngineError::Storage("GPU save worker disappeared".into()))?
+        )
+        .inspect_err(|_| admission.complete())?;
+        match receiver.await {
+            Ok(result) => result,
+            Err(_) => {
+                admission.retain();
+                // The caller owns the imported GPU context until this future returns.
+                // Losing a reply says nothing about already submitted device access.
+                use std::io::Write;
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "GPU save reply lost; retaining admitted Publish without a completion proof"
+                );
+                futures::future::pending().await
+            }
+        }
     }
 
     /// Reject new work; every lane releases staging and imported pointers before acknowledgement.
@@ -747,54 +927,47 @@ fn worker_loop(
                 }
                 finish_load(task, result.map(|_| ()), started, bytes, outcome);
             }
-            WorkerCommand::Save(
-                SaveTask {
-                    mut layers,
-                    reply,
-                    storage,
-                    numa,
-                    ssd_writes: _,
-                    codec_groups,
-                    ssd_admission,
-                    #[cfg(feature = "tracing")]
-                    trace_ctx,
-                },
-                mut observation,
-            ) => {
-                observation.admitted();
-                let encoded = storage
-                    .as_ref()
-                    .is_some_and(|s| s.codec != crate::StorageCodec::None);
-                let result = codec::save(
-                    &runtime,
-                    &mut layers,
-                    storage.as_deref(),
-                    numa,
-                    &codec_groups,
-                    &mut observation,
-                )
-                .and_then(|()| {
-                    if encoded {
-                        return Ok(());
-                    }
-                    process_save_task(
-                        &layers,
+            WorkerCommand::Save(mut task, mut observation) => {
+                // Borrow every task-owned allocation/admission across execution;
+                // an unwind must not drop the task before device completion.
+                let result = crate::transfer::contain_gpu_unwind(|| {
+                    observation.admitted();
+                    let encoded = task
+                        .storage
+                        .as_ref()
+                        .is_some_and(|storage| storage.codec != crate::StorageCodec::None);
+                    let result = codec::save(
                         &runtime,
+                        &mut task.layers,
+                        task.storage.as_deref(),
+                        task.numa,
+                        &task.codec_groups,
                         &mut observation,
-                        #[cfg(feature = "tracing")]
-                        trace_ctx,
                     )
-                })
-                .map(|()| layers);
-                let outcome = terminal_outcome(result.is_ok(), reply.is_closed());
-                let actual_io = if enabled() && runtime.backend.name() == "direct" && !encoded {
-                    result.as_ref().ok().map(|layers| transfer_shape(layers).0)
-                } else {
-                    None
-                };
-                observation.finish(outcome, actual_io);
-                drop(ssd_admission);
-                let _ = reply.send(result);
+                    .and_then(|()| {
+                        if encoded {
+                            return Ok(());
+                        }
+                        process_save_task(
+                            &task.layers,
+                            &runtime,
+                            &mut observation,
+                            #[cfg(feature = "tracing")]
+                            task.trace_ctx,
+                        )
+                    });
+                    let outcome = terminal_outcome(result.is_ok(), task.reply.is_closed());
+                    let actual_io = if enabled() && runtime.backend.name() == "direct" && !encoded {
+                        result.as_ref().ok().map(|_| transfer_shape(&task.layers).0)
+                    } else {
+                        None
+                    };
+                    observation.finish(outcome, actual_io);
+                    result
+                });
+                drop(task.ssd_admission);
+                task.admission.complete();
+                let _ = task.reply.send(result.map(|()| task.layers));
             }
         }
     }
