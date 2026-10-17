@@ -413,7 +413,9 @@ impl TransportClient {
 
     /// No logical error or process-liveness observation ends submitted device work.
     pub(crate) fn retain_unproven_publish(request_id: u64) -> ! {
-        log::error!(
+        use std::io::Write;
+        let _ = writeln!(
+            std::io::stderr().lock(),
             "Publish {request_id} has no physical completion proof; retaining caller and source owners"
         );
         loop {

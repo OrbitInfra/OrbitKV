@@ -280,6 +280,39 @@ def check_inputs(
         manifests = [available[path] for path in runtime_manifest_paths]
     for manifest in manifests:
         check_runtime_manifest(manifest, deadline)
+    if "mutable_runtime_domain" in contract:
+        domain = contract["mutable_runtime_domain"]
+        root = Path(domain["root"])
+        directories = domain["directories"]
+        expected_paths = {str(root), str(root / "nodes"), str(root / "services")}
+        if (
+            not root.is_absolute()
+            or root.resolve(strict=True) != root
+            or not isinstance(directories, list)
+            or len(directories) != 3
+            or {row["path"] for row in directories} != expected_paths
+        ):
+            raise RuntimeError("Invalid private runtime directory declarations")
+        for row in directories:
+            remaining(deadline)
+            path = Path(row["path"])
+            metadata = path.lstat()
+            values = {
+                "device": metadata.st_dev,
+                "inode": metadata.st_ino,
+                "mode": metadata.st_mode,
+                "uid": metadata.st_uid,
+            }
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or path.resolve(strict=True) != path
+                or any(
+                    type(row[field]) is not int or row[field] != value
+                    for field, value in values.items()
+                )
+            ):
+                raise RuntimeError("Private runtime directory identity changed")
+        remaining(deadline)
     protected_resources = contract["protected_resources"]
     if not isinstance(protected_resources, list) or len(protected_resources) > 64:
         raise RuntimeError("Invalid protected resource declarations")

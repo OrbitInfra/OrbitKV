@@ -1,11 +1,16 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use base64::display::Base64Display;
+use base64::engine::general_purpose::STANDARD;
 use serde::Serialize;
 
 use super::{CopyDesc, LocalTensor, RawCopy};
 
 static NEXT_TRACE: AtomicU64 = AtomicU64::new(1);
+
+const PUBLICATION_BYTES: usize = 64 * 1024;
+const RECORD_TAG: &str = "local_raw_copy ";
 
 const COPY_FIELDS: [&str; 15] = [
     "device",
@@ -25,46 +30,45 @@ const COPY_FIELDS: [&str; 15] = [
     "source_offset",
 ];
 
-#[derive(Clone)]
-struct Geometry {
-    device: u64,
-    host: u64,
-    host_device: u64,
-    size: usize,
-    device_allocation: usize,
-    host_registration: usize,
-    registered_device_start: u64,
-    registered_device_bytes: usize,
-    destination_offset: u64,
-    arena_id: u64,
-    arena_bytes: usize,
-    source_allocation_id: u64,
-    source_allocation_offset: u64,
-    source_allocation_bytes: u64,
-    source_offset: u64,
+type Geometry = [u64; 15];
+
+fn encode_integer(mut value: u64, data: &mut Vec<u8>) {
+    while value >= 128 {
+        data.push((value as u8 & 127) | 128);
+        value >>= 7;
+    }
+    data.push(value as u8);
 }
 
-impl Serialize for Geometry {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        [
-            self.device,
-            self.host,
-            self.host_device,
-            self.size as u64,
-            self.device_allocation as u64,
-            self.host_registration as u64,
-            self.registered_device_start,
-            self.registered_device_bytes as u64,
-            self.destination_offset,
-            self.arena_id,
-            self.arena_bytes as u64,
-            self.source_allocation_id,
-            self.source_allocation_offset,
-            self.source_allocation_bytes,
-            self.source_offset,
-        ]
-        .serialize(serializer)
+fn serialize_geometry<S: serde::Serializer>(
+    geometry: &[Geometry],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let Some(capacity) = geometry.len().checked_mul(COPY_FIELDS.len() * 11) else {
+        return Err(serde::ser::Error::custom("geometry frame is too large"));
+    };
+    let mut data = Vec::new();
+    data.try_reserve_exact(capacity)
+        .map_err(serde::ser::Error::custom)?;
+    if let Some(first) = geometry.first() {
+        for column in 0..COPY_FIELDS.len() {
+            let mut value = first[column];
+            let mut run = 0_u64;
+            for row in geometry {
+                if row[column] == value {
+                    run += 1;
+                } else {
+                    encode_integer(run, &mut data);
+                    encode_integer(value, &mut data);
+                    value = row[column];
+                    run = 1;
+                }
+            }
+            encode_integer(run, &mut data);
+            encode_integer(value, &mut data);
+        }
     }
+    serializer.collect_str(&Base64Display::new(&data, &STANDARD))
 }
 
 struct Batch {
@@ -123,6 +127,9 @@ enum TraceRecord<'a> {
         begin_ns: u64,
         submitted_ns: u64,
         success: bool,
+        copies_encoding: &'static str,
+        copy_rows: usize,
+        #[serde(serialize_with = "serialize_geometry")]
         copies: &'a [Geometry],
     },
     #[serde(rename = "local_raw_copy_part")]
@@ -166,6 +173,8 @@ pub(super) struct LocalCopyTrace {
     closed: bool,
     part: Option<Part>,
     geometry: HashMap<u64, Geometry>,
+    publication: Option<Box<[u8]>>,
+    publication_len: usize,
 }
 
 impl LocalCopyTrace {
@@ -187,6 +196,8 @@ impl LocalCopyTrace {
             closed: false,
             part: None,
             geometry: HashMap::new(),
+            publication: None,
+            publication_len: 0,
         }
     }
 
@@ -212,7 +223,7 @@ impl LocalCopyTrace {
 
     fn identity(&self) -> TraceIdentity {
         TraceIdentity {
-            schema: 3,
+            schema: 4,
             pid: std::process::id(),
             trace_id: self.id,
             device: self.device,
@@ -225,7 +236,7 @@ impl LocalCopyTrace {
         &mut self,
         planned_descriptors: usize,
         final_part: bool,
-        mut write: impl FnMut(TraceRecord<'_>),
+        mut write: impl FnMut(TraceRecord<'_>) -> bool,
     ) {
         if self.closed {
             return;
@@ -234,13 +245,15 @@ impl LocalCopyTrace {
             self.invalid = Some("unfinished_previous_part");
             return;
         }
-        write(TraceRecord::Open {
+        if !write(TraceRecord::Open {
             identity: self.identity(),
             max_pitch: self.max_pitch,
             limit: self.limit,
             records_before: self.used,
             copy_fields: &COPY_FIELDS,
-        });
+        }) {
+            self.invalid.get_or_insert("capture_publication_failed");
+        }
         self.geometry.clear();
         if self.admit(planned_descriptors.saturating_mul(2).saturating_add(1))
             && self.geometry.try_reserve(planned_descriptors).is_err()
@@ -266,23 +279,23 @@ impl LocalCopyTrace {
         }
         self.geometry.insert(
             copy.device,
-            Geometry {
-                device: copy.device,
-                host: copy.host as u64,
-                host_device: copy.host_device,
-                size: copy.size,
-                device_allocation: copy.device_allocation,
-                host_registration: copy.host_registration,
-                registered_device_start: tensor.address,
-                registered_device_bytes: tensor.bytes,
-                destination_offset: raw.destination_offset,
-                arena_id: raw.source.arena_id,
-                arena_bytes,
-                source_allocation_id: raw.source.allocation_id,
-                source_allocation_offset: raw.source.allocation_offset,
-                source_allocation_bytes: raw.source.allocation_size,
-                source_offset: raw.source.offset,
-            },
+            [
+                copy.device,
+                copy.host as u64,
+                copy.host_device,
+                copy.size as u64,
+                copy.device_allocation as u64,
+                copy.host_registration as u64,
+                tensor.address,
+                tensor.bytes as u64,
+                raw.destination_offset,
+                raw.source.arena_id,
+                arena_bytes as u64,
+                raw.source.allocation_id,
+                raw.source.allocation_offset,
+                raw.source.allocation_size,
+                raw.source.offset,
+            ],
         );
     }
 
@@ -304,7 +317,7 @@ impl LocalCopyTrace {
                 self.invalid = Some("submission_geometry_missing");
                 return None;
             };
-            geometry.push(bounds.clone());
+            geometry.push(*bounds);
         }
         let mut shape = crate::transfer::raw_copy_shape(copies, self.max_pitch);
         shape.device = self.device as u64;
@@ -348,7 +361,13 @@ impl LocalCopyTrace {
         if self.part.is_none() {
             return;
         }
-        self.finish_part_with(host_drain_ns, success, Self::write);
+        let mut publication = self.publication.take();
+        let mut publication_len = std::mem::take(&mut self.publication_len);
+        self.finish_part_with(host_drain_ns, success, |record| {
+            Self::write_buffered(record, &mut publication, &mut publication_len)
+        });
+        self.publication = publication;
+        self.publication_len = publication_len;
         log::logger().flush();
     }
 
@@ -356,7 +375,7 @@ impl LocalCopyTrace {
         &mut self,
         host_drain_ns: u64,
         success: bool,
-        mut write: impl FnMut(TraceRecord<'_>),
+        mut write: impl FnMut(TraceRecord<'_>) -> bool,
     ) {
         let Some(part) = self.part.take() else {
             return;
@@ -369,7 +388,7 @@ impl LocalCopyTrace {
             let submitted: usize = part.batches.iter().map(|batch| batch.geometry.len()).sum();
             for (batch_id, batch) in part.batches.iter().enumerate() {
                 let shape = &batch.shape;
-                write(TraceRecord::Batch {
+                if !write(TraceRecord::Batch {
                     identity,
                     part_id,
                     batch_id,
@@ -387,13 +406,17 @@ impl LocalCopyTrace {
                     begin_ns: batch.begin_ns,
                     submitted_ns: batch.submitted_ns,
                     success: shape.success,
+                    copies_encoding: "uvarint-rle-base64-v1",
+                    copy_rows: batch.geometry.len(),
                     copies: &batch.geometry,
-                });
+                }) {
+                    self.invalid.get_or_insert("capture_publication_failed");
+                }
                 successful &= shape.success;
                 self.batches += 1;
                 self.descriptors += batch.geometry.len();
             }
-            write(TraceRecord::Part {
+            if !write(TraceRecord::Part {
                 identity,
                 part_id,
                 final_part: part.final_part,
@@ -403,13 +426,15 @@ impl LocalCopyTrace {
                 host_drain_ns,
                 drained_ns,
                 success,
-            });
+            }) {
+                self.invalid.get_or_insert("capture_publication_failed");
+            }
             successful &= submitted == part.planned_descriptors;
         }
         if !successful && self.invalid.is_none() {
             self.invalid = Some("incomplete_or_failed_part");
         }
-        write(TraceRecord::Complete {
+        if !write(TraceRecord::Complete {
             identity,
             parts: self.parts + 1,
             batches: self.batches,
@@ -417,16 +442,113 @@ impl LocalCopyTrace {
             records_reserved: self.used,
             invalid_reason: self.invalid,
             complete: self.invalid.is_none() && successful,
-        });
+        }) {
+            self.invalid.get_or_insert("capture_publication_failed");
+        }
         self.parts += 1;
         self.closed = self.invalid.is_some();
         self.geometry.clear();
     }
 
-    fn write(record: TraceRecord<'_>) {
+    fn write(record: TraceRecord<'_>) -> bool {
         match serde_json::to_string(&record) {
-            Ok(fields) => log::info!("local_raw_copy {fields}"),
-            Err(error) => log::error!("Cannot serialize local raw-copy capture: {error}"),
+            Ok(fields) => {
+                log::info!("local_raw_copy {fields}");
+                true
+            }
+            Err(error) => {
+                log::error!("Cannot serialize local raw-copy capture: {error}");
+                false
+            }
+        }
+    }
+
+    fn publish_pending(publication: &Option<Box<[u8]>>, used: &mut usize) -> bool {
+        if *used == 0 {
+            return true;
+        }
+        let fields = publication
+            .as_ref()
+            .and_then(|buffer| buffer.get(..*used))
+            .and_then(|buffer| std::str::from_utf8(buffer).ok());
+        let success = if let Some(fields) = fields {
+            log::info!("{fields}");
+            true
+        } else {
+            log::error!("Invalid local raw-copy publication buffer");
+            false
+        };
+        *used = 0;
+        success
+    }
+
+    fn publish_fields(
+        fields: &str,
+        complete: bool,
+        publication: &mut Option<Box<[u8]>>,
+        used: &mut usize,
+    ) -> bool {
+        let Some(frame_bytes) = RECORD_TAG.len().checked_add(fields.len()) else {
+            Self::publish_pending(publication, used);
+            log::error!("Local raw-copy publication frame is too large");
+            return false;
+        };
+        if frame_bytes > PUBLICATION_BYTES {
+            let success = Self::publish_pending(publication, used);
+            log::info!("local_raw_copy {fields}");
+            return success;
+        }
+        if publication.is_none() {
+            let mut buffer = Vec::new();
+            if let Err(error) = buffer.try_reserve_exact(PUBLICATION_BYTES) {
+                Self::publish_pending(publication, used);
+                log::error!("Cannot allocate local raw-copy publication buffer: {error}");
+                return false;
+            }
+            buffer.resize(PUBLICATION_BYTES, 0);
+            *publication = Some(buffer.into_boxed_slice());
+        }
+        let fits = used
+            .checked_add(usize::from(*used != 0))
+            .and_then(|size| size.checked_add(frame_bytes))
+            .is_some_and(|size| size <= PUBLICATION_BYTES);
+        let mut success = true;
+        if !fits {
+            success = Self::publish_pending(publication, used);
+        }
+        let Some(buffer) = publication else {
+            log::error!("Missing local raw-copy publication buffer");
+            return false;
+        };
+        if *used != 0 {
+            buffer[*used] = b'\n';
+            *used += 1;
+        }
+        let end = *used + RECORD_TAG.len();
+        buffer[*used..end].copy_from_slice(RECORD_TAG.as_bytes());
+        *used = end;
+        let end = *used + fields.len();
+        buffer[*used..end].copy_from_slice(fields.as_bytes());
+        *used = end;
+        if complete {
+            success &= Self::publish_pending(publication, used);
+        }
+        success
+    }
+
+    fn write_buffered(
+        record: TraceRecord<'_>,
+        publication: &mut Option<Box<[u8]>>,
+        used: &mut usize,
+    ) -> bool {
+        let complete = matches!(&record, TraceRecord::Complete { .. });
+        match serde_json::to_string(&record) {
+            Ok(fields) => Self::publish_fields(&fields, complete, publication, used),
+            Err(error) => {
+                Self::publish_pending(publication, used);
+                log::error!("Cannot serialize local raw-copy capture: {error}");
+                false
+            }
         }
     }
 }

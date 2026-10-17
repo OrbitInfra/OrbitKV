@@ -1407,11 +1407,65 @@ cannot be added to infer GPU restore overhead or promote a transfer backend.
 See the [profile result and limits](../docs/kernel-optimization.md#native-trace-cpu-profile).
 
 
-Schema-3 engine-local captures store each copy as fifteen unsigned integers in
-the `copy_fields` order declared by its opening record. `benches.local_restore_shapes`
-validates that order and row width before restoring the named geometry consumed
-by the production compiler. Archived schema-2 captures remain readable; mixing
-formats within an executor is invalid. The format change preserves every value,
-submission order, cumulative capture budget and synchronous publication/flush.
-Use the same complete byte, drain and observation-overhead gates described above;
-smaller output alone does not qualify application performance.
+Set `ORBITKV_TRACE_PROFILE_PROBE=thread` for opt-in calling-thread CPU diagnostics;
+omission or `off` disables the per-part probes, and unknown values fail. Sample
+schema 2 includes the mode, profile TID and CPU-clock resolution. Six CPU-clock
+readings surround open, geometry, batch capture, finish and flush, each bracketed
+by wall reads. Raw stamps and signed wall-minus-CPU interval bounds are retained;
+these windows include timer bookkeeping and are not identical to the historical
+stage timers. In whole mode, synchronous publication flush remains in `finish`;
+the separate explicit flush window does almost no work.
+
+`total_ns` includes six clock probes. `observed_ns` also encloses two
+`RUSAGE_THREAD` snapshots and preserves raw envelope timestamps. Both exclude
+JSON result construction, trace construction/destruction and input preparation.
+The coarse snapshots report enclosing context switches and faults; they do not
+count allocations or identify the cause of a stage's latency. Off/thread
+calibration uses the same newly built executable, validates every raw bracket,
+usage delta, canonical geometry row and production-compiler result, and guards
+both timing metrics independently. Never subtract these CPU windows from
+unmatched original stage timers or clamp a negative residual to zero. See the
+[diagnostic contract](../docs/kernel-optimization.md#thread-cpu-decomposition)
+before using observations to choose another candidate.
+
+
+Schema-4 engine-local captures encode all fifteen unsigned geometry values in
+column order as canonical positive run-length/unsigned-value LEB128 pairs,
+then Base64, with the `uvarint-rle-base64-v1` tag and exact row count. Each
+column reconstructs exactly that many rows in the original submission order.
+Every opening record still declares the exact `copy_fields` order.
+`benches.local_restore_shapes` validates framing, count and pre-decode allocation
+bounds, positive run sums and canonical adjacent runs before restoring the named
+geometry consumed by the production compiler. The offline compiler buffers JSON
+file input; this validation is outside native profile timing. Archived schema-2
+named and schema-3 array captures remain readable; mixing
+formats within an executor is invalid. The ignored Rust CPU replay above accepts
+schema-2/3 input and exercises the current writer; decoding and exact comparison
+run after the measured process exits. Capture budgets, submission/drain clocks
+and synchronous publication/flush are unchanged. Use the same complete byte,
+drain and observation-overhead gates; smaller output alone does not qualify
+application performance.
+
+
+For prospective within-process CPU trace calibration, freeze the benchmark-only
+native test ELF, captured input, accepted canonical encoding, production layout
+validator, maintained controller/readers, runtime dependencies and a fixed
+contract outside the checkout. Obtain independent method/source and launch
+review before collecting data. `benches.native_trace_calibration` owns the
+16-process order, complete validation, actual child waits and independent
+process bootstrap; it requires the reviewed input-index hash and one-use
+launch admission. See [the interleaved measurement contract](../docs/kernel-optimization.md#prospective-interleaved-calibration).
+
+The native profile's opt-in variables are
+`ORBITKV_TRACE_PROFILE_CONTRAST=aa|ab` and
+`ORBITKV_TRACE_PROFILE_ORDER=ABBABAAB|BAABABBA`, together with fixed probe `off`
+and mode `whole`. Both settings are required together; invalid or mixed fixed
+probe settings are rejected. They select schema 3 and preserve the original
+schema 2 behavior when absent. Do not run ad hoc samples before freezing the
+cohort or treat these CPU times as GPU/serving performance.
+
+Run the lightweight contract and direct-child cleanup tests with:
+
+```bash
+python -m pytest benches/tests/test_native_trace_calibration.py
+```

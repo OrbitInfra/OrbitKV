@@ -299,8 +299,13 @@ impl ChannelClient {
         for payload in payloads {
             // One logical publish can use several descriptor generations.
             // Every chunk retains the source pages until its D2H completes.
-            let _ =
-                self.call_descriptor(CommandCode::Publish, request_id, &payload, 0, Some(peer))?;
+            let call = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.call_descriptor(CommandCode::Publish, request_id, &payload, 0, Some(peer))
+            }));
+            match call {
+                Ok(result) => result?,
+                Err(_) => TransportClient::retain_unproven_publish(request_id),
+            };
         }
         Ok(())
     }

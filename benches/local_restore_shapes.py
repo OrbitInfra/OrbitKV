@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import subprocess
@@ -30,8 +31,59 @@ COPY_FIELDS = (
 )
 
 
+def _decode_integer(data: bytes, cursor: int) -> tuple[int, int]:
+    value = 0
+    for digit in range(10):
+        if cursor == len(data):
+            raise ValueError("Truncated local H2D descriptor integer")
+        byte = data[cursor]
+        cursor += 1
+        if digit == 9 and byte > 1:
+            raise ValueError("Local H2D descriptor integer exceeds u64")
+        value |= (byte & 127) << (digit * 7)
+        if byte < 128:
+            if digit and byte == 0:
+                raise ValueError("Noncanonical local H2D descriptor integer")
+            return value, cursor
+    raise ValueError("Unterminated local H2D descriptor integer")
+
+
 def _decode_copies(batch: dict) -> None:
     copies = batch.get("copies")
+    if batch["schema"] == 4:
+        rows = batch.get("copy_rows")
+        if (
+            type(rows) is not int
+            or rows != batch["descriptors"]
+            or not 1 <= rows <= 65536
+            or batch.get("copies_encoding") != "uvarint-rle-base64-v1"
+            or not isinstance(copies, str)
+        ):
+            raise ValueError("Malformed encoded local H2D descriptor frame")
+        max_bytes = rows * len(COPY_FIELDS) * 11
+        if len(copies) > 4 * ((max_bytes + 2) // 3):
+            raise ValueError("Encoded local H2D geometry exceeds its bounded frame")
+        data = base64.b64decode(copies, validate=True)
+        if len(data) > max_bytes or base64.b64encode(data).decode("ascii") != copies:
+            raise ValueError("Noncanonical local H2D descriptor encoding")
+        copies = [[0] * len(COPY_FIELDS) for _ in range(rows)]
+        cursor = 0
+        for column in range(len(COPY_FIELDS)):
+            next_row = 0
+            previous = None
+            while next_row < rows:
+                run, cursor = _decode_integer(data, cursor)
+                if not 1 <= run <= rows - next_row:
+                    raise ValueError("Local H2D descriptor run exceeds its column")
+                value, cursor = _decode_integer(data, cursor)
+                if value == previous:
+                    raise ValueError("Noncanonical adjacent local H2D descriptor runs")
+                for index in range(next_row, next_row + run):
+                    copies[index][column] = value
+                next_row += run
+                previous = value
+        if cursor != len(data):
+            raise ValueError("Extra local H2D descriptor bytes")
     if not isinstance(copies, list) or len(copies) != batch["descriptors"]:
         raise ValueError("Missing local H2D descriptor geometry")
     if any(not isinstance(row, list) or len(row) != len(COPY_FIELDS) for row in copies):
@@ -140,7 +192,7 @@ def _collect(log_path: Path) -> dict:
         if (
             not isinstance(event, dict)
             or type(event.get("schema")) is not int
-            or event["schema"] not in (2, 3)
+            or event["schema"] not in (2, 3, 4)
         ):
             raise ValueError("Unknown local H2D observation schema")
         key = _integer(event, "pid", 1), _integer(event, "trace_id", 1)
@@ -148,7 +200,7 @@ def _collect(log_path: Path) -> dict:
         sequence = _integer(event, "sequence")
         stage = event.get("stage")
         if stage == "local_raw_copy_open":
-            if event["schema"] == 3 and event.get("copy_fields") != list(COPY_FIELDS):
+            if event["schema"] in (3, 4) and event.get("copy_fields") != list(COPY_FIELDS):
                 raise ValueError("Unknown compact local H2D descriptor order")
             if not 1 <= _integer(event, "limit") <= 65536:
                 raise ValueError("Invalid local H2D capture budget")
@@ -204,7 +256,7 @@ def _collect(log_path: Path) -> dict:
             retained = sum(batch["descriptors"] for batch in trace["batches"])
             if retained + event["descriptors"] > trace["header"]["limit"]:
                 raise ValueError("Local H2D geometry exceeds capture budget")
-            if event["schema"] == 3:
+            if event["schema"] in (3, 4):
                 _decode_copies(event)
             _geometry(event)
             trace["batches"].append(event)

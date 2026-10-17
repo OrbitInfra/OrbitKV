@@ -794,20 +794,41 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   controls, independent source acceptance and a new exact freeze/launch review
   are required. Preserve the incompatible freeze and denied READY unchanged.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
+  Independent source/CPU review accepts the `e9865c08` evidence-capacity delta.
+  Its first installed precheck remains failed: the declared 117 mapped files
+  differed from the actual 78. A separate predeclared consumed-runtime freeze
+  then passes one GPU3 precheck with both native CUDA parameterizations: explicit
+  registration, Publish and four full 128 KiB restores into cleared destinations.
+  The unchanged CPU result oracle, complete mapped executable provenance and
+  normal Manager/client release pass independent result review. This accepts
+  healthy local registration/Publish/Restore only. Final credit repayment,
+  partial-export retention, both adapter lifecycles and physical termination
+  remain open; the preserved PID1 supervisor zombie and IPC remnants are not
+  reclamation or GPU-reuse proof. That precheck launched no formal cells.
+  Accepted evidence is under `codex-gpu3-e986-precheck-result-1/` in that artifact root.
+  The integrated installed-wheel cohort at `1c077ae0` has independent acceptance
+  for its bounded registration prerequisite: four H20 cells/seven cases cover
+  partial-export credit repayment and conservative throw retention, duplicate
+  registration rejection, complete native Restore byte assertions, vLLM producer
+  stream fencing and released SGLang pool retirement with independent holders.
+  All seven Managers, native children, the controller and its foreground SSH
+  owner have literal normal waits. Frozen runtime checks and the selected GPU's
+  empty postflight pass. One CUDA IPC producer warning and a 65,536-byte uncertain
+  throw attempt remain explicit limits; physical fault reclamation, engine page
+  generations, model serving and performance remain unqualified. Evidence is at
+  `/root/orbitkv-artifacts/s3-installed-registration-completion-20261017/`.
+  The next bounded delivery is the matching installed official-engine model E2E
+  gate before merging [PR #251](https://github.com/feichai0017/orbitkv/pull/251),
+  with a fresh runtime freeze and launch review. Historical failed cohorts,
+  frozen thresholds and retained old resources keep their original status.
 
-- The `e9865c08` installed package now has independent healthy local CUDA
-  registration/Publish/raw-DRAM Restore precheck acceptance. Both cases, complete
-  78-file actual Manager provenance, strict unregister/close, native child exits
-  and controller actual wait pass. Evidence is under
-  `codex-gpu3-e986-precheck-result-1/` in the explicit-registration artifact root.
-  The preceding 117-file prediction failure stays failed/quarantined. Original
-  credit snapshots prove importer handoff, not final repayment; persistent SHM
-  and a PID1-owned supervisor zombie remain explicit limits. Neither adapter
-  faults, SSD/RDMA nor S3 physical reclamation is qualified by this precheck.
 - A separate Publish safety candidate retains the existing synchronous caller,
   descriptors and source owners after post-submit transport/notification errors
   or Manager process exit without a matched completion. The previous path could
   return an error after pidfd exit and let adapters report save completion.
+  A post-submit Rust unwind is caught at the same Publish owner; retention uses
+  a fallible stderr diagnostic rather than calling a potentially panicking
+  custom logger. An isolated real logger-unwind control keeps the caller hold.
   Real process controls must reject that return; normal late replies and
   never-submitted failures keep their existing behavior. This is conservative
   retention, not the bounded live-stall response or page-generation substage;
@@ -954,13 +975,151 @@ Complete raw evidence and the runtime closure are retained outside Git with
 [PR #249](https://github.com/feichai0017/orbitkv/pull/249). This does not promote
 inference contention, a copy default, serving performance or S3 lifetime.
 
-**Next bounded delivery:** reduce the remaining native encoding/publication cost
-inside the existing owner with a lossless representation. Preserve every scalar,
-record order, cumulative cap, completion clock and synchronous flush; retain the
-same complete byte/capture/drain controls and 5% guard. Any new candidate needs
-independent code/runtime/launch review and a newly frozen cohort; this completed
-cohort is not retried or replaced. Inference contention and further kernel/default
-promotion remain blocked by the observation gate; S3/S4/S5 limits are unchanged.
+**Remaining delivery:** reduce native observation cost inside the existing
+owner. The column-RLE candidate below passes CPU retention but still fails the
+complete H20 observation guard. Profile the remaining capture, encoding and
+synchronous publication cost before selecting another change. Preserve every
+scalar, record order, cumulative cap, completion clock and synchronous flush;
+retain the complete byte/capture/drain controls and 5% guard. Any new candidate
+needs independent code/runtime/launch review and a newly frozen cohort; completed
+cohorts are not retried or replaced. Inference contention and further
+kernel/default promotion remain blocked; S3/S4/S5 limits are unchanged.
+
+**JSON workspace candidate: rejected by its fixed CPU comparison.**
+The candidate at `b16bead2` reuses at most 64 KiB of JSON workspace in the
+existing owner without changing canonical bytes, record order, clocks, capture
+caps or synchronous flush. All twenty fixed CPU cells preserve 720 replays and
+87,091,200 geometry values, with normal profile/compiler/controller waits and
+unchanged frozen inputs. Staged encoding ratio is 0.8040, with independent-pair
+95% interval [0.7117, 0.9147], but whole-capture ratio is 1.0333
+[0.9134, 1.1688]; two whole pairs exceed 1.05. The candidate fails its
+predeclared whole-capture guards and is not retained. Production source is
+restored to the merged `2d6c77ac` baseline; the rejected source, binaries and
+complete failed cohort remain outside Git at
+`/root/orbitkv-artifacts/s4-trace-json-workspace-20261016/`.
+No H20 cohort or dependent inference-contention run is admitted; prior results
+and S3/S4/S5 limits remain unchanged. Inspect capture allocation, memory footprint and whole-operation
+variance before selecting another bounded candidate; the component improvement
+does not establish a whole-path gain or identify the cause of failure.
+
+**Baseline A/A diagnosis: collected; repeatability remains scoped.**
+The accepted native CPU executable is compared with itself in 32 fixed whole-profile
+cells, with four complete ABBA/BAAB blocks separately at CPU0 and CPU2. All cells
+preserve complete geometry/canonical bytes and normal profile/compiler waits.
+CPU0 does not demonstrate the frozen symmetric 5% repeatability band: block
+geometric ratio 0.9146, 95% interval [0.7922, 1.0086]. CPU2 demonstrates it only
+in this cohort: 0.9981 [0.9945, 1.0017]. These are identical-code repeatability
+results, not optimization gains, a CPU ranking or a correction to prior FAILs.
+Shared resource counters do not establish the cause of timed-part differences.
+See the [A/A methodology](kernel-optimization.md#baseline-aa-repeatability-diagnosis)
+and complete evidence at `/root/orbitkv-artifacts/s4-trace-aa-diagnosis-20261016/`.
+Declare and validate subsequent measurement conditions before another candidate;
+no CPU setting, GPU run or dependent inference-contended experiment is promoted.
+
+**Thread CPU decomposition: implemented; probe overhead unqualified.**
+The explicit CPU benchmark adds opt-in calling-thread CPU stamps and enclosing
+context-switch/fault counters. Keep the production owner and original stage
+clocks unchanged. Independently calibrate off/thread in the same newly built
+executable using 32 fixed processes, guarding both the existing total and an
+outer envelope that includes the resource probes, separately at CPU0 and CPU2.
+Preserve signed, matched-endpoint residuals and complete geometry validation.
+The [measurement contract](kernel-optimization.md#thread-cpu-decomposition)
+precedes the sole cohort. All 32 cells preserve complete geometry and normal
+profile/compiler/controller exits. CPU0 fails both guards: total ratio 1.0852
+[1.0012, 1.1762], enclosing ratio 1.0861 [1.0015, 1.1777]. CPU2 passes both
+within this cohort: 1.0137 [1.0107, 1.0166] and 1.0140 [1.0111, 1.0170].
+The required conjunction fails; the optional diagnostic remains unqualified.
+Retain every sample and the historical CPU0 A/A failure; do not interpret this as
+an established probe cost, root cause or CPU ranking. No new candidate, H20 run
+or dependent inference contention is admitted.
+
+**Measurement-method preparation (2026-10-17): archive description only.**
+All 32 sealed baseline A/A cells and 768 measured parts are reproduced without
+new native/GPU runs. The posthoc sequence contrast does not qualify a method or
+change any prior FAIL. Before another same-binary instrumentation comparison,
+predeclare balanced within-process order, independent restarted-process units,
+both CPUs, original 5% guards and complete geometry/byte/drain controls. Obtain
+method/source and launch review before collection. This calibration cannot
+validate earlier between-binary optimization comparisons or promote serving.
+The description and reproduction remain outside Git at
+`/root/orbitkv-artifacts/s4-paired-measurement-preparation-20261017/`.
+
+**Prospective interleaved calibration (2026-10-17): implemented; qualification FAIL.**
+The sole fixed 16-process CPU cohort completes all 576 parts (384 measured),
+full geometry/canonical-byte/cap/drain validation and 33 normal child waits.
+The [prospective median3 contract](kernel-optimization.md#prospective-interleaved-calibration)
+keeps both CPUs and original numeric 5% guards. All process estimates and
+bootstrap intervals satisfy their guards, but adjacent contrasts fail:
+CPU0 A/A 7/16 and A/B 3/16; CPU2 A/A passes and A/B fails 1/16, for both metrics.
+A/A prerequisite and A/B conjunction fail; the method and optional probe remain
+unqualified. Sequence medians do not bound individual parts, sequence sums or
+former process medians. No old FAIL, hardware/default or serving boundary changes;
+no replacement or subsequent campaign. Complete evidence remains outside Git at
+`/root/orbitkv-artifacts/s4-interleaved-calibration-20261017/`.
+
+**Bounded synchronous publication: CPU retention accepted; H20 overhead FAIL.**
+The candidate groups already-drained diagnostic JSON lines into
+synchronous log messages of at most 64 KiB. Keep opening records on the original
+pre-submission path, all tagged JSON lines in order, intact oversized records,
+and terminal publication plus logger flush before returning. Clock placement,
+cumulative capture budgets and physical ownership remain unchanged. Measure
+chunk assembly and terminal-tail publication inside the existing whole-operation
+and staged publication clocks; retain at most 64 KiB of publication payload
+storage per trace, allocated lazily inside the measured path. Allocator bookkeeping
+and temporary serialization storage remain separate measured costs. Log event
+grouping changes; compatibility is limited to tested line-preserving loggers.
+Independent design, source and complete CPU-data review accepts retention at
+`6265bc8c` against merged `6a00e221`. All twenty fixed cells and 720 replays
+preserve 87,091,200 reconstructed geometry values. The whole-capture geometric
+ratio is 0.8256, with independent-pair 95% interval [0.7514, 0.9071]; all five
+whole pairs pass the frozen 1.05 guard. Synchronous publication ratio is 0.4876
+[0.4327, 0.5472]. These are CPU replay costs, not GPU restore or serving gains.
+The matching installed wheel/runtime and fresh H20 launch pass independent
+review. The sole sixteen-cell cohort completes 48 full-layout restores and 96
+corruption controls, with normal SDK/Manager/controller/foreground SSH waits
+and unchanged frozen files. Native-only geometric ratio is 1.0567, with 95%
+interval [1.0437, 1.0770]; combined is 1.0538 [1.0466, 1.0612]. Both fail the
+unchanged 1.05 guard. Driver-only is 1.0033 [0.9981, 1.0109] and passes. The
+terminal status is `PILOT_OVERHEAD_FAIL`; dependent inference contention remains
+blocked. CPU retention does not qualify GPU restoration, serving or defaults.
+Prior valid failed cohorts and S3/S4/S5 limits remain unchanged. The KDA draft,
+fixed guards and complete evidence are outside Git at
+`/root/orbitkv-artifacts/s4-trace-publication-20261016/`.
+
+The first schema-4 row-varint candidate at `5fb3d61f` passes independent source
+and complete CPU-data review, but fails its predeclared retention criteria.
+All twenty processes preserve 720 restores and every recorded value; the whole
+ratio's independent-pair 95% upper bound is 1.1427, its worst pair is 1.4275,
+and the encoding geometric ratio is 1.2726. The candidate is not retained and
+does not authorize H20. Its frozen source, reader, binaries and complete failed
+cohort remain at `/root/orbitkv-artifacts/s4-varint-trace-20261016/`.
+
+The distinct follow-up uses canonical column run-length/value pairs with an
+explicit row count and `uvarint-rle-base64-v1` tag. It preserves all fifteen
+unsigned values and their row order; the bounded reader restores named geometry
+for the unchanged checks. Capture, clocks, cumulative caps and synchronous flush
+remain unchanged. Independent review accepts CPU retention at `afe30921`:
+all twenty cells, 720 replays and 87,091,200 reconstructed values pass. Whole
+candidate/baseline geometric ratio is 0.7370, with independent-pair 95% interval
+[0.6157, 0.8822]; every whole pair passes the frozen 1.05 guard. Staged encoding
+ratio is 0.6430. These are CPU replay results, not GPU restore or serving gains.
+
+The complete CUDA 13 wheel and consumed-import closure pass independent
+runtime/READY/launch review in an isolated H20 prefix. The sole fresh sixteen-cell
+cohort completes 48 full-layout restores and 96 corruption controls with actual
+normal process waits and unchanged frozen inputs. Four independent matched
+blocks distinguish native-only, CUDA-driver-only and combined observation from
+off. Native-only geometric ratio is 1.0582, with 95% interval [1.0481, 1.0708];
+combined is 1.0609 [1.0567, 1.0656]. Both fail the unchanged 1.05 guard.
+Driver-only is 0.9966 [0.9915, 1.0018] and passes. The exact terminal status is
+`PILOT_OVERHEAD_FAIL`. There is no second cohort or replacement cell. This is
+complete-restoration host-wall observation evidence, not p99, model serving or
+a backend/default qualification; inference contention remains blocked.
+
+The offline DMA fixture separately buffers JSON input; its identical full
+compiler receipt is independently accepted and its validation time stays outside
+trace measurement. CPU retention, terminal raw data and the full frozen runtime
+remain outside Git at `/root/orbitkv-artifacts/s4-rle-trace-20261016/`.
 
 - Profile actual adapter hashing/conversions, destination checks, fragmentation,
   dispatch, scratch allocation and repeated shared-prefix H2D before selecting
@@ -1064,6 +1223,49 @@ or relaxed log rule is installed, and the support matrix is unchanged.
 immutable local static PEFT identity at `47fea821`; the official dense query-control
 handshake at `1ab67a58`. These do not qualify live weight changes, dynamic adapter
 mutation or physical multi-rank recovery.
+
+**Public worker preparation (2026-10-17): upstream contribution; adoption open.**
+The isolated SGLang candidate at `ae5f357e` adds an optional registered-backend
+preparation callback before every runner in `TpModelWorker.init_cuda_graphs`.
+It preserves original factories, selects the published backend and passes the
+original worker and decode-capture flag. Invalid registration is rejected before
+insertion, and preparation failure stops before capture. The candidate-source
+registry/worker suite passes 32 CPU tests.
+[SGLang issue #44855](https://github.com/sgl-project/sglang/issues/44855) and
+[draft PR #44856](https://github.com/sgl-project/sglang/pull/44856) track the generic
+interface proposal; independent review accepts only contribution CPU scope.
+No OrbitKV runtime, engine pin or installed engine file is changed. Real GPU
+capture/replay, released adoption and eager/graph restore plus page-reuse gates
+remain open; keep the private pre-capture Hook and separate pending-admission
+protection. Complete contribution and review evidence stays outside Git at
+`/root/orbitkv-artifacts/s5-sglang-worker-preparation-20261017/`.
+
+**Public pending lookup (2026-10-17): implemented contribution; adoption open.**
+The isolated SGLang candidate `c950c381` on upstream `bce7b27a` allows `None` for
+pending lookup and preserves `[]` for a completed miss. Current-match state
+reaches the native `PrefillAdder` guard before budgets, locks or destination
+loads, allowing ready requests to continue. Readiness shares slot zero of the
+existing sparse-boundary MIN reduction; a local miss is not cancelled while
+another rank remains pending. Native abort and session/disabled/HBM bypasses
+retire lookup-only interest and old hit markers. Lookup cancellation errors keep
+the existing queued/started-load cleanup responsibility; they do not prove DMA
+drain. Only actually admitted requests occupy the native LoRA batch set. Backends
+retain terminal results and the original finite deadline across rematches, and
+own input validation plus stale callbacks. Earlier Scheduler capacity/preemption
+checks keep their existing order; the guard protects `PrefillAdder` operations.
+
+The eight affected source CPU suites pass 165 tests and 66 subtests, with 16
+explicit CUDA-fixture skips. Genuine module paths, uninitialized CUDA and all
+3,722 unchanged installed Python files are recorded; borrowed SGLang distribution
+metadata is 0.5.20, separate from tested candidate source and selected 0.5.21.
+[SGLang issue #44872](https://github.com/sgl-project/sglang/issues/44872) and
+[draft PR #44873](https://github.com/sgl-project/sglang/pull/44873) track the
+independently accepted contribution CPU scope. Evidence, including
+baseline counterexamples and earlier failed fixture runs, stays at
+`/root/orbitkv-artifacts/s5-sglang-pending-admission-20261017/`.
+No installed engine, OrbitKV runtime Hook, engine pin or backend default changes.
+Real GPU/rank/model/cancellation/page-reuse gates and released adoption remain
+open. Static LoRA admission validation remains a separate protected behavior.
 
 - Replace SGLang's private graph-initialization and pending-query admission hooks
   with consumed public lifecycle interfaces. Document their behavior and released
@@ -1205,7 +1407,7 @@ fragment geometry and inference load before changing their owners. Preserve
 all-enqueued admission, event generations, source ownership and physical drain;
 keep CUDA in standalone files. Representative copy wins cannot select a production
 default. Native GDS and physical failure-domain qualification remain separate.
-S2/S4/S5 stay Partial.
+S4/S5 stay Partial; S2 is complete only for its accepted engineering scope.
 
 **Bounded attribution delivery:** source `4b568860` adds benchmark-only CUPTI
 driver callbacks and optional monotonic windows to the native layout fixture.

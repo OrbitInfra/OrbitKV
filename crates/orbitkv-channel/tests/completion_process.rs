@@ -456,7 +456,12 @@ fn partitioned_grant_uses_one_cross_process_submission_and_terminal_result() {
 
 #[test]
 fn publish_peer_exit_does_not_release_a_submitted_source_owner() {
-    for mode in ["exit-pending", "invalid-ack", "late-complete"] {
+    for mode in [
+        "exit-pending",
+        "invalid-ack",
+        "late-complete",
+        "logger-unwind",
+    ] {
         let directory = tempfile::tempdir().unwrap();
         let child = Command::new(std::env::current_exe().unwrap())
             .args([
@@ -505,6 +510,21 @@ fn publish_retention_child() {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(1));
     }
+    if mode == "logger-unwind" {
+        struct PanickingLogger;
+        impl log::Log for PanickingLogger {
+            fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+                true
+            }
+            fn log(&self, _: &log::Record<'_>) {
+                panic!("controlled post-submit logger unwind");
+            }
+            fn flush(&self) {}
+        }
+        static LOGGER: PanickingLogger = PanickingLogger;
+        log::set_logger(&LOGGER).unwrap();
+        log::set_max_level(log::LevelFilter::Warn);
+    }
     let client = Arc::new(
         orbitkv_channel::ChannelClient::connect(
             directory.join("publish.sock"),
@@ -551,6 +571,11 @@ fn publish_retention_child() {
         publisher.join().unwrap();
         assert!(directory.join("source-released").exists());
     } else {
+        if mode == "logger-unwind" {
+            assert!(result.recv_timeout(Duration::from_millis(30)).is_err());
+            assert!(!directory.join("source-released").exists());
+            std::fs::write(directory.join("exit"), b"").unwrap();
+        }
         // The CPU peer submits no DMA. Its actual exit cannot release the simulated source.
         while peer.child.try_wait().unwrap().is_none() {
             assert!(Instant::now() < deadline);
@@ -594,7 +619,13 @@ fn publish_retention_peer() {
                     .unwrap();
                 admitted = true;
                 std::fs::write(directory.join("admitted"), b"").unwrap();
-                if mode == "exit-pending" {
+                if mode == "exit-pending" || mode == "logger-unwind" {
+                    if mode == "logger-unwind" {
+                        while !directory.join("exit").exists() {
+                            assert!(Instant::now() < deadline);
+                            std::thread::sleep(Duration::from_millis(1));
+                        }
+                    }
                     drop(reply);
                     return Ok(());
                 }

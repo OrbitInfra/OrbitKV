@@ -210,7 +210,7 @@ actual maximum pitch.
 CPU submission is recorded per batch; stream waiting is recorded once for the
 whole part, including its layer events. Neither isolates GPU execution time.
 
-The executor publishes a schema-3 opening record before each part's submission,
+The executor publishes a schema-4 opening record before each part's submission,
 then serializes its bounded scalar geometry after the existing physical stream
 drain. `local_raw_copy_complete` checkpoints all records through that drained
 part under the same retained executor identity. It does not seal executor
@@ -810,7 +810,7 @@ outside the checkout at
 
 ### Compact local trace geometry
 
-The local owner emits schema 3. Each opening record declares `copy_fields` in
+The schema-3 delivery declares `copy_fields` in each opening record in
 this fixed order: `device`, `host`, `host_device`, `size`, `device_allocation`,
 `host_registration`, `registered_device_start`, `registered_device_bytes`,
 `destination_offset`, `arena_id`, `arena_bytes`, `source_allocation_id`,
@@ -855,3 +855,321 @@ reproduction context in [PR #249](https://github.com/feichai0017/orbitkv/pull/24
 The previous failed and invalid cohorts retain their original decisions.
 This is a complete-restoration observation pilot, not p99, device-only time,
 model output/serving, physical-fault reclamation or a backend/default qualification.
+
+
+### Lossless binary geometry candidate
+
+The first row-varint candidate at `5fb3d61f` has independently accepted source
+correctness and valid CPU **FAIL** evidence. Twenty processes preserve 720
+restores, every scalar, full geometry and all clocks/ownership budgets. Whole
+candidate/baseline geometric ratio is 0.9090 with independent-pair 95% interval
+[0.7955, 1.1427]; its worst pair is 1.4275 and staged encoding ratio is 1.2726.
+It fails retention and is not promoted to H20. Smaller output did not establish
+a qualified timing improvement. Complete source, reader, binaries, raw data and
+review remain at `/root/orbitkv-artifacts/s4-varint-trace-20261016/`.
+
+The distinct follow-up keeps schema 4 and declares
+`copies_encoding=uvarint-rle-base64-v1` plus exact `copy_rows`. Each of the
+fifteen columns, in opening `copy_fields` order, records positive run lengths
+and exact unsigned values as canonical LEB128, followed by Base64. No address is
+inferred from another field. The reader fills each column to exactly the stated
+row count and restores named rows in their original submission order. It checks
+row/descriptor agreement and the cumulative cap, bounds encoded length before
+allocation by rows × 15 × 11 bytes, and rejects zero/excess runs, adjacent equal
+runs, malformed Base64/integers, overflow, truncation and trailing data. The
+existing span, scalar, generation and production DMA-compiler checks still run.
+Archived schema-2/3 captures remain readable; the rejected unmerged prototype
+retains its own frozen reader instead of adding a permanent fallback.
+
+Capture, completion clocks and synchronous logging/flush remain unchanged.
+Independent review accepts the matched CPU retention result at `afe30921`.
+The same Intel Xeon Platinum 8457C/CPU-0 profile uses twenty fresh processes,
+five independent pairs per mode, four warm-up and eight measured sequences,
+and three complete parts per sequence. All 720 restores and 87,091,200 scalar
+values reconstruct exactly; all forty children and the controller are normally
+waited. Whole candidate/baseline geometric ratio is 0.7370, with independent-pair
+bootstrap 95% interval [0.6157, 0.8822]; all five whole pairs pass the predeclared
+1.05 guard. Staged encoding ratio is 0.6430. Median structured JSON payload per
+measured part (24 measured parts per process, excluding the logger prefix and
+newline) falls from 1,419,062 to 457,225 bytes. This qualifies CPU retention only.
+
+The complete CUDA 13 wheel, isolated installation and consumed-import closure
+pass independent runtime/READY/launch review. The sole fresh H20 cohort completes
+all sixteen off/native/driver/on cells in the frozen balanced order. Each cell
+uses one warm-up and two measured restores of the Qwen3-32B SGLang KV-pool
+geometry: 64 layers, 128 planes and a 4K-token sequence. Every restore checks the
+entire 4,311,744,512-byte pool, including 1,056,964,608 payload bytes and untouched
+sentinels; all 48 restores and 96 payload/sentinel corruption controls pass.
+This exercises real GPU storage and restore, without loading model weights or
+measuring serving. Native ownership is released, clients close and Manager/oracle
+processes return normally in every cell. Frozen inputs and the complete installed
+prefix remain unchanged.
+
+Four independent process blocks give the following geometric ratios against
+off, with bootstrap 95% intervals: native-only 1.0582 [1.0481, 1.0708], driver-only
+0.9966 [0.9915, 1.0018], combined 1.0609 [1.0567, 1.0656]. Driver-only passes the
+predeclared 1.05 guard; native-only and combined fail. These are paired component
+costs; their effects are not assumed additive. The exact terminal result is
+`PILOT_OVERHEAD_FAIL`. No sample, cell or cohort is replaced. CPU retention does
+not establish a qualified GPU restore gain: inference contention and
+kernel/default promotion remain
+blocked. The preceding failures retain their original decisions.
+
+Complete CPU and H20 raw evidence, the wheel and its full runtime closure remain
+outside Git under `/root/orbitkv-artifacts/s4-rle-trace-20261016/`; terminal
+capture is a closed 428-file archive. The complete-restoration host-wall pilot
+is not a p99 estimate, device-only result, model-output/serving comparison or
+native-fault/lifetime qualification.
+
+The separate offline compiler uses buffered file input. Its output must remain
+byte-identical on the same complete captured geometry. This reduces validation
+work outside the native profile clock; it is not a trace, restore or serving
+performance result.
+
+### Bounded synchronous trace publication
+
+The follow-up to merged `6a00e221` groups complete, already-drained schema-4
+JSON lines into synchronous log messages of at most 64 KiB, including tags and
+internal newline separators. Opening records keep their original direct path
+before submission. A larger individual frame first drains preceding records
+and is emitted intact. Every completion, including empty and invalid parts,
+publishes its tail before the existing logger flush and return. Serialization
+and allocation failures invalidate the capture without changing physical copy
+results or resource ownership.
+
+A trace lazily allocates and reuses one fixed 64-KiB payload slice. The bound
+excludes allocator bookkeeping, temporary JSON/RLE encoding and downstream
+logger storage; allocation and assembly remain inside publication and inclusive
+operation clocks. The staged CPU profile calls the same production publisher,
+including chunk-boundary and final-tail writes, and reports retained payload
+bytes separately. The whole profile still uses the real trace owner methods.
+Per-part clocks exclude eventual trace-owner destruction, including freeing the
+retained buffer; the baseline has the same owner-lifetime timer boundary.
+
+This changes `log::Record` grouping, counts and per-event metadata. Qualification
+covers the pinned plain-text logger and tested line-preserving embedding logger;
+JSON-escaping or truncating embedding loggers require their own capture check.
+The actual Info target stays `orbitkv_core::transfer::local::trace`. Synchronous
+flush does not add a persistence guarantee to the logger interface. Full reader
+and production-compiler verification remain required.
+
+Independent design, source and complete CPU-data review accepts source
+`6265bc8c` against the merged `6a00e221` baseline. All twenty fixed cells preserve
+720 replays, 94,320 records and all 87,091,200 geometry values. Whole-capture
+candidate/baseline geometric ratio is 0.8256, with independent-process-pair 95%
+interval [0.7514, 0.9071]; all five whole pairs pass the unchanged 1.05 guard.
+Staged synchronous publication ratio is 0.4876 [0.4327, 0.5472]. Encoding remains
+unchanged, with ratio 1.0216 [0.8929, 1.1101]. This qualifies CPU retention only.
+
+The matching installed CUDA 13 wheel and full runtime pass independent review.
+Fresh resource/READY review admits one exact sixteen-cell H20 cohort. All sixteen
+cells complete 48 full-layout restores and 96 corruption controls, with explicit
+native unregister/close, normal SDK/Manager/controller/foreground SSH waits and
+unchanged frozen inputs and installed files. Four independent process blocks
+retain the original balanced order and one warmup/two measured restores per cell.
+
+| Observation mode versus off | Geometric ratio | Independent-block 95% interval | Frozen 1.05 guard |
+| --- | ---: | --- | --- |
+| Native capture | 1.0567 | [1.0437, 1.0770] | FAIL |
+| CUDA driver only | 1.0033 | [0.9981, 1.0109] | PASS |
+| Combined | 1.0538 | [1.0466, 1.0612] | FAIL |
+
+The exact terminal status is `PILOT_OVERHEAD_FAIL`. Combined capture exceeds 1.05
+in two matched blocks and its 95% upper bound also exceeds the unchanged guard.
+The valid CPU improvement does not override this H20 result. No retry or
+replacement cell ran, and the cohort does not admit dependent inference
+contention. These are complete-restoration host-wall observations, not p99,
+device-only latency, model serving benefit, a backend default or physical fault
+reclamation. Per-part timers still exclude eventual trace-owner destruction.
+Prior valid failed cohorts and S3/S4/S5 limits remain unchanged. The KDA draft,
+fixed guards, original input, complete raw data and reviews are outside Git under
+`/root/orbitkv-artifacts/s4-trace-publication-20261016/`.
+
+
+### JSON workspace candidate rejected
+
+The candidate at `b16bead2` reuses a JSON workspace in the existing native trace
+owner after physical drain. It retains at most 64 KiB at each record boundary
+and discards oversized storage after synchronous publication. The original
+opening path, canonical RLE/JSON bytes, capture caps, completion clocks and
+terminal flush remain unchanged. Memory bounds, actual default/buffered logger
+controls and the source/CPU-launch gate pass independent review.
+
+The sole fixed twenty-cell CPU comparison completes 720 replays, 94,320 records
+and 87,091,200 reconstructed geometry values. All forty profile/compiler children
+and the controller/outer session exit normally, with all frozen inputs unchanged.
+Staged encoding geometric ratio is 0.8040, with independent-process-pair 95%
+interval [0.7117, 0.9147]. Whole-capture ratio is 1.0333 [0.9134, 1.1688], with
+two pairs above 1.05. The component improvement does not pass the predeclared
+whole-capture retention guards. The candidate is rejected and production code
+returns to the merged `2d6c77ac` baseline.
+
+No H20 run, replacement CPU cell or relaxed threshold is authorized by this
+result. Stage differences do not establish
+whether allocator/cache effects or external variability caused the whole-path
+failure. Further work must inspect whole capture and memory costs before selecting
+a distinct candidate. Earlier H20 failures, the unchanged 5% observation guard and
+S3/S4/S5 limits remain binding. The rejected source, executable, fixed contract
+and complete failed data remain outside Git at
+`/root/orbitkv-artifacts/s4-trace-json-workspace-20261016/`.
+
+### Baseline A/A repeatability diagnosis
+
+Before selecting another native-observation candidate, compare the accepted
+baseline executable with itself. A and B use the same absolute executable path,
+input, canonical encoding reference, decoder and production geometry compiler.
+This diagnoses the existing CPU measurement path; it does not qualify GPU restore,
+serving performance or an optimization candidate.
+
+The fixed cohort contains eight four-process blocks: four pinned to CPU0 and
+four to the next allowed different physical core, CPU2. Each CPU has two ABBA
+and two BAAB blocks, with CPU order balanced across the cohort. These CPU IDs
+describe the frozen host; other hosts need a new topology-bound contract. Every process
+uses the existing four warm-up and eight measured three-part sequences in whole
+mode. Preserve the original constructor/destructor exclusions and part clocks.
+Validate every emitted geometry value, canonical row, order, budget and clock,
+then replay the complete output through the production compiler.
+
+Use the median of 24 measured parts per process. In an ABBA block, adjacent B/A
+ratios are the second/first and third/fourth process medians; in BAAB they are
+first/second and fourth/third. Their geometric mean is the block ratio. Bootstrap
+four complete blocks separately at each CPU; parts, adjacent ratios and CPUs are
+not pooled as independent repetitions. Report all ratios and uncertainty.
+Repeatability is demonstrated only if every adjacent and block ratio, and the
+entire block-bootstrap 95% interval, lie in `[1/1.05, 1.05]`. Four blocks provide
+descriptive uncertainty and do not establish general 5% measurement resolution.
+
+Before/after host and cgroup counters, plus actual child `wait4` CPU, fault, RSS
+and context-switch records, provide context. Child usage includes pre-exec work.
+These counters cover a complete process or
+shared host/container activity, so they cannot identify the cause of a timed-part
+outlier or count its allocations. CPU affinity does not reserve a core. Keep
+unavailable frequency information explicit and record the cgroup version, quota,
+mount and CPU/NUMA topology. No polling observer enters the native process.
+
+A valid repeatability failure remains a useful diagnostic result. It does not
+reclassify prior failed candidates, calibrate a looser guard, select a preferred
+CPU or authorize another candidate or hardware run. Complete contracts, source,
+raw data and independent reviews belong outside Git at
+`/root/orbitkv-artifacts/s4-trace-aa-diagnosis-20261016/`.
+
+The sole 32-cell cohort completes 1,152 replay parts (384 complete three-part
+sequences), 150,912 records and 139,345,920 reconstructed geometry values. All
+64 profile/compiler children, the controller and its outer session exit normally;
+all 28 frozen inputs remain unchanged. CPU0 does not demonstrate repeatability:
+block geometric ratio 0.9146, 95% interval [0.7922, 1.0086]. CPU2 demonstrates the
+band within this cohort: 0.9981 [0.9945, 1.0017], with all adjacent/block/interval
+guards passing. Keep both CPU results. This does not select a CPU for future
+experiments or establish why earlier comparisons varied. Shared cgroup throttle
+counts do not increase during these native windows, but this cannot exclude
+scheduler, frequency, allocator or cache effects inside the part clocks.
+Earlier rejected candidates and H20 failures retain their original status.
+
+
+### Thread CPU decomposition
+
+The explicit native trace CPU profile provides an opt-in `thread` probe, with
+`off` as the default. This is benchmark-only schema 2; the production trace owner,
+schema-4 bytes and ownership contracts are unchanged. Six
+[`CLOCK_THREAD_CPUTIME_ID`](https://man7.org/linux/man-pages/man2/clock_gettime.2.html)
+reads sample the actual profile thread. Each CPU stamp is bracketed by monotonic
+wall reads; retain all raw values. For start `(sb, cs, sa)` and end `(eb, ce, ea)`,
+CPU time is `ce-cs`, wall bounds are `[eb-sa, ea-sb]`, and signed residual bounds
+subtract that CPU delta from both endpoints. Whole-window bounds use the first
+and last stamps directly. A residual is not proof of scheduler wait; clock
+accounting, blocking, descheduling and probe bookkeeping remain possible factors.
+CPU time can also change with frequency or cache behavior.
+
+Two enclosing
+[`RUSAGE_THREAD`](https://man7.org/linux/man-pages/man2/getrusage.2.html)
+snapshots retain context-switch and page-fault counters outside the existing
+`total_ns` boundary. The additional `observed_ns` envelope includes these calls
+as well as all six CPU probes. Both modes retain reconstructible envelope
+endpoints. Probes sit between original stage clocks, so CPU windows include
+bookkeeping and do not exactly match the original stage intervals. In whole
+mode, actual synchronous log flush belongs to finish. Serialization, preparation,
+trace construction and destruction remain outside both metrics.
+
+The fixed calibration uses one executable for off/thread in 32 whole-profile
+processes, with four balanced ABBA/BAAB blocks separately on CPU0 and CPU2.
+Each process retains four warm-up/eight measured three-part sequences. For both
+`total_ns` and `observed_ns`, take the median of 24 measured parts per process, form
+adjacent B/A contrasts and four-process block ratios, then bootstrap the four
+complete blocks per CPU with 20,000 draws and seed 20261017. Every adjacent/block
+ratio and the 95% interval upper endpoint must be at most 1.05, separately for
+both metrics and both CPUs. Do not pool parts or CPUs. This bounds only the
+observed incremental thread-versus-off cost within this new executable; it does
+not calibrate shared changes, omitted serialization or total process overhead.
+
+The sole fixed cohort completes 32 valid cells, 1,152 replay parts and
+139,345,920 reconstructed geometry values. All 64 profile/compiler children and
+the controller exit normally, with frozen inputs unchanged. Its result is
+`PROBE_OVERHEAD_UNQUALIFIED`:
+
+| CPU | Metric | Thread/off geometric ratio | Four-block 95% interval | Guard |
+| --- | --- | ---: | --- | --- |
+| 0 | Existing total | 1.0852 | [1.0012, 1.1762] | FAIL |
+| 0 | Enclosing observed | 1.0861 | [1.0015, 1.1777] | FAIL |
+| 2 | Existing total | 1.0137 | [1.0107, 1.0166] | PASS |
+| 2 | Enclosing observed | 1.0140 | [1.0111, 1.0170] | PASS |
+
+CPU0 also has adjacent and block ratios above 1.05; both metrics fail all three
+checks there. The mandatory conjunction therefore fails. Keep all valid samples;
+no retry, replacement or revised threshold is applied. CPU0's earlier A/A failure
+prevents attributing this contrast to a stable probe effect. Raw CPU/residual
+observations remain descriptive and cannot select another production candidate.
+The opt-in diagnostic is implemented, not qualified as a low-overhead probe.
+Exact contracts, controls, raw evidence and independent reviews belong outside
+Git at `/root/orbitkv-artifacts/s4-trace-thread-clock-20261017/`.
+The previous CPU0 A/A failure and rejected candidates remain unchanged. Even a
+calibration pass does not identify a root cause, select a preferred CPU or
+qualify an optimization, GPU restore, serving, a copy default or S3 lifetime.
+
+
+### Prospective interleaved calibration
+
+The CPU trace profile accepts an opt-in `aa` (off/off) or `ab` (off/thread)
+contrast with `ABBABAAB` or `BAABABBA` sequence order. Four warmup sequences
+use the first four labels; eight measured sequences restart at the beginning
+of the complete order. Each complete three-part sequence keeps one arm/probe
+and a fresh trace owner. Schema 3 records the actual arm and probe for every
+part. The original fixed-probe schema 2 remains the default. Stage clocks,
+enclosing `observed_ns`, synchronous publication/flush, caps, geometry and
+constructor/destructor exclusions remain intact. Labels and result JSON are
+constructed outside the enclosing clock.
+
+The maintained `benches.native_trace_calibration` controller validates full
+stable geometry, canonical encoded bytes, identities, drain clocks and the
+production layout compiler receipt after every cell. A frozen input index and
+independent launch receipt admit one fixed 16-process cohort: four restarted
+processes for each CPU and contrast stratum (A/A or A/B), with two complementary
+orders of each kind. A cell error stops collection and preserves its evidence; a
+valid performance failure never causes a replacement.
+
+For both `total_ns` and `observed_ns`, each measured sequence contributes the
+median of its three part values. Four adjacent B/A contrasts produce one
+geometric process estimate. Bootstrap uncertainty uses four whole restarted
+process estimates per CPU/contrast, 20,000 draws and seed 20261017; parts and
+CPUs are never pooled. A/A requires every adjacent ratio, process estimate
+and entire 95% interval in `[1/1.05, 1.05]`. A/B requires every adjacent ratio
+and process estimate at most 1.05 and the interval upper bound at most 1.05.
+Both CPUs and both metrics must pass A/A before A/B can be usable. These are
+prospective sequence units, distinct from the historical process-median units.
+
+A passing result bounds only this median projection within the declared
+cohort. It does not bound every part, the sum of the three parts, the former
+24-part process median, or whole-process overhead. Carry-over, shared-host
+scheduling and frequency remain uncontrolled. This method cannot validate old
+between-binary optimization comparisons, reverse prior failures or promote a
+GPU, kernel default or serving path. Raw parts and all failed controls remain
+in the selected external artifact directory.
+
+The sole prospective 16-process cohort completed all geometry, canonical-byte,
+cap, drain and normal-exit controls. Its process estimates and bootstrap
+intervals satisfy their numeric guards, while adjacent contrasts do not:
+CPU0 fails A/A and A/B; CPU2 passes A/A and fails A/B. Both enclosing and
+original metrics have the same failed guard pattern. The A/A prerequisite
+fails, so this method and optional thread probe remain **unqualified**. No
+replacement cohort or production promotion follows. Preserve the raw parts,
+all 33 child waits and the complete failure conclusion at
+`/root/orbitkv-artifacts/s4-interleaved-calibration-20261017/`.

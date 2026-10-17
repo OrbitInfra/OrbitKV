@@ -92,6 +92,63 @@ The frozen `--shutdown-timeout 30` gate retains its failure and quarantine;
 normal API exits do not qualify physical drain. No expected-error filter,
 upstream runtime patch or new support claim is applied.
 
+## 2026-10-17 public worker preparation contribution
+
+The selected runtime stays on official SGLang 0.5.21. An isolated contribution
+against main `4fc86f73` adds optional `prepare_worker(worker, capture_decode_cuda_graph)`
+to registered radix backends and invokes it before all runners in the existing
+worker graph initializer. Two-argument registration and factory identity remain
+unchanged; dispatch reads the published backend. Invalid callbacks are rejected
+before insertion and preparation errors propagate before runner initialization.
+[SGLang issue #44855](https://github.com/sgl-project/sglang/issues/44855) and
+[draft PR #44856](https://github.com/sgl-project/sglang/pull/44856) track the generic
+interface proposal; independent review accepts only contribution CPU scope.
+
+The 32 candidate-source CPU tests use actual registry/runtime-context code and
+the real worker method with recording collaborators. They cover selected-only
+preparation, raw/published configuration differences, repeated calls, multiple
+workers/runners, both capture flags and failure ordering. The existing local
+dependency environment has SGLang distribution metadata 0.5.20; the candidate
+checkout supplies tested SGLang modules. This is not installed 0.5.21 or GPU
+qualification. No installed engine, OrbitKV Hook, package pin or submodule is
+changed. Direct runner recapture and `ensure_decode_cuda_graphs` remain outside
+the proposed boundary. Consume a supported released callback and pass actual
+eager/graph restoration, cancellation and page-reuse gates before Hook removal.
+Pending-ticket admission remains a separate interface task. Evidence stays at
+`/root/orbitkv-artifacts/s5-sglang-worker-preparation-20261017/`.
+
+## 2026-10-17 public pending lookup contribution
+
+An isolated proposal against SGLang main `bce7b27a`, candidate `c950c381`, adds a
+pending result to the existing external-linker contract. `None` remains pending;
+`[]` is a terminal miss. `MatchResult` and the actual request adoption path carry
+current readiness to the first prefill-admission guard. The existing sparse MIN
+mask also carries readiness, so a local miss cannot bypass or restart a peer's
+pending query. Ready synchronous backends keep their existing result behavior.
+
+Lookup-only cancellation reaches actual abort and session/disabled/HBM/unusable
+match paths, retiring obsolete markers without detaching accepted loads. Its
+exception path preserves queued-load cancellation and started-load references.
+Only actually appended requests occupy the Scheduler LoRA batch set. Earlier
+capacity/preemption checks keep their existing order; the no-budget/lock/load
+mutation guarantee is local to `PrefillAdder`. Async backends retain terminal
+results and original finite deadlines across polls, validate changed inputs and
+fence retired callbacks; this is not a new physical cancellation or drain protocol.
+The eight affected CPU suites pass 165 tests plus 66 subtests; 16 CUDA fixtures
+skip. Candidate modules and genuine dependency identities are recorded, CUDA is
+uninitialized, and all 3,722 installed SGLang Python files stay unchanged. The
+borrowed environment's distribution metadata remains 0.5.20; this does not
+qualify installed 0.5.21. Independent review accepts contribution CPU scope:
+[SGLang issue #44872](https://github.com/sgl-project/sglang/issues/44872) and
+[draft PR #44873](https://github.com/sgl-project/sglang/pull/44873).
+Evidence stays at `/root/orbitkv-artifacts/s5-sglang-pending-admission-20261017/`.
+
+Official release pins and both private safety Hooks remain. Released adoption,
+actual GPU/model/rank behavior, timeout/cancellation and page-reuse gates are
+required before consuming the interface. Static LoRA admission validation needs
+its own replacement even after pending-query admission becomes public. No
+performance, kernel/default or broader lifecycle support is claimed.
+
 ## Released integration boundaries
 
 | Engine | Consumed interface | Ownership |
@@ -126,7 +183,7 @@ The older 0.5.20 links below preserve the original interface research:
 
 | Internal target or bridge | What it protects | Official replacement / disposition | Removal gate |
 | --- | --- | --- | --- |
-| `TpModelWorker.init_cuda_graphs` BEFORE | Installs stable external CUDA events before capture so replay waits for restored layers | Factory is too late: Scheduler captures graphs in `init_model_worker` before constructing tree cache. Keep the guarded Hook. | A released pre-capture linker construction callback; rerun actual eager/graph restore and page-reuse gates |
+| `TpModelWorker.init_cuda_graphs` BEFORE | Installs stable external CUDA events before capture so replay waits for restored layers | Factory is too late: Scheduler captures graphs in `init_model_worker` before constructing tree cache. Keep the guarded Hook. | A released pre-capture worker preparation callback, consumed by the adapter; rerun actual eager/graph restore and page-reuse gates |
 | `PrefillAdder.add_one_req` AROUND | Defers pending SSD/peer queries without treating pending as miss; preserves rank agreement and cache admission | External-linker lookup returns ready boundaries, without an asynchronous pending ticket. Keep the guarded Hook. | Released pending-lookup/admission contract; cold/partial/full, timeout, cancellation and rank gates |
 | `Scheduler._add_request_to_queue` AROUND (opt-in) | Starts optional preparation/warming for waiting requests | No consumed public enqueue callback. Disabled unless `ORBITKV_PREPARE_REQUESTS=1` or `ORBITKV_QUEUE_WARMUP=1`. | Released enqueue callback or removal of the optional optimization with matched workload checks |
 | `RecoveryLinkerWrapper` / recurrent component override | Origin/boundary/rank translation, held destination locks and checkpoint release | Public component override is consumed; generic recurrent lifecycle remains incomplete upstream. Keep correctness ownership; broad model support remains unqualified. | Released component semantics and exact checkpoint/window bytes under abort/preemption |

@@ -33,6 +33,7 @@ libc.workspace = true
 libloading.workspace = true
 rand.workspace = true
 ahash.workspace = true
+base64 = "0.22.1"
 io-uring = "0.7"
 half = "2.7"
 serde.workspace = true
