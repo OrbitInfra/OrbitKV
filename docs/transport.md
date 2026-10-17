@@ -38,12 +38,14 @@ after unregister; it does not reauthorize them. Workloads and adapters retire
 their own references after normal cleanup and retain them if cleanup fails.
 A separately queued reference keeps its exporters until that task retires. Restore retains its existing
 query-lease checks and API. The earlier `03cbcebd` acceptance covers its snapshot
-and Core/lifecycle controls. The new producer-bound authority is implemented
-pending independent acceptance and actual installed GPU/adapter lifetime gates.
+and Core/lifecycle controls. The producer-bound authority has bounded installed
+registration acceptance;
+matching real-model regression and physical lifetime remain separate gates in
+[the completion plan](completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership).
 CPU authority controls use an authenticated process fixture and an idle worker
 with no CUDA executor; they do not register, compute or submit device DMA.
 
-The explicit-registration candidate replaces the framework pickle payload with
+Explicit registration replaces the framework pickle payload with
 versioned protobuf storage/view metadata. The native client exports retained
 tensors directly; Manager validation precedes CUDA device discovery/import.
 Storage suballocation and tensor view offsets are separate; dtype/element size,
@@ -59,7 +61,7 @@ storage IPC primitive and holds the resulting tensor mapping until its owner
 retires. The importer creates a zero-sized typed tensor with `torch.empty`, then
 binds the validated storage/view with `set_`; a Rust byte vector becomes Python
 bytes and cannot serve as an empty `torch.tensor` input. The old wrapper-byte
-field and helper/API are removed in this candidate.
+field and helper/API are removed.
 The client retains the exact storage objects used for initial geometry. It
 exports those objects, rather than reacquiring storage after a wait, and
 rechecks the tensor pointer, offset and layout before sending and after the
@@ -97,9 +99,12 @@ attempts retain them under the existing admission limits. Diagnostic output is
 bounded to 4,096 credits and 4 MiB per call and is consumed by the strict installed
 registration gate before the producer exits.
 
-Source/CPU checks exist; final installed GPU bytes, real IPC repayment/import
-failure and both adapter lifecycles still need independent acceptance. These
-changes do not supply allocation/page generations or physical DMA termination.
+Independent installed prerequisite acceptance covers partial-export repayment,
+conservative throw retention, duplicate registration rejection, native Restore
+byte assertions, producer-stream fencing and bounded pool-retirement controls.
+Actual model recovery is recorded separately under S3/S5 in the completion plan.
+CUDA IPC warnings and an uncertain retained attempt remain explicit limits.
+These checks do not supply allocation/page generations or physical DMA termination.
 
 ## Process channel
 

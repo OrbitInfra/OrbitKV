@@ -31,7 +31,7 @@ branches at cutover. See [interface audit](engine-release-audit.md).
 | S0 | Complete | Handoff/skill migration merged in PR #190 |
 | S1 | Accepted at `ec3add9b` | Preserve external evidence and one queue |
 | S2 | Complete for the accepted engineering scope; full qualification open | Reviewed metadata contracts, the same-host four-owner baseline and one normal-SIGTERM three-host etcd process-only cohort are accepted. DRAM/SSD isolation FAIL; sixteen owners UNQUALIFIED; support stays four owners. Cross-host cache HA and independent etcd failure domains remain unqualified |
-| S3 | Implementation partial; qualification open | Conservative native failure retention has limited code/CPU acceptance at `27f1cb1b`; physical termination proof, installed GPU/adapter gates, page generations, explicit registration and crash reclamation remain open |
+| S3 | Implementation partial; qualification open | Explicit CUDA registration and bounded installed normal-path ownership controls are accepted; page generations, physical termination, fault reclamation and broader adapter lifetime remain open |
 | S4 | Partial | Measured copy/SSD/control improvements exist; mixed contention, complete serving gains and S3-dependent faults remain open |
 | S5 | Partial | Official dense cache/restart and scoped deployment profiles accepted; public lifecycle, complete hybrid recovery, native P/D faults and broader topology remain open |
 | S6 | Partial | Observations and guarded limited choices exist; one consumed route/admission planner remains open |
@@ -821,6 +821,26 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   gate before merging [PR #251](https://github.com/feichai0017/orbitkv/pull/251),
   with a fresh runtime freeze and launch review. Historical failed cohorts,
   frozen thresholds and retained old resources keep their original status.
+  The matching SGLang part now has independent acceptance from the same installed
+  wheel: official 0.5.21, Qwen3-8B TP1/PP1, direct copy, DRAM and io_uring SSD.
+  Both model cases pass native-HBM bypass, flush/restart recovery, concurrent
+  prefixes, changed-identity cold controls, positive restore/read counters and
+  same-engine output assertions. All eight service owners have literal normal
+  waits; the complete archive and unchanged runtime/model hashes are verified.
+  Six CUDA IPC warnings and the official engine's internal SIGKILL statuses
+  remain limits. This is functional recovery acceptance, not complete native
+  termination, computed-KV byte dumps, physical faults or performance evidence.
+  The matching vLLM gate stops during the official Noop baseline's initial
+  Inductor compilation: the frozen Triton `ptxas` has mode 0600 and `execve`
+  returns `EACCES`. Pytest, API and EngineCore exit one; no OrbitKV Manager,
+  save or load is evaluated. Missing normal service receipts leave the controller
+  and its original GPU6 quarantine/lease held, even though GPU memory is empty.
+  The complete failed cohort remains separate and the PR stays merge-blocked.
+  This initialization failure is distinct from the known terminal Noop traceback.
+  The next bounded delivery is compiler executable admission and a CPU-verified
+  supported `TRITON_PTXAS_PATH`, followed only after independent acceptance by a
+  separately frozen matching model cohort. Preserve the old bundle, failure,
+  guards and retained owners; a fresh cohort does not revise its verdict.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
   without a control RPC or taking a blocked Publish/lifecycle lock. Restore
@@ -1204,6 +1224,13 @@ The failed contract and quarantine are preserved with PR #238; functional
 assertions do not turn that cohort into a pass or qualify S3 physical lifetime.
 The earlier missing-Manager-binary attempt also remains failed. No fork patch
 or relaxed log rule is installed, and the support matrix is unchanged.
+
+**Explicit-registration wheel cutover (2026-10-17):** the new installed
+registration prerequisite and matching real-model regression are tracked under
+[S3](#s3--transfer-lifetime-and-generation-safe-ownership). Recheck the actual
+artifact for each newly claimed engine/media profile. Healthy output and recovery
+assertions do not replace strict native shutdown, physical lifetime or fault
+qualification, and prior failed cohorts keep their original verdicts.
 
 ### S5.3 — Public lifecycle and hybrid-state contracts
 

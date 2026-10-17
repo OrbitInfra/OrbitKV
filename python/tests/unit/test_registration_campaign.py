@@ -1192,3 +1192,59 @@ def test_final_failure_enters_retention_while_real_lock_is_still_held(tmp_path, 
     with pytest.raises(RetentionEntered):
         campaign.main()
     assert not (tmp_path / "RESULT.json").exists()
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "lost-execute",
+        "never-executable",
+        "replacement",
+        "alias",
+        "payload",
+        "relative",
+        "duplicate",
+    ],
+)
+def test_executable_inputs_require_unchanged_identity_and_execute_access(tmp_path, fault):
+    tool = tmp_path / "compiler"
+    tool.write_text("#!/bin/sh\nexit 0\n")
+    tool.chmod(0o400 if fault == "never-executable" else 0o500)
+    metadata = tool.stat()
+    executable = {
+        "path": str(tool),
+        "realpath": str(tool.resolve()),
+        "sha256": campaign.digest(tool),
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+        "mode": metadata.st_mode,
+        "uid": metadata.st_uid,
+        "gid": metadata.st_gid,
+        "bytes": metadata.st_size,
+    }
+    contract = runtime_input_contract(tmp_path, [])
+    contract["executable_inputs"] = [executable]
+    if fault == "lost-execute":
+        tool.chmod(0o400)
+    elif fault == "replacement":
+        tool.rename(tmp_path / "retired-compiler")
+        tool.write_text("#!/bin/sh\nexit 0\n")
+        tool.chmod(0o500)
+    elif fault == "alias":
+        target = tmp_path / "other-compiler"
+        tool.rename(target)
+        tool.symlink_to(target)
+    elif fault == "payload":
+        tool.chmod(0o700)
+        tool.write_text("#!/bin/sh\nexit 1\n")
+        tool.chmod(0o500)
+    elif fault == "relative":
+        executable["path"] = tool.name
+    elif fault == "duplicate":
+        contract["executable_inputs"].append(dict(executable))
+    if fault is None:
+        campaign.check_inputs(contract)
+    else:
+        with pytest.raises(RuntimeError, match="executable"):
+            campaign.check_inputs(contract)

@@ -140,6 +140,12 @@ Startup verification has one 180-second deadline. Cell admission/postflight can
 select only declared roots consumed by that cell; startup, grant and final input
 checks retain the complete manifest set. Freeze and review each cell's consumer
 root selection as part of launch acceptance, with the unchanged cleanup budget.
+Compiler-enabled model gates also declare `executable_inputs`: canonical tool
+targets, device/inode, mode, owner, size and SHA. Input checks require execute
+access as well as unchanged bytes. Before freezing, run the selected compiler's
+CPU version and compile-only probes; record supported tool-selection environment
+variables. A byte manifest or successful native import does not prove that a
+bundled JIT executable can run. Preserve failed freezes instead of chmodding them.
 Use `--supervise` for remote launch: a durable parent owns the actual controller
 wait and records its identity, status and lack of forced cleanup. Normal and
 nonzero real child controls run without GPU; a quarantined controller stays alive.
