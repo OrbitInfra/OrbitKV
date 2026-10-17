@@ -671,6 +671,17 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   completion and reject further source admission; SGLang uses the same attempt
   boundary. Prelaunch and receipt-proven errors remain distinct. Preserve both
   rejected freezes and new independent controls.
+  Independent acceptance at `6ab9b6e3` covers the corrected code/CPU pending
+  Save owner and matching package loading. The original post-start attachment
+  counterexample now keeps completion unset and source admission closed; exact
+  SGLang 0.5.21 wheel method controls also retain unknown starts and reject reset.
+  The inherited unchanged native CPU controls, both rejected freezes and final
+  review are archived under
+  `/root/orbitkv-artifacts/s3-publish-pending-owner-20261018/`;
+  [PR #262](https://github.com/feichai0017/orbitkv/pull/262) carries this boundary.
+  Native pending admission does not bound the Python queue, retained task list
+  or user-held completed handles. Installed GPU/model, physical termination,
+  allocation/page generations and adapter-fault qualification remain open.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-
