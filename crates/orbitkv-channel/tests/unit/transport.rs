@@ -204,7 +204,7 @@ fn missing_request_service_reports_the_effective_discovery_path() {
     assert!(error.contains(&name), "{error}");
     assert!(error.contains("pattern=RequestResponse"), "{error}");
     assert!(
-        error.contains(Config::global_config().global.service_dir().as_str()),
+        error.contains(process_config().unwrap().global.service_dir().as_str()),
         "{error}"
     );
     assert!(error.contains("metadata=Err("), "{error}");
@@ -217,7 +217,10 @@ fn missing_request_service_reports_the_effective_discovery_path() {
 #[test]
 fn request_doorbell_is_required_and_scoped_to_the_manager_service() {
     let name = service_name("missing-wake");
-    let node = NodeBuilder::new().create::<ThreadSafeIpcService>().unwrap();
+    let node = NodeBuilder::new()
+        .config(process_config().unwrap())
+        .create::<ThreadSafeIpcService>()
+        .unwrap();
     let _bare_requests = node
         .service_builder(&name.as_str().try_into().unwrap())
         .request_response::<WireMessage, WireMessage>()

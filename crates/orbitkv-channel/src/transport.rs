@@ -411,14 +411,13 @@ impl TransportClient {
         }
     }
 
-    /// A failed receive after submission cannot prove that DMA stopped.
-    /// Keep the source pages pinned until the peer process itself is gone.
-    pub fn wait_for_peer_exit(peer: &OwnedFd) {
+    /// No logical error or process-liveness observation ends submitted device work.
+    pub(crate) fn retain_unproven_publish(request_id: u64) -> ! {
+        log::error!(
+            "Publish {request_id} has no physical completion proof; retaining caller and source owners"
+        );
         loop {
-            if matches!(peer_exited(peer), Ok(true)) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(10));
+            std::thread::park_timeout(Duration::from_secs(60));
         }
     }
 }

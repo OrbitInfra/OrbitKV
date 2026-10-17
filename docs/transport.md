@@ -340,9 +340,12 @@ wakes. Publish and Restore do not consume each other's notification counter.
 
 Publish requires a Manager pidfd before submission. An ordinary deadline logs
 a warning, then at most once per minute; it does not release source pages.
-Ambiguous/malformed replies retain the source fence until a valid outcome or
-confirmed Manager exit. A live Manager that never completes requires
-operational recovery. Publish batches split to the negotiated descriptor slot
+Ambiguous/malformed replies and post-submit transport errors retain the source
+owner even after confirmed Manager exit. Process liveness cannot prove CUDA
+completion. Only a matched valid result following the Manager copy drain, or
+a proven never-submitted send failure, permits return. This conservative
+retention still blocks the caller; bounded operational responses and adapter
+page-generation consumers remain separate pending work. Publish batches split to the negotiated descriptor slot
 capacity, retaining matching page ranges across layers until all chunks finish.
 This Publish partitioning does not yet partition oversized raw Restore plans.
 

@@ -795,6 +795,24 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   are required. Preserve the incompatible freeze and denied READY unchanged.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
+- The `e9865c08` installed package now has independent healthy local CUDA
+  registration/Publish/raw-DRAM Restore precheck acceptance. Both cases, complete
+  78-file actual Manager provenance, strict unregister/close, native child exits
+  and controller actual wait pass. Evidence is under
+  `codex-gpu3-e986-precheck-result-1/` in the explicit-registration artifact root.
+  The preceding 117-file prediction failure stays failed/quarantined. Original
+  credit snapshots prove importer handoff, not final repayment; persistent SHM
+  and a PID1-owned supervisor zombie remain explicit limits. Neither adapter
+  faults, SSD/RDMA nor S3 physical reclamation is qualified by this precheck.
+- A separate Publish safety candidate retains the existing synchronous caller,
+  descriptors and source owners after post-submit transport/notification errors
+  or Manager process exit without a matched completion. The previous path could
+  return an error after pidfd exit and let adapters report save completion.
+  Real process controls must reject that return; normal late replies and
+  never-submitted failures keep their existing behavior. This is conservative
+  retention, not the bounded live-stall response or page-generation substage;
+  source/process/GPU/adapter review and corresponding hardware gates remain
+  required before dependent changes.
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
   without a control RPC or taking a blocked Publish/lifecycle lock. Restore
   readiness and pending-result checks consume that observation. A live stalled

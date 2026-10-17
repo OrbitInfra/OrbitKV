@@ -404,26 +404,17 @@ impl ChannelClient {
             Ok(response) => response,
             Err(error) => {
                 self.close();
-                if let Some(peer) = peer
-                    && !matches!(
-                        error,
-                        TransportError::PeerExited { .. } | TransportError::Send(_)
-                    )
-                {
-                    TransportClient::wait_for_peer_exit(peer);
+                if peer.is_some() && !matches!(error, TransportError::Send(_)) {
+                    TransportClient::retain_unproven_publish(request_id);
                 }
                 return Err(error.into());
             }
         };
-        // A malformed acknowledgement is not evidence that the peer stopped
-        // reading publish sources. Poison the session and fence its process.
+        // Invalid replies cannot end source ownership after device submission.
         let ambiguous = || {
             self.close();
-            if let Some(peer) = peer {
-                log::error!(
-                    "publish acknowledgement is invalid; holding source pages until Cache Manager exits"
-                );
-                TransportClient::wait_for_peer_exit(peer);
+            if peer.is_some() {
+                TransportClient::retain_unproven_publish(request_id);
             }
         };
         if response.status != StatusCode::Ok {
@@ -433,6 +424,9 @@ impl ChannelClient {
                     .inspect_err(|_| ambiguous())?;
             } else {
                 self.close();
+                if peer.is_some() && response.status != StatusCode::StaleSession {
+                    TransportClient::retain_unproven_publish(request_id);
+                }
             }
             return Err(ChannelError::Status(response.status));
         }

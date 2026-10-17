@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 
 use orbitkv_channel::{
     BootstrapServer, CacheClient, CallOptions, ChannelError, CommandCode, GrantState,
-    RESPONSE_FLAG_REQUEST_CONSUMED, Response, RestoreRequest, RestoreState, TransportServer,
+    PublishRequest, RESPONSE_FLAG_REQUEST_CONSUMED, Response, RestoreRequest, RestoreState,
+    TransportServer,
 };
 
 struct ChildGuard {
@@ -451,4 +452,170 @@ fn partitioned_grant_uses_one_cross_process_submission_and_terminal_result() {
     );
     client.close();
     child.wait_for_success();
+}
+
+#[test]
+fn publish_peer_exit_does_not_release_a_submitted_source_owner() {
+    for mode in ["exit-pending", "invalid-ack", "late-complete"] {
+        let directory = tempfile::tempdir().unwrap();
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "publish_retention_child",
+                "--nocapture",
+            ])
+            .env("ORBITKV_PUBLISH_RETENTION_DIRECTORY", directory.path())
+            .env("ORBITKV_PUBLISH_RETENTION_MODE", mode)
+            .spawn()
+            .unwrap();
+        let start_ticks = process_start_ticks(child.id()).unwrap();
+        let mut child = ChildGuard { child, start_ticks };
+        child.wait_for_success();
+        println!("publish_control={mode} actual_wait=true exit=0");
+    }
+}
+
+#[test]
+#[ignore = "isolated CPU consumer for publish_peer_exit_does_not_release_a_submitted_source_owner"]
+fn publish_retention_child() {
+    use std::sync::{Arc, mpsc};
+    let directory =
+        std::path::PathBuf::from(std::env::var_os("ORBITKV_PUBLISH_RETENTION_DIRECTORY").unwrap());
+    let mode = std::env::var("ORBITKV_PUBLISH_RETENTION_MODE").unwrap();
+    let peer = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "publish_retention_peer",
+            "--nocapture",
+        ])
+        .env("ORBITKV_PUBLISH_RETENTION_DIRECTORY", &directory)
+        .env("ORBITKV_PUBLISH_RETENTION_MODE", &mode)
+        .spawn()
+        .unwrap();
+    let start_ticks = process_start_ticks(peer.id()).unwrap();
+    let mut peer = ChildGuard {
+        child: peer,
+        start_ticks,
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !directory.join("ready").exists() {
+        assert!(peer.child.try_wait().unwrap().is_none());
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let client = Arc::new(
+        orbitkv_channel::ChannelClient::connect(
+            directory.join("publish.sock"),
+            CallOptions {
+                timeout: Duration::from_millis(5),
+                spin_iterations: 0,
+            },
+        )
+        .unwrap(),
+    );
+    struct SourceOwner(std::path::PathBuf, Vec<u8>);
+    impl Drop for SourceOwner {
+        fn drop(&mut self) {
+            assert_eq!(self.1, vec![37; 4096]);
+            std::fs::write(&self.0, b"released").unwrap();
+        }
+    }
+    let source = SourceOwner(directory.join("source-released"), vec![37; 4096]);
+    let (returned, result) = mpsc::channel();
+    let publisher = std::thread::spawn(move || {
+        let outcome = client.publish(
+            1,
+            &PublishRequest {
+                instance_id: "test".into(),
+                registration_generation: [1; 16],
+                tp_rank: 0,
+                pp_rank: 0,
+                device_id: 0,
+                layers: vec![],
+            },
+        );
+        drop(source);
+        returned.send(outcome.is_ok()).unwrap();
+    });
+    while !directory.join("admitted").exists() {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(!directory.join("source-released").exists());
+    if mode == "late-complete" {
+        assert!(result.recv_timeout(Duration::from_millis(20)).is_err());
+        std::fs::write(directory.join("complete"), b"").unwrap();
+        assert!(result.recv_timeout(Duration::from_secs(2)).unwrap());
+        publisher.join().unwrap();
+        assert!(directory.join("source-released").exists());
+    } else {
+        // The CPU peer submits no DMA. Its actual exit cannot release the simulated source.
+        while peer.child.try_wait().unwrap().is_none() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(result.recv_timeout(Duration::from_millis(50)).is_err());
+        assert!(!directory.join("source-released").exists());
+    }
+    peer.wait_for_success();
+    println!("cpu_peer_mode={mode} actual_wait=true exit=0 no_DMA_submitted=true");
+    // Isolated test process exit ends a deliberately parked CPU-only thread.
+    // This is not a native drain or a production cleanup procedure.
+}
+
+#[test]
+#[ignore = "CPU process peer fixture of publish_retention_child"]
+fn publish_retention_peer() {
+    let directory =
+        std::path::PathBuf::from(std::env::var_os("ORBITKV_PUBLISH_RETENTION_DIRECTORY").unwrap());
+    let mode = std::env::var("ORBITKV_PUBLISH_RETENTION_MODE").unwrap();
+    let name = format!("orbitkv/test/publish-retention/{}", std::process::id());
+    let server = TransportServer::bind(&name).unwrap();
+    let bootstrap =
+        BootstrapServer::bind(directory.join("publish.sock"), &name, 91, 65536, 4096).unwrap();
+    std::fs::write(directory.join("ready"), b"").unwrap();
+    let mut session = bootstrap.accept().unwrap();
+    let mut admitted = false;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !admitted {
+        assert!(Instant::now() < deadline);
+        server
+            .try_serve_deferred_for_epoch(91, |command, reply| {
+                assert_eq!(command.code, CommandCode::Publish);
+                let slot = bootstrap
+                    .descriptor_slot(command.descriptor.offset)
+                    .unwrap();
+                session
+                    .validate_request(command.descriptor, command.arg0, slot)
+                    .unwrap();
+                PublishRequest::decode(&bootstrap.arena().read(command.descriptor).unwrap())
+                    .unwrap();
+                admitted = true;
+                std::fs::write(directory.join("admitted"), b"").unwrap();
+                if mode == "exit-pending" {
+                    drop(reply);
+                    return Ok(());
+                }
+                let mut response = Response::ok(command);
+                if mode == "late-complete" {
+                    while !directory.join("complete").exists() {
+                        assert!(Instant::now() < deadline);
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    response.descriptor = bootstrap
+                        .arena()
+                        .write_response(command.descriptor, &[])
+                        .unwrap();
+                    session.complete_request().unwrap();
+                    response.value1 = RESPONSE_FLAG_REQUEST_CONSUMED;
+                } else {
+                    response.value1 = 0; // Deliberately missing the matched completion proof.
+                }
+                reply.send_and_notify(response, session.reply_notification_fd())
+            })
+            .unwrap();
+        std::thread::yield_now();
+    }
 }
