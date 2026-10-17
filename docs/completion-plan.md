@@ -702,6 +702,17 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   source/consumer identities, exact client close/release records and increasing
   typed timestamps. Replayed, foreign, missing, malformed and regressed CPU
   evidence is preserved and must be rejected before hardware launch.
+  New runtime readiness on 2026-10-18 failed at CUDA registration: the client
+  loaded the new wheel, but the Manager test fixture prepended source-only
+  `orbitkv` to embedded Python. No successful GPU context or Save/READ was
+  admitted. The Manager received SIGTERM and its direct wait recorded exit 0;
+  the readiness result remains failed and the task-owned GPU4/CPU/SSD/control
+  locks are quarantined pending independent credit/resource disposition.
+  Raw readiness archive is outside Git under
+  `/root/orbitkv-artifacts/s3-installed-save-gates-20261018/`.
+  The fixture correction explicitly consumes the installed package root from
+  matching imported package/extension paths. It requires new readiness evidence
+  and cannot turn the previous failure into formal qualification.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-
