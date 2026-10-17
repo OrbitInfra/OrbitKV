@@ -80,15 +80,16 @@ fn pending_save_retains_after_handle_drop_and_delayed_reply() {
     }
     drop(registration);
     let started = Instant::now();
-    let response = Python::attach(|py| client.wait_save(py, &handle, Some(0.001))).unwrap();
+    let response =
+        Python::attach(|py| client.wait_save(py, &handle.borrow(py), Some(0.001))).unwrap();
     assert!(!response.done);
     assert!(started.elapsed() < Duration::from_secs(1));
     let foreign = native_client(
         Arc::new(CacheClient::connect(&socket, CallOptions::default()).unwrap()),
         [37; 16],
     );
-    assert!(Python::attach(|py| foreign.poll_save(py, &handle)).is_err());
-    let observed = Arc::clone(&handle.pending);
+    assert!(Python::attach(|py| foreign.poll_save(py, &handle.borrow(py))).is_err());
+    let observed = Python::attach(|py| Arc::clone(&handle.borrow(py).pending));
     drop(handle);
     assert!(
         tensors.upgrade().is_some(),

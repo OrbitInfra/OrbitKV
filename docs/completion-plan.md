@@ -658,6 +658,12 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   does not inherit an asynchronous deadline. This candidate awaits code,
   matching-package, GPU/model and independent acceptance. It does not establish
   page-slot generations, native-fault termination or orphan reclamation.
+  The first pending-handle candidate `8c6c58e5` has review findings: fallible
+  Python handle allocation after native launch and a SGLang reset/join race.
+  Preserve that candidate/wheel and its CPU controls. The correction allocates
+  the complete Python handoff before spawning native work and rechecks retained
+  offloads after queue join. It requires a new exact freeze and independent
+  review; the prior passing CPU controls do not close those findings.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-
