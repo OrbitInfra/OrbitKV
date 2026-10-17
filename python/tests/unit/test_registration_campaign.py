@@ -62,6 +62,58 @@ def cpu_ready_inputs(tmp_path):
     return path, env, lease
 
 
+@pytest.mark.parametrize(
+    "fault", [None, "mutable-file", "root-replaced", "nodes-replaced", "symlink", "mode"]
+)
+def test_private_runtime_domain_preserves_directories_but_allows_owned_files(tmp_path, fault):
+    root = tmp_path / "domain"
+    root.mkdir(mode=0o700)
+    nodes, services = root / "nodes", root / "services"
+    nodes.mkdir(mode=0o700)
+    services.mkdir(mode=0o700)
+    directories = []
+    for path in (root, nodes, services):
+        metadata = path.stat()
+        directories.append(
+            {
+                "path": str(path),
+                "device": metadata.st_dev,
+                "inode": metadata.st_ino,
+                "mode": metadata.st_mode,
+                "uid": metadata.st_uid,
+            }
+        )
+    contract = {
+        "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+        "input_sha256": {},
+        "protected_resources": [],
+        "locks": [],
+        "mutable_runtime_domain": {"root": str(root), "directories": directories},
+    }
+    campaign.check_inputs(contract)
+    if fault == "mutable-file":
+        (nodes / "owned-node").write_bytes(b"runtime changes this file")
+        (services / "owned-service").write_bytes(b"runtime owns this service")
+    elif fault == "root-replaced":
+        root.rename(tmp_path / "retired-domain")
+        root.mkdir(mode=0o700)
+        nodes.mkdir(mode=0o700)
+        services.mkdir(mode=0o700)
+    elif fault in ("nodes-replaced", "symlink"):
+        nodes.rename(root / "retired-nodes")
+        if fault == "symlink":
+            nodes.symlink_to(root / "retired-nodes", target_is_directory=True)
+        else:
+            nodes.mkdir(mode=0o700)
+    elif fault == "mode":
+        nodes.chmod(0o750)
+    if fault in (None, "mutable-file"):
+        campaign.check_inputs(contract)
+    else:
+        with pytest.raises(RuntimeError, match="directory identity changed"):
+            campaign.check_inputs(contract)
+
+
 @pytest.mark.parametrize("supervised", [False, True])
 def test_cpu_ready_owner_holds_then_normally_releases_real_resource_locks(tmp_path, supervised):
     path, env, lease = cpu_ready_inputs(tmp_path)
