@@ -48,6 +48,14 @@ cross-host rank coordination, HA or the remaining CUDA IPC lifetime contracts.
 | P/D bootstrap, request lifecycle and payload | Official engine native P/D; vLLM NIXL and SGLang native backend, separately qualified with the cache |
 | Shared-cache memory movement | TENT between Managers; independent of live P/D transport |
 
+The Publish activity candidate is consumed by vLLM's transfer-result poll and
+SGLang's completed-offload count for bounded diagnostics. It observes native
+active/retained callers and a local active interval without taking the blocked
+descriptor/lifecycle locks. Missing observations, an overdue call or a dead
+Manager cannot produce an offload completion. Existing synchronous Save still
+holds its source pages; this does not qualify asynchronous handles, page-slot
+reuse or fault reclamation.
+
 A hit is a recoverable state boundary across every required group, not simply a
 stored key. The engine supplies destination pages and their readiness; native work
 retains source and destination ownership until drain. Enqueue acknowledgement,

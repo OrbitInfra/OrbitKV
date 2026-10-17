@@ -14,6 +14,7 @@ _NATIVE_EXPORTS = {
     "CacheManagerClient",
     "GpuRegistration",
     "ChannelCallObservation",
+    "PublishProgress",
     "BlockHashes",
     "MooncakeTransferEngine",
     "OrbitKVError",

@@ -75,6 +75,24 @@ def process_next_save(worker: WorkerAdapter) -> None:
     worker._process_save_batch([task])
 
 
+@pytest.mark.parametrize("alive", [True, False, None])
+def test_publish_progress_never_completes_held_engine_pages(alive):
+    worker = make_worker()
+    completion = enqueue_save(worker)
+    worker._client.publish_progress.return_value = SimpleNamespace(
+        active=1,
+        retained=1,
+        overdue=True,
+        active_interval_seconds=61.0,
+        manager_alive=alive,
+    )
+    assert not worker.get_transfer_results({"request"}).finished_sending
+    assert not completion.is_set()
+    worker._client.publish_progress.side_effect = RuntimeError("observation contention")
+    assert not worker.get_transfer_results({"request"}).finished_sending
+    assert not completion.is_set()
+
+
 def test_save_waits_for_each_producer_before_publishing():
     worker = make_worker()
     worker._registered_layers = ["layer"]
