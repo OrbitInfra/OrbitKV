@@ -1,187 +1,29 @@
-"""Register inference GPU buffers with the Cache Manager."""
+"""Framework CUDA identity used during native registration handoff."""
 
-import pickle
 import threading
 from uuid import UUID
 
 import torch
 
-
-class CudaIPCWrapper:
-    """Wrapper for CUDA IPC handle with tensor metadata.
-
-    This class wraps a PyTorch CUDA tensor and extracts its IPC handle,
-    allowing the tensor to be reconstructed in another process. It correctly
-    handles CUDA_VISIBLE_DEVICES by using GPU UUIDs for device identification.
-
-    Attributes:
-        handle: CUDA IPC handle tuple (device, ipc_handle, size, offset, ...)
-        dtype: PyTorch dtype of the tensor
-        shape: Shape tuple of the tensor
-        stride: Stride tuple of the tensor
-        device_uuid: UUID string of the GPU device
-
-    Example:
-        # Process 1 (sender)
-        tensor = torch.randn(10, device='cuda:0')
-        wrapper = CudaIPCWrapper(tensor)
-        serialized = pickle.dumps(wrapper)
-        # ... send serialized bytes to another process ...
-
-        # Process 2 (receiver)
-        wrapper = pickle.loads(serialized)
-        tensor = wrapper.to_tensor()  # Reconstruct tensor
-        ptr = tensor.data_ptr()  # Get GPU pointer
-    """
-
-    # Class-level cache for device UUID to index mapping
-    _discovered_device_mapping: dict[str, int] = {}
-    _device_mapping_lock = threading.Lock()
-
-    @staticmethod
-    def _get_device_uuid(device_index: int) -> str:
-        """Get the UUID of a GPU device given its index.
-
-        Args:
-            device_index: CUDA device index (relative to CUDA_VISIBLE_DEVICES)
-
-        Returns:
-            UUID string of the GPU device
-        """
-        value = str(torch.cuda.get_device_properties(device_index).uuid)
-        return f"GPU-{UUID(value.removeprefix('GPU-'))}"
-
-    @staticmethod
-    def _discover_gpu_devices():
-        """Discover all available GPU devices and map their UUIDs to
-        the receiver-local CUDA ordinals.
-        """
-        if not torch.cuda.is_available():
-            return
-
-        num_devices = torch.cuda.device_count()
-        with CudaIPCWrapper._device_mapping_lock:
-            if CudaIPCWrapper._discovered_device_mapping:
-                return  # Already discovered
-
-            for i in range(num_devices):
-                device_uuid = CudaIPCWrapper._get_device_uuid(i)
-                CudaIPCWrapper._discovered_device_mapping[device_uuid] = i
-
-    @staticmethod
-    def _get_device_index_from_uuid(device_uuid: str) -> int:
-        """Get the receiver-local CUDA ordinal from its UUID.
-
-        Args:
-            device_uuid: UUID string of the GPU device
-
-        Returns:
-            Device index relative to CUDA_VISIBLE_DEVICES
-
-        Raises:
-            RuntimeError: If the device UUID is not found
-        """
-        CudaIPCWrapper._discover_gpu_devices()
-
-        with CudaIPCWrapper._device_mapping_lock:
-            device_index = CudaIPCWrapper._discovered_device_mapping.get(device_uuid, None)
-
-        if device_index is None:
-            raise RuntimeError(
-                f"Device UUID {device_uuid} not found in the discovered devices. "
-                "Please make sure the process can see all the GPU devices."
-            )
-        return device_index
-
-    def __init__(self, tensor: torch.Tensor):
-        """Create IPC wrapper from a CUDA tensor.
-
-        Args:
-            tensor: PyTorch CUDA tensor to wrap. The tensor does not need to
-                   be contiguous or start at the beginning of its storage —
-                   IPC shares the whole underlying allocation and the view
-                   (shape, stride, storage offset) is re-applied on the
-                   receiving side.
-        """
-        # Get the underlying storage and create IPC handle
-        storage = tensor.untyped_storage()
-        handle = storage._share_cuda_()
-
-        # Store metadata needed to reconstruct the tensor
-        self.handle = handle
-        self.dtype = tensor.dtype
-        self.shape = tensor.shape
-        self.stride = tensor.stride()
-        self.storage_offset = tensor.storage_offset()
-
-        # Store device UUID instead of device index to handle CUDA_VISIBLE_DEVICES
-        device_index = tensor.device.index
-        self.device_uuid = CudaIPCWrapper._get_device_uuid(device_index)
-
-    def to_tensor(self) -> torch.Tensor:
-        """Reconstruct tensor from IPC handle.
-
-        This method creates a new tensor in the current process that shares
-        the same GPU memory as the original tensor (via CUDA IPC).
-
-        Returns:
-            PyTorch tensor that shares GPU memory with the original tensor.
-
-        Note:
-            The reconstructed tensor shares memory with the original. Any
-            modifications to one will be visible in the other.
-
-            This function may break if torch.cuda is not initialized.
-            Call torch.cuda.init() before using this function if needed.
-        """
-        # Get the correct device index in the current process based on UUID
-        device = CudaIPCWrapper._get_device_index_from_uuid(self.device_uuid)
-
-        # Reconstruct storage from IPC handle
-        storage = torch.UntypedStorage._new_shared_cuda(device, *self.handle[1:])
-
-        # Create empty tensor on the correct device
-        t = torch.tensor([], device=device, dtype=self.dtype)
-
-        # Set the tensor to use the shared storage. Preserve stride because
-        # some KV cache layouts use padded storage where shape.numel() is
-        # smaller than the underlying storage size.
-        t.set_(storage, self.storage_offset, self.shape, self.stride)
-        return t
-
-    def __eq__(self, other) -> bool:
-        """Check equality with another CudaIPCWrapper.
-
-        Args:
-            other: Object to compare with
-
-        Returns:
-            True if the wrappers refer to the same tensor, False otherwise
-        """
-        if not isinstance(other, CudaIPCWrapper):
-            return False
-        return (
-            self.handle == other.handle
-            and self.dtype == other.dtype
-            and self.shape == other.shape
-            and self.stride == other.stride
-            and self.storage_offset == other.storage_offset
-            and self.device_uuid == other.device_uuid
-        )
-
-    def __repr__(self) -> str:
-        return (
-            f"CudaIPCWrapper(shape={self.shape}, dtype={self.dtype}, "
-            f"stride={self.stride}, "
-            f"device_uuid={self.device_uuid})"
-        )
+_discovered_devices: dict[str, int] = {}
+_device_mapping_lock = threading.Lock()
 
 
-def serialize_gpu_buffer(tensor: torch.Tensor) -> bytes:
-    """Encode the GPU registration used by both inference adapters."""
-    return pickle.dumps(CudaIPCWrapper(tensor))
+def device_uuid(device_index: int) -> str:
+    value = str(torch.cuda.get_device_properties(device_index).uuid)
+    return f"GPU-{UUID(value.removeprefix('GPU-'))}"
+
+
+def device_index_from_uuid(value: str) -> int:
+    with _device_mapping_lock:
+        if not _discovered_devices:
+            for index in range(torch.cuda.device_count()):
+                _discovered_devices[device_uuid(index)] = index
+        index = _discovered_devices.get(value)
+    if index is None:
+        raise RuntimeError(f"GPU UUID {value} is not visible to this process")
+    return index
 
 
 def resolve_device_id() -> int:
-    """Return the client-local CUDA ordinal; registration resolves the Manager UUID."""
     return torch.cuda.current_device()

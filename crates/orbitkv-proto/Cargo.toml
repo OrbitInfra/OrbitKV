@@ -16,6 +16,7 @@ orbitkv-state.workspace = true
 prost.workspace = true
 tonic.workspace = true
 tonic-prost.workspace = true
+uuid.workspace = true
 
 [build-dependencies]
 tonic-prost-build = "0.14"

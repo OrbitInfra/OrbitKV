@@ -1,4 +1,5 @@
 mod inventory;
+mod registration;
 
 pub mod proto {
     #[allow(

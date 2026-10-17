@@ -6,12 +6,14 @@ and test helpers for connector testing against a running server.
 
 import contextlib
 import errno
+import hashlib
 import json
 import logging
 import os
 import secrets
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import sysconfig
@@ -264,10 +266,10 @@ class ClientContext:
         # Map layer index to layer name (for compatibility with vLLM)
         self._layer_names = [f"layer_{i}" for i in range(num_layers)]
         self._registered = False
+        self.registration = None
 
     def register_kv_caches(self) -> None:
         """Register KV cache tensors with the engine server (like WorkerAdapter.register_kv_caches)."""
-        from orbitkv.client.gpu import serialize_gpu_buffer
 
         if self._registered:
             return
@@ -275,15 +277,12 @@ class ClientContext:
         kv_caches = {name: self.gpu_kv_caches[i] for i, name in enumerate(self._layer_names)}
 
         layer_names: list[str] = []
-        wrapper_bytes_list: list[bytes] = []
         num_blocks_list: list[int] = []
         bytes_per_block_list: list[int] = []
         kv_stride_bytes_list: list[int] = []
         segments_list: list[int] = []
 
         for layer_name, kv_cache in kv_caches.items():
-            wrapper_bytes = serialize_gpu_buffer(kv_cache)
-
             shape = tuple(kv_cache.shape)
             stride = tuple(kv_cache.stride())
             element_size = kv_cache.element_size()
@@ -300,7 +299,6 @@ class ClientContext:
                 segments = 1
 
             layer_names.append(layer_name)
-            wrapper_bytes_list.append(wrapper_bytes)
             num_blocks_list.append(num_blocks)
             bytes_per_block_list.append(bytes_per_block)
             kv_stride_bytes_list.append(kv_stride_bytes)
@@ -317,7 +315,6 @@ class ClientContext:
             1,  # world_size
             self.device_id,
             layer_names,
-            wrapper_bytes_list,
             num_blocks_list,
             bytes_per_block_list,
             kv_stride_bytes_list,
@@ -542,7 +539,196 @@ class CacheManagerProcess:
         except OSError:
             self._process_start_ticks = None
 
+        if os.environ.get("ORBITKV_TEST_STRICT_SHUTDOWN") == "1":
+            from .registration_campaign import write
+
+            record = {
+                "pid": self.process.pid,
+                "start_ticks": int(self._process_start_ticks)
+                if self._process_start_ticks
+                else None,
+                "argv": list(self.command),
+                "environment": {
+                    key: env[key]
+                    for key in (
+                        "PYO3_PYTHON",
+                        "PYTHONHOME",
+                        "PYTHONPATH",
+                        "PYTHONNOUSERSITE",
+                        "PYTHONSAFEPATH",
+                        "LD_LIBRARY_PATH",
+                        "CUDA_VISIBLE_DEVICES",
+                        "MC_FORCE_TCP",
+                        "ORBITKV_CHANNEL_CONFIG",
+                    )
+                    if key in env
+                },
+                "log_path": str(self._log_path.resolve()),
+                "bootstrap_socket": self.bootstrap_socket,
+                "port": self.port,
+                "http_port": self.http_port,
+                "channel_service": self.channel_service,
+                "channel_session_epoch": self.channel_session_epoch,
+            }
+            path = Path(
+                f"{self._log_path}.{self.process.pid}-{self._process_start_ticks}.manager-start.json"
+            )
+            write(path, record, time.monotonic() + 30)
+
         return wait_for_server_ready(self.bootstrap_socket, process=self.process)
+
+    def record_runtime(self) -> None:
+        """Capture the live Manager's mapped file identities after registration."""
+        from .registration_campaign import (
+            MAX_MAPPED_EXECUTABLE_BYTES,
+            identity,
+            read_bytes,
+            remaining,
+            write,
+        )
+
+        deadline = time.monotonic() + 30
+        process = self.process
+        if process is None or process.poll() is not None or self._log_path is None:
+            raise RuntimeError("Manager is unavailable for its actual runtime record")
+        owner = identity(process.pid, deadline)
+        if owner["start_ticks"] != int(self._process_start_ticks):
+            raise RuntimeError("Manager runtime process identity changed")
+        raw = read_bytes(Path(f"/proc/{process.pid}/maps"), 1024 * 1024, deadline).decode()
+        executable = Path(f"/proc/{process.pid}/exe").resolve(strict=True)
+        paths = {}
+        executable_regions = {}
+        executable_bytes = 0
+        for line in raw.splitlines():
+            fields = line.split(maxsplit=5)
+            if len(fields) == 6 and fields[5].startswith("/"):
+                name = fields[5]
+                if ".so" not in Path(name).name and name != str(executable):
+                    continue
+                if name.endswith(" (deleted)"):
+                    raise RuntimeError("Manager has a deleted mapped runtime file")
+                major, minor = (int(part, 16) for part in fields[3].split(":"))
+                mapped_identity = (os.makedev(major, minor), int(fields[4]))
+                if name in paths and paths[name] != mapped_identity:
+                    raise RuntimeError("Manager mapped runtime identities conflict")
+                paths[name] = mapped_identity
+                if "x" in fields[1]:
+                    start, end = (int(value, 16) for value in fields[0].split("-"))
+                    if end <= start:
+                        raise RuntimeError("Invalid Manager executable mapping range")
+                    executable_bytes += end - start
+                    if executable_bytes > MAX_MAPPED_EXECUTABLE_BYTES:
+                        raise RuntimeError("Mapped executable evidence exceeds byte bound")
+                    executable_regions.setdefault(name, []).append((start, end, int(fields[2], 16)))
+        if not paths or len(paths) > 2048:
+            raise RuntimeError("Manager mapped file inventory is empty or exceeds its bound")
+        files = []
+        for name in sorted(paths):
+            remaining(deadline)
+            path = Path(name)
+            resolved = path.resolve(strict=True)
+            fd = os.open(resolved, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                metadata = os.fstat(fd)
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_ino != paths[name][1]:
+                    raise RuntimeError("Manager mapped runtime path was replaced")
+                code_regions = []
+                if metadata.st_dev != paths[name][0]:
+                    regions = executable_regions.get(name, [])
+                    if not regions:
+                        raise RuntimeError(
+                            "Mapped runtime identity differs without executable proof"
+                        )
+                    memory = os.open(f"/proc/{process.pid}/mem", os.O_RDONLY | os.O_NONBLOCK)
+                    try:
+                        for start, end, offset in regions:
+                            expected_hash = hashlib.sha256()
+                            actual_hash = hashlib.sha256()
+                            position = 0
+                            while position < end - start:
+                                remaining(deadline)
+                                count = min(1024 * 1024, end - start - position)
+                                expected = os.pread(fd, count, offset + position)
+                                actual = os.pread(memory, count, start + position)
+                                file_count = min(
+                                    count, max(0, metadata.st_size - offset - position)
+                                )
+                                if len(expected) != file_count:
+                                    raise RuntimeError("Mapped executable file read was short")
+                                # The last executable page can contain zero padding beyond the file.
+                                expected += bytes(count - len(expected))
+                                if len(actual) != count or actual != expected:
+                                    raise RuntimeError(
+                                        "Actual mapped executable bytes differ from the file"
+                                    )
+                                expected_hash.update(expected)
+                                actual_hash.update(actual)
+                                position += count
+                            code_regions.append(
+                                {
+                                    "start": start,
+                                    "end": end,
+                                    "file_offset": offset,
+                                    "file_sha256": expected_hash.hexdigest(),
+                                    "mapped_sha256": actual_hash.hexdigest(),
+                                }
+                            )
+                    finally:
+                        os.close(memory)
+                value = hashlib.sha256()
+                while True:
+                    remaining(deadline)
+                    chunk = os.read(fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    value.update(chunk)
+                after = os.fstat(fd)
+                current = resolved.stat()
+                if (
+                    (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                    != (metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns)
+                    or (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino)
+                    or path.resolve(strict=True) != resolved
+                ):
+                    raise RuntimeError("Manager mapped runtime changed during hashing")
+            finally:
+                os.close(fd)
+            files.append(
+                {
+                    "path": name,
+                    "realpath": str(resolved),
+                    "device": metadata.st_dev,
+                    "inode": metadata.st_ino,
+                    "bytes": metadata.st_size,
+                    "sha256": value.hexdigest(),
+                    "mapped_device": paths[name][0],
+                    "mapped_inode": paths[name][1],
+                    "executable_regions": code_regions,
+                }
+            )
+        if (
+            identity(process.pid, deadline) != owner
+            or Path(f"/proc/{process.pid}/exe").resolve(strict=True) != executable
+        ):
+            raise RuntimeError("Manager changed during its runtime inventory")
+        final_maps = read_bytes(Path(f"/proc/{process.pid}/maps"), 1024 * 1024, deadline).decode()
+
+        def runtime_lines(value):
+            return {
+                line
+                for line in value.splitlines()
+                if len(fields := line.split(maxsplit=5)) == 6
+                and fields[5].startswith("/")
+                and (".so" in Path(fields[5]).name or fields[5] == str(executable))
+            }
+
+        if runtime_lines(raw) != runtime_lines(final_maps):
+            raise RuntimeError("Manager mapped runtime changed during capture")
+        write(
+            Path(f"{self._log_path}.{process.pid}-{owner['start_ticks']}.manager-runtime.json"),
+            {"owner": owner, "maps": raw, "files": files, "physical_termination_claimed": False},
+            deadline,
+        )
 
     def stop(self) -> None:
         """Stop the server process."""
@@ -558,6 +744,7 @@ class CacheManagerProcess:
                 "start_ticks": int(record["start_ticks"]) if record["start_ticks"] else None,
                 "exit_code": process.returncode,
                 "forced_kill": False,
+                "sigterm_sent": record["sigterm_sent"],
                 "reaped": record["reaped"],
                 "remaining_processes": members,
                 "inspection_errors": errors,

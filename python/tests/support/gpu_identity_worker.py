@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import json
 import os
-import pickle
 import time
 from pathlib import Path
 from uuid import UUID
@@ -14,9 +13,7 @@ def main():
     import torch
 
     from orbitkv import BlockHashes, CacheManagerClient, QueryLoading, QueryReady
-    from orbitkv.client.gpu import serialize_gpu_buffer
     from tests.support.cache_manager import evict_dram_after_ssd_writes
-    from tests.support.gpu_identity import UnissuedCudaIPCWrapper
     from tests.support.metrics import fetch_orbitkv_metrics
 
     parser = argparse.ArgumentParser()
@@ -39,16 +36,10 @@ def main():
     )
     tensor = expected.to(f"cuda:{args.device}")
     tensors = [tensor]
-    if args.rejection:
-        uuids = [f"GPU-{UUID(actual_uuid.removeprefix('GPU-'))}"]
-        if args.rejection == "UUID differs":
-            wrong = tensor.to(f"cuda:{1 - args.device}")
-            tensors.append(tensor)
-            wrong_uuid = str(torch.cuda.get_device_properties(wrong.device).uuid)
-            uuids.insert(0, f"GPU-{UUID(wrong_uuid.removeprefix('GPU-'))}")
-        wrappers = [pickle.dumps(UnissuedCudaIPCWrapper(uuid)) for uuid in uuids]
-    else:
-        wrappers = [serialize_gpu_buffer(tensor)]
+    expected_rejection = args.rejection
+    if args.rejection == "UUID differs":
+        tensors.append(tensor.to(f"cuda:{1 - args.device}"))
+        expected_rejection = "cannot span CUDA devices"
     count = len(tensors)
     client = CacheManagerClient(args.socket)
     registered = False
@@ -71,7 +62,6 @@ def main():
                 1,
                 7 if args.rejection == "client-local" else args.device,
                 [f"kv:{index}" for index in range(count)],
-                wrappers,
                 [8] * count,
                 [4096] * count,
                 [0] * count,
@@ -82,7 +72,7 @@ def main():
             )
             registered = True
         except Exception as error:
-            if not args.rejection or args.rejection not in str(error):
+            if not args.rejection or expected_rejection not in str(error):
                 raise
             assert client.health()[0]
             result["rejection"] = str(error)

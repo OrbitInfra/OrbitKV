@@ -125,6 +125,74 @@ unregister/close, and retain failed cleanup plus independent queued holds.
 The optional `ORBITKV_CLEANUP_SOURCE_ROOT` selects an archived source for the
 negative control; it never changes production lookup or admission.
 
+The installed registration campaign controller is
+`tests/support/registration_campaign.py`. Its CPU gate
+`pytest tests/unit/test_registration_campaign.py` checks real READY lock ownership
+and rejects missing/forced/unreaped/native-error evidence. It also checks
+adopted exit codes, expected logs, observed owner identities, selected lock
+replacement, READY/controller grant replay, loader/cache environment leakage,
+shared remaining deadlines and final-error retention. Runtime manifest controls
+use the consumed input check to reject payload changes, extra installed files,
+symlink target drift, changed manifests, duplicate/traversal entries and
+nonregular input. Each frozen root has a complete file census, file sizes,
+resolved targets and SHA256 values; manifests have a 64 MiB/200,000-file bound.
+Startup verification has one 180-second deadline. Cell admission/postflight can
+select only declared roots consumed by that cell; startup, grant and final input
+checks retain the complete manifest set. Freeze and review each cell's consumer
+root selection as part of launch acceptance, with the unchanged cleanup budget.
+Use `--supervise` for remote launch: a durable parent owns the actual controller
+wait and records its identity, status and lack of forced cleanup. Normal and
+nonzero real child controls run without GPU; a quarantined controller stays alive.
+This supervision does not qualify controller crashes or native DMA termination.
+The control interpreter uses `-I -S`; freeze any absent default import search
+inputs too. Embedded Manager Python still uses its explicit installed environment:
+disable user-site, freeze every consumed system site and require the actual
+registry Torch/helper origin records and `sys.path`. The native gate rejects
+missing/duplicate origins, foreign paths and mismatched process identity.
+Strict Manager fixtures persist an actual argv/environment/listener/namespace
+startup record bound to PID/start ticks before readiness. Missing or mismatched
+records cannot pass the native gate; persistence failure retains the live owner.
+After registration success or failure, the native fixture records the live
+Manager's complete maps and the resolved executable/shared-library identities,
+sizes and hashes. Each native cell freezes `runtime_mapped_files`; the result
+oracle joins every recorded library to its actual maps device/inode and frozen
+path/target/digest. Missing, foreign, omitted or replaced inputs refuse success.
+Capture has one 30-second deadline and never releases the process on evidence
+failure. A differing overlay device view retains both identities and requires
+complete executable mapping bytes read from the live child to match the same
+opened file's segments. Missing or corrupt code proof refuses capture; a name,
+inode or file hash alone cannot substitute. Code reads share the 30-second
+deadline and a 4 GiB aggregate executable range bound, checked before the first
+code read and independently by the result oracle. Reads use 1 MiB chunks; the
+bound counts mapped bytes, not collector scratch allocation. The complete
+Torch/CUDA runtime exceeds the prior 512 MiB limit, so the finite evidence
+capacity covers that runtime without omitting any executable region. This qualifies executable provenance,
+not mutable data values or physical device completion.
+These snapshots do not reconstruct historical mappings or prove physical drain.
+Native cleanup additionally requires the actual owned `sigterm_sent` record and
+the Manager's normal-shutdown marker; exit zero/reaped alone does not pass.
+Cells that declare a frozen process tracer preserve the pytest leader PID and
+record native fork/exec/wait/exit events. A child reaped by its own parent requires
+one matching actual wait and child exit record; absence, duplication or unexpected
+status refuses success. Tracing does not establish physical DMA termination.
+The original controller
+and its counterexamples stay in the external artifact archive. It separates precheck
+from formal cells, preserves locks on unknown ownership and requires a distinct
+independent grant matching the immutable contract. A source/CPU controller pass
+is not GPU launch approval; freeze and review the actual runtime/resources before
+execution. Runtime outputs and contracts belong outside this checkout.
+
+For explicit CUDA registration/credit-owner changes, run
+`registration::tests` and the actual duplicate-entry control in `client::tests`
+with the authenticated channel fixture below. CPU tests use a declared local
+Torch storage ABI stub to count exports and repayments; they never import a
+real CUDA mapping. Partial/lost-return controls preserve the owner, and repayment
+is not retried after an unknown return. Separately run the server lifecycle
+unit gate: actual UDS rejects bad registration with a generation-bound
+NeverImported disposition; this uses the explicit host-registration test shim
+and read-only driver discovery, not CUDA byte/DMA qualification. Actual installed
+Torch export/import/repayment and both engine GPU gates remain required.
+
 For producer-bound Publish registration changes, run `client::tests` with the
 same fixture and embedding environment. These controls pause a real native
 worker-lock lookup, replace the registration, and check stale/foreign-client

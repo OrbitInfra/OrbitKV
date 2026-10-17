@@ -70,7 +70,28 @@ def channel_client_context(
         num_blocks=4,
         num_layers=1,
     )
-    ctx.register_kv_caches()
+    try:
+        ctx.register_kv_caches()
+    finally:
+        if os.environ.get("ORBITKV_TEST_STRICT_SHUTDOWN") == "1":
+            from tests.support.registration_campaign import identity, write
+
+            registration = ctx.registration
+            evidence = (
+                registration.ipc_credit_evidence
+                if registration is not None
+                else ctx.client.retained_credit_evidence(instance_id)
+            )
+            write(
+                tmp_path / "registration.credit-owner.json",
+                {
+                    "owner": identity(os.getpid()),
+                    "instance_id": instance_id,
+                    "evidence": json.loads(evidence),
+                },
+                time.monotonic() + 30,
+            )
+            channel_server.record_runtime()
     yield ctx
     if os.environ.get("ORBITKV_TEST_STRICT_SHUTDOWN") == "1":
         if not channel_server.is_running():

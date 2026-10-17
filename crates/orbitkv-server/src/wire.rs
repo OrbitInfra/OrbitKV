@@ -22,7 +22,7 @@ pub(crate) fn registration(request: RegisterContextRequest) -> Registration {
         device_id: request.device_id,
         device_uuid: request.device_uuid,
         layer_names: request.layer_names,
-        wrapper_bytes: request.wrapper_bytes,
+        gpu_tensors: request.gpu_tensors,
         num_blocks: request.num_blocks,
         bytes_per_block: request.bytes_per_block,
         kv_stride_bytes: request.kv_stride_bytes,

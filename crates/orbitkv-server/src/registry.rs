@@ -1,3 +1,4 @@
+use orbitkv_proto::proto::engine::{CudaCreditDisposition, CudaIpcTensorRegistration};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -21,6 +22,7 @@ struct LayerTensor {
     )]
     tensor: Py<PyAny>,
     metadata: TensorMetadata,
+    credit_identity: (Vec<u8>, u64),
 }
 
 // Note: No custom Drop impl needed for LayerTensor.
@@ -34,6 +36,7 @@ struct LayerTensor {
 struct ContextState {
     device_id: i32,
     tensors: HashMap<String, LayerTensor>,
+    export_owner_generation: Option<Vec<u8>>,
 }
 
 impl ContextState {
@@ -41,6 +44,7 @@ impl ContextState {
         Self {
             device_id,
             tensors: HashMap::new(),
+            export_owner_generation: None,
         }
     }
 }
@@ -61,6 +65,18 @@ impl CudaTensorRegistry {
     pub fn new() -> PyResult<Self> {
         Python::attach(|py| {
             let torch = py.import("torch")?;
+            let sys = py.import("sys")?;
+            log::info!(
+                "CUDA registration Python runtime: {}",
+                serde_json::json!({
+                    "pid": std::process::id(),
+                    "torch_file": torch.getattr("__file__")?.extract::<String>()?,
+                    "sys_path": sys.getattr("path")?.extract::<Vec<String>>()?,
+                    "prefix": sys.getattr("prefix")?.extract::<String>()?,
+                    "base_prefix": sys.getattr("base_prefix")?.extract::<String>()?,
+                    "no_user_site": sys.getattr("flags")?.getattr("no_user_site")?.extract::<u8>()?,
+                })
+            );
             let cuda = torch.getattr("cuda")?;
             cuda.call_method0("init")?;
             Ok(Self {
@@ -78,8 +94,10 @@ impl CudaTensorRegistry {
     fn register_layers(
         &mut self,
         context_key: &ContextKey,
-        layers: Vec<(String, Vec<u8>)>,
+        layers: Vec<(String, CudaIpcTensorRegistration)>,
+        disposition: &mut CudaCreditDisposition,
     ) -> PyResult<Vec<TensorMetadata>> {
+        *disposition = CudaCreditDisposition::Unknown;
         if self.contexts.contains_key(context_key) {
             return Err(PyValueError::new_err(format!(
                 "context {context_key:?} is already registered"
@@ -96,16 +114,58 @@ impl CudaTensorRegistry {
         }
 
         let device_uuid = &context_key.device_uuid;
+        let mut credits: HashSet<(Vec<u8>, u64)> = self
+            .contexts
+            .values()
+            .flat_map(|context| {
+                context
+                    .tensors
+                    .values()
+                    .map(|tensor| tensor.credit_identity.clone())
+            })
+            .collect();
+        for (_, registration) in &layers {
+            if !credits.insert((
+                registration.ref_counter_handle.clone(),
+                registration.ref_counter_offset,
+            )) {
+                return Err(PyValueError::new_err(
+                    "CUDA IPC export credit already has an importer owner",
+                ));
+            }
+        }
+        let export_owner_generation = layers
+            .first()
+            .map(|(_, tensor)| &tensor.export_owner_generation);
+        for (_, registration) in &layers {
+            if Some(&registration.export_owner_generation) != export_owner_generation {
+                return Err(PyValueError::new_err(
+                    "CUDA export batch spans different owners",
+                ));
+            }
+            registration
+                .validate(device_uuid)
+                .map_err(PyValueError::new_err)?;
+        }
+        *disposition = CudaCreditDisposition::NeverImported;
         let device_id = Python::attach(|py| {
-            py.import("orbitkv.client.gpu")?
-                .getattr("CudaIPCWrapper")?
-                .call_method1("_get_device_index_from_uuid", (device_uuid,))?
+            let gpu = py.import("orbitkv.client.gpu")?;
+            log::info!(
+                "CUDA registration Python helper: {}",
+                serde_json::json!({
+                    "pid": std::process::id(),
+                    "gpu_module_file": gpu.getattr("__file__")?.extract::<String>()?,
+                })
+            );
+            gpu.call_method1("device_index_from_uuid", (device_uuid,))?
                 .extract::<i32>()
         })?;
         let mut context = ContextState::new(device_id);
+        context.export_owner_generation = export_owner_generation.cloned();
         let mut metadatas = Vec::with_capacity(layers.len());
-        for (layer_name, wrapper_bytes) in layers {
-            let layer_tensor = Self::materialize_tensor(device_id, device_uuid, &wrapper_bytes)?;
+        for (layer_name, registration) in layers {
+            *disposition = CudaCreditDisposition::Unknown;
+            let layer_tensor = Self::materialize_tensor(device_id, device_uuid, &registration)?;
             let metadata = layer_tensor.metadata.clone();
 
             if context.device_id != metadata.device_id {
@@ -120,6 +180,7 @@ impl CudaTensorRegistry {
         }
 
         self.contexts.insert(context_key.clone(), context);
+        *disposition = CudaCreditDisposition::ImporterOwned;
         Ok(metadatas)
     }
 
@@ -188,61 +249,100 @@ impl CudaTensorRegistry {
     fn materialize_tensor(
         device_id: i32,
         device_uuid: &str,
-        wrapper_bytes: &[u8],
+        registration: &CudaIpcTensorRegistration,
     ) -> PyResult<LayerTensor> {
+        registration
+            .validate(device_uuid)
+            .map_err(PyValueError::new_err)?;
         Python::attach(|py| {
             let torch = py.import("torch")?;
-            let pickle = py.import("pickle")?;
             let cuda = torch.getattr("cuda")?;
-
-            let py_bytes = PyBytes::new(py, wrapper_bytes);
-            let wrapper = pickle.call_method1("loads", (py_bytes,))?;
-            if wrapper.getattr("device_uuid")?.extract::<String>()? != device_uuid {
+            cuda.call_method1("set_device", (device_id,))?;
+            let storage = torch.getattr("UntypedStorage")?.call_method1(
+                "_new_shared_cuda",
+                (
+                    device_id,
+                    PyBytes::new(py, &registration.allocation_handle),
+                    registration.storage_size_bytes,
+                    registration.storage_allocation_offset_bytes,
+                    PyBytes::new(py, &registration.ref_counter_handle),
+                    registration.ref_counter_offset,
+                    PyBytes::new(py, &registration.event_handle),
+                    registration.event_sync_required,
+                ),
+            )?;
+            let dtype = torch.getattr(registration.dtype.as_str())?;
+            let kwargs = pyo3::types::PyDict::new(py);
+            kwargs.set_item("device", format!("cuda:{device_id}"))?;
+            kwargs.set_item("dtype", dtype)?;
+            let tensor = torch.getattr("empty")?.call(((0_u64,),), Some(&kwargs))?;
+            tensor.call_method1(
+                "set_",
+                (
+                    &storage,
+                    registration.view_offset_bytes / registration.element_size,
+                    &registration.shape,
+                    &registration.strides,
+                ),
+            )?;
+            let data_ptr: u64 = tensor.call_method0("data_ptr")?.extract()?;
+            let actual_device: i32 = tensor.getattr("device")?.getattr("index")?.extract()?;
+            let actual_size: u64 = storage.call_method0("nbytes")?.extract()?;
+            let base: u64 = storage.call_method0("data_ptr")?.extract()?;
+            let actual_offset: u64 = tensor.call_method0("storage_offset")?.extract()?;
+            let actual_dtype = tensor.getattr("dtype")?.str()?.to_string();
+            let shape: Vec<usize> = tensor.getattr("shape")?.extract()?;
+            let strides: Vec<usize> = tensor.call_method0("stride")?.extract()?;
+            let element_size: u64 = tensor.call_method0("element_size")?.extract()?;
+            if base.checked_add(registration.view_offset_bytes) != Some(data_ptr)
+                || actual_offset.checked_mul(registration.element_size)
+                    != Some(registration.view_offset_bytes)
+                || data_ptr == 0
+                || !data_ptr.is_multiple_of(registration.element_size)
+                || actual_dtype != format!("torch.{}", registration.dtype)
+                || actual_device != device_id
+                || actual_size != registration.storage_size_bytes
+                || element_size != registration.element_size
+                || shape
+                    .iter()
+                    .map(|n| *n as u64)
+                    .ne(registration.shape.iter().copied())
+                || strides
+                    .iter()
+                    .map(|n| *n as u64)
+                    .ne(registration.strides.iter().copied())
+            {
                 return Err(PyValueError::new_err(
-                    "CUDA IPC tensor UUID differs from the registered device",
+                    "CUDA importer differs from validated registration",
                 ));
             }
-            cuda.call_method1("set_device", (device_id,))?;
-            let tensor = wrapper.call_method0("to_tensor")?;
-
-            let data_ptr: u64 = tensor.call_method0("data_ptr")?.extract()?;
-            let device_attr = tensor.getattr("device")?;
-            let device_index: Option<i32> = device_attr.getattr("index")?.extract()?;
-            let resolved_device = device_index.unwrap_or(device_id);
-
-            // The view may start partway into its allocation (vLLM hands out
-            // per-layer views of one shared KV buffer); register the bytes
-            // from the view's start to the end of the allocation.
-            let storage = tensor.call_method0("untyped_storage")?;
-            let storage_bytes: usize = storage.call_method0("nbytes")?.extract()?;
-            let storage_offset: usize = tensor.call_method0("storage_offset")?.extract()?;
-            let element_size: usize = tensor.call_method0("element_size")?.extract()?;
-            let size_bytes = storage_bytes
-                .checked_sub(storage_offset * element_size)
-                .ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(
-                        "tensor storage offset lies past the end of its allocation",
-                    )
-                })?;
-
-            let shape = tensor.getattr("shape")?.extract()?;
-            let strides = tensor.call_method0("stride")?.extract()?;
-            let tensor_owned = tensor.unbind();
-            let dtype = tensor_owned.bind(py).getattr("dtype")?.str()?.to_string();
-
+            let size_bytes = actual_size
+                .checked_sub(registration.view_offset_bytes)
+                .and_then(|size| usize::try_from(size).ok())
+                .ok_or_else(|| PyValueError::new_err("CUDA registration view size overflow"))?;
             Ok(LayerTensor {
-                tensor: tensor_owned,
+                credit_identity: (
+                    registration.ref_counter_handle.clone(),
+                    registration.ref_counter_offset,
+                ),
+                tensor: tensor.unbind(),
                 metadata: TensorMetadata {
-                    dtype,
+                    dtype: format!("torch.{}", registration.dtype),
                     shape,
                     strides,
                     data_ptr,
                     size_bytes,
-                    device_id: resolved_device,
+                    device_id,
                 },
             })
         })
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct ImportFailure {
+    pub(crate) message: String,
+    pub(crate) disposition: CudaCreditDisposition,
 }
 
 /// Work submitted to the dedicated registry thread. Each carries a `oneshot`
@@ -250,11 +350,11 @@ impl CudaTensorRegistry {
 enum RegistryCommand {
     RegisterLayers {
         context_key: ContextKey,
-        /// `(layer_name, wrapper_bytes)` for each layer in the batch.
-        layers: Vec<(String, Vec<u8>)>,
+        /// Explicit tensor/storage exports for each layer in the batch.
+        layers: Vec<(String, CudaIpcTensorRegistration)>,
         // The `PyErr` is stringified on the actor thread (which holds the GIL),
         // so callers never need to touch the GIL to read an error message.
-        reply: oneshot::Sender<Result<Vec<TensorMetadata>, String>>,
+        reply: oneshot::Sender<Result<Vec<TensorMetadata>, ImportFailure>>,
     },
     DropInstance {
         instance_id: String,
@@ -307,8 +407,8 @@ impl RegistryHandle {
     pub(crate) async fn register_layers(
         &self,
         context_key: ContextKey,
-        layers: Vec<(String, Vec<u8>)>,
-    ) -> Result<Vec<TensorMetadata>, String> {
+        layers: Vec<(String, CudaIpcTensorRegistration)>,
+    ) -> Result<Vec<TensorMetadata>, ImportFailure> {
         let (reply, rx) = oneshot::channel();
         self.dispatch(RegistryCommand::RegisterLayers {
             context_key,
@@ -361,11 +461,15 @@ fn registry_actor(mut registry: CudaTensorRegistry, mut rx: mpsc::Receiver<Regis
                 layers,
                 reply,
             } => {
+                let mut disposition = CudaCreditDisposition::Unknown;
                 let result = registry
-                    .register_layers(&context_key, layers)
+                    .register_layers(&context_key, layers, &mut disposition)
                     // Stringify here, on the GIL-owning thread, so the gRPC
                     // handler never needs `Python::attach` just to read the message.
-                    .map_err(|err| Python::attach(|py| err.value(py).to_string()));
+                    .map_err(|err| ImportFailure {
+                        message: Python::attach(|py| err.value(py).to_string()),
+                        disposition,
+                    });
                 let _ = reply.send(result);
             }
             RegistryCommand::DropInstance { instance_id, reply } => {

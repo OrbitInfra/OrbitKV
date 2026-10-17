@@ -17,10 +17,26 @@ peer address, etcd endpoints, a unique stable node ID and the same cluster name.
 
 Client and Manager CUDA ordinals may differ. Registration joins the tensor's full
 GPU UUID to the Manager-visible device and retains that route for Publish/Restore;
-use matching lifecycle-protocol-8 artifacts. NUMA selection uses those visible
+use matching lifecycle-protocol-9 artifacts. NUMA selection uses those visible
 UUIDs. Known payload placement uses `mbind` before first touch and requires the
 selected memory node in the process's allowed nodes. CPU affinity alone cannot
 override an inherited interleave memory policy; inspect actual resident pages.
+
+For installed registration qualification, use a stdlib-only `-I -S` control
+interpreter with a durable actual-wait owner. Freeze absent import search paths
+as well as present files. The embedded Manager's explicit Python environment
+must disable user-site and cover consumed system-site `.pth` files. Require its
+actual registry Torch/helper origin records and `sys.path`, plus mapped native
+library provenance; an independent venv import does not prove Manager loading.
+When an old channel domain is quarantined, unique service names do not isolate
+iceoryx2's global counter or stale-node cleanup. Use the same frozen absolute
+`ORBITKV_CHANNEL_CONFIG` for client and Manager with a separate private prefix
+and canonical root. The Rust channel owner consumes it before Node creation,
+independently of Manager cwd; recheck resource scope and READY before launch.
+Precreate the private node/service directories without symlinks, freeze each
+path-chain identity, and keep the domain immutable under its resource owner
+through cleanup. The dependency uses paths after the Rust precheck; concurrent
+privileged renames are not atomically fenced by the channel configuration.
 
 For remote metadata scope, omission means `AllNamespaces`. Repeat
 `--metadata-namespace` only with complete storage namespaces logged by actual

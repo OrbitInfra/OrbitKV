@@ -1,7 +1,10 @@
 use super::*;
 use crate::endpoint::ProcessEndpoint;
 use crate::metric::hll::MultiWindowHllTracker;
-use crate::proto::engine::{RegisterContextRequest, SessionRequest};
+use crate::proto::engine::{
+    CudaCreditDisposition, CudaIpcTensorRegistration, CudaRegistrationReply,
+    RegisterContextRequest, SessionRequest,
+};
 use crate::registry::CudaTensorRegistry;
 use orbitkv_channel::lifecycle::LifecycleCommand;
 use orbitkv_channel::{CallOptions, ChannelClient, ChannelError, QueryBundleRequest};
@@ -81,12 +84,23 @@ async fn process_channel_lifecycle_and_cache_control_need_no_grpc() {
             instance_id: "inst".into(),
             namespace: "ns".into(),
             client_version: "old".into(),
+            gpu_tensors: vec![CudaIpcTensorRegistration {
+                export_owner_generation: vec![9; 16],
+                ..Default::default()
+            }],
             ..Default::default()
         };
-        assert!(matches!(
-            first.lifecycle(LifecycleCommand::Register, &bad_version.encode_to_vec()),
-            Err(ChannelError::Lifecycle { code: 2, .. })
-        ));
+        let rejected = first
+            .lifecycle(LifecycleCommand::Register, &bad_version.encode_to_vec())
+            .unwrap();
+        let receipt = CudaRegistrationReply::decode(rejected.payload.as_slice()).unwrap();
+        assert_eq!(receipt.status_code, 2);
+        assert_eq!(receipt.export_owner_generation, vec![9; 16]);
+        assert_eq!(
+            receipt.credits,
+            vec![CudaCreditDisposition::NeverImported as i32]
+        );
+        assert!(rejected.fds.is_empty());
         first.lifecycle(LifecycleCommand::Health, &[]).unwrap();
         assert!(
             first

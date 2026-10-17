@@ -26,7 +26,22 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   Resolve their full physical GPU UUIDs; the native owner retains the Manager's
   resolved ordinal for Publish/Restore. Do not reuse the client's ordinal on the
   Manager or convert a UUID into an ordinal with physical `nvidia-smi` ordering.
-  Lifecycle protocol 8 requires matching installed client and Manager artifacts.
+  Lifecycle protocol 9 requires matching installed client and Manager artifacts.
+  The selected Torch 2.13 cudaMalloc IPC storage handle has a version/type
+  envelope around the native CUDA handle. Keep the validated 66-byte version-3
+  cudaMalloc export unchanged through the importer; bare legacy and expandable
+  handles are outside this owner contract. Real installed export/import controls
+  remain necessary even when synthetic metadata validation passes.
+  A normal return from Torch's best-effort counter release is not repayment
+  proof. The Rust attempt owner must retain the original counter file and verify
+  identity plus the exclusive slot's one-to-zero transition; missing, replaced,
+  silent or failed repayment remains charged without retry. This counter proof
+  does not establish CUDA/RDMA termination.
+  Installed registration gates persist the immutable `ipc_credit_evidence`
+  handoff snapshot, or `retained_credit_evidence(instance_id)` on failure. The
+  latter reads original held counter descriptors and distinguishes current-path
+  identity, missing paths and read errors. Neither API authorizes repayment or
+  physical reuse; preserve the original failure and quarantine on uncertainty.
 
 Use the gate table in `AGENTS.md`: default Python tests must remain source-only;
 native lifecycle changes need process integration, and consumed adapter changes

@@ -1,7 +1,11 @@
+use std::io::Read;
 use std::os::fd::OwnedFd;
+use std::os::unix::fs::MetadataExt;
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use iceoryx2::active_request::ActiveRequest;
+use iceoryx2::config::Config;
 use iceoryx2::port::listener::{Listener, ListenerWaitError};
 use iceoryx2::port::notifier::Notifier;
 use iceoryx2::prelude::*;
@@ -24,6 +28,131 @@ type IpcService = iceoryx2::service::port_factory::request_response::PortFactory
     WireMessage,
     (),
 >;
+
+struct ProcessConfig {
+    config: Config,
+    directories: Vec<(std::path::PathBuf, u64, u64)>,
+}
+
+fn process_config() -> Result<&'static Config, TransportError> {
+    static CONFIG: LazyLock<Result<ProcessConfig, String>> = LazyLock::new(|| {
+        let Some(path) = std::env::var_os("ORBITKV_CHANNEL_CONFIG") else {
+            return Ok(ProcessConfig {
+                config: Config::global_config().clone(),
+                directories: Vec::new(),
+            });
+        };
+        let path = std::path::Path::new(&path);
+        if !path.is_absolute() {
+            return Err("ORBITKV_CHANNEL_CONFIG must name an absolute file".into());
+        }
+        let fd = rustix::fs::open(
+            path,
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::NONBLOCK,
+            rustix::fs::Mode::empty(),
+        )
+        .map_err(|error| error.to_string())?;
+        let metadata = rustix::fs::fstat(&fd).map_err(|error| error.to_string())?;
+        if rustix::fs::FileType::from_raw_mode(metadata.st_mode)
+            != rustix::fs::FileType::RegularFile
+            || metadata.st_size < 0
+            || metadata.st_size > 65536
+        {
+            return Err("channel configuration must be a regular file of at most 64 KiB".into());
+        }
+        let mut input = String::new();
+        let file = std::fs::File::from(fd);
+        (&file)
+            .take(65537)
+            .read_to_string(&mut input)
+            .map_err(|error| error.to_string())?;
+        if input.len() > 65536 {
+            return Err("channel configuration exceeded its byte bound".into());
+        }
+        let after = rustix::fs::fstat(&file).map_err(|error| error.to_string())?;
+        if after.st_dev != metadata.st_dev
+            || after.st_ino != metadata.st_ino
+            || after.st_size != metadata.st_size
+            || after.st_mtime != metadata.st_mtime
+            || after.st_mtime_nsec != metadata.st_mtime_nsec
+            || after.st_ctime != metadata.st_ctime
+            || after.st_ctime_nsec != metadata.st_ctime_nsec
+        {
+            return Err("channel configuration changed while being read".into());
+        }
+        let config: Config = toml::from_str(&input).map_err(|error| error.to_string())?;
+        let root = std::path::Path::new(config.global.root_path().as_str());
+        if !root.is_absolute()
+            || !root.is_dir()
+            || root.canonicalize().map_err(|error| error.to_string())? != root
+            || config.global.prefix == Config::default().global.prefix
+        {
+            return Err(
+                "explicit channel configuration needs an absolute root and private prefix".into(),
+            );
+        }
+        let root_metadata = root.metadata().map_err(|error| error.to_string())?;
+        let mut directories = vec![(root.to_path_buf(), root_metadata.dev(), root_metadata.ino())];
+        for directory in [
+            config.global.node.directory.as_str(),
+            config.global.service.directory.as_str(),
+        ] {
+            let directory = std::path::Path::new(directory);
+            if directory
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+            {
+                return Err(
+                    "channel node and service directories must remain inside the private root"
+                        .into(),
+                );
+            }
+            let mut current = root.to_path_buf();
+            for component in directory.components() {
+                current.push(component);
+                let metadata = std::fs::symlink_metadata(&current).map_err(|error| {
+                    format!("private channel directories must exist before Node creation: {error}")
+                })?;
+                if !metadata.is_dir()
+                    || metadata.file_type().is_symlink()
+                    || current.canonicalize().map_err(|error| error.to_string())? != current
+                {
+                    return Err("private channel directories cannot contain symlinks".into());
+                }
+                directories.push((current.clone(), metadata.dev(), metadata.ino()));
+            }
+        }
+        Ok(ProcessConfig {
+            config,
+            directories,
+        })
+    });
+    CONFIG
+        .as_ref()
+        .map_err(|error| TransportError::Node(error.clone()))
+        .and_then(|owner| {
+            for (path, device, inode) in &owner.directories {
+                let metadata = path
+                    .symlink_metadata()
+                    .map_err(|error| TransportError::Node(error.to_string()))?;
+                if !metadata.is_dir()
+                    || metadata.file_type().is_symlink()
+                    || (metadata.dev(), metadata.ino()) != (*device, *inode)
+                    || path
+                        .canonicalize()
+                        .map_err(|error| TransportError::Node(error.to_string()))?
+                        != *path
+                {
+                    return Err(TransportError::Node(
+                        "private channel directory changed before Node creation".into(),
+                    ));
+                }
+            }
+            Ok(&owner.config)
+        })
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct CallOptions {
@@ -103,6 +232,7 @@ pub struct TransportClient {
 impl TransportClient {
     pub fn connect(service_name: &str) -> Result<Self, TransportError> {
         let node = NodeBuilder::new()
+            .config(process_config()?)
             .create::<ThreadSafeIpcService>()
             .map_err(|error| TransportError::Node(error.to_string()))?;
         let name = service_name.try_into().map_err(
@@ -351,6 +481,7 @@ impl DeferredResponse {
 impl TransportServer {
     pub fn bind(service_name: &str) -> Result<Self, TransportError> {
         let node = NodeBuilder::new()
+            .config(process_config()?)
             .create::<ThreadSafeIpcService>()
             .map_err(|error| TransportError::Node(error.to_string()))?;
         let name = service_name.try_into().map_err(

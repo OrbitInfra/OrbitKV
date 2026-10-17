@@ -734,7 +734,7 @@ class Agent:
         import torch
 
         from orbitkv import CacheManagerClient
-        from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+        from orbitkv.client.gpu import resolve_device_id
 
         runtime = self.settings["orbitkv_runtime"]
         self.manager = self.start_manager()
@@ -760,7 +760,6 @@ class Agent:
             1,
             resolve_device_id(),
             ["kv:0"],
-            [serialize_gpu_buffer(self.tensor)],
             [pages],
             [block_bytes],
             [0],
@@ -793,7 +792,7 @@ class Agent:
         import torch
 
         from orbitkv import CacheManagerClient
-        from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+        from orbitkv.client.gpu import resolve_device_id
 
         runtime = self.settings["orbitkv_runtime"]
         self.query_source_manager = self.start_manager(query_source=True)
@@ -822,7 +821,6 @@ class Agent:
             1,
             resolve_device_id(),
             ["kv:0"],
-            [serialize_gpu_buffer(self.query_source_tensor)],
             [pages],
             [block_bytes],
             [0],

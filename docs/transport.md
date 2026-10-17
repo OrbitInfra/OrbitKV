@@ -29,7 +29,7 @@ lookup. Both adapters capture it when queuing their producing step. The native
 client validates the original client and generation after acquiring its worker
 lock, so a wait or late callback cannot bind a replacement registration. Each
 Publish chunk carries the captured generation; the Core owner rechecks the same
-retained instance before topology or GPU pointer binding. Matching lifecycle 8
+retained instance before topology or GPU pointer binding. Matching lifecycle 9
 and cache schema 10 artifacts remain required; retired schemas are rejected.
 
 This is registration lifetime fencing, not allocation/page generation or a
@@ -43,7 +43,82 @@ pending independent acceptance and actual installed GPU/adapter lifetime gates.
 CPU authority controls use an authenticated process fixture and an idle worker
 with no CUDA executor; they do not register, compute or submit device DMA.
 
+The explicit-registration candidate replaces the framework pickle payload with
+versioned protobuf storage/view metadata. The native client exports retained
+tensors directly; Manager validation precedes CUDA device discovery/import.
+Storage suballocation and tensor view offsets are separate; dtype/element size,
+shape/stride extent, handles, ref-counter and readiness event are checked.
+The selected PyTorch 2.13 ordinary storage export includes a version-3,
+`cudaMalloc` type envelope around the 64-byte CUDA allocation handle. Registration
+validates the complete 66-byte envelope and passes it unchanged to PyTorch's
+importer. Bare legacy handles, unknown versions and expandable-segment exports
+are rejected; they do not share this allocation-owner contract.
+A native exporter-owner generation is distinct from the Manager registration
+and engine page-slot generations. The importer still uses the pinned PyTorch
+storage IPC primitive and holds the resulting tensor mapping until its owner
+retires. The importer creates a zero-sized typed tensor with `torch.empty`, then
+binds the validated storage/view with `set_`; a Rust byte vector becomes Python
+bytes and cannot serve as an empty `torch.tensor` input. The old wrapper-byte
+field and helper/API are removed in this candidate.
+The client retains the exact storage objects used for initial geometry. It
+exports those objects, rather than reacquiring storage after a wait, and
+rechecks the tensor pointer, offset and layout before sending and after the
+import reply. A changed tensor binding is rejected; possibly imported work
+remains retained. Registered engine pools must keep their binding immutable.
+Native registration reserves its client/key before creating any export. Each
+returned credit is charged to the attempt owner immediately; a never-sent export
+can be repaid exactly once. Register replies bind the export generation and
+explicit credit disposition. Only NeverImported permits repayment; importer
+ownership is a handoff, and Unknown never proves import or device termination.
+The selected framework's rollback helper is best effort and can return after
+silently skipping a decrement. The native attempt owner therefore holds the
+actual exported counter file, checks its identity and exclusive value before
+rollback, and removes a credit only after the same slot is observed to change
+from one to zero. Missing/replaced files, unchanged counters and call errors
+retain the credit without another repayment attempt. This is a reference-credit
+proof; it is not a device-operation terminal receipt.
+A failed, partial or lost reply retains the attempt's client, tensors and credits,
+even after caller/client destruction. Unregister refuses a pending/retained
+attempt rather than reporting completed cleanup. The process limits these
+attempts to 64, each with at most 4,096 tensors/credits, and conservatively charges
+at most 1 TiB of tensor storage bytes. These limits are separate from ordinary
+payload admission and existing transfer descriptor limits. Retention counters
+and per-generation states are available from the native client. The original
+unaccepted implementation and its negative review are preserved.
+`GpuRegistration.ipc_credit_evidence` is an immutable snapshot from importer
+handoff. `retained_credit_evidence(instance_id)` observes the original held
+counter descriptors for failed attempts belonging to that client and instance.
+The versioned JSON reports original and current-path identity separately, the
+value observed in the held slot, and explicit read/path errors. A missing or
+replaced path cannot become a successful observation. These diagnostics add no
+repayment/release action, and a zero counter is not a device drain receipt.
+Successful handoff drops the extra descriptors after the snapshot; uncertain
+attempts retain them under the existing admission limits. Diagnostic output is
+bounded to 4,096 credits and 4 MiB per call and is consumed by the strict installed
+registration gate before the producer exits.
+
+Source/CPU checks exist; final installed GPU bytes, real IPC repayment/import
+failure and both adapter lifecycles still need independent acceptance. These
+changes do not supply allocation/page generations or physical DMA termination.
+
 ## Process channel
+
+An isolated deployment can set the same absolute `ORBITKV_CHANNEL_CONFIG` file
+for client and Manager. The Rust channel owner reads at most 64 KiB once per
+process and passes that config explicitly to both Node builders. The file must
+be regular and not symlinked, with an existing canonical absolute root, a private
+prefix and node/service directories inside the root. Invalid input refuses Node
+creation. Precreate every node/service directory component; the owner rejects
+symlinks and retains their device/inode identities for a check before each Node.
+Keep that task-owned directory chain immutable from admission through cleanup.
+The dependency operates on pathnames after this check, so a privileged concurrent
+rename is outside this isolation contract and must be excluded by the resource
+owner/lock, rather than treated as atomically fenced by the library. Freeze the
+TOML bytes and domain resources for qualification; changing
+the file after first channel construction cannot rebind that process. This
+separates iceoryx2's persistent counter, shared resources and stale-node cleanup
+from a retained historical domain; unique service names alone do not. The default
+deployment still uses the dependency's standard configuration.
 
 ### Native TENT failure retention
 
