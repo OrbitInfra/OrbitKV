@@ -1117,6 +1117,24 @@ def validate_cell(
                     raise RuntimeError("Save source and consumer identities are invalid")
                 if close.get("source") != source_id or close.get("consumer") != consumer_id:
                     raise RuntimeError("Save client close identity differs")
+                if tier == "ssd-uring":
+                    reads_before, reads_after = row.get("read_before"), row.get("read_after")
+                    if not isinstance(reads_before, dict) or not isinstance(reads_after, dict):
+                        raise RuntimeError("Missing actual io_uring read evidence")
+                    for name in (
+                        "orbitkv_ssd_prefetch_bytes_total",
+                        "orbitkv_ssd_uring_read_operations_total",
+                    ):
+                        before, after = reads_before.get(name), reads_after.get(name)
+                        if (
+                            type(after) not in (int, float)
+                            or after <= 0
+                            or (
+                                before is not None
+                                and (type(before) not in (int, float) or after <= before)
+                            )
+                        ):
+                            raise RuntimeError("No advancing io_uring read evidence")
                 for role, instance in (("source", source_id), ("consumer", consumer_id)):
                     credit = read_json(
                         summaries[0].parent / f"round-{index}-{role}.credit-owner.json", deadline
