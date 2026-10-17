@@ -22,31 +22,37 @@ fn wait(child: &mut std::process::Child) -> std::process::ExitStatus {
 }
 
 fn output(command: &mut ProcessCommand) -> std::process::Output {
+    let directory = tempfile::tempdir().unwrap();
+    let out = directory.path().join("stdout");
+    let err = directory.path().join("stderr");
     let mut child = command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(std::fs::File::create(&out).unwrap())
+        .stderr(std::fs::File::create(&err).unwrap())
         .spawn()
         .unwrap();
     let status = wait(&mut child);
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    use std::io::Read;
-    child
-        .stdout
-        .take()
-        .unwrap()
-        .read_to_end(&mut stdout)
-        .unwrap();
-    child
-        .stderr
-        .take()
-        .unwrap()
-        .read_to_end(&mut stderr)
-        .unwrap();
+    let stdout = std::fs::read(&out).unwrap();
+    let stderr = std::fs::read(&err).unwrap();
     std::process::Output {
         status,
         stdout,
         stderr,
+    }
+}
+
+struct EchoOwner(std::process::Child, rustix::fd::OwnedFd);
+
+impl Drop for EchoOwner {
+    fn drop(&mut self) {
+        if self.0.try_wait().ok().flatten().is_some() {
+            return;
+        }
+        let _ = rustix::process::pidfd_send_signal(&self.1, rustix::process::Signal::TERM);
+        let status = wait(&mut self.0);
+        eprintln!(
+            "CPU echo error-path cleanup: pid={} actual_wait=true status={status}; not graceful channel drain",
+            self.0.id()
+        );
     }
 }
 
@@ -57,14 +63,20 @@ fn request_response_crosses_a_real_process_boundary() {
         .unwrap()
         .as_nanos();
     let service_name = format!("orbitkv/test/{}/{nonce}", std::process::id());
-    let mut child = ProcessCommand::new(env!("CARGO_BIN_EXE_orbitkv-channel-echo"))
+    let mut command = ProcessCommand::new(env!("CARGO_BIN_EXE_orbitkv-channel-echo"));
+    use std::os::unix::process::CommandExt;
+    command.process_group(0);
+    let child = command
         .arg(&service_name)
         .arg("11")
         .current_dir("/tmp")
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    let stdout = child.stdout.take().unwrap();
+    let pid = rustix::process::Pid::from_raw(child.id() as i32).unwrap();
+    let peer = rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()).unwrap();
+    let mut child = EchoOwner(child, peer);
+    let stdout = child.0.stdout.take().unwrap();
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut ready = String::new();
@@ -76,6 +88,10 @@ fn request_response_crosses_a_real_process_boundary() {
         .unwrap()
         .unwrap();
     assert_eq!(ready.trim(), "READY");
+    assert!(
+        std::env::var_os("ORBITKV_CHANNEL_TEST_FAIL_AFTER_READY").is_none(),
+        "controlled CPU failure after echo READY"
+    );
 
     let client = TransportClient::connect(&service_name).unwrap();
     let mut ping = Command::ping(7, 11);
@@ -109,7 +125,7 @@ fn request_response_crosses_a_real_process_boundary() {
         )
         .unwrap();
     assert_eq!(response.status, StatusCode::Ok);
-    assert!(wait(&mut child).success());
+    assert!(wait(&mut child.0).success());
 }
 
 #[test]
@@ -185,6 +201,64 @@ fn private_domain_is_consumed_by_both_processes_without_touching_default_shm() {
         "only this private domain's persistent counter should remain"
     );
     std::fs::remove_file(&owned[0]).unwrap();
+}
+
+#[test]
+fn failure_after_ready_keeps_output_bounded_and_actually_waits_the_echo() {
+    let directory = tempfile::tempdir().unwrap();
+    for name in ["nodes", "services"] {
+        std::fs::create_dir(directory.path().join(name)).unwrap();
+    }
+    let prefix = format!("orbitkv_error_{}_", std::process::id());
+    let config = directory.path().join("config.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "[global]\nroot-path={:?}\nprefix={prefix:?}\n",
+            directory.path().to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    let started = Instant::now();
+    let result = output(
+        ProcessCommand::new(std::env::current_exe().unwrap())
+            .args(["--exact", "private_domain_child", "--nocapture"])
+            .env("ORBITKV_CHANNEL_CONFIG", &config)
+            .env("ORBITKV_CHANNEL_TEST_FAIL_AFTER_READY", "1"),
+    );
+    assert!(!result.status.success());
+    assert!(started.elapsed() < Duration::from_secs(10));
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains("actual_wait=true") && stderr.contains("not graceful channel drain"),
+        "{stderr}"
+    );
+    let pid: u32 = stderr
+        .split("CPU echo error-path cleanup: pid=")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+    let owned: Vec<_> = std::fs::read_dir("/dev/shm")
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(&prefix)
+        })
+        .collect();
+    // These are new CPU-only fixture objects; all writers have been actually waited.
+    // Their explicit removal is error cleanup, not a normal channel drain receipt.
+    eprintln!("CPU failure fixture explicit IPC cleanup: {owned:?}");
+    for path in owned {
+        std::fs::remove_file(path).unwrap();
+    }
 }
 
 #[test]

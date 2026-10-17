@@ -740,6 +740,13 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   fence privileged concurrent renames atomically. Real process controls reject
   the original escapes and file root before a shared counter is created. New
   package/freeze/software and resource reviews remain required.
+  Independent `8921fa3a` review confirms the directory corrections but rejects
+  the process-test output owner: stderr inherited by an abandoned echo could
+  block after its parent exited. The harness remedy writes output to owned files
+  and keeps a pidfd-bound echo owner through error paths. Its READY-failure
+  control records actual error-path SIGTERM/wait and explicit CPU fixture cleanup,
+  separately from successful channel Shutdown. Production wheel bytes are
+  unchanged; a new exact source/package rereview is required before launch.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
