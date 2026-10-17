@@ -582,8 +582,8 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   Independent acceptance at `47e4f18a` covers code/CPU transport only; main
   `3b48b463` has the same reviewed tree. The review and immutable controls are
   under `/root/orbitkv-artifacts/s3-publish-lifetime-20261018/independent-47e4-review-1/`.
-  Manager worker/reply loss can still produce a consumed Internal response
-  without physical drain proof; that owner gap, bounded live-stall response,
+  The accepted SaveTask correction below prevents worker/reply loss alone from
+  producing a consumed Internal response. Bounded live-stall response,
   finite parked-operation admission, page generations and physical reclamation
   remain open. New installed-package or GPU/fault qualification cannot be
   inherited from the earlier registration wheel or these CPU controls.
@@ -609,8 +609,14 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   the active gauges. CPU saturation, overflow, cancellation, reply-loss and
   fresh metric controls are archived under
   `/root/orbitkv-artifacts/s3-publish-worker-drain-20261018/`.
-  This worker candidate awaits independent acceptance and a matching installed
-  artifact. Arbitrary SSD-worker unwind and engine-local Restore failures remain
+  Independent acceptance at `df8886ed` covers code/CPU Save ownership and matching
+  package loading: 320 Core tests passed, 26 ignored, shared-Python Clippy passed,
+  the historical reply-loss-error mutation failed, and the isolated wheel loaded
+  its extension plus bundled TENT. The review is under
+  `/root/orbitkv-artifacts/s3-publish-worker-drain-20261018/independent-df8886-review-1/`;
+  [PR #260](https://github.com/feichai0017/orbitkv/pull/260) carries the implementation.
+  Package loading does not establish installed Manager/device operation.
+  Arbitrary SSD-worker unwind and engine-local Restore failures remain
   separate open ownership/qualification items.
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
   without a control RPC or taking a blocked Publish/lifecycle lock. Restore
