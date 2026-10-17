@@ -804,12 +804,23 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   healthy local registration/Publish/Restore only. Final credit repayment,
   partial-export retention, both adapter lifecycles and physical termination
   remain open; the preserved PID1 supervisor zombie and IPC remnants are not
-  reclamation or GPU-reuse proof. Formal launches remain zero. Accepted evidence
-  is under `codex-gpu3-e986-precheck-result-1/` in that artifact root.
-  The next bounded delivery integrates the reviewed registration candidate with
-  current main and freezes a matching installable wheel before credit/native/
-  vLLM-worker/SGLang-pool gates. Source/runtime/resource and exact launch review
-  precede execution; failed cohorts and old locked resources remain unchanged.
+  reclamation or GPU-reuse proof. That precheck launched no formal cells.
+  Accepted evidence is under `codex-gpu3-e986-precheck-result-1/` in that artifact root.
+  The integrated installed-wheel cohort at `1c077ae0` has independent acceptance
+  for its bounded registration prerequisite: four H20 cells/seven cases cover
+  partial-export credit repayment and conservative throw retention, duplicate
+  registration rejection, complete native Restore byte assertions, vLLM producer
+  stream fencing and released SGLang pool retirement with independent holders.
+  All seven Managers, native children, the controller and its foreground SSH
+  owner have literal normal waits. Frozen runtime checks and the selected GPU's
+  empty postflight pass. One CUDA IPC producer warning and a 65,536-byte uncertain
+  throw attempt remain explicit limits; physical fault reclamation, engine page
+  generations, model serving and performance remain unqualified. Evidence is at
+  `/root/orbitkv-artifacts/s3-installed-registration-completion-20261017/`.
+  The next bounded delivery is the matching installed official-engine model E2E
+  gate before merging [PR #251](https://github.com/feichai0017/orbitkv/pull/251),
+  with a fresh runtime freeze and launch review. Historical failed cohorts,
+  frozen thresholds and retained old resources keep their original status.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
   without a control RPC or taking a blocked Publish/lifecycle lock. Restore
