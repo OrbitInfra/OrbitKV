@@ -69,6 +69,30 @@ def test_publish_activity_does_not_complete_offloads(linker, alive):
     assert linker.num_completed_offloads() == 1
 
 
+@pytest.mark.parametrize("failure", ["pending", "exception"])
+def test_native_save_wait_failure_does_not_complete_offload(linker, failure):
+    import queue
+
+    linker._offload_queue = queue.Queue()
+    linker._completed_offloads = queue.Queue()
+    linker._retained_offloads = []
+    handle = object()
+    linker.client.start_save.return_value = handle
+    if failure == "pending":
+        linker.client.wait_save.return_value = SimpleNamespace(
+            done=False, success=False, message="pending"
+        )
+    else:
+        linker.client.wait_save.side_effect = RuntimeError("wait failed")
+    linker._offload_queue.put((object(), [], MagicMock()))
+    linker._offload_queue.put(None)
+    linker._offload_worker()
+    assert linker._completed_offloads.empty()
+    assert linker._retained_offloads[0][1] is handle
+    with pytest.raises(RuntimeError, match="pages remain held"):
+        linker.reset()
+
+
 def transfer(keys):
     from sglang.srt.mem_cache.hicache_storage import PoolName
 

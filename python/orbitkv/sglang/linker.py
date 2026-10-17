@@ -151,6 +151,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self._completed_loads: queue.Queue[list[str]] = queue.Queue()
         self._load_error: Exception | None = None
         self._completed_offloads: queue.Queue[bool] = queue.Queue()
+        self._retained_offloads: list[tuple[object, object]] = []
         self._last_publish_warning = 0.0
         self._load_thread = threading.Thread(
             target=self._load_worker, daemon=True, name="orbitkv-sglang-load"
@@ -547,14 +548,24 @@ class OrbitKVLinker(UnifiedCacheLinker):
                     return
                 registration, saves, ready = task
                 success = False
+                handle = None
+                completed = False
                 try:
                     ready.synchronize()
-                    success, message = self.client.save(registration, saves)
+                    handle = self.client.start_save(registration, saves)
+                    status = self.client.wait_save(handle)
+                    if not status.done:
+                        raise RuntimeError("native Save wait returned without completion")
+                    success, message = status.success, status.message
+                    completed = True
                     if not success:
                         logger.error("OrbitKV SGLang GPU offload failed: %s", message)
                 except Exception:
                     logger.exception("OrbitKV SGLang GPU offload failed")
-                self._completed_offloads.put(success)
+                if handle is None or completed:
+                    self._completed_offloads.put(success)
+                else:
+                    self._retained_offloads.append((task, handle))
             finally:
                 self._offload_queue.task_done()
 
@@ -580,6 +591,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
         return self._completed_offloads.get_nowait()
 
     def reset(self) -> None:
+        if self._retained_offloads:
+            raise RuntimeError("native Save completion unknown; offload pages remain held")
         self.layer_done_counter.cancel_pending()
         self._load_queue.join()
         self._offload_queue.join()

@@ -346,7 +346,7 @@ def test_page_first_saves_all_layers_for_this_ranks_block_stripe():
     worker._registered_layers = ["a", "b", "c"]
     worker._page_first = True
     worker._torch_device = None
-    ctx.client.save.return_value = (True, "")
+    ctx.client.wait_save.return_value = SimpleNamespace(done=True, success=True, message="")
 
     meta = OrbitKVConnectorMetadata(
         save_intents={
@@ -364,8 +364,8 @@ def test_page_first_saves_all_layers_for_this_ranks_block_stripe():
         worker._registered_layers = []  # skip mock unregister on shutdown
         worker.shutdown()
 
-    ctx.client.save.assert_called_once()
-    saves_list = ctx.client.save.call_args.args[1]
+    ctx.client.start_save.assert_called_once()
+    saves_list = ctx.client.start_save.call_args.args[1]
     # Every layer is saved (the whole page)...
     assert {name for name, _ids, _hashes in saves_list} == {"a", "b", "c"}
     # ...but only rank 1's block stripe (odd block ids), hashes kept aligned.
@@ -388,7 +388,7 @@ def test_recurrent_save_omits_null_group_target():
     worker._registered_layers = ["attention", "recurrent"]
     worker._layer_to_group = {"attention": 0, "recurrent": 1}
     worker._torch_device = None
-    ctx.client.save.return_value = (True, "")
+    ctx.client.wait_save.return_value = SimpleNamespace(done=True, success=True, message="")
     metadata = OrbitKVConnectorMetadata(
         save_intents={
             "r1": SaveIntent(
@@ -410,7 +410,7 @@ def test_recurrent_save_omits_null_group_target():
         worker._registered_layers = []
         worker.shutdown()
 
-    saves = ctx.client.save.call_args.args[1]
+    saves = ctx.client.start_save.call_args.args[1]
     assert saves == [("attention", [11], [b"h0"])]
 
 
@@ -432,7 +432,7 @@ def test_page_first_layer_split_saves_own_layers_for_all_blocks():
     worker._registered_layers = ["b", "d"]
     worker._page_first = True
     worker._torch_device = None
-    ctx.client.save.return_value = (True, "")
+    ctx.client.wait_save.return_value = SimpleNamespace(done=True, success=True, message="")
 
     meta = OrbitKVConnectorMetadata(
         save_intents={
@@ -450,8 +450,8 @@ def test_page_first_layer_split_saves_own_layers_for_all_blocks():
         worker._registered_layers = []  # skip mock unregister on shutdown
         worker.shutdown()
 
-    ctx.client.save.assert_called_once()
-    saves_list = ctx.client.save.call_args.args[1]
+    ctx.client.start_save.assert_called_once()
+    saves_list = ctx.client.start_save.call_args.args[1]
     # Only this rank's shard layers...
     assert {name for name, _ids, _hashes in saves_list} == {"b", "d"}
     # ...and every block (no striping), hashes kept aligned.
