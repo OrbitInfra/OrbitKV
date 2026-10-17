@@ -977,6 +977,13 @@ def validate_cell(
         )
         if len(credits) != (6 if pending_bytes else len(receipts)):
             raise RuntimeError("Missing original registration credit snapshots")
+        if pending_bytes and {path.name for path in credits} != {
+            f"round-{index}-{role}.credit-owner.json"
+            for index in range(3)
+            for role in ("source", "consumer")
+        }:
+            raise RuntimeError("Save registration credit round/role identities differ")
+        generations = set()
         for path in credits:
             row = read_json(path, deadline)
             if row.get("owner") != pytest_owner:
@@ -997,6 +1004,11 @@ def validate_cell(
                 value = evidence[field]
                 if not isinstance(value, str) or str(UUID(value)) != value or UUID(value).int == 0:
                     raise RuntimeError("Registration credit generation is invalid")
+                if pending_bytes:
+                    marker = (field, value)
+                    if marker in generations:
+                        raise RuntimeError("Replayed Save registration generation")
+                    generations.add(marker)
             identities = set()
             physical_slots = set()
             for credit in evidence["credits"]:
@@ -1078,17 +1090,39 @@ def validate_cell(
             tier = cell.get("tier")
             if tier not in ("dram", "ssd-uring") or not isinstance(rows, list) or len(rows) != 3:
                 raise RuntimeError("Invalid Save byte medium or round count")
+            previous_release = 0
             for index, row in enumerate(rows):
                 if (
-                    row.get("round") != index
-                    or row.get("copied_bytes") != 16384
-                    or row.get("observed_bytes") != 32768
+                    not isinstance(row, dict)
+                    or type(row.get("round")) is not int
+                    or row["round"] != index
+                    or type(row.get("copied_bytes")) is not int
+                    or row["copied_bytes"] != 16384
+                    or type(row.get("observed_bytes")) is not int
+                    or row["observed_bytes"] != 32768
                     or row.get("full_oracle") is not True
                     or row.get("mutation_rejected") is not True
                     or row.get("normal_unregister") is not True
                     or row.get("tier") != tier
                 ):
                     raise RuntimeError("Installed Save byte oracle differs")
+                source_id, consumer_id = row.get("source_identity"), row.get("consumer_identity")
+                if (
+                    any(
+                        not isinstance(value, str) or not value
+                        for value in (source_id, consumer_id)
+                    )
+                    or source_id == consumer_id
+                ):
+                    raise RuntimeError("Save source and consumer identities are invalid")
+                if close.get("source") != source_id or close.get("consumer") != consumer_id:
+                    raise RuntimeError("Save client close identity differs")
+                for role, instance in (("source", source_id), ("consumer", consumer_id)):
+                    credit = read_json(
+                        summaries[0].parent / f"round-{index}-{role}.credit-owner.json", deadline
+                    )
+                    if credit.get("instance_id") != instance:
+                        raise RuntimeError("Save payload and registration identity differ")
                 payload = summaries[0].parent / f"round-{index}.payload.bin"
                 raw = read_bytes(payload, 32768, deadline)
                 if len(raw) != 32768 or hashlib.sha256(raw).hexdigest() != row.get("sha256"):
@@ -1104,6 +1138,14 @@ def validate_cell(
                 release = read_json(
                     summaries[0].parent / f"round-{index}.native-release.json", deadline
                 )
+                if (
+                    type(release.get("completed_mono_ns")) is not int
+                    or release["completed_mono_ns"] <= 0
+                ):
+                    raise RuntimeError("Save release completion timestamp is invalid")
+                if release["completed_mono_ns"] <= previous_release:
+                    raise RuntimeError("Save release chronology regressed")
+                previous_release = release["completed_mono_ns"]
                 if release.get("source") != row.get("source_identity") or release.get(
                     "consumer"
                 ) != row.get("consumer_identity"):

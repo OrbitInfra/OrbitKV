@@ -696,6 +696,12 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   corrupted or false release evidence rejects success. Its CPU controls and
   code review do not substitute for the new runtime/resource freeze or launch
   acceptance; historical failures remain unchanged.
+  Controller candidate `de68e81c` is rejected for replayable/missing identity
+  and loose numeric types in new receipts. The correction binds all six
+  round/role snapshots to distinct registration/export generations, nonempty
+  source/consumer identities, exact client close/release records and increasing
+  typed timestamps. Replayed, foreign, missing, malformed and regressed CPU
+  evidence is preserved and must be rejected before hardware launch.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-

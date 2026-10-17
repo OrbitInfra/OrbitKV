@@ -1127,7 +1127,22 @@ def test_native_credit_oracle_refuses_malformed_types_and_aliased_slots(
 
 
 @pytest.mark.parametrize(
-    "fault", [None, "payload", "sentinel", "release", "close", "credit", "rounds"]
+    "fault",
+    [
+        None,
+        "payload",
+        "sentinel",
+        "release",
+        "close",
+        "credit",
+        "rounds",
+        "replay",
+        "foreign-close",
+        "missing-identity",
+        "float-round",
+        "credit-identity",
+        "chronology",
+    ],
 )
 def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
     tmp_path, monkeypatch, fault
@@ -1151,7 +1166,15 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
     rows = []
     for index in range(3):
         for role in ["source", "consumer"]:
-            (tmp_path / f"round-{index}-{role}.credit-owner.json").write_text(json.dumps(credit))
+            import copy
+            from uuid import UUID
+
+            snapshot = copy.deepcopy(credit)
+            snapshot["instance_id"] = role
+            ordinal = 2 * index + int(role == "consumer") + 1
+            snapshot["evidence"]["registration_generation"] = str(UUID(int=ordinal))
+            snapshot["evidence"]["export_owner_generation"] = str(UUID(int=ordinal + 10))
+            (tmp_path / f"round-{index}-{role}.credit-owner.json").write_text(json.dumps(snapshot))
         payload = bytearray([167] * 32768)
         for source, target in zip((0, 2, 4, 6), (1, 3, 5, 7), strict=True):
             payload[target * 4096 : (target + 1) * 4096] = bytes(
@@ -1182,17 +1205,51 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
                     "source": "source",
                     "consumer": "consumer",
                     "physical_fault_termination_claimed": False,
+                    "completed_mono_ns": index + 1,
                 }
             )
         )
     (tmp_path / "clients.native-close.json").write_text(
-        json.dumps({"owner": owner, "closed": fault != "close", "normal_unregister": True})
+        json.dumps(
+            {
+                "owner": owner,
+                "closed": fault != "close",
+                "normal_unregister": True,
+                "source": "source",
+                "consumer": "consumer",
+            }
+        )
     )
     (tmp_path / "PENDING-SAVE-BYTES.json").write_text(
         json.dumps(rows[:2] if fault == "rounds" else rows)
     )
     if fault == "credit":
         (tmp_path / "round-0-source.credit-owner.json").unlink()
+    elif fault == "replay":
+        snapshot = (tmp_path / "round-0-source.credit-owner.json").read_text()
+        (tmp_path / "round-1-source.credit-owner.json").write_text(snapshot)
+    elif fault == "foreign-close":
+        path = tmp_path / "clients.native-close.json"
+        row = json.loads(path.read_text())
+        row["source"] = "foreign"
+        path.write_text(json.dumps(row))
+    elif fault == "missing-identity":
+        rows[0].pop("source_identity")
+        (tmp_path / "PENDING-SAVE-BYTES.json").write_text(json.dumps(rows))
+    elif fault == "float-round":
+        rows[0]["round"] = False
+        rows[1]["round"] = 1.0
+        (tmp_path / "PENDING-SAVE-BYTES.json").write_text(json.dumps(rows))
+    elif fault == "credit-identity":
+        path = tmp_path / "round-0-source.credit-owner.json"
+        row = json.loads(path.read_text())
+        row["instance_id"] = "foreign"
+        path.write_text(json.dumps(row))
+    elif fault == "chronology":
+        path = tmp_path / "round-2.native-release.json"
+        row = json.loads(path.read_text())
+        row["completed_mono_ns"] = 1
+        path.write_text(json.dumps(row))
     if fault is None:
         validate(*args, **kwargs)
     else:
