@@ -571,8 +571,16 @@ def validate_python_origin(
     for kind in ("runtime", "helper"):
         marker = f"CUDA registration Python {kind}: "
         records = [line.partition(marker)[2] for line in text.splitlines() if marker in line]
-        if len(records) != 1 or len(records[0].encode()) > MAX_JSON_BYTES:
+        count = expected.get("helper_records", 1) if kind == "helper" else 1
+        if (
+            type(count) is not int
+            or not 1 <= count <= 64
+            or len(records) != count
+            or any(len(record.encode()) > MAX_JSON_BYTES for record in records)
+        ):
             raise RuntimeError("Missing or duplicate Manager Python origin evidence")
+        if len(set(records)) != 1:
+            raise RuntimeError("Manager Python helper origin changed during registrations")
         remaining(deadline)
         value = json.loads(records[0])
         remaining(deadline)

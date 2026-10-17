@@ -863,6 +863,45 @@ def test_manager_importer_origin_is_identity_bound_and_inside_frozen_roots(fault
             campaign.validate_python_origin(text, expected, 17, time.monotonic() + 1)
 
 
+@pytest.mark.parametrize("fault", [None, "changed", "missing", "extra"])
+def test_repeated_registration_helpers_keep_one_exact_runtime_origin(fault):
+    expected = {
+        "torch_file": "/site/torch/__init__.py",
+        "gpu_module_file": "/site/orbitkv/client/gpu.py",
+        "prefix": "/usr",
+        "base_prefix": "/usr",
+        "allowed_sys_path": ["/site"],
+        "helper_records": 6,
+    }
+    runtime = {
+        "pid": 17,
+        "torch_file": expected["torch_file"],
+        "prefix": "/usr",
+        "base_prefix": "/usr",
+        "sys_path": ["/site"],
+        "no_user_site": 1,
+    }
+    helper = {"pid": 17, "gpu_module_file": expected["gpu_module_file"]}
+    rows = [json.dumps(helper)] * 6
+    if fault == "changed":
+        rows[-1] = json.dumps(dict(helper, gpu_module_file="/wrong/gpu.py"))
+    elif fault == "missing":
+        rows.pop()
+    elif fault == "extra":
+        rows.append(rows[0])
+    text = (
+        "CUDA registration Python runtime: "
+        + json.dumps(runtime)
+        + "\n"
+        + "\n".join("CUDA registration Python helper: " + row for row in rows)
+    )
+    if fault is None:
+        campaign.validate_python_origin(text, expected, 17)
+    else:
+        with pytest.raises(RuntimeError):
+            campaign.validate_python_origin(text, expected, 17)
+
+
 @pytest.mark.parametrize(
     "fault",
     [
