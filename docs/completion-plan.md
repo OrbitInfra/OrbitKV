@@ -747,6 +747,12 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   control records actual error-path SIGTERM/wait and explicit CPU fixture cleanup,
   separately from successful channel Shutdown. Production wheel bytes are
   unchanged; a new exact source/package rereview is required before launch.
+  Independent `133e5a59` review confirms bounded file output and pidfd-bound
+  wait cleanup, but finds that PID-only prefix deletion could remove a
+  pre-existing unrelated SHM marker. The test correction chooses a fresh
+  PID/time namespace, checks that it starts empty and preserves error-path IPC
+  remnants without inferring ownership from their basename. A new rereview is
+  required; the failed control and every historical resource remain archived.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

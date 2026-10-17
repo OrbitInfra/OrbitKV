@@ -209,7 +209,22 @@ fn failure_after_ready_keeps_output_bounded_and_actually_waits_the_echo() {
     for name in ["nodes", "services"] {
         std::fs::create_dir(directory.path().join(name)).unwrap();
     }
-    let prefix = format!("orbitkv_error_{}_", std::process::id());
+    let prefix = format!(
+        "orbitkv_error_{}_{}_",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    assert!(
+        !std::fs::read_dir("/dev/shm").unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(&prefix)),
+        "CPU fixture namespace already exists"
+    );
     let config = directory.path().join("config.toml");
     std::fs::write(
         &config,
@@ -253,12 +268,8 @@ fn failure_after_ready_keeps_output_bounded_and_actually_waits_the_echo() {
                 .starts_with(&prefix)
         })
         .collect();
-    // These are new CPU-only fixture objects; all writers have been actually waited.
-    // Their explicit removal is error cleanup, not a normal channel drain receipt.
-    eprintln!("CPU failure fixture explicit IPC cleanup: {owned:?}");
-    for path in owned {
-        std::fs::remove_file(path).unwrap();
-    }
+    // Error-path IPC ownership is not inferred from a name. Preserve remnants.
+    eprintln!("CPU failure fixture retained IPC remnants: {owned:?}");
 }
 
 #[test]
