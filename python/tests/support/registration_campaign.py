@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from uuid import UUID
 
@@ -252,6 +253,46 @@ def check_inputs(
     for path, expected in contract["input_sha256"].items():
         if digest(Path(path), deadline) != expected:
             raise RuntimeError(f"Frozen input changed: {path}")
+    executables = contract.get("executable_inputs", [])
+    if not isinstance(executables, list) or len(executables) > 64:
+        raise RuntimeError("Invalid executable input declarations")
+    seen_executables = set()
+    for executable in executables:
+        remaining(deadline)
+        if (
+            not isinstance(executable, dict)
+            or not isinstance(executable.get("path"), str)
+            or not Path(executable["path"]).is_absolute()
+            or executable["path"] in seen_executables
+            or not isinstance(executable.get("realpath"), str)
+            or not Path(executable["realpath"]).is_absolute()
+            or not isinstance(executable.get("sha256"), str)
+            or not re.fullmatch("[0-9a-f]{64}", executable["sha256"])
+            or any(
+                type(executable.get(field)) is not int or executable[field] < 0
+                for field in ("device", "inode", "mode", "uid", "gid", "bytes")
+            )
+        ):
+            raise RuntimeError("Invalid executable input identity")
+        seen_executables.add(executable["path"])
+        path = Path(executable["path"])
+        metadata = path.stat()
+        observed = {
+            "device": metadata.st_dev,
+            "inode": metadata.st_ino,
+            "mode": metadata.st_mode,
+            "uid": metadata.st_uid,
+            "gid": metadata.st_gid,
+            "bytes": metadata.st_size,
+        }
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or str(path.resolve(strict=True)) != executable["realpath"]
+            or any(executable[field] != value for field, value in observed.items())
+            or not os.access(path, os.X_OK)
+            or digest(path, deadline) != executable["sha256"]
+        ):
+            raise RuntimeError(f"Frozen executable changed or cannot execute: {path}")
     absent = contract.get("absent_inputs", [])
     if not isinstance(absent, list) or len(absent) > MAX_EVIDENCE_FILES:
         raise RuntimeError("Invalid absent input declarations")
@@ -278,8 +319,20 @@ def check_inputs(
         ):
             raise RuntimeError("Cell runtime roots differ from the frozen declarations")
         manifests = [available[path] for path in runtime_manifest_paths]
-    for manifest in manifests:
-        check_runtime_manifest(manifest, deadline)
+    if len(manifests) < 2:
+        for manifest in manifests:
+            check_runtime_manifest(manifest, deadline)
+    else:
+        executor = ThreadPoolExecutor(max_workers=2)
+        try:
+            readers = [
+                executor.submit(check_runtime_manifest, manifest, deadline)
+                for manifest in manifests
+            ]
+            for reader in readers:
+                reader.result()
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
     if "mutable_runtime_domain" in contract:
         domain = contract["mutable_runtime_domain"]
         root = Path(domain["root"])

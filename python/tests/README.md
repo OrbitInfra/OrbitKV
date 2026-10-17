@@ -140,6 +140,12 @@ Startup verification has one 180-second deadline. Cell admission/postflight can
 select only declared roots consumed by that cell; startup, grant and final input
 checks retain the complete manifest set. Freeze and review each cell's consumer
 root selection as part of launch acceptance, with the unchanged cleanup budget.
+Compiler-enabled model gates also declare `executable_inputs`: canonical tool
+targets, device/inode, mode, owner, size and SHA. Input checks require execute
+access as well as unchanged bytes. Before freezing, run the selected compiler's
+CPU version and compile-only probes; record supported tool-selection environment
+variables. A byte manifest or successful native import does not prove that a
+bundled JIT executable can run. Preserve failed freezes instead of chmodding them.
 Use `--supervise` for remote launch: a durable parent owns the actual controller
 wait and records its identity, status and lack of forced cleanup. Normal and
 nonzero real child controls run without GPU; a quarantined controller stays alive.
@@ -180,14 +186,20 @@ and its counterexamples stay in the external artifact archive. It separates prec
 from formal cells, preserves locks on unknown ownership and requires a distinct
 independent grant matching the immutable contract. A source/CPU controller pass
 is not GPU launch approval; freeze and review the actual runtime/resources before
-execution. Runtime outputs and contracts belong outside this checkout.
+execution. Independent runtime roots use at most two file readers, share the
+original deadline, and join all readers before returning or propagating an error;
+per-file hashes, targets and the complete census remain mandatory. Runtime outputs and contracts belong outside this checkout.
 
 For explicit CUDA registration/credit-owner changes, run
 `registration::tests` and the actual duplicate-entry control in `client::tests`
 with the authenticated channel fixture below. CPU tests use a declared local
 Torch storage ABI stub to count exports and repayments; they never import a
-real CUDA mapping. Partial/lost-return controls preserve the owner, and repayment
-is not retried after an unknown return. Separately run the server lifecycle
+real CUDA mapping. Shared-storage controls cover exact aliases, different bases,
+extents, partial overlap, overflow and actual attempt-budget admission, including
+the 36-layer Qwen3-8B shared-pool geometry. Exact aliases reduce only same-batch
+byte charging; per-layer owners/credits and cross-attempt caps stay unchanged.
+Partial/lost-return controls preserve the owner, and repayment is not retried
+after an unknown return. Separately run the server lifecycle
 unit gate: actual UDS rejects bad registration with a generation-bound
 NeverImported disposition; this uses the explicit host-registration test shim
 and read-only driver discovery, not CUDA byte/DMA qualification. Actual installed

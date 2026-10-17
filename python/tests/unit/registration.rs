@@ -4,6 +4,29 @@ use pyo3::ffi::c_str;
 use pyo3::types::PyModule;
 
 #[test]
+fn retained_storage_bytes_counts_exact_backing_aliases_once() {
+    for layers in [32_u64, 36] {
+        let backing_bytes = 26144 * 8 * 16 * 256 * 2 * layers;
+        let shared = vec![(0x1000, backing_bytes); layers as usize];
+        assert_eq!(retained_storage_bytes(shared), Ok(backing_bytes));
+        assert!(backing_bytes <= MAX_RETAINED_BYTES);
+        assert!(backing_bytes * layers > MAX_RETAINED_BYTES);
+    }
+
+    for (name, storages, expected) in [
+        ("empty", vec![], 0),
+        ("exact_alias", vec![(0x1000, 64), (0x1000, 64)], 64),
+        ("distinct_bases", vec![(0x1000, 64), (0x2000, 64)], 128),
+        ("different_extents", vec![(0x1000, 64), (0x1000, 32)], 96),
+        ("partial_overlap", vec![(0x1000, 64), (0x1020, 64)], 128),
+    ] {
+        assert_eq!(retained_storage_bytes(storages), Ok(expected), "{name}");
+    }
+    assert!(retained_storage_bytes([(1, u64::MAX), (2, 1)]).is_err());
+    assert_eq!(retained_storage_bytes([(1, u64::MAX); 2]), Ok(u64::MAX));
+}
+
+#[test]
 #[ignore = "CPU IPC-owner control; requires authenticated channel fixture and local Torch ABI stub"]
 fn actual_attempt_owner_refunds_never_sent_and_retains_unknown_credits() {
     Python::initialize();
@@ -282,6 +305,47 @@ torch = SimpleNamespace(UntypedStorage=Storage)
             )
             .is_err()
         );
+        let backing_bytes = 26144_u64 * 8 * 16 * 256 * 2 * 36;
+        let shared_bytes = retained_storage_bytes([(0x1000, backing_bytes); 36]).unwrap();
+        let shared = AttemptOwner::reserve(
+            Arc::clone(&process.client),
+            ("shared-backing".into(), 0, 0),
+            Arc::clone(&tensors),
+            shared_bytes,
+        )
+        .unwrap();
+        let distinct_bytes = retained_storage_bytes(
+            (0..36).map(|index| (0x1000 + index * backing_bytes, backing_bytes)),
+        )
+        .unwrap();
+        assert!(distinct_bytes > MAX_RETAINED_BYTES);
+        assert!(
+            AttemptOwner::reserve(
+                Arc::clone(&process.client),
+                ("distinct-over-budget".into(), 0, 0),
+                Arc::clone(&tensors),
+                distinct_bytes,
+            )
+            .is_err()
+        );
+        shared.rollback(py).unwrap();
+        let charged = AttemptOwner::reserve(
+            Arc::clone(&process.client),
+            ("already-charged".into(), 0, 0),
+            Arc::clone(&tensors),
+            MAX_RETAINED_BYTES / 2 + 1,
+        )
+        .unwrap();
+        assert!(
+            AttemptOwner::reserve(
+                Arc::clone(&process.client),
+                ("separate-attempt".into(), 0, 0),
+                Arc::clone(&tensors),
+                MAX_RETAINED_BYTES / 2 + 1,
+            )
+            .is_err()
+        );
+        charged.rollback(py).unwrap();
         let mut reserved = Vec::new();
         for index in 0..MAX_ATTEMPTS {
             reserved.push(

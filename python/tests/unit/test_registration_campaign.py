@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -642,6 +643,77 @@ def test_cell_checks_consumed_roots_and_final_checks_all_roots(tmp_path):
         campaign.check_inputs(contract, runtime_manifest_paths=selected)
 
 
+def test_failed_parallel_root_check_joins_other_readers(tmp_path, monkeypatch):
+    manifests = []
+    for name in ("bad", "held"):
+        root = tmp_path / name
+        root.mkdir()
+        library = root / "native.so"
+        library.write_bytes(b"frozen CPU payload")
+        manifest = tmp_path / f"{name}.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "root": str(root),
+                    "files": [
+                        {
+                            "path": library.name,
+                            "realpath": str(library),
+                            "bytes": library.stat().st_size,
+                            "sha256": campaign.digest(library),
+                        }
+                    ],
+                }
+            )
+        )
+        manifests.append({"path": str(manifest), "sha256": campaign.digest(manifest)})
+    contract = runtime_input_contract(tmp_path, manifests)
+    (tmp_path / "bad/native.so").write_bytes(b"changed CPU bytes")
+    entered, failed, release, closed, finished = (threading.Event() for _ in range(5))
+    check = campaign.check_runtime_manifest
+    deadline = time.monotonic() + 5
+    errors = []
+
+    def verify(declaration, received_deadline):
+        assert received_deadline == deadline
+        if declaration == manifests[0]:
+            assert entered.wait(2)
+            try:
+                check(declaration, received_deadline)
+            finally:
+                failed.set()
+        else:
+            try:
+                with (tmp_path / "held/native.so").open("rb"):
+                    entered.set()
+                    assert release.wait(2)
+                    check(declaration, received_deadline)
+            finally:
+                closed.set()
+
+    def verify_all():
+        try:
+            campaign.check_inputs(contract, deadline=deadline)
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(campaign, "check_runtime_manifest", verify)
+    caller = threading.Thread(target=verify_all)
+    caller.start()
+    try:
+        assert entered.wait(2)
+        assert failed.wait(2)
+        assert not finished.wait(0.05), "Integrity failure returned with a live file reader"
+    finally:
+        release.set()
+        caller.join(3)
+    assert not caller.is_alive() and finished.is_set() and closed.is_set()
+    assert len(errors) == 1 and isinstance(errors[0], RuntimeError)
+    assert "payload changed" in str(errors[0])
+
+
 def test_expired_startup_verification_cannot_reach_resource_or_gpu_admission(monkeypatch):
     now = [200.0]
     monkeypatch.setattr(campaign.time, "monotonic", lambda: now[0])
@@ -1192,3 +1264,59 @@ def test_final_failure_enters_retention_while_real_lock_is_still_held(tmp_path, 
     with pytest.raises(RetentionEntered):
         campaign.main()
     assert not (tmp_path / "RESULT.json").exists()
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "lost-execute",
+        "never-executable",
+        "replacement",
+        "alias",
+        "payload",
+        "relative",
+        "duplicate",
+    ],
+)
+def test_executable_inputs_require_unchanged_identity_and_execute_access(tmp_path, fault):
+    tool = tmp_path / "compiler"
+    tool.write_text("#!/bin/sh\nexit 0\n")
+    tool.chmod(0o400 if fault == "never-executable" else 0o500)
+    metadata = tool.stat()
+    executable = {
+        "path": str(tool),
+        "realpath": str(tool.resolve()),
+        "sha256": campaign.digest(tool),
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+        "mode": metadata.st_mode,
+        "uid": metadata.st_uid,
+        "gid": metadata.st_gid,
+        "bytes": metadata.st_size,
+    }
+    contract = runtime_input_contract(tmp_path, [])
+    contract["executable_inputs"] = [executable]
+    if fault == "lost-execute":
+        tool.chmod(0o400)
+    elif fault == "replacement":
+        tool.rename(tmp_path / "retired-compiler")
+        tool.write_text("#!/bin/sh\nexit 0\n")
+        tool.chmod(0o500)
+    elif fault == "alias":
+        target = tmp_path / "other-compiler"
+        tool.rename(target)
+        tool.symlink_to(target)
+    elif fault == "payload":
+        tool.chmod(0o700)
+        tool.write_text("#!/bin/sh\nexit 1\n")
+        tool.chmod(0o500)
+    elif fault == "relative":
+        executable["path"] = tool.name
+    elif fault == "duplicate":
+        contract["executable_inputs"].append(dict(executable))
+    if fault is None:
+        campaign.check_inputs(contract)
+    else:
+        with pytest.raises(RuntimeError, match="executable"):
+            campaign.check_inputs(contract)
