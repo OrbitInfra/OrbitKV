@@ -682,6 +682,12 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   Native pending admission does not bound the Python queue, retained task list
   or user-held completed handles. Installed GPU/model, physical termination,
   allocation/page generations and adapter-fault qualification remain open.
+  The next installed gate exercises the accepted SaveHandle with deterministic
+  per-round GPU payloads, normal unregister, fresh consumer registration and
+  full Restore/sentinel checks over DRAM and actual io_uring SSD. It rejects
+  missing ownership metrics and requires actual SSD read bytes after source
+  DRAM eviction. This reusable gate awaits exact source review, runtime
+  readiness and independent launch acceptance; no hardware result is claimed.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-
