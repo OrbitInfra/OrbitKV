@@ -2,9 +2,53 @@
 
 use std::io::{BufRead, BufReader};
 use std::process::{Command as ProcessCommand, Stdio};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use orbitkv_channel::{CallOptions, Command, CommandCode, StatusCode, TransportClient};
+
+fn wait(child: &mut std::process::Child) -> std::process::ExitStatus {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "owned CPU child wait exceeded ten seconds: {}",
+            child.id()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn output(command: &mut ProcessCommand) -> std::process::Output {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let status = wait(&mut child);
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    use std::io::Read;
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_end(&mut stdout)
+        .unwrap();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_end(&mut stderr)
+        .unwrap();
+    std::process::Output {
+        status,
+        stdout,
+        stderr,
+    }
+}
 
 #[test]
 fn request_response_crosses_a_real_process_boundary() {
@@ -20,9 +64,16 @@ fn request_response_crosses_a_real_process_boundary() {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    let mut ready = String::new();
-    BufReader::new(child.stdout.take().unwrap())
-        .read_line(&mut ready)
+    let stdout = child.stdout.take().unwrap();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut ready = String::new();
+        let result = BufReader::new(stdout).read_line(&mut ready).map(|_| ready);
+        let _ = sender.send(result);
+    });
+    let ready = receiver
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap()
         .unwrap();
     assert_eq!(ready.trim(), "READY");
 
@@ -58,7 +109,7 @@ fn request_response_crosses_a_real_process_boundary() {
         )
         .unwrap();
     assert_eq!(response.status, StatusCode::Ok);
-    assert!(child.wait().unwrap().success());
+    assert!(wait(&mut child).success());
 }
 
 #[test]
@@ -73,6 +124,8 @@ fn private_domain_is_consumed_by_both_processes_without_touching_default_shm() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("domain");
     std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(root.join("nodes")).unwrap();
+    std::fs::create_dir(root.join("services")).unwrap();
     let config = directory.path().join("channel.toml");
     let prefix = format!("orbitkv_private_{}_", std::process::id());
     std::fs::write(
@@ -100,12 +153,12 @@ fn private_domain_is_consumed_by_both_processes_without_touching_default_shm() {
             .collect()
     };
     let before = snapshot();
-    let output = ProcessCommand::new(std::env::current_exe().unwrap())
-        .args(["--exact", "private_domain_child", "--nocapture"])
-        .env("ORBITKV_CHANNEL_CONFIG", &config)
-        .current_dir("/tmp")
-        .output()
-        .unwrap();
+    let output = output(
+        ProcessCommand::new(std::env::current_exe().unwrap())
+            .args(["--exact", "private_domain_child", "--nocapture"])
+            .env("ORBITKV_CHANNEL_CONFIG", &config)
+            .current_dir("/tmp"),
+    );
     assert!(
         output.status.success(),
         "{}",
@@ -148,11 +201,11 @@ fn invalid_explicit_domain_never_falls_back_to_default_node_creation() {
         ),
     ] {
         std::fs::write(&config, source).unwrap();
-        let output = ProcessCommand::new(env!("CARGO_BIN_EXE_orbitkv-channel-echo"))
-            .arg("private-invalid")
-            .env("ORBITKV_CHANNEL_CONFIG", &config)
-            .output()
-            .unwrap();
+        let output = output(
+            ProcessCommand::new(env!("CARGO_BIN_EXE_orbitkv-channel-echo"))
+                .arg("private-invalid")
+                .env("ORBITKV_CHANNEL_CONFIG", &config),
+        );
         assert!(!output.status.success());
         assert!(!String::from_utf8_lossy(&output.stdout).contains("READY"));
     }
@@ -160,12 +213,84 @@ fn invalid_explicit_domain_never_falls_back_to_default_node_creation() {
     let alias = directory.path().join("symlink.toml");
     symlink(&config, &alias).unwrap();
     for path in [&alias, &directory.path().join("missing.toml")] {
-        let output = ProcessCommand::new(env!("CARGO_BIN_EXE_orbitkv-channel-echo"))
-            .arg("private-invalid")
-            .env("ORBITKV_CHANNEL_CONFIG", path)
-            .output()
-            .unwrap();
+        let output = output(
+            ProcessCommand::new(env!("CARGO_BIN_EXE_orbitkv-channel-echo"))
+                .arg("private-invalid")
+                .env("ORBITKV_CHANNEL_CONFIG", path),
+        );
         assert!(!output.status.success());
         assert!(!String::from_utf8_lossy(&output.stdout).contains("READY"));
+    }
+}
+
+#[test]
+fn private_domain_refuses_symlink_directories_and_file_roots_before_shared_state() {
+    use std::os::unix::fs::symlink;
+    for case in [
+        "node",
+        "service",
+        "intermediate",
+        "file-root",
+        "missing-directories",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("root");
+        let outside = directory.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        if case == "file-root" {
+            std::fs::write(&root, b"not a directory").unwrap();
+        } else {
+            std::fs::create_dir(&root).unwrap();
+            if case != "missing-directories" {
+                for name in ["nodes", "services"] {
+                    if (case == "node" && name == "nodes")
+                        || (case == "service" && name == "services")
+                    {
+                        symlink(&outside, root.join(name)).unwrap();
+                    } else {
+                        std::fs::create_dir(root.join(name)).unwrap();
+                    }
+                }
+            }
+            if case == "intermediate" {
+                symlink(&outside, root.join("escape")).unwrap();
+                std::fs::create_dir(outside.join("nodes")).unwrap();
+                std::fs::create_dir(outside.join("services")).unwrap();
+            }
+        }
+        let prefix = format!(
+            "orbitkv_refused_{}_{}_",
+            std::process::id(),
+            case.replace('-', "_")
+        );
+        let config = directory.path().join("config.toml");
+        let dirs = if case == "intermediate" {
+            "[global.node]\ndirectory='escape/nodes'\n[global.service]\ndirectory='escape/services'\n"
+        } else {
+            ""
+        };
+        std::fs::write(
+            &config,
+            format!(
+                "[global]\nroot-path={:?}\nprefix={prefix:?}\n{dirs}",
+                root.to_str().unwrap()
+            ),
+        )
+        .unwrap();
+        let output = output(
+            ProcessCommand::new(env!("CARGO_BIN_EXE_orbitkv-channel-echo"))
+                .arg("private-refusal")
+                .env("ORBITKV_CHANNEL_CONFIG", &config),
+        );
+        assert!(!output.status.success(), "{case}");
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("READY"));
+        assert!(
+            !std::fs::read_dir("/dev/shm").unwrap().any(|entry| entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&prefix)),
+            "{case} created shared state"
+        );
     }
 }

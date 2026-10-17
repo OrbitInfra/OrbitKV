@@ -33,6 +33,10 @@ iceoryx2's global counter or stale-node cleanup. Use the same frozen absolute
 `ORBITKV_CHANNEL_CONFIG` for client and Manager with a separate private prefix
 and canonical root. The Rust channel owner consumes it before Node creation,
 independently of Manager cwd; recheck resource scope and READY before launch.
+Precreate the private node/service directories without symlinks, freeze each
+path-chain identity, and keep the domain immutable under its resource owner
+through cleanup. The dependency uses paths after the Rust precheck; concurrent
+privileged renames are not atomically fenced by the channel configuration.
 
 For remote metadata scope, omission means `AllNamespaces`. Repeat
 `--metadata-namespace` only with complete storage namespaces logged by actual

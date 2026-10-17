@@ -729,6 +729,17 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   instead of falling back. Real two-process CPU roundtrip keeps default-domain
   shared objects byte-identical. Native/package review and a new resource/READY
   review remain required before GPU launch; old locks/remnants stay preserved.
+  Independent `e7077986` review remains ChangesRequired: node/service and
+  intermediate symlinks could escape, and a regular-file root entered Node
+  creation before failing. The correction requires an actual canonical directory
+  root and existing nonsymlink directory components before construction,
+  snapshots their identities and rechecks them before later Nodes. It also
+  checks configuration metadata after reading and bounds CPU process readiness
+  and waits. The whole private directory chain must remain task-owned and
+  immutable through the dependency's path-based operations; the code does not
+  fence privileged concurrent renames atomically. Real process controls reject
+  the original escapes and file root before a shared counter is created. New
+  package/freeze/software and resource reviews remain required.
   New evidence is under `/root/orbitkv-artifacts/s3-explicit-registration-20261016/`.
 
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,

@@ -1,5 +1,6 @@
 use std::io::Read;
 use std::os::fd::OwnedFd;
+use std::os::unix::fs::MetadataExt;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
@@ -28,10 +29,18 @@ type IpcService = iceoryx2::service::port_factory::request_response::PortFactory
     (),
 >;
 
+struct ProcessConfig {
+    config: Config,
+    directories: Vec<(std::path::PathBuf, u64, u64)>,
+}
+
 fn process_config() -> Result<&'static Config, TransportError> {
-    static CONFIG: LazyLock<Result<Config, String>> = LazyLock::new(|| {
+    static CONFIG: LazyLock<Result<ProcessConfig, String>> = LazyLock::new(|| {
         let Some(path) = std::env::var_os("ORBITKV_CHANNEL_CONFIG") else {
-            return Ok(Config::global_config().clone());
+            return Ok(ProcessConfig {
+                config: Config::global_config().clone(),
+                directories: Vec::new(),
+            });
         };
         let path = std::path::Path::new(&path);
         if !path.is_absolute() {
@@ -54,16 +63,29 @@ fn process_config() -> Result<&'static Config, TransportError> {
             return Err("channel configuration must be a regular file of at most 64 KiB".into());
         }
         let mut input = String::new();
-        std::fs::File::from(fd)
+        let file = std::fs::File::from(fd);
+        (&file)
             .take(65537)
             .read_to_string(&mut input)
             .map_err(|error| error.to_string())?;
         if input.len() > 65536 {
             return Err("channel configuration exceeded its byte bound".into());
         }
+        let after = rustix::fs::fstat(&file).map_err(|error| error.to_string())?;
+        if after.st_dev != metadata.st_dev
+            || after.st_ino != metadata.st_ino
+            || after.st_size != metadata.st_size
+            || after.st_mtime != metadata.st_mtime
+            || after.st_mtime_nsec != metadata.st_mtime_nsec
+            || after.st_ctime != metadata.st_ctime
+            || after.st_ctime_nsec != metadata.st_ctime_nsec
+        {
+            return Err("channel configuration changed while being read".into());
+        }
         let config: Config = toml::from_str(&input).map_err(|error| error.to_string())?;
         let root = std::path::Path::new(config.global.root_path().as_str());
         if !root.is_absolute()
+            || !root.is_dir()
             || root.canonicalize().map_err(|error| error.to_string())? != root
             || config.global.prefix == Config::default().global.prefix
         {
@@ -71,11 +93,14 @@ fn process_config() -> Result<&'static Config, TransportError> {
                 "explicit channel configuration needs an absolute root and private prefix".into(),
             );
         }
+        let root_metadata = root.metadata().map_err(|error| error.to_string())?;
+        let mut directories = vec![(root.to_path_buf(), root_metadata.dev(), root_metadata.ino())];
         for directory in [
             config.global.node.directory.as_str(),
             config.global.service.directory.as_str(),
         ] {
-            if std::path::Path::new(directory)
+            let directory = std::path::Path::new(directory);
+            if directory
                 .components()
                 .any(|component| !matches!(component, std::path::Component::Normal(_)))
             {
@@ -84,12 +109,49 @@ fn process_config() -> Result<&'static Config, TransportError> {
                         .into(),
                 );
             }
+            let mut current = root.to_path_buf();
+            for component in directory.components() {
+                current.push(component);
+                let metadata = std::fs::symlink_metadata(&current).map_err(|error| {
+                    format!("private channel directories must exist before Node creation: {error}")
+                })?;
+                if !metadata.is_dir()
+                    || metadata.file_type().is_symlink()
+                    || current.canonicalize().map_err(|error| error.to_string())? != current
+                {
+                    return Err("private channel directories cannot contain symlinks".into());
+                }
+                directories.push((current.clone(), metadata.dev(), metadata.ino()));
+            }
         }
-        Ok(config)
+        Ok(ProcessConfig {
+            config,
+            directories,
+        })
     });
     CONFIG
         .as_ref()
         .map_err(|error| TransportError::Node(error.clone()))
+        .and_then(|owner| {
+            for (path, device, inode) in &owner.directories {
+                let metadata = path
+                    .symlink_metadata()
+                    .map_err(|error| TransportError::Node(error.to_string()))?;
+                if !metadata.is_dir()
+                    || metadata.file_type().is_symlink()
+                    || (metadata.dev(), metadata.ino()) != (*device, *inode)
+                    || path
+                        .canonicalize()
+                        .map_err(|error| TransportError::Node(error.to_string()))?
+                        != *path
+                {
+                    return Err(TransportError::Node(
+                        "private channel directory changed before Node creation".into(),
+                    ));
+                }
+            }
+            Ok(&owner.config)
+        })
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -108,7 +108,13 @@ for client and Manager. The Rust channel owner reads at most 64 KiB once per
 process and passes that config explicitly to both Node builders. The file must
 be regular and not symlinked, with an existing canonical absolute root, a private
 prefix and node/service directories inside the root. Invalid input refuses Node
-creation. Freeze the TOML bytes and domain resources for qualification; changing
+creation. Precreate every node/service directory component; the owner rejects
+symlinks and retains their device/inode identities for a check before each Node.
+Keep that task-owned directory chain immutable from admission through cleanup.
+The dependency operates on pathnames after this check, so a privileged concurrent
+rename is outside this isolation contract and must be excluded by the resource
+owner/lock, rather than treated as atomically fenced by the library. Freeze the
+TOML bytes and domain resources for qualification; changing
 the file after first channel construction cannot rebind that process. This
 separates iceoryx2's persistent counter, shared resources and stale-node cleanup
 from a retained historical domain; unique service names alone do not. The default
