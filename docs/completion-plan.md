@@ -713,6 +713,15 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   The fixture correction explicitly consumes the installed package root from
   matching imported package/extension paths. It requires new readiness evidence
   and cannot turn the previous failure into formal qualification.
+  Corrected installed DRAM readiness then completed three exact GPU-byte rounds
+  with normal Manager and owner waits. Separate SSD readiness failed after its
+  byte assertion because the gate requested a nonexistent generic SSD-read
+  counter. The actual io_uring owner reports stored bytes through
+  `orbitkv_ssd_prefetch_bytes_total` and READV submission through
+  `orbitkv_ssd_uring_read_operations_total`; the correction records both before
+  and after, preserving absent-before explicitly, and requires advancing actual
+  reads. Both readiness outcomes remain separate from formal qualification;
+  the SSD failure owner and evidence require scoped disposition.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-

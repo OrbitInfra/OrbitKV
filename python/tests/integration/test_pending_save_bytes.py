@@ -164,6 +164,13 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                 time.monotonic() + 30,
             )
             io_before = fetch_orbitkv_metrics(channel_server.http_port)
+            read_before = {
+                name: io_before.get(name)
+                for name in (
+                    "orbitkv_ssd_prefetch_bytes_total",
+                    "orbitkv_ssd_uring_read_operations_total",
+                )
+            }
             deadline = time.monotonic() + 30
             while True:
                 query = consumer.query_prefetch(
@@ -194,10 +201,16 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
             actual[1, 0] ^= 1
             after = fetch_orbitkv_metrics(channel_server.http_port)
             if channel_server.ssd_cache_path is not None:
-                assert (
-                    after["orbitkv_ssd_read_bytes_total"]
-                    > io_before["orbitkv_ssd_read_bytes_total"]
-                )
+                for name in (
+                    "orbitkv_ssd_prefetch_bytes_total",
+                    "orbitkv_ssd_uring_read_operations_total",
+                ):
+                    assert name in after, f"Missing actual io_uring read metric: {name}"
+                    assert (
+                        after[name] > 0
+                        if read_before[name] is None
+                        else after[name] > read_before[name]
+                    )
             success, message = consumer.unregister_context(consumer_id)
             assert success, message
             consumer_registered = False
@@ -217,6 +230,8 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                     "source_identity": source_id,
                     "consumer_identity": consumer_id,
                     "normal_unregister": True,
+                    "read_before": read_before,
+                    "read_after": {name: after.get(name) for name in read_before},
                 }
             )
             write(
