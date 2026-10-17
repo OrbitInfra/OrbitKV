@@ -738,16 +738,17 @@ validate earlier between-binary optimization comparisons or promote serving.
 The description and reproduction remain outside Git at
 `/root/orbitkv-artifacts/s4-paired-measurement-preparation-20261017/`.
 
-**Prospective interleaved calibration (2026-10-17): implementation under review.**
-Add a same-process benchmark-only A/A and off/thread schedule with explicit
-sequence labels, maintaining the original trace owner and timing boundaries.
-The [prospective contract](kernel-optimization.md#prospective-interleaved-calibration)
-keeps both CPUs, numeric 5% guards, complete byte/geometry/drain checks and
-independently restarted-process bootstrap units. Median3-part sequence units
-are declared in advance and do not bound individual parts or former process
-medians. Method/source and exact runtime/launch review precede a sole fixed
-16-process cohort; no hardware, production promotion or old-failure reversal.
-Evidence remains outside Git at
+**Prospective interleaved calibration (2026-10-17): implemented; qualification FAIL.**
+The sole fixed 16-process CPU cohort completes all 576 parts (384 measured),
+full geometry/canonical-byte/cap/drain validation and 33 normal child waits.
+The [prospective median3 contract](kernel-optimization.md#prospective-interleaved-calibration)
+keeps both CPUs and original numeric 5% guards. All process estimates and
+bootstrap intervals satisfy their guards, but adjacent contrasts fail:
+CPU0 A/A 7/16 and A/B 3/16; CPU2 A/A passes and A/B fails 1/16, for both metrics.
+A/A prerequisite and A/B conjunction fail; the method and optional probe remain
+unqualified. Sequence medians do not bound individual parts, sequence sums or
+former process medians. No old FAIL, hardware/default or serving boundary changes;
+no replacement or subsequent campaign. Complete evidence remains outside Git at
 `/root/orbitkv-artifacts/s4-interleaved-calibration-20261017/`.
 
 **Bounded synchronous publication: CPU retention accepted; H20 overhead FAIL.**

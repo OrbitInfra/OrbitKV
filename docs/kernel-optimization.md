@@ -1142,8 +1142,8 @@ The maintained `benches.native_trace_calibration` controller validates full
 stable geometry, canonical encoded bytes, identities, drain clocks and the
 production layout compiler receipt after every cell. A frozen input index and
 independent launch receipt admit one fixed 16-process cohort: four restarted
-processes for each CPU0/CPU2 and A/A/A/B stratum, with two complementary orders
-of each kind. A cell error stops collection and preserves its evidence; a
+processes for each CPU and contrast stratum (A/A or A/B), with two complementary
+orders of each kind. A cell error stops collection and preserves its evidence; a
 valid performance failure never causes a replacement.
 
 For both `total_ns` and `observed_ns`, each measured sequence contributes the
@@ -1163,3 +1163,13 @@ scheduling and frequency remain uncontrolled. This method cannot validate old
 between-binary optimization comparisons, reverse prior failures or promote a
 GPU, kernel default or serving path. Raw parts and all failed controls remain
 in the selected external artifact directory.
+
+The sole prospective 16-process cohort completed all geometry, canonical-byte,
+cap, drain and normal-exit controls. Its process estimates and bootstrap
+intervals satisfy their numeric guards, while adjacent contrasts do not:
+CPU0 fails A/A and A/B; CPU2 passes A/A and fails A/B. Both enclosing and
+original metrics have the same failed guard pattern. The A/A prerequisite
+fails, so this method and optional thread probe remain **unqualified**. No
+replacement cohort or production promotion follows. Preserve the raw parts,
+all 33 child waits and the complete failure conclusion at
+`/root/orbitkv-artifacts/s4-interleaved-calibration-20261017/`.
