@@ -43,6 +43,14 @@ cache adapters and Manager peer-cache traffic through TENT.
 
 `register_context_batch(..., tensors=[...])` returns an opaque `GpuRegistration`
 that retains actual tensor/exporter objects in registration order.
+Explicit registration exports storage IPC metadata in the native
+client; Python supplies retained tensors and layouts, without serialized pickle
+wrappers. Matching lifecycle-9 packages are required. Storage and view offsets,
+GPU UUID, dtype/layout, counter and readiness fields are validated before import.
+Scoped installed GPU/adapter and export-error ownership gates are independently
+accepted; see S3 in the [completion plan](../docs/completion-plan.md). Physical
+fault termination and allocation/page-generation qualification remain open.
+
 Use `save(registration, saves)` for Publish. Queued engine callbacks capture that
 registration when their producer hands off work; an inactive registration or a
 different native client is rejected before Publish. Keeping the object retains

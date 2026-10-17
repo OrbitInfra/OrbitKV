@@ -258,8 +258,6 @@ def test_encoded_ssd_mixed_prefix_cancellation_and_corruption(fault_cache):
 def test_fp8_storage_matches_torch_scalar_cast_and_isolates_exact_registration(fault_cache):
     import torch
 
-    from orbitkv.client.gpu import serialize_gpu_buffer
-
     server, client, ctx, _ = fault_cache
     tensor = ctx.get_kv_cache()
     values = torch.arange(65536, dtype=torch.int32).to(torch.uint16).view(tensor.dtype).float()
@@ -302,7 +300,6 @@ def test_fp8_storage_matches_torch_scalar_cast_and_isolates_exact_registration(f
         1,
         0,
         ctx._layer_names,
-        [serialize_gpu_buffer(tensor)],
         [ctx.num_blocks],
         [stride[1] * tensor.element_size()],
         [stride[0] * tensor.element_size()],

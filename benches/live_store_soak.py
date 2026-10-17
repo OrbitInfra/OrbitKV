@@ -68,7 +68,7 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
 
     import orbitkv.orbitkv as native
     from orbitkv import CacheManagerClient
-    from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+    from orbitkv.client.gpu import resolve_device_id
 
     assert torch.cuda.is_available()
     os.environ["MC_FORCE_TCP"] = "1"
@@ -198,7 +198,6 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
                     1,
                     resolve_device_id(),
                     ["kv:0"],
-                    [serialize_gpu_buffer(tensor)],
                     [pages],
                     [block_bytes],
                     [0],
@@ -419,7 +418,9 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
                     target = _metadata(source_manager)["inventory_sequence"]
                     source_owner = registrations["source"]["owner"]["incarnation"]
                     _until(
-                        lambda target=target, source_owner=source_owner, consumer_manager=consumer_manager: (
+                        lambda target=target,
+                        source_owner=source_owner,
+                        consumer_manager=consumer_manager: (
                             (status := _owner_status(consumer_manager, source_owner))
                             and status["fresh"]
                             and status["applied_sequence"] >= target

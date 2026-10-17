@@ -550,7 +550,6 @@ def main(argv: list[str] | None = None) -> None:
                 1,
                 device,
                 layers,
-                [gpu.serialize_gpu_buffer(pages[index]) for index in range(args.layers)],
                 [count * 2] * args.layers,
                 [segment_bytes] * args.layers,
                 [count * 2 * segment_bytes if segments == 2 else 0] * args.layers,

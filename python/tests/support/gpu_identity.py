@@ -9,16 +9,6 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
-class UnissuedCudaIPCWrapper:
-    """Metadata-only input proving a negative guard runs before tensor import."""
-
-    def __init__(self, device_uuid: str):
-        self.device_uuid = device_uuid
-
-    def to_tensor(self):
-        raise AssertionError("Unissued negative-control IPC handle reached tensor import")
-
-
 def inherited_gpu_lock_fds() -> tuple[int, ...]:
     descriptors = tuple(json.loads(os.environ.get("ORBITKV_TEST_GPU_LOCK_FDS", "[]")))
     for descriptor in descriptors:

@@ -155,6 +155,14 @@ class GpuRegistration:
 
     @property
     def generation(self) -> bytes: ...
+    @property
+    def export_owner_generation(self) -> bytes: ...
+    @property
+    def ipc_counters(self) -> list[tuple[bytes, int]]: ...
+    @property
+    def ipc_credit_evidence(self) -> str:
+        """Immutable importer-handoff counter snapshot; never a DMA drain receipt."""
+        ...
 
 class CacheManagerClient:
     """Native owner of query, publish and restore lifetimes."""
@@ -167,6 +175,15 @@ class CacheManagerClient:
         spin_iterations: int = 64,
     ) -> None: ...
     def close(self) -> None: ...
+    def retained_registration_attempts(self) -> list[tuple[bytes, str, int, list[str], bool]]:
+        """Exporter generation, instance, charged bytes, credit states, export-return uncertainty."""
+        ...
+    def registration_retention(self) -> tuple[int, int, int]:
+        """Process-wide retained attempts, tensor bytes and IPC credits; not a drain receipt."""
+        ...
+    def retained_credit_evidence(self, instance_id: str) -> str:
+        """Versioned original counter observations for this client's retained attempts."""
+        ...
     def health(self) -> tuple[bool, str]: ...
     def configure_shard_queries(
         self,
@@ -197,7 +214,6 @@ class CacheManagerClient:
         world_size: int,
         device_id: int,
         layer_names: list[str],
-        wrapper_bytes_list: list[bytes],
         num_blocks_list: list[int],
         bytes_per_block_list: list[int],
         kv_stride_bytes_list: list[int],

@@ -31,7 +31,7 @@ branches at cutover. See [interface audit](engine-release-audit.md).
 | S0 | Complete | Handoff/skill migration merged in PR #190 |
 | S1 | Accepted at `ec3add9b` | Preserve external evidence and one queue |
 | S2 | Complete for the accepted engineering scope; full qualification open | Reviewed metadata contracts, the same-host four-owner baseline and one normal-SIGTERM three-host etcd process-only cohort are accepted. DRAM/SSD isolation FAIL; sixteen owners UNQUALIFIED; support stays four owners. Cross-host cache HA and independent etcd failure domains remain unqualified |
-| S3 | Implementation partial; qualification open | Conservative native failure retention has limited code/CPU acceptance at `27f1cb1b`; physical termination proof, installed GPU/adapter gates, page generations, explicit registration and crash reclamation remain open |
+| S3 | Implementation partial; qualification open | Explicit CUDA registration and bounded installed normal-path ownership controls are accepted; page generations, physical termination, fault reclamation and broader adapter lifetime remain open |
 | S4 | Partial | Measured copy/SSD/control improvements exist; mixed contention, complete serving gains and S3-dependent faults remain open |
 | S5 | Partial | Official dense cache/restart and scoped deployment profiles accepted; public lifecycle, complete hybrid recovery, native P/D faults and broader topology remain open |
 | S6 | Partial | Observations and guarded limited choices exist; one consumed route/admission planner remains open |
@@ -526,8 +526,43 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   [PR #246](https://github.com/feichai0017/orbitkv/pull/246).
   Healthy completion does not close physical faults, allocation/page generation
   or S3. Original failures and native IPC/helper-exit limits remain preserved.
-- Replace the remaining framework CUDA IPC pickle interpretation in the Manager
-  with explicit validated registration data; remove the retired wire/API path.
+- Explicit CUDA registration is implemented and independently accepted for its
+  bounded code/CPU and matching healthy installed profile at production
+  `6ee6cdca`, test harness `949d0dd5`, wheel SHA256 `0a05a5c9…` (PR
+  [#251](https://github.com/feichai0017/orbitkv/pull/251)). Versioned protobuf
+  storage/view metadata replaces the framework pickle wrapper; lifecycle 9
+  requires matching client and Manager packages. Per-registration metadata
+  validation precedes device resolution/import. The native owner reserves the
+  client/key before export,
+  retains the original storage binding and per-layer owners/credits, and checks
+  generation-bound import dispositions. Uncertain or partial attempts retain
+  their client/tensors/credits. Repayment requires the original held counter
+  identity and an observed one-to-zero transition; an importer handoff or zero
+  counter is not physical device completion.
+  Retention is bounded to 64 attempts, 4,096 tensors/credits per attempt and
+  1 TiB of conservatively accounted storage. Identical `(base, bytes)` aliases
+  are charged once inside a validated single-device batch, avoiding repeated
+  OrbitKV accounting of vLLM's shared layer backing. Different extents, overlaps,
+  attempts and every layer's ownership remain independent.
+  Matching H20 installed gates pass four core cells/seven cases; official
+  vLLM 0.31.0 Qwen3-8B TP1/PP1 V1/direct DRAM with CUDA Graph NONE passes
+  six cases with one inapplicable hybrid-model skip; official SGLang 0.5.21 Qwen3-8B TP1/PP1
+  direct DRAM/io_uring SSD passes both recovery cases. These checks cover
+  retained-credit controls, native Restore bytes, producer-stream fencing,
+  released-pool retirement, model output and restart recovery under their
+  respective frozen contracts. Literal service/controller/foreground waits,
+  installed input hashes and selected-resource postflight are independently
+  checked. They establish healthy scoped correctness, not complete lifecycle,
+  physical-fault reclamation, page generations, RDMA/GDS or performance gains.
+  Core and SGLang IPC warnings, uncertain throw retention and official
+  engine-internal termination limits remain explicit in the accepted reports.
+  Full frozen inputs, original failures, retained old owners and independent
+  reports are preserved under
+  `/root/orbitkv-artifacts/s3-installed-registration-completion-20261017/`.
+  The [immutable pre-acceptance record](https://github.com/feichai0017/orbitkv/blob/949d0dd50e149f9a2b74d738838719a589f481ac/docs/completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
+  retains the earlier failed candidates, source fixes, runtime closures and
+  rejected launch preparations. This summary does not revise their verdicts.
+
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
   without a control RPC or taking a blocked Publish/lifecycle lock. Restore
   readiness and pending-result checks consume that observation. A live stalled
@@ -538,7 +573,8 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   its local DMA-result eventfd. SGLang probing and actual GPU/fault gates remain
   open; peer exit still does not fence active engine DMA or release pages.
 - Add a bounded operational response to a live Manager that never completes a
-  Publish, preserving held pages until drain or established process death.
+  Publish, preserving held pages until matched completion or independently
+  established physical termination. Process death alone is not a DMA fence.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-
@@ -910,6 +946,18 @@ The failed contract and quarantine are preserved with PR #238; functional
 assertions do not turn that cohort into a pass or qualify S3 physical lifetime.
 The earlier missing-Manager-binary attempt also remains failed. No fork patch
 or relaxed log rule is installed, and the support matrix is unchanged.
+
+**Explicit-registration wheel cutover (2026-10-17):** the new installed
+registration prerequisite and matching official-release model regression pass
+from the same frozen wheel: vLLM dense V1/direct DRAM with CUDA Graph NONE, and
+SGLang direct DRAM/io_uring SSD, all TP1/PP1 with Qwen3-8B. The current vLLM native baseline/save/
+restart logs also pass the unchanged strict validator; the historical Noop
+shutdown failure above keeps its failed verdict. Exact profiles and independent
+reviews are tracked under [S3](#s3--transfer-lifetime-and-generation-safe-ownership).
+Recheck the actual artifact for each newly claimed engine/media profile. Healthy
+output and recovery assertions do not replace strict native shutdown, physical
+lifetime or fault qualification, and prior failed cohorts keep their original
+verdicts.
 
 ### S5.3 — Public lifecycle and hybrid-state contracts
 

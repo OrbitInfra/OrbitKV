@@ -4,6 +4,7 @@ use std::sync::{Arc, Weak};
 
 use log::{info, warn};
 use orbitkv_core::{EngineError, OrbitKVEngine, TransferMode};
+use orbitkv_proto::proto::engine::{CudaCreditDisposition, CudaIpcTensorRegistration};
 use orbitkv_state::{AttentionRole, Scalar16, StorageFormat};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
@@ -27,7 +28,7 @@ pub(crate) struct Registration {
     pub(crate) device_id: i32,
     pub(crate) device_uuid: String,
     pub(crate) layer_names: Vec<String>,
-    pub(crate) wrapper_bytes: Vec<Vec<u8>>,
+    pub(crate) gpu_tensors: Vec<CudaIpcTensorRegistration>,
     pub(crate) num_blocks: Vec<u64>,
     pub(crate) bytes_per_block: Vec<u64>,
     pub(crate) kv_stride_bytes: Vec<u64>,
@@ -45,24 +46,28 @@ pub(crate) struct Registration {
 pub(crate) struct ControlError {
     pub(crate) code: u16,
     pub(crate) message: String,
+    pub(crate) credit_disposition: CudaCreditDisposition,
 }
 impl ControlError {
     pub(crate) fn invalid_argument(message: impl Into<String>) -> Self {
         Self {
             code: 1,
             message: message.into(),
+            credit_disposition: CudaCreditDisposition::Unknown,
         }
     }
     fn failed_precondition(message: impl Into<String>) -> Self {
         Self {
             code: 2,
             message: message.into(),
+            credit_disposition: CudaCreditDisposition::Unknown,
         }
     }
     fn internal(message: impl Into<String>) -> Self {
         Self {
             code: 3,
             message: message.into(),
+            credit_disposition: CudaCreditDisposition::Unknown,
         }
     }
 }
@@ -185,6 +190,8 @@ impl LifecycleService {
         &self,
         req: Registration,
     ) -> Result<(i32, [u8; 16]), ControlError> {
+        let mut disposition = CudaCreditDisposition::NeverImported;
+        let result = async {
         let stopping = self.stopping.read().await;
         if *stopping {
             return Err(ControlError::failed_precondition(
@@ -205,7 +212,7 @@ impl LifecycleService {
         // Validate array lengths are consistent with each other.
         let batch_len = req.layer_names.len();
         if batch_len == 0
-            || req.wrapper_bytes.len() != batch_len
+            || req.gpu_tensors.len() != batch_len
             || req.num_blocks.len() != batch_len
             || req.bytes_per_block.len() != batch_len
             || req.kv_stride_bytes.len() != batch_len
@@ -253,21 +260,23 @@ impl LifecycleService {
         };
         // Materialize on the dedicated registry thread (GIL + CUDA IPC) and
         // await the result, so this RPC never blocks an async worker. Move
-        // the (large) wrapper bytes over; clone the layer names since the
+        // the explicit registration data over; clone the layer names since the
         // engine call below still needs them.
-        let layers: Vec<(String, Vec<u8>)> = req
+        let layers: Vec<(String, CudaIpcTensorRegistration)> = req
             .layer_names
             .iter()
             .cloned()
-            .zip(req.wrapper_bytes)
+            .zip(req.gpu_tensors)
             .collect();
         let metadatas = self
             .registry
             .register_layers(context_key.clone(), layers)
             .await
-            .map_err(|message| {
-                ControlError::internal(format!("register tensor failed: {message}"))
+            .map_err(|error| {
+                disposition = error.disposition;
+                ControlError::internal(format!("register tensor failed: {}", error.message))
             })?;
+        disposition = CudaCreditDisposition::ImporterOwned;
         let manager_device_id = metadatas
             .first()
             .ok_or_else(|| ControlError::internal("GPU registration imported no tensors"))?
@@ -386,6 +395,11 @@ impl LifecycleService {
         };
 
         Ok((manager_device_id, registration_generation))
+        }.await;
+        result.map_err(|mut error: ControlError| {
+            error.credit_disposition = disposition;
+            error
+        })
     }
 
     fn validate_session_topology(

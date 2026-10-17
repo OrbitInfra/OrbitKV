@@ -16,6 +16,7 @@ mod mooncake;
 mod client;
 mod local_restore;
 mod recovery;
+mod registration;
 
 // Custom Python exceptions for error classification
 create_exception!(orbitkv, OrbitKVError, PyException);

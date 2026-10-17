@@ -113,6 +113,7 @@ class VLLMServer:
         self.health_endpoints = ["/health", "/v1/models"]
         self.process: subprocess.Popen | None = None
         self.log_handle = None
+        self._process_start_ticks: int | None = None
 
     def __enter__(self):
         """Start the vLLM server."""
@@ -228,30 +229,28 @@ class VLLMServer:
         if self.log_file:
             print(f"[{server_label}] Logging to: {self.log_file}")
             self.log_handle = open(self.log_file, "w")
+        try:
             self.process = subprocess.Popen(
                 cmd,
                 cwd=PYTHON_ROOT.parent,
-                stdout=self.log_handle,
+                stdout=self.log_handle if self.log_handle is not None else subprocess.DEVNULL,
                 stderr=subprocess.STDOUT,
                 env=env,
                 preexec_fn=os.setsid,
                 pass_fds=inherited_gpu_lock_fds(),
             )
-        else:
-            self.process = subprocess.Popen(
-                cmd,
-                cwd=PYTHON_ROOT.parent,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=env,
-                preexec_fn=os.setsid,
-                pass_fds=inherited_gpu_lock_fds(),
+            self._process_start_ticks = int(
+                Path(f"/proc/{self.process.pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
             )
-
-        self._process_start_ticks = int(
-            Path(f"/proc/{self.process.pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
-        )
-        self._wait_for_ready(timeout=self.startup_timeout)
+            self._wait_for_ready(timeout=self.startup_timeout)
+        except BaseException as primary:
+            try:
+                self.__exit__(type(primary), primary, primary.__traceback__)
+            except BaseException as cleanup_error:
+                if cleanup_error is primary:
+                    raise
+                raise primary from cleanup_error
+            raise
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):

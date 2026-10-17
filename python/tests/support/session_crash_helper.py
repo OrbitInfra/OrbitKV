@@ -15,8 +15,6 @@ import time
 
 import torch
 
-from orbitkv.client.gpu import serialize_gpu_buffer
-
 
 def main() -> int:
     endpoint, instance_id, ready_file = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -26,7 +24,6 @@ def main() -> int:
 
     device = torch.device("cuda:0")
     kv = torch.rand((2, 16, 16, 8, 128), dtype=torch.bfloat16, device=device).contiguous()
-    wrapper_bytes = serialize_gpu_buffer(kv)
 
     shape = tuple(kv.shape)
     stride = tuple(kv.stride())
@@ -45,7 +42,6 @@ def main() -> int:
         1,  # world_size
         0,  # device_id
         ["layer_0"],
-        [wrapper_bytes],
         [num_blocks],
         [bytes_per_block],
         [kv_stride_bytes],
