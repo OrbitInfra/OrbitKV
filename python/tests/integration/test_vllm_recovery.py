@@ -206,12 +206,12 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel
     def save(*args):
         overlapped.append(not unrelated_done.query())
         submitted.set()
-        return client.save(*args)
+        return client.start_save(*args)
 
     try:
         worker.register_kv_caches({"layer": kv})
         worker._client = MagicMock(wraps=client)
-        worker._client.save.side_effect = save
+        worker._client.start_save.side_effect = save
         torch.cuda.synchronize()
         # A delayed producer verifies that the background thread cannot read
         # the initial zeros. Independent work must not extend its save fence.
