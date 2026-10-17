@@ -563,18 +563,24 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   retains the earlier failed candidates, source fixes, runtime closures and
   rejected launch preparations. This summary does not revise their verdicts.
 
-- A separate Publish safety candidate retains the existing synchronous caller,
-  descriptors and source owners after post-submit transport/notification errors
-  or Manager process exit without a matched completion. The previous path could
-  return an error after pidfd exit and let adapters report save completion.
-  A post-submit Rust unwind is caught at the same Publish owner; retention uses
-  a fallible stderr diagnostic rather than calling a potentially panicking
-  custom logger. An isolated real logger-unwind control keeps the caller hold.
-  Real process controls must reject that return; normal late replies and
-  never-submitted failures keep their existing behavior. This is conservative
-  retention, not the bounded live-stall response or page-generation substage;
-  source/process/GPU/adapter review and corresponding hardware gates remain
-  required before dependent changes.
+- Publish retains the existing synchronous caller, descriptors and source owners
+  after unproven transport errors, invalid acknowledgements, Manager process exit
+  or a caught Rust unwind. Fallible stderr diagnostics avoid a panicking logger
+  on the final retention path. Request-send errors retain their native type:
+  only loan, pre-delivery connection and active-request admission failures prove
+  no submission. A send error may follow delivery and cannot be treated as a
+  blanket pre-submission exception. Request services enforce one Manager
+  recipient at creation and check that exact configuration when opening.
+  Real CPU process controls cover queue-delivery interruption, source ownership,
+  pre-admission rejection, valid late completion, peer exit, malformed replies
+  and logger unwind. The historical unsafe send-exception mutation must fail
+  the same source-retention control. This is transport-boundary hardening,
+  tracked in [PR #259](https://github.com/feichai0017/orbitkv/pull/259).
+  Manager worker/reply loss can still produce a consumed Internal response
+  without physical drain proof; that owner gap, bounded live-stall response,
+  finite parked-operation admission, page generations and physical reclamation
+  remain open. New installed-package or GPU/fault qualification cannot be
+  inherited from the earlier registration wheel or these CPU controls.
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
   without a control RPC or taking a blocked Publish/lifecycle lock. Restore
   readiness and pending-result checks consume that observation. A live stalled

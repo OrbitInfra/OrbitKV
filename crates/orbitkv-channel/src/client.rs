@@ -409,7 +409,7 @@ impl ChannelClient {
             Ok(response) => response,
             Err(error) => {
                 self.close();
-                if peer.is_some() && !matches!(error, TransportError::Send(_)) {
+                if peer.is_some() && !error.request_not_submitted() {
                     TransportClient::retain_unproven_publish(request_id);
                 }
                 return Err(error.into());

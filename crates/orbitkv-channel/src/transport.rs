@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 
 use iceoryx2::active_request::ActiveRequest;
 use iceoryx2::config::Config;
+use iceoryx2::port::SendError;
+use iceoryx2::port::client::RequestSendError;
 use iceoryx2::port::listener::{Listener, ListenerWaitError};
 use iceoryx2::port::notifier::Notifier;
 use iceoryx2::prelude::*;
@@ -183,6 +185,8 @@ pub enum TransportError {
     Thread(String),
     #[error("failed to send process channel message: {0}")]
     Send(String),
+    #[error("failed to send process channel request: {0}")]
+    RequestSend(#[source] RequestSendError),
     #[error("failed to receive process channel message: {0}")]
     Receive(String),
     #[error("process channel request {request_id} timed out")]
@@ -195,6 +199,20 @@ pub enum TransportError {
     SessionMismatch { expected: u64, actual: u64 },
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
+}
+
+impl TransportError {
+    pub(crate) fn request_not_submitted(&self) -> bool {
+        matches!(
+            self,
+            Self::RequestSend(
+                RequestSendError::ExceedsMaxActiveRequests
+                    | RequestSendError::SendError(
+                        SendError::LoanError(_) | SendError::ConnectionError(_)
+                    )
+            )
+        )
+    }
 }
 
 fn service_open_error(
@@ -247,6 +265,11 @@ impl TransportClient {
             .map_err(|error| {
                 service_open_error(&node, &name, MessagingPattern::RequestResponse, error)
             })?;
+        if service.static_config().max_servers() != 1 {
+            return Err(TransportError::Service(
+                "process channel requests require exactly one Manager recipient".into(),
+            ));
+        }
         let client = service
             .client_builder()
             .create()
@@ -302,7 +325,7 @@ impl TransportClient {
         let pending = self
             .client
             .send_copy(command.encode())
-            .map_err(|error| TransportError::Send(error.to_string()))?;
+            .map_err(TransportError::RequestSend)?;
         // The request is already submitted. A missed doorbell cannot return a
         // pre-submission error or let a Publish caller release its GPU pages.
         // Manager maintenance also rechecks the queue, independently of wakes.
@@ -325,7 +348,7 @@ impl TransportClient {
         loop {
             if publish.is_some() && Instant::now() >= next_warning {
                 log::warn!(
-                    "publish request {} is still pending after {:?}; retaining source pages until completion or Cache Manager exit",
+                    "publish request {} is still pending after {:?}; retaining source pages without a matched completion",
                     command.request_id,
                     started.elapsed()
                 );
@@ -493,6 +516,7 @@ impl TransportServer {
         let service = node
             .service_builder(&name)
             .request_response::<WireMessage, WireMessage>()
+            .max_servers(1)
             // Each CacheClient can own separate control and Publish ports.
             // Keep room for concurrent producers plus foreground requests.
             .max_clients(64)

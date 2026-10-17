@@ -349,13 +349,23 @@ wakes. Publish and Restore do not consume each other's notification counter.
 
 Publish requires a Manager pidfd before submission. An ordinary deadline logs
 a warning, then at most once per minute; it does not release source pages.
+The request service permits exactly one Manager recipient. Clients reject a
+service configured for more recipients; restart the Manager and clients together
+when upgrading from the earlier service configuration. The native request-send
+error remains typed. Only request-loan, pre-delivery connection and active-request
+admission failures prove no submission. Other send errors may follow delivery
+and cannot release source pages, even with one configured recipient.
 Ambiguous/malformed replies and post-submit transport errors retain the source
 owner even after confirmed Manager exit. Process liveness cannot prove CUDA
 completion. Only a matched valid result following the Manager copy drain, or
 a proven never-submitted send failure, permits return. This conservative
 retention still blocks the caller; bounded operational responses and adapter
-page-generation consumers remain separate pending work. Publish batches split to the negotiated descriptor slot
-capacity, retaining matching page ranges across layers until all chunks finish.
+page-generation consumers remain separate pending work. Manager GPU-worker
+disappearance or reply loss can still produce a consumed Internal response
+without an independently established physical drain; that existing gap is not
+qualified by the transport caller-retention controls. Publish batches split to
+the negotiated descriptor slot capacity, retaining matching page ranges across
+layers until all chunks finish.
 This Publish partitioning does not yet partition oversized raw Restore plans.
 
 Rust `CacheClient`, exposed directly by PyO3 as `CacheManagerClient`, owns query
