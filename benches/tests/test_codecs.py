@@ -133,7 +133,10 @@ def test_matched_execution_mode_uses_released_engine_controls(tmp_path, engine, 
     )
     if engine == "vllm":
         assert ("--enforce-eager" in launch.command) == eager
+        assert launch.command.count("--shutdown-timeout") == 1
+        assert launch.command[launch.command.index("--shutdown-timeout") + 1] == "30"
     else:
+        assert "--shutdown-timeout" not in launch.command
         for flag in ("--cuda-graph-backend-decode", "--cuda-graph-backend-prefill"):
             assert (flag in launch.command) == eager
             if eager:

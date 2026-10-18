@@ -271,6 +271,8 @@ def vllm_command(
         "vllm",
         "--seed",
         "42",
+        "--shutdown-timeout",
+        "30",
         "--enable-prompt-tokens-details",
     ]
     if args.deterministic_inference:

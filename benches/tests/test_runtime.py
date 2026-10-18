@@ -389,6 +389,10 @@ import json, os, signal, sys
 from pathlib import Path
 
 def stop(*_):
+    print('API server: stopping engine client mode=drain timeout=30s', flush=True)
+    print('EngineCore: start mode=drain timeout=30s', flush=True)
+    print('EngineCore: request processing complete; starting resource teardown', flush=True)
+    print('MPClient: complete', flush=True)
     print('API server: engine client stopped', flush=True)
     print('Application shutdown complete.', flush=True)
     sys.exit(0)
@@ -538,7 +542,9 @@ def test_server_reaps_before_caller_releases_exports_even_after_kill_timeouts_an
     assert cleanup["forced_kill"] == (len(sent) > 1)
 
 
-@pytest.mark.parametrize("failure", [None, "native_error", "log_missing", "body_and_native_error"])
+@pytest.mark.parametrize(
+    "failure", [None, "native_error", "log_missing", "body_and_native_error", "abort", "force_kill"]
+)
 def test_real_engine_parent_owns_child_shutdown_and_native_errors_invalidate_measurement(
     monkeypatch, tmp_path, failure
 ):
@@ -566,6 +572,13 @@ def stop(signum, frame):
         raise RuntimeError(f'child received group SIGTERM: {status}')
     if sys.argv[2] in {'native_error', 'body_and_native_error'}:
         print('EngineDeadError: intentional failure control', flush=True)
+    mode, timeout = ('abort', 0) if sys.argv[2] == 'abort' else ('drain', 30)
+    print(f'API server: stopping engine client mode={mode} timeout={timeout}s', flush=True)
+    print(f'EngineCore: start mode={mode} timeout={timeout}s', flush=True)
+    print('EngineCore: request processing complete; starting resource teardown', flush=True)
+    print('MPClient: complete', flush=True)
+    if sys.argv[2] == 'force_kill':
+        print('Process manager: force killing remaining process EngineCore', flush=True)
     print('API server: engine client stopped', flush=True)
     print('Application shutdown complete.', flush=True)
     sys.exit(0)
@@ -671,6 +684,10 @@ from pathlib import Path
 child = subprocess.Popen([sys.executable, '-c', 'import signal; signal.pause()'])
 
 def stop(signum, frame):
+    print('API server: stopping engine client mode=drain timeout=30s', flush=True)
+    print('EngineCore: start mode=drain timeout=30s', flush=True)
+    print('EngineCore: request processing complete; starting resource teardown', flush=True)
+    print('MPClient: complete', flush=True)
     print('API server: engine client stopped', flush=True)
     print('Application shutdown complete.', flush=True)
     sys.exit(0)

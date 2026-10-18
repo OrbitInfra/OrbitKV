@@ -1246,8 +1246,23 @@ Shared-cache drain also rejects missing or invalid ownership gauges rather than
 treating them as zero, and waits for any present optional owner gauges to clear.
 Both Manager and engine leaders inherit the test owner's existing GPU lease
 descriptors through the shared service launcher.
-These corrections require a fresh freeze and independent launch review before
-either GPU gate.
+The fresh `28c62db6` shared-cache fixture runs the vLLM case to completion:
+one selected test passes, with two remote-hit prompts, consumer index/engine
+restart recovery and a source-restart miss. The outer frozen acceptance still
+fails: all four engine logs show the official default `abort/0s`, including
+force-kill requests, rather than the required `drain/30s`. Eight service-leader
+waits of zero do not override this native evidence. The original controller
+retains its resource lease; the SGLang shared case has not started. Preserve this
+failed cohort and do not claim complete shared-cache qualification.
+
+The correction sets the common vLLM launcher to the released
+`--shutdown-timeout 30`, as the ordinary model fixture already does. Its consumed
+shutdown validator now requires the native drain/teardown messages and rejects
+abort or force-kill diagnostics, so pytest cannot accept only an API-owner exit.
+Fresh installed shared-cache qualification remains required. The four Managers'
+`closeSource status 2` records are the documented unsupported CUDA physical
+receipt, with source engine/registration/pool retention until process exit;
+they are not a newly established upstream defect or physical drain proof.
 
 ### S5.3 — Public lifecycle and hybrid-state contracts
 
