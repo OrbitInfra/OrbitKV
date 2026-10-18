@@ -733,6 +733,20 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   This admits repeated evidence only for the declared count, without weakening
   the one-runtime-origin contract. Runtime verification disables bytecode writes;
   new census/contract versions preserve earlier failed input checks.
+  The exact `4e141786` formal launch was independently accepted once, then its
+  first DRAM cell passed all three payload/sentinel rounds but failed process
+  ownership validation: Manager child PID 25718 had no terminal wait receipt.
+  The freeze omitted process tracing, so its later disappearance cannot supply
+  that missing result. The controller retains its five resource locks; SSD was
+  not launched. Preserve this fail-stop cohort and raw archive SHA256
+  `93a3b9f4e98c059ca8c95f9a030ed205b49382394a4a550cc7263853425e7090`
+  under `/root/orbitkv-artifacts/s3-installed-save-gates-20261018/`.
+  The next harness correction requires the process tracer in both executable
+  identity and input-digest declarations before admission. Real CPU child/wait
+  controls exercise the existing census and reject missing or nonzero child
+  evidence despite a zero-exit leader. A new source/runtime freeze, traced
+  readiness and independent launch acceptance are required; this correction
+  does not qualify the failed cohort or physical fault termination.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-

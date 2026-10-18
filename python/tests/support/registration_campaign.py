@@ -294,6 +294,19 @@ def check_inputs(
             or digest(path, deadline) != executable["sha256"]
         ):
             raise RuntimeError(f"Frozen executable changed or cannot execute: {path}")
+    if contract.get("qualification") == "pending-save-bytes-v1":
+        for cell in contract["cells"]:
+            tracer = cell.get("process_trace_binary")
+            if (
+                not isinstance(tracer, str)
+                or not Path(tracer).is_absolute()
+                or tracer not in seen_executables
+                or tracer not in contract["input_sha256"]
+            ):
+                raise RuntimeError("Installed Save gate requires a frozen process tracer")
+            declared = next(item for item in executables if item["path"] == tracer)
+            if contract["input_sha256"][tracer] != declared["sha256"]:
+                raise RuntimeError("Process tracer digests disagree")
     absent = contract.get("absent_inputs", [])
     if not isinstance(absent, list) or len(absent) > MAX_EVIDENCE_FILES:
         raise RuntimeError("Invalid absent input declarations")

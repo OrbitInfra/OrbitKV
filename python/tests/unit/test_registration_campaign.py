@@ -63,6 +63,48 @@ def cpu_ready_inputs(tmp_path):
     return path, env, lease
 
 
+@pytest.mark.parametrize("fault", [None, "missing", "relative", "undeclared", "unhashed", "digest"])
+def test_installed_save_requires_frozen_process_tracer_before_admission(tmp_path, fault):
+    path, _env, _lease = cpu_ready_inputs(tmp_path)
+    contract = json.loads(path.read_text())
+    tracer = tmp_path / "tracer"
+    tracer.write_text("#!/bin/sh\nexit 0\n")
+    tracer.chmod(0o700)
+    metadata = tracer.stat()
+    declaration = {
+        "path": str(tracer),
+        "realpath": str(tracer.resolve()),
+        "sha256": campaign.digest(tracer),
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+        "mode": metadata.st_mode,
+        "uid": metadata.st_uid,
+        "gid": metadata.st_gid,
+        "bytes": metadata.st_size,
+    }
+    contract.update(
+        qualification="pending-save-bytes-v1",
+        cells=[{"process_trace_binary": str(tracer)}],
+        executable_inputs=[declaration],
+        input_sha256={str(tracer): declaration["sha256"]},
+    )
+    if fault == "missing":
+        contract["cells"][0].clear()
+    elif fault == "relative":
+        contract["cells"][0]["process_trace_binary"] = "tracer"
+    elif fault == "undeclared":
+        contract["executable_inputs"] = []
+    elif fault == "unhashed":
+        contract["input_sha256"] = {}
+    elif fault == "digest":
+        declaration["sha256"] = "0" * 64
+    if fault is None:
+        campaign.check_inputs(contract, deadline=time.monotonic() + 3)
+    else:
+        with pytest.raises(RuntimeError):
+            campaign.check_inputs(contract, deadline=time.monotonic() + 3)
+
+
 @pytest.mark.parametrize(
     "fault", [None, "mutable-file", "root-replaced", "nodes-replaced", "symlink", "mode"]
 )
