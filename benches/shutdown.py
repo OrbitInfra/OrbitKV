@@ -38,8 +38,19 @@ def validate_engine_shutdown(log: str, engine: str, *, pid: int | None = None) -
                 raise ValueError(f"Incomplete LMCache shutdown protocol: {marker}")
             previous = position
         return
+    if engine == "vllm":
+        for marker in ("mode=abort", "Process manager: force killing"):
+            if marker in log:
+                raise ValueError(f"Native engine shutdown did not drain: {marker}")
     required = (
-        ("API server: engine client stopped", "Application shutdown complete.")
+        (
+            "API server: stopping engine client mode=drain timeout=30s",
+            "EngineCore: start mode=drain timeout=30s",
+            "EngineCore: request processing complete; starting resource teardown",
+            "MPClient: complete",
+            "API server: engine client stopped",
+            "Application shutdown complete.",
+        )
         if engine == "vllm"
         else (
             "SIGTERM received.",

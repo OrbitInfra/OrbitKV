@@ -33,6 +33,10 @@ def linker(monkeypatch):
     result._load_boundaries = {}
     result.page_size = 64
     result.client = MagicMock()
+    result.client.wait_save.return_value = SimpleNamespace(done=True, success=True, message="")
+    result.client.publish_progress.return_value = SimpleNamespace(active=0)
+    result._retained_offloads = []
+    result._last_publish_warning = 0.0
     result._lookups = {}
     result._pending_queries = {}
     result._expired_queries = set()
@@ -69,30 +73,72 @@ def test_publish_activity_does_not_complete_offloads(linker, alive):
     assert linker.num_completed_offloads() == 1
 
 
-@pytest.mark.parametrize("failure", ["pending", "exception", "start"])
-def test_native_save_wait_failure_does_not_complete_offload(linker, failure):
+@pytest.mark.parametrize("failure", ["pending", "exception", "start", "typed-wait"])
+@pytest.mark.parametrize("later", ["success", "not-submitted", "producer-error"])
+@pytest.mark.parametrize("completed_prefix", [False, True], ids=["unknown-head", "ready-prefix"])
+def test_native_save_wait_failure_does_not_complete_offload(
+    linker, failure, later, completed_prefix
+):
     import queue
+
+    from sglang.srt.mem_cache.unified_cache.unified_cache_linker import (
+        UnifiedCacheLinkerWrapper,
+        _PendingOffload,
+    )
+
+    from orbitkv import SaveNotSubmittedError
 
     linker._offload_queue = queue.Queue()
     linker._completed_offloads = queue.Queue()
-    linker._retained_offloads = []
-    handle = object()
-    linker.client.start_save.return_value = handle
-    if failure == "pending":
-        linker.client.wait_save.return_value = SimpleNamespace(
-            done=False, success=False, message="pending"
-        )
-    else:
-        linker.client.wait_save.side_effect = RuntimeError("wait failed")
-    if failure == "start":
-        linker.client.start_save.side_effect = MemoryError("unknown handoff")
-    linker._offload_queue.put((object(), [], MagicMock()))
+    handles = {node: object() for node in (1, 2, 3)}
+
+    def start(node, saves):
+        if node == 2 and failure == "start":
+            raise MemoryError("unknown handoff")
+        if node == 3 and later == "not-submitted":
+            raise SaveNotSubmittedError("later native rejection")
+        return handles[node]
+
+    def wait(handle):
+        if handle is handles[2]:
+            if failure == "pending":
+                return SimpleNamespace(done=False, success=False, message="pending")
+            if failure == "typed-wait":
+                raise SaveNotSubmittedError("outside start")
+            raise RuntimeError("wait failed")
+        return SimpleNamespace(done=True, success=True, message="")
+
+    linker.client.start_save.side_effect = start
+    linker.client.wait_save.side_effect = wait
+    nodes = [1, 2, 3] if completed_prefix else [2, 3]
+    ready = {node: MagicMock() for node in nodes}
+    if later == "producer-error":
+        ready[3].synchronize.side_effect = RuntimeError("later producer failed")
+    for node in nodes:
+        linker._offload_queue.put((node, [], ready[node]))
     linker._offload_queue.put(None)
-    linker._offload_worker()
-    assert linker._completed_offloads.empty()
+
+    worker = threading.Thread(target=linker._offload_worker, daemon=True)
+    worker.start()
+    worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert linker._offload_queue.unfinished_tasks == 0
+
+    wrapper = object.__new__(UnifiedCacheLinkerWrapper)
+    wrapper.cache_linker = linker
+    wrapper.cache = MagicMock()
+    wrapper.pending_offloads = [_PendingOffload(node, object(), [node]) for node in nodes]
+    count = wrapper.num_completed_offloads()
+    wrapper.commit_completed_offloads(wrapper.take_completed_offloads(count))
+    unpinned = [call.args[0] for call in wrapper.cache.dec_lock_ref.call_args_list]
+    assert unpinned == ([1] if completed_prefix else []), "unknown offload was unpinned"
+    assert [row.lock_node_id for row in wrapper.pending_offloads] == [2, 3]
+    assert [call.args[0] for call in linker.client.start_save.call_args_list] == nodes[:-1]
+    ready[3].synchronize.assert_not_called()
     if failure != "start":
-        assert linker._retained_offloads[0][1] is handle
-    assert len(linker._retained_offloads) == 1
+        assert linker._retained_offloads[0][1] is handles[2]
+    assert [task[0] for task, _ in linker._retained_offloads] == [2, 3]
+    assert linker._retained_offloads[1][1] is None
     with pytest.raises(RuntimeError, match="pages remain held"):
         linker.reset()
 
@@ -712,6 +758,8 @@ def test_offload_keeps_producer_registration_and_reports_rejection(linker, monke
 
     from sglang.srt.mem_cache.hicache_storage import PoolName
 
+    from orbitkv import SaveNotSubmittedError
+
     original = object()
     linker.registration = original
     linker._offload_queue = queue.Queue()
@@ -726,19 +774,29 @@ def test_offload_keeps_producer_registration_and_reports_rejection(linker, monke
     transfers = [SimpleNamespace(name=PoolName.KV, keys=["key"], device_indices=[2])]
     expected = [("kv:0", [2], linker._hashes(["key"]))]
     if rejected:
-        linker.client.save.side_effect = ValueError("GPU registration is no longer active")
-    else:
-        linker.client.save.return_value = True, ""
+        linker.client.start_save.side_effect = SaveNotSubmittedError(
+            "GPU registration is no longer active"
+        )
 
     assert linker.offload(transfers)
     linker.registration = object()
     linker._offload_queue.put(None)
     linker._offload_worker()
 
-    linker.client.save.assert_called_once_with(original, expected)
+    linker.client.start_save.assert_called_once_with(original, expected)
     ready.synchronize.assert_called_once()
     assert linker.pop_completed_offload() is not rejected
+    assert linker._retained_offloads == []
+    if rejected:
+        linker.client.wait_save.assert_not_called()
     assert linker._offload_queue.unfinished_tasks == 0
+
+    linker.client.start_save.side_effect = None
+    assert linker.offload(transfers)
+    linker._offload_queue.put(None)
+    linker._offload_worker()
+    assert linker.pop_completed_offload() is True
+    assert linker._retained_offloads == []
 
 
 @pytest.mark.parametrize("failure", [None, "unregister", "close"])

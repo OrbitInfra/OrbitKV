@@ -8,7 +8,13 @@ import pytest
 
 from benches.shared_cache_compare import summarize
 
-VLLM_SHUTDOWN = "API server: engine client stopped\nApplication shutdown complete.\n"
+VLLM_SHUTDOWN = (
+    "API server: stopping engine client mode=drain timeout=30s\n"
+    "EngineCore: start mode=drain timeout=30s\n"
+    "EngineCore: request processing complete; starting resource teardown\n"
+    "MPClient: complete\n"
+    "API server: engine client stopped\nApplication shutdown complete.\n"
+)
 SGLANG_SHUTDOWN = (
     "SIGTERM received.\nRemaining number of requests 0.\n"
     "Finished server process [123]\ninclude_parent=False\n"

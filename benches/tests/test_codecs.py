@@ -81,10 +81,16 @@ def test_installed_benchmark_uses_wheel_without_source_or_duplicate_plugin(
     site = tmp_path / "site-packages"
     package = site / "orbitkv"
     package.mkdir(parents=True)
+    (package / "__init__.py").write_text("ORIGIN = 'installed'\n")
     (package / "orbitkv-cache-manager-py").touch()
+    source = tmp_path / "checkout/python"
+    (source / "orbitkv").mkdir(parents=True)
+    (source / "orbitkv/__init__.py").write_text("raise RuntimeError('source package selected')\n")
+    monkeypatch.chdir(source)
     monkeypatch.setattr(
         "benches.launch.sys.path",
         [
+            str(source),
             str(site),
             *(
                 path
@@ -92,10 +98,6 @@ def test_installed_benchmark_uses_wheel_without_source_or_duplicate_plugin(
                 if Path(path).name not in {"site-packages", "dist-packages"}
             ),
         ],
-    )
-    monkeypatch.setattr(
-        "benches.launch.importlib.util.find_spec",
-        lambda name: SimpleNamespace(origin=str(package / "__init__.py")),
     )
     monkeypatch.delenv("ORBITKV_CACHE_MANAGER_BINARY", raising=False)
     monkeypatch.setenv("PYTHONPATH", "/source/that/must/not/shadow/the/wheel")
@@ -107,17 +109,39 @@ def test_installed_benchmark_uses_wheel_without_source_or_duplicate_plugin(
     assert launch.backend_configuration["artifact_mode"] == "installed"
     assert launch.backend_configuration["orbitkv_package_dir"] == str(package)
     assert not (tmp_path / "orbitkv_benchmark-0.0.dist-info").exists()
-
-
-@pytest.mark.parametrize("origin", [None, "/checkout/python/orbitkv/__init__.py"])
-def test_installed_benchmark_rejects_missing_or_shadowed_wheel(tmp_path, monkeypatch, origin):
-    monkeypatch.setattr(
-        "benches.launch.importlib.util.find_spec",
-        lambda name: None if origin is None else SimpleNamespace(origin=origin),
+    private_run = tmp_path / "private-run"
+    private_run.mkdir()
+    launch.env.pop("PYTHONSAFEPATH", None)
+    child = subprocess.run(
+        [sys.executable, "-c", "import orbitkv; print(orbitkv.ORIGIN)"],
+        env=launch.env,
+        cwd=private_run,
+        check=True,
+        capture_output=True,
+        text=True,
     )
+    assert child.stdout.strip() == "installed"
+
+
+@pytest.mark.parametrize("artifact", ["missing", "source-symlink", "missing-manager"])
+def test_installed_benchmark_rejects_incomplete_or_external_wheel(tmp_path, monkeypatch, artifact):
+    site = tmp_path / "site-packages"
+    site.mkdir()
+    if artifact == "source-symlink":
+        source = tmp_path / "checkout/python/orbitkv"
+        source.mkdir(parents=True)
+        (source / "__init__.py").touch()
+        (source / "orbitkv-cache-manager-py").touch()
+        (site / "orbitkv").symlink_to(source, target_is_directory=True)
+    elif artifact == "missing-manager":
+        (site / "orbitkv").mkdir()
+        (site / "orbitkv/__init__.py").touch()
+    monkeypatch.setattr("benches.launch.sys.path", [str(site)])
     args = launch_arguments(tmp_path)
     args.installed_artifact = True
-    with pytest.raises(RuntimeError, match="complete OrbitKV wheel|outside site-packages"):
+    with pytest.raises(
+        RuntimeError, match="complete OrbitKV wheel|outside site-packages|Cache Manager"
+    ):
         configure(args, 147456)
 
 
@@ -133,7 +157,10 @@ def test_matched_execution_mode_uses_released_engine_controls(tmp_path, engine, 
     )
     if engine == "vllm":
         assert ("--enforce-eager" in launch.command) == eager
+        assert launch.command.count("--shutdown-timeout") == 1
+        assert launch.command[launch.command.index("--shutdown-timeout") + 1] == "30"
     else:
+        assert "--shutdown-timeout" not in launch.command
         for flag in ("--cuda-graph-backend-decode", "--cuda-graph-backend-prefill"):
             assert (flag in launch.command) == eager
             if eager:

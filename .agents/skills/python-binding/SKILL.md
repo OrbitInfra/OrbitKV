@@ -24,6 +24,11 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   engine-page holds until the actual receipt; close/unregister must serialize
   admission and wait for accepted Saves. The synchronous `save` workload API
   still waits to its established completion and has no new timeout return.
+  `SaveNotSubmittedError` is a proof for only the current `start_save` call: an
+  explicit native preflight/admission/spawn rejection before worker launch, with
+  any admission reservation rolled back. Argument conversion, Python handle
+  allocation, panic, attachment and wait failures stay unknown. Preserve the
+  original cause and do not infer completion from handle absence.
 - Engine callback changes: use `.agents/skills/engine-integration/SKILL.md` and
   `docs/adapters.md`; release targets and current qualification are distinct.
 - Model/layout identity and hybrid recovery are shared contracts. Do not equate

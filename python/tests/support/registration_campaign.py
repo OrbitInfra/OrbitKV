@@ -1322,6 +1322,55 @@ def validate_cell(
                     raise RuntimeError("Save source and consumer identities are invalid")
                 if close.get("source") != source_id or close.get("consumer") != consumer_id:
                     raise RuntimeError("Save client close identity differs")
+                rejected = row.get("rejected_save")
+                if (
+                    not isinstance(rejected, dict)
+                    or rejected.get("instance_id") != source_id
+                    or rejected.get("exception") != "SaveNotSubmittedError"
+                    or rejected.get("cause") != "ValueError"
+                    or rejected.get("publish_count_claimed") is not False
+                    or rejected.get("physical_termination_claimed") is not False
+                    or type(rejected.get("started_mono_ns")) is not int
+                    or type(rejected.get("ended_mono_ns")) is not int
+                    or not (
+                        previous_release < rejected["started_mono_ns"] < rejected["ended_mono_ns"]
+                    )
+                ):
+                    raise RuntimeError("Missing exact retired Save rejection observation")
+                counters = rejected.get("io_before")
+                after_rejection = rejected.get("io_after")
+                expected_counters = {
+                    "orbitkv_save_bytes_total",
+                    "orbitkv_load_bytes_total",
+                    "orbitkv_ssd_write_bytes_total",
+                    "orbitkv_ssd_prefetch_bytes_total",
+                    "orbitkv_ssd_uring_read_operations_total",
+                }
+                if (
+                    not isinstance(counters, dict)
+                    or not isinstance(after_rejection, dict)
+                    or set(counters) != expected_counters
+                    or counters != after_rejection
+                    or any(
+                        value is not None
+                        and (
+                            type(value) not in (int, float) or not math.isfinite(value) or value < 0
+                        )
+                        for snapshot in (counters, after_rejection)
+                        for value in snapshot.values()
+                    )
+                    or counters["orbitkv_save_bytes_total"] is None
+                    or counters["orbitkv_save_bytes_total"] < (index + 1) * 16384
+                    or counters["orbitkv_load_bytes_total"] is None
+                    or (
+                        tier == "ssd-uring"
+                        and (
+                            counters["orbitkv_ssd_write_bytes_total"] is None
+                            or counters["orbitkv_ssd_write_bytes_total"] < (index + 1) * 16384
+                        )
+                    )
+                ):
+                    raise RuntimeError("I/O observation across retired Save rejection differs")
                 if tier == "ssd-uring":
                     reads_before, reads_after = row.get("read_before"), row.get("read_after")
                     if not isinstance(reads_before, dict) or not isinstance(reads_after, dict):
@@ -1388,12 +1437,20 @@ def validate_cell(
                     raise RuntimeError("Save release completion timestamp is invalid")
                 if release["completed_mono_ns"] <= previous_release:
                     raise RuntimeError("Save release chronology regressed")
+                if rejected["ended_mono_ns"] >= release["completed_mono_ns"]:
+                    raise RuntimeError("Retired Save rejection follows its native release")
                 for role in ("source", "consumer"):
                     credit_release = read_json(
                         summaries[0].parent / f"round-{index}-{role}.credit-release.json", deadline
                     )
                     if credit_release["observed_mono_ns"] > release["completed_mono_ns"]:
                         raise RuntimeError("Save credit repayment follows its release receipt")
+                    if role == "source" and (
+                        credit_release["observed_mono_ns"] > rejected["started_mono_ns"]
+                    ):
+                        raise RuntimeError(
+                            "Retired Save rejection precedes source credit repayment"
+                        )
                 previous_release = release["completed_mono_ns"]
                 if release.get("source") != row.get("source_identity") or release.get(
                     "consumer"

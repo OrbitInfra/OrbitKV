@@ -31,6 +31,12 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   Unknown wait responses/exceptions retain task/page completion state and
   prevent reset/unregister. This code is not a page-slot generation or physical
   fault receipt; installed engine/fault acceptance is still required.
+  Consume `SaveNotSubmittedError` only around the current `start_save` call.
+  SGLang bool completions must remain a contiguous submitted-order prefix: once
+  an offload is retained with unknown completion, its worker must retain already
+  queued later tasks without starting them or emitting a completion bool. A
+  producer-side guard does not protect those queued tasks. A later known
+  rejection cannot release an earlier unknown owner.
 - Python translates engine layout, state boundaries, callbacks and CUDA readiness.
   Existing Rust owners manage shared cache policy, transfers, admission and drain.
 - vLLM uses the KV Connector contract; SGLang uses UnifiedRadixCache and the

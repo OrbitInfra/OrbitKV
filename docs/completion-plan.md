@@ -682,6 +682,31 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   Native pending admission does not bound the Python queue, retained task list
   or user-held completed handles. Installed GPU/model, physical termination,
   allocation/page generations and adapter-fault qualification remain open.
+  A further Save correction addresses an independently reproduced SGLang FIFO
+  counterexample: an earlier unknown native result can be unpinned by a later
+  queued task's completion. The existing offload worker now retains subsequent
+  queued tasks without submitting them or advancing the completion FIFO. The
+  same candidate exposes `SaveNotSubmittedError` only for explicit native
+  prelaunch rejection; adapters consume it only around `start_save`, preserving
+  unknown attachment/wait holds. Independent acceptance covers production
+  `d49f6deb`, harness `5d2a800e`, the real CPU channel and selected-release FIFO
+  controls. The repaired `cb19ce82` wheel passes new installed DRAM/io_uring
+  save/unregister/restore gates: six complete payload/sentinel comparisons,
+  six genuine retired-registration rejections with unchanged recorded I/O
+  observations, and twelve original-descriptor credit repayments. Recorded I/O
+  observations are not a count of GPU Publish operations or physical drain
+  proof. Fresh official-release model gates also pass from this wheel:
+  vLLM 0.31.0 V1/direct DRAM with Graph NONE (six passed, one unsupported-hybrid
+  skip), and SGLang 0.5.21 direct DRAM/io_uring SSD (two passed), all Qwen3-8B
+  dense TP1/PP1. They exercise output, actual load-byte and restart controls;
+  both controllers and their original SSH owners return zero. Fresh same-host
+  TCP shared-cache gates also pass in both official environments, including
+  consumer restart recovery and an empty-source restart miss; see S5.2 below.
+  Official SGLang internal SIGKILL exits remain physical-lifetime limits.
+  Evidence, independent reviews and the original rejected design are at
+  `/root/orbitkv-artifacts/s3-save-no-submit-20261018/`. This does not reconcile
+  unknown admitted work or qualify page generations, physical faults or native
+  P/D; S3/S4/S5 remain Partial.
   The next installed gate exercises the accepted SaveHandle with deterministic
   per-round GPU payloads, normal unregister, fresh consumer registration and
   full Restore/sentinel checks over DRAM and actual io_uring SSD. It rejects
@@ -1190,6 +1215,55 @@ adapter retention after native prelaunch exceptions remains an availability
 follow-up. Historical failed runs and quarantines retain their verdicts.
 See [PR #262](https://github.com/feichai0017/orbitkv/pull/262) and the sealed
 reviews under `/root/orbitkv-artifacts/s5-installed-pending-save-model-20261018/`.
+A later append-only audit found that those model recipes retained an older
+wheel identity. The actual frozen runtime bytes and functional observations
+remain recorded, while canonical recipe provenance has that explicit limit.
+The corrected `cb19ce82` preparation binds the current wheel and all four
+protocol domains separately; it does not change a production protocol.
+
+**Save rejection and FIFO regression (2026-10-18):** production `d49f6deb`,
+harness `5d2a800e` and repaired wheel `cb19ce82` pass fresh installed DRAM/io_uring
+byte gates and both official-release Qwen3-8B model gates described under
+[S3](#s3--transfer-lifetime-and-generation-safe-ownership). A known native
+prelaunch rejection can release only the current invocation's hold; unknown
+start, attachment and wait outcomes remain retained. SGLang preserves its
+completion prefix even for tasks already queued behind an unknown result.
+The current vLLM logs pass the unchanged strict native validator; the six actual
+SGLang adopted child `-9` exits remain recorded. Engine/model inputs stay frozen,
+and prior failed preparations and cohorts retain their verdicts. These healthy
+profiles do not reconcile unknown owners, bound the Python queues or qualify
+physical faults, page generations, hybrid state, P/D or a performance gain.
+See [PR #268](https://github.com/feichai0017/orbitkv/pull/268) and the external
+reviews under `/root/orbitkv-artifacts/s3-save-no-submit-20261018/`.
+Final trigger acceptance also covers fresh same-host TCP shared-cache serving
+from the same wheel in both official environments: one selected case per engine,
+dense Qwen3-8B TP1/PP1 eager, two replicas and two DRAM Managers on one GPU.
+Each case verifies three remote restores totalling 301,989,888 READ bytes and
+the same H2D bytes, matching generated output, consumer index/engine restart
+recovery, and restart of the empty source with zero remote/H2D bytes. All eight
+engine/Manager leader waits per case and both original controllers/SSH owners
+return zero.
+This is healthy correctness evidence; it adds no RDMA, SSD, HA, P/D, physical
+fault or performance qualification.
+
+The fixture selects the complete installed wheel and explicit eager profile.
+Its existing Manager service context solely owns SIGTERM/wait; missing or
+invalid ownership gauges reject drain. Manager and engine leaders inherit the
+original GPU lease descriptors. The common vLLM launcher uses the released
+`--shutdown-timeout 30`; the consumed native validator requires drain/teardown
+messages and rejects abort or force-kill diagnostics. All four current vLLM
+engine logs pass, with no SIGKILL requests. SGLang's native child SIGKILL exits
+and CUDA IPC warnings remain preserved, separately from its zero leader waits.
+
+The earlier `28c62db6` vLLM shared cohort remains failed: its functional test
+passed, but all four native logs used the official default `abort/0s` and
+requested force killing. Its retained resource owner is not released by the new
+case. The SGLang preparation that failed its protected-supervision check before
+READY also remains failed. GPU7's old SSH wait remains unknown. No failed case
+is replaced or reclassified.
+Managers' `closeSource status 2` records are the documented unsupported CUDA
+physical receipt, retaining source engines, registrations and pools until
+process exit; they are not physical drain proof or a new upstream defect.
 
 ### S5.3 — Public lifecycle and hybrid-state contracts
 

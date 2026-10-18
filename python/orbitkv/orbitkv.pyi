@@ -19,6 +19,14 @@ class OrbitKVInternal(OrbitKVError):
 
     ...
 
+class SaveNotSubmittedError(OrbitKVError):
+    """This start_save invocation launched no native Publish worker.
+
+    It does not complete older Saves or prove any physical transfer has drained.
+    """
+
+    ...
+
 class MooncakeTransferEngine:
     def __init__(self, *, bind_host: str, nics: list[str] = ...) -> None: ...
     @property
@@ -194,7 +202,11 @@ class CacheManagerClient:
     def start_save(
         self, registration: GpuRegistration, saves: list[tuple[str, list[int], list[bytes]]]
     ) -> SaveHandle:
-        """Admit a native-held Save; dropping its handle does not cancel or release source pages."""
+        """Admit a native-held Save; dropping its handle does not release source pages.
+
+        SaveNotSubmittedError proves this call was rejected before native launch.
+        Other exceptions can leave a native Save active; retain source pages.
+        """
         ...
     def poll_save(self, handle: SaveHandle) -> RestoreStatus: ...
     def wait_save(self, handle: SaveHandle, *, timeout: float | None = None) -> RestoreStatus:

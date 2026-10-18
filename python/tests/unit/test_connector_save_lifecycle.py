@@ -14,6 +14,7 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (  # noqa: E402
     KVConnectorTransferResults,
 )
 
+from orbitkv import SaveNotSubmittedError  # noqa: E402
 from orbitkv.vllm.config import ConnectorContext  # noqa: E402
 from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, SaveIntent  # noqa: E402
 from orbitkv.vllm.worker import WorkerAdapter  # noqa: E402
@@ -94,7 +95,7 @@ def test_publish_progress_never_completes_held_engine_pages(alive):
     assert not completion.is_set()
 
 
-@pytest.mark.parametrize("failure", ["pending", "exception", "start"])
+@pytest.mark.parametrize("failure", ["pending", "exception", "start", "typed-wait", "attachment"])
 def test_native_save_wait_failure_keeps_engine_pages_and_registration(failure):
     worker = make_worker()
     worker._registered_layers = ["layer"]
@@ -109,15 +110,47 @@ def test_native_save_wait_failure_keeps_engine_pages_and_registration(failure):
         worker._client.wait_save.side_effect = RuntimeError("wait failed")
     if failure == "start":
         worker._client.start_save.side_effect = MemoryError("unknown handoff")
+    if failure == "typed-wait":
+        worker._client.wait_save.side_effect = SaveNotSubmittedError("outside start")
+    if failure == "attachment":
+        task = worker._save_queue.get_nowait()
+
+        class RejectAttachment(type(task)):
+            def __setattr__(self, name, value):
+                if name == "native_handle":
+                    raise SaveNotSubmittedError("outside start")
+                super().__setattr__(name, value)
+
+        task.__class__ = RejectAttachment
+        worker._save_queue.put(task)
     with pytest.raises(RuntimeError, match="engine pages remain held"):
         process_next_save(worker)
     assert not completion.is_set()
     assert not worker.get_transfer_results({"request"}).finished_sending
     assert worker._retained_save_tasks[0].native_attempted
-    if failure != "start":
+    if failure not in {"start", "attachment"}:
         assert worker._retained_save_tasks[0].native_handle is handle
     with pytest.raises(RuntimeError, match="pages remain held"):
         worker.unregister_context()
+
+
+def test_native_save_rejection_completes_only_the_unsubmitted_batch():
+    worker = make_worker()
+    worker._registered_layers = ["layer"]
+    completion = enqueue_save(worker)
+    worker._client.start_save.side_effect = SaveNotSubmittedError("Save admission is full")
+
+    process_next_save(worker)
+
+    assert completion.is_set()
+    assert worker.get_transfer_results({"request"}).finished_sending == {"request"}
+    assert worker._retained_save_tasks == []
+    worker._client.wait_save.assert_not_called()
+
+    worker._client.start_save.side_effect = None
+    next_completion = enqueue_save(worker)
+    process_next_save(worker)
+    assert next_completion.is_set()
 
 
 def test_save_waits_for_each_producer_before_publishing():
@@ -360,7 +393,7 @@ def test_save_worker_survives_a_failing_batch():
         completion = enqueue_save(worker)
     worker._save_queue.put(None)
 
-    with patch.object(worker._client, "save") as save:
+    with patch.object(worker._client, "start_save") as save:
         worker._save_worker()
         save.assert_not_called()
 
