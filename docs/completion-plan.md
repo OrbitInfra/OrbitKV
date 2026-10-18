@@ -761,6 +761,30 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   basename survived the receipt census. The correction requires exactly six
   unique full paths paired with their handoffs in the same directories; extra
   and moved receipts are explicit negative controls before a new freeze.
+  Source/CPU acceptance at `af3f2023` closes that receipt census. New GPU7
+  readiness completed DRAM and actual NVMe/io_uring SSD, with all twelve
+  original-counter descriptors observed at zero and actual process waits;
+  independent result acceptance and a new formal freeze remain pending.
+  Its first READY was rejected before any cell because five actual TENT dlopen
+  dependencies were missing from the frozen closure. The second closure covers
+  those dependencies and mapped locale data; all old freezes remain immutable.
+  The next reusable readiness guard launches a frozen stdlib-only dlopen helper
+  before resource admission/READY and rejects every mapped file outside direct
+  digests or complete runtime manifests. This consumes actual native loader
+  behavior without creating a transfer engine or claiming a CUDA/GDS result.
+  Independent review accepts the exact `af3f2023` readiness-2 precheck: both
+  media, all six complete payloads, twelve original-counter transitions and
+  actual process waits pass. This authorizes a fresh formal freeze only.
+  The first reusable guard at `04373784` is rejected: only the first cell's
+  environment was probed, child identity was not bound, and output/descendant
+  cleanup were incomplete. Its CPU counterexamples remain archived. The
+  correction probes every cell environment, bounds live output, binds the actual
+  child PID and stops/reaps its process group before return. It requires a new
+  source review and does not reclassify the rejected guard or qualify faults.
+  Follow-up `88a646cd` closes those original controls but remains rejected:
+  a child can leave the process group and survive through READY. The next
+  correction requires the controller's existing subreaper and accounts for its
+  complete newly adopted subtree; normal return requires no new descendants.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-
