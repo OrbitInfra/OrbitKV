@@ -837,6 +837,9 @@ records in this section retain each artifact, measured profile and failed gate.
   source/CPU acceptance and final-head CI. Hardware observation is still open.
 - [ ] Admit the current two-host runtime and pass the matched native-observer
   overhead pilot before diagnosing first peer recovery and warm steady state.
+  The runtime guard binds the consumed channel configuration to its checked
+  private root and prefix, launches children from a frozen neutral directory,
+  and verifies their actual working directories before payload admission.
 - [ ] Reduce engine-local H2D observation cost until the complete matched
   overhead guard passes; earlier valid failed cohorts remain failed.
 - [ ] Pass inference-contention and repeatable end-to-end performance gates
@@ -1132,6 +1135,14 @@ remain outside Git at `/root/orbitkv-artifacts/s4-rle-trace-20261016/`.
   are verified separately from the legacy upstream 48-byte probe. Source/CPU
   review, frozen-runtime admission and a matched observation-overhead pilot must
   precede hardware diagnosis. This does not change S4/S5 qualification or defaults.
+  The existing RDMA host owner now consumes full input/directory checks under its
+  inherited resource leases, validates every private cell domain, and launches
+  children with exact frozen environments. A post-registration checkpoint checks
+  the actual Manager Python origins and both live processes' native mappings
+  before payload publication, reusing the installed-gate inode/device and
+  executable-byte inspection. Final input validation precedes lease release.
+  These are implementation changes; current-runtime hardware admission and the
+  matched observation-overhead pilot remain open.
 - Retain bounded multipart plans and whole-operation ownership. Earlier layer,
   multipart, codec or SSD readiness requires consumer dependencies and final
   physical drain, not only a readiness notification.

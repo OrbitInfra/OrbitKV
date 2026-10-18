@@ -14,6 +14,42 @@ hosts. Verify ELF closure, actual TENT loading and native import before launch;
 never overwrite a mapped library. Keep `harness/benches` separate from the Python
 package so source-only imports cannot shadow the installed extension.
 
+Each host supplies `runtime_inputs` naming the frozen registration-check helper
+and guard JSON; both files also belong in `runtime_hashes`. The existing owner
+consumes complete directory manifests, absent inputs, protected owners and the
+ordered inherited lease FDs after acquisition, before child launch and before
+final lease release. Declare every Manager cell's private channel domain in the
+guard's `channel_domains`, including its `cell`, `config_path`, root, private
+`prefix` and directory identities. The configuration must use exactly this
+canonical document, with JSON-quoted root and prefix strings and a final newline:
+
+```toml
+[global]
+root-path = "/absolute/private/root"
+prefix = "private_prefix_"
+[global.node]
+directory = "nodes"
+[global.service]
+directory = "services"
+```
+
+Declare `working_directory` with its canonical `path`, `device`, `inode` and
+`manifest` path. That manifest must be included in `runtime_manifests` and cover
+the complete neutral directory. Every child launch supplies the same explicit
+`cwd`; inherited owner working directories cannot select Python modules.
+Runtime checks share a 60-second bound within the 100-second RPC wait.
+
+Child environments are literal frozen dictionaries; `MC_FORCE_TCP` must be
+absent. After both registered GPU fixtures own healthy listeners, the driver
+requests one runtime-admission checkpoint per host before publishing payloads.
+Freeze `python_origins`, `observer_library` and each child's `runtime` executable,
+required mappings and observer mode. The checkpoint reuses the installed-gate
+Python-origin and native-map inspection, including mapped inode/device identity
+and executable-byte checks when overlay device numbers differ. It rejects a
+loaded observer in off mode and verifies each actual process's working directory
+before inspection and before issuing the receipt. These startup checks are outside transfer timing;
+the descriptive driver's PASS does not imply an observation-overhead PASS.
+
 For GPU-pointer cells, compile the byte oracle on each test host before freezing
 its resulting hash. A Manager-only contract uses the existing tensor byte and
 sentinel checks in `shared_cache_bytes`; it does not need this oracle library:
