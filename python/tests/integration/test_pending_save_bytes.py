@@ -122,9 +122,50 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                 hashlib.sha256(f"{namespace}/{round_id}/{index}".encode()).digest()
                 for index in source_indices
             ]
-            handle = source.start_save(source_registration, [("bytes", source_indices, hashes)])
-            status = source.wait_save(handle, timeout=30)
-            assert status.done and status.success, status.message
+            admission_started = time.monotonic_ns()
+            admission_before = fetch_orbitkv_metrics(channel_server.http_port)
+            if "orbitkv_save_bytes_total" not in admission_before:
+                raise RuntimeError("Missing native Save byte counter before preparation")
+            canceled = source.prepare_save(
+                source_registration,
+                [("bytes", [source_indices[0]], [hashlib.sha256(b"never-published").digest()])],
+            )
+            pending = source.wait_save(canceled, timeout=0)
+            if pending.done or pending.success:
+                raise RuntimeError("Prepared Save reported completion before submission")
+            if not source.cancel_save(canceled):
+                raise RuntimeError("Never-submitted Save cancellation lacked a receipt")
+            canceled_status = source.wait_save(canceled, timeout=0)
+            if not canceled_status.done or canceled_status.success:
+                raise RuntimeError("Prepared cancellation reported a successful Publish")
+            handles = [
+                source.prepare_save(
+                    source_registration,
+                    [("bytes", source_indices[start : start + 2], hashes[start : start + 2])],
+                )
+                for start in (0, 2)
+            ]
+            operation_ids = [canceled.operation_id, *(handle.operation_id for handle in handles)]
+            if len(set(operation_ids)) != 3:
+                raise RuntimeError("Prepared Save operation identities were reused")
+            for handle in handles:
+                pending = source.wait_save(handle, timeout=0)
+                if pending.done or pending.success:
+                    raise RuntimeError("Prepared batch completed before Rust submission")
+            admission_prepared = fetch_orbitkv_metrics(channel_server.http_port)
+            if (
+                admission_prepared["orbitkv_save_bytes_total"]
+                != admission_before["orbitkv_save_bytes_total"]
+            ):
+                raise RuntimeError("Preparation/cancellation copied source bytes")
+            source.submit_saves(handles)
+            for handle in handles:
+                if source.cancel_save(handle):
+                    raise RuntimeError("Submitted Save was canceled as never-submitted")
+                status = source.wait_save(handle, timeout=30)
+                if not status.done or not status.success:
+                    raise RuntimeError(f"Prepared Save did not complete: {status.message}")
+            admission_completed = time.monotonic_ns()
             success, message = source.unregister_context(source_id)
             assert success, message
             source_registered = False
@@ -146,6 +187,28 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                 "orbitkv_inflight_bytes",
             ]
             before = wait_idle(channel_server.http_port, idle_names)
+            if (
+                before["orbitkv_save_bytes_total"] - admission_before["orbitkv_save_bytes_total"]
+                != 16384
+            ):
+                raise RuntimeError("Rust submitted batch copied an unexpected number of bytes")
+            admission = {
+                "api": "prepare_save/submit_saves/cancel_save",
+                "operation_ids": operation_ids,
+                "pending_before_submit": 2,
+                "canceled_before_submit": True,
+                "canceled_done": canceled_status.done,
+                "canceled_success": canceled_status.success,
+                "submitted_cancel_refused": 2,
+                "completed_successfully": 2,
+                "prepare_copy_bytes": admission_prepared["orbitkv_save_bytes_total"]
+                - admission_before["orbitkv_save_bytes_total"],
+                "submitted_copy_bytes": before["orbitkv_save_bytes_total"]
+                - admission_before["orbitkv_save_bytes_total"],
+                "started_mono_ns": admission_started,
+                "completed_mono_ns": admission_completed,
+                "physical_fault_termination_claimed": False,
+            }
             if channel_server.ssd_cache_path is not None:
                 write_deadline = time.monotonic() + 30
                 while True:
@@ -171,7 +234,7 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
             assert io_before_rejection["orbitkv_load_bytes_total"] is not None
             rejected_started = time.monotonic_ns()
             with pytest.raises(SaveNotSubmittedError, match="no longer active") as rejected:
-                source.start_save(source_registration, [("bytes", source_indices, hashes)])
+                source.prepare_save(source_registration, [("bytes", source_indices, hashes)])
             rejected_ended = time.monotonic_ns()
             assert isinstance(rejected.value.__cause__, ValueError)
             observed = fetch_orbitkv_metrics(channel_server.http_port)
@@ -188,7 +251,7 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                 "publish_count_claimed": False,
                 "physical_termination_claimed": False,
             }
-            del handle, source_registration
+            del handle, handles, canceled, source_registration
             if channel_server.ssd_cache_path is not None:
                 reply = requests.post(
                     f"http://127.0.0.1:{channel_server.http_port}/cache/memory/cleanup", timeout=30
@@ -285,6 +348,7 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                     "consumer_identity": consumer_id,
                     "normal_unregister": True,
                     "rejected_save": rejection,
+                    "producer_admission": admission,
                     "read_before": read_before,
                     "read_after": {name: after.get(name) for name in read_before},
                 }

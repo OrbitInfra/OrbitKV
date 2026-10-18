@@ -83,7 +83,7 @@ def test_installed_save_requires_frozen_process_tracer_before_admission(tmp_path
         "bytes": metadata.st_size,
     }
     contract.update(
-        qualification="pending-save-bytes-v1",
+        qualification="pending-save-bytes-v2",
         cells=[{"process_trace_binary": str(tracer)}],
         executable_inputs=[declaration],
         input_sha256={str(tracer): declaration["sha256"]},
@@ -103,6 +103,19 @@ def test_installed_save_requires_frozen_process_tracer_before_admission(tmp_path
     else:
         with pytest.raises(RuntimeError):
             campaign.check_inputs(contract, deadline=time.monotonic() + 3)
+
+
+def test_historical_save_freeze_is_rejected_before_resource_admission(tmp_path, monkeypatch):
+    path, _env, lease = cpu_ready_inputs(tmp_path)
+    contract = json.loads(path.read_text())
+    contract["qualification"] = "pending-save-bytes-v1"
+    path.write_text(json.dumps(contract))
+    monkeypatch.setattr(sys, "argv", ["registration_campaign.py", str(path)])
+    with pytest.raises(RuntimeError, match="historical freezes"):
+        campaign.main()
+    assert not (tmp_path / "READY.json").exists()
+    with lease.open("rb") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
 @pytest.mark.parametrize(
@@ -1246,6 +1259,20 @@ def test_native_credit_oracle_refuses_malformed_types_and_aliased_slots(
         "rejection-missing-counter",
         "rejection-late",
         "rejection-count-claim",
+        "admission-missing",
+        "admission-api",
+        "admission-operation-replay",
+        "admission-operation-duplicate",
+        "admission-operation-bool",
+        "admission-pending",
+        "admission-cancel",
+        "admission-cancel-success",
+        "admission-submitted-cancel",
+        "admission-completed",
+        "admission-prepare-copied",
+        "admission-copy-bytes",
+        "admission-late",
+        "admission-physical-claim",
     ],
 )
 def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
@@ -1321,12 +1348,27 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
                 "full_oracle": True,
                 "mutation_rejected": True,
                 "normal_unregister": True,
+                "producer_admission": {
+                    "api": "prepare_save/submit_saves/cancel_save",
+                    "operation_ids": [index * 3 + offset for offset in (1, 2, 3)],
+                    "pending_before_submit": 2,
+                    "canceled_before_submit": True,
+                    "canceled_done": True,
+                    "canceled_success": False,
+                    "submitted_cancel_refused": 2,
+                    "completed_successfully": 2,
+                    "prepare_copy_bytes": 0,
+                    "submitted_copy_bytes": 16384,
+                    "started_mono_ns": index * 10 + 1,
+                    "completed_mono_ns": index * 10 + 2,
+                    "physical_fault_termination_claimed": False,
+                },
                 "rejected_save": {
                     "instance_id": "source",
                     "exception": "SaveNotSubmittedError",
                     "cause": "ValueError",
-                    "started_mono_ns": index * 4 + 2,
-                    "ended_mono_ns": index * 4 + 3,
+                    "started_mono_ns": index * 10 + 3,
+                    "ended_mono_ns": index * 10 + 4,
                     "io_before": {
                         "orbitkv_save_bytes_total": (index + 1) * 16384,
                         "orbitkv_load_bytes_total": index * 16384,
@@ -1359,7 +1401,7 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
                     "source": "source",
                     "consumer": "consumer",
                     "physical_fault_termination_claimed": False,
-                    "completed_mono_ns": index * 4 + 4,
+                    "completed_mono_ns": index * 10 + 5,
                 }
             )
         )
@@ -1428,6 +1470,31 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
         row = json.loads(path.read_text())
         row["completed_mono_ns"] = 1
         path.write_text(json.dumps(row))
+    elif fault is not None and fault.startswith("admission-"):
+        admission = rows[0]["producer_admission"]
+        if fault == "admission-missing":
+            rows[0].pop("producer_admission")
+        elif fault == "admission-operation-replay":
+            rows[1]["producer_admission"]["operation_ids"] = admission["operation_ids"]
+        elif fault == "admission-operation-duplicate":
+            admission["operation_ids"][1] = admission["operation_ids"][0]
+        elif fault == "admission-operation-bool":
+            admission["operation_ids"][0] = True
+        else:
+            field, value = {
+                "admission-api": ("api", "start_save"),
+                "admission-pending": ("pending_before_submit", True),
+                "admission-cancel": ("canceled_before_submit", False),
+                "admission-cancel-success": ("canceled_success", True),
+                "admission-submitted-cancel": ("submitted_cancel_refused", 1),
+                "admission-completed": ("completed_successfully", 1),
+                "admission-prepare-copied": ("prepare_copy_bytes", 1),
+                "admission-copy-bytes": ("submitted_copy_bytes", 8192),
+                "admission-late": ("completed_mono_ns", 1000),
+                "admission-physical-claim": ("physical_fault_termination_claimed", True),
+            }[fault]
+            admission[field] = value
+        (tmp_path / "PENDING-SAVE-BYTES.json").write_text(json.dumps(rows))
     elif fault is not None and fault.startswith("rejection-"):
         rejected = rows[0]["rejected_save"]
         if fault == "rejection-missing":

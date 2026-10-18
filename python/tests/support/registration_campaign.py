@@ -329,7 +329,7 @@ def check_inputs(
             or digest(path, deadline) != executable["sha256"]
         ):
             raise RuntimeError(f"Frozen executable changed or cannot execute: {path}")
-    if contract.get("qualification") == "pending-save-bytes-v1":
+    if contract.get("qualification") == "pending-save-bytes-v2":
         for cell in contract["cells"]:
             tracer = cell.get("process_trace_binary")
             if (
@@ -1433,6 +1433,7 @@ def validate_cell(
                 raise RuntimeError("Invalid Save byte medium or round count")
             previous_release = 0
             previous_reads = {}
+            save_operations = set()
             for index, row in enumerate(rows):
                 if (
                     not isinstance(row, dict)
@@ -1459,6 +1460,39 @@ def validate_cell(
                     raise RuntimeError("Save source and consumer identities are invalid")
                 if close.get("source") != source_id or close.get("consumer") != consumer_id:
                     raise RuntimeError("Save client close identity differs")
+                admission = row.get("producer_admission")
+                if not isinstance(admission, dict):
+                    raise RuntimeError("Missing consumed producer Save admission evidence")
+                operations = admission.get("operation_ids")
+                if (
+                    admission.get("api") != "prepare_save/submit_saves/cancel_save"
+                    or not isinstance(operations, list)
+                    or len(operations) != 3
+                    or any(type(value) is not int or value <= 0 for value in operations)
+                    or len(set(operations)) != 3
+                    or set(operations) & save_operations
+                    or admission.get("canceled_before_submit") is not True
+                    or admission.get("canceled_done") is not True
+                    or admission.get("canceled_success") is not False
+                    or admission.get("physical_fault_termination_claimed") is not False
+                    or any(
+                        type(admission.get(field)) is not int or admission[field] != expected
+                        for field, expected in (
+                            ("pending_before_submit", 2),
+                            ("submitted_cancel_refused", 2),
+                            ("completed_successfully", 2),
+                            ("prepare_copy_bytes", 0),
+                            ("submitted_copy_bytes", 16384),
+                        )
+                    )
+                    or type(admission.get("started_mono_ns")) is not int
+                    or type(admission.get("completed_mono_ns")) is not int
+                    or not previous_release
+                    < admission["started_mono_ns"]
+                    < admission["completed_mono_ns"]
+                ):
+                    raise RuntimeError("Prepared Save ownership/cancellation evidence differs")
+                save_operations.update(operations)
                 rejected = row.get("rejected_save")
                 if (
                     not isinstance(rejected, dict)
@@ -1470,7 +1504,9 @@ def validate_cell(
                     or type(rejected.get("started_mono_ns")) is not int
                     or type(rejected.get("ended_mono_ns")) is not int
                     or not (
-                        previous_release < rejected["started_mono_ns"] < rejected["ended_mono_ns"]
+                        admission["completed_mono_ns"]
+                        < rejected["started_mono_ns"]
+                        < rejected["ended_mono_ns"]
                     )
                 ):
                     raise RuntimeError("Missing exact retired Save rejection observation")
@@ -1727,6 +1763,8 @@ def main() -> None:
     contract_bytes = read_bytes(args.contract, 16 * MAX_JSON_BYTES, startup_deadline)
     contract_sha = hashlib.sha256(contract_bytes).hexdigest()
     contract = json.loads(contract_bytes)
+    if contract.get("qualification") not in (None, "pending-save-bytes-v2"):
+        raise RuntimeError("Unsupported qualification contract; historical freezes stay immutable")
     remaining(startup_deadline)
     root = args.contract.parent
     if contract["phase"] not in ("precheck", "formal"):
@@ -1735,7 +1773,7 @@ def main() -> None:
         raise RuntimeError("Unknown campaign schema")
     expected = (
         [("pending-save-bytes", 1), ("pending-save-bytes", 1)]
-        if contract.get("qualification") == "pending-save-bytes-v1"
+        if contract.get("qualification") == "pending-save-bytes-v2"
         else (
             [("native", 2)]
             if contract["phase"] == "precheck"
@@ -1744,7 +1782,7 @@ def main() -> None:
     )
     if [(cell["kind"], cell["passed"]) for cell in contract["cells"]] != expected:
         raise RuntimeError("Frozen registration gate cells differ")
-    if contract.get("qualification") == "pending-save-bytes-v1":
+    if contract.get("qualification") == "pending-save-bytes-v2":
         if [cell.get("tier") for cell in contract["cells"]] != ["dram", "ssd-uring"]:
             raise RuntimeError("Frozen installed Save medium order differs")
         for cell in contract["cells"]:
@@ -1775,7 +1813,7 @@ def main() -> None:
         signal.signal(number, signal.SIG_IGN)
     try:
         check_inputs(contract, deadline=startup_deadline)
-        if contract.get("qualification") == "pending-save-bytes-v1":
+        if contract.get("qualification") == "pending-save-bytes-v2":
             write(
                 root / "DLOPEN-PREFLIGHT.json",
                 check_dlopen(contract, startup_deadline),

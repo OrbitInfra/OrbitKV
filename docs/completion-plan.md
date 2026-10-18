@@ -845,6 +845,23 @@ retain the producer/batch and released-engine tree hold. The original vLLM and
 SGLang negative controls remain under `independent-b273-review-1/` in
 `/root/orbitkv-artifacts/s3-save-producer-admission-20261018/`; the corrected
 source, installed package and adapter qualification require their own review.
+Independent `AcceptedSourceCPUInstalledMethodScope` at `2d38489a`, tree
+`b5248c88`, accepts the corrected catches, source-only 632/1 skip and installed
+SGLang 0.5.21 method controls 32/32. Review SHA256 is
+`fe55fb65c9c2253f5951f1bd4a17614eb745e3267c3203426b4b07a9eb9130d1`;
+wheel SHA256 is `d59c8ca0fa60d160d4bcd522089e541aa5771db8d744f19af21cb5f047e6fe66`.
+The local vLLM release environment is historical 0.29.0 and is not current
+0.31.0 evidence. Native code and ELF bytes are unchanged from the independently
+rerun b273 native controls; page generation and hardware lifetime remain open.
+The next installed-byte harness uses a new `pending-save-bytes-v2` contract:
+one prepared request cancels without copying; two prepared requests remain
+pending until Rust submission, refuse never-submitted cancellation afterwards,
+and complete exactly 16,384 copied bytes per round. The existing complete
+32,768-byte payload/sentinel, io_uring read, original-credit release and actual
+process-wait gates remain mandatory. Missing, replayed or malformed admission
+evidence is rejected. Old v1 freezes/results are preserved and cannot launch
+through the new controller. Source review, new runtime/resource freeze and
+independent launch acceptance precede any GPU campaign.
 
 ## S4 — Finish communication execution and demonstrate gains
 

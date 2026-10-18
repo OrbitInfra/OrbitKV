@@ -9,6 +9,11 @@
 - `e2e/`: actual inference-engine correctness and restart recovery.
 - `stress/`: concurrent or pressure workloads with explicit resource requirements.
 - `support/`: process helpers, import stubs, paths, and immutable test data.
+  `support/registration_campaign.py` consumes the installed pending Save byte
+  gate's `pending-save-bytes-v2` freeze: preparation performs no copy, explicit
+  never-submitted cancellation completes as failure, and Rust submits two
+  prepared handles before normal payload/release checks. Old v1 freezes are
+  historical evidence; a new reviewed freeze is required for this controller.
 - `conftest.py`: shared options and the Cache Manager fixture used by both engine
   E2E and channel integration tests; `integration/conftest.py` owns GPU fixtures.
 
