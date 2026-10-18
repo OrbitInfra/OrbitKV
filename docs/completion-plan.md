@@ -1100,6 +1100,17 @@ remain outside Git at `/root/orbitkv-artifacts/s4-rle-trace-20261016/`.
   A connection-warming candidate must consume an explicit reviewed interface,
   account for setup/fabric resources and pass contention controls. Never use
   unowned dummy payload addresses or omit warming cost from serving latency.
+  The Manager profiling harness now retains the GPU worker's query-prefetch
+  window separately from duration statistics. Its offline native reader joins
+  the consumer Manager and distinct query actor by host, boot, cell, process
+  start, query identity and actual normal waits. The bounded native observer
+  admits only its pre-exec owner PID; fork/exec children cannot overwrite the
+  parent's trace. Warm windows may contain zero setup calls, and clipped temporal
+  overlap is not a native terminal/free boundary or a causal decomposition.
+  CPU controls and the current 88-byte epoch-checked Rust/native request layout
+  are verified separately from the legacy upstream 48-byte probe. Source/CPU
+  review, frozen-runtime admission and a matched observation-overhead pilot must
+  precede hardware diagnosis. This does not change S4/S5 qualification or defaults.
 - Retain bounded multipart plans and whole-operation ownership. Earlier layer,
   multipart, codec or SSD readiness requires consumer dependencies and final
   physical drain, not only a readiness notification.

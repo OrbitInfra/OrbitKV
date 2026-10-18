@@ -338,6 +338,8 @@ def test_service_status_requires_the_actual_owned_listening_socket(tmp_path, for
         while True:
             result = owner.process_status({"name": "manager"})
             assert result["exit_code"] is None and not result["actual_wait_reap"]
+            assert result["host"] == "local"
+            assert result["boot_id"] == owner.contract["hosts"]["local"]["boot_id"]
             if foreign_listener or port in result["listen_ports"]:
                 break
             assert time.monotonic() < deadline

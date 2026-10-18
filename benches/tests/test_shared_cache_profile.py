@@ -23,7 +23,22 @@ def boundaries():
         total = f"orbitkv_remote_stage_duration_seconds_sum_{stage}"
         before.update({count: 2, total: 0.02})
         after.update({count: 3, total: 0.0202})
-    restored = {"checked_payload_bytes": 64, "sha256": ["a"] * 4, "timing": {"query_ms": 2}}
+    restored = {
+        "checked_payload_bytes": 64,
+        "sha256": ["a"] * 4,
+        "query_id": "query-0",
+        "timing": {"query_ms": 2},
+        "query_window": {
+            "clock": "CLOCK_MONOTONIC",
+            "pid": 43,
+            "start_ticks": 222,
+            "boot_id": "0f7f8389-3d2e-424f-84b8-c52d59f20908",
+            "instance": "consumer",
+            "namespace": "profile",
+            "begin_mono_ns": 100,
+            "ready_mono_ns": 2000100,
+        },
+    }
     return before, after, restored
 
 
@@ -51,6 +66,7 @@ def test_profile_uses_deltas_and_separates_cold_and_warmup():
     evidence = sample_evidence(before, after, restored, 64)
     assert evidence["remote_bytes"] == evidence["h2d_bytes"] == 64
     assert evidence["remote_stages_ms"]["read"] == pytest.approx(0.2)
+    assert evidence["query_window"] == restored["query_window"]
     rows = []
     for phase, duration in [("cold", 100), ("warmup", 50), ("measured", 1), ("measured", 3)]:
         rows.append({**evidence, "phase": phase, "manager_fetch_ms": duration})
@@ -62,3 +78,25 @@ def test_profile_uses_deltas_and_separates_cold_and_warmup():
         "min": 1,
         "max": 3,
     }
+    assert "begin_mono_ns" not in summary["statistics"]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("clock", "CLOCK_REALTIME"),
+        ("pid", True),
+        ("start_ticks", 0),
+        ("boot_id", "unknown"),
+        ("instance", ""),
+        ("namespace", None),
+        ("begin_mono_ns", 2000101),
+        ("ready_mono_ns", 2000100.0),
+        ("ready_mono_ns", 3000100),
+    ],
+)
+def test_profile_rejects_ambiguous_client_query_window(field, value):
+    before, after, restored = boundaries()
+    restored["query_window"][field] = value
+    with pytest.raises(ValueError):
+        sample_evidence(before, after, restored, 64)
