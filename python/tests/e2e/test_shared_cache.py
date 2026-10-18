@@ -9,6 +9,7 @@ import contextlib
 import json
 import os
 import random
+import shutil
 import time
 from argparse import Namespace
 from pathlib import Path
@@ -27,6 +28,13 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
     pytest.importorskip(engine)
     if not os.environ.get("ETCD_BIN") or not os.environ.get("ORBITKV_CACHE_MANAGER_BINARY"):
         pytest.skip("set ETCD_BIN and ORBITKV_CACHE_MANAGER_BINARY; no builds during runtime gates")
+    model = Path(request.config.getoption("--model")).resolve()
+    for variable in ("ETCD_BIN", "ORBITKV_CACHE_MANAGER_BINARY"):
+        binary = shutil.which(os.environ[variable])
+        if binary is None:
+            raise FileNotFoundError(f"{variable} is not an executable: {os.environ[variable]}")
+        monkeypatch.setenv(variable, str(Path(binary).resolve()))
+    monkeypatch.chdir(tmp_path)
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3]))
     from transformers import AutoTokenizer
 
@@ -36,7 +44,6 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
     from benches.shared_cache import drain, qualify, synchronize, verify_restore
     from benches.workload import evict_host_cache, generate
 
-    model = Path(request.config.getoption("--model"))
     config = json.loads((model / "config.json").read_text())
     assert config["model_type"] == "qwen3", "this gate qualifies dense Qwen3"
     bpt = 4 * config["num_hidden_layers"] * config["num_key_value_heads"] * config["head_dim"]

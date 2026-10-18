@@ -310,8 +310,9 @@ ORBITKV_CACHE_MANAGER_BINARY=/path/to/orbitkv-cache-manager \
   tests/e2e/test_shared_cache.py -k vllm --model /workspace/models/qwen3-8b
 ```
 
-Repeat with `.venv/sglang-release/bin/python` and `-k sglang`. The fixture uses
-the installed OrbitKV wheel and explicit eager mode. Its common vLLM launcher
+Repeat with `../.venv/sglang-release/bin/python` and `-k sglang`. The fixture uses
+the installed OrbitKV wheel and explicit eager mode. It resolves input paths
+before starting child processes in a private temporary directory. Its common vLLM launcher
 sets the official `--shutdown-timeout 30`; the consumed shutdown validator
 requires native drain/teardown messages and rejects abort or force-kill logs.
 Service-leader exit zero alone cannot pass this check. Preserve SGLang's native

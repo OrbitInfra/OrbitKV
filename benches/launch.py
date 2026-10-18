@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import importlib.util
+import importlib.machinery
 import json
 import os
 import re
@@ -62,7 +62,7 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
     package_dir = ROOT / "python/orbitkv"
     if args.installed_artifact:
         if args.backend == "orbitkv":
-            spec = importlib.util.find_spec("orbitkv")
+            spec = importlib.machinery.PathFinder.find_spec("orbitkv", site_paths)
             if spec is None or spec.origin is None:
                 raise RuntimeError("Installed benchmark requires the complete OrbitKV wheel")
             package_dir = Path(spec.origin).resolve().parent
