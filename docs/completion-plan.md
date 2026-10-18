@@ -837,6 +837,9 @@ records in this section retain each artifact, measured profile and failed gate.
   source/CPU acceptance and final-head CI. Hardware observation is still open.
 - [ ] Admit the current two-host runtime and pass the matched native-observer
   overhead pilot before diagnosing first peer recovery and warm steady state.
+  The runtime guard binds the consumed channel configuration to its checked
+  private root and prefix, launches children from a frozen neutral directory,
+  and verifies their actual working directories before payload admission.
 - [ ] Reduce engine-local H2D observation cost until the complete matched
   overhead guard passes; earlier valid failed cohorts remain failed.
 - [ ] Pass inference-contention and repeatable end-to-end performance gates

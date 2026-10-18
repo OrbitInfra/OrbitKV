@@ -126,6 +126,23 @@ class HostOwner:
             locks=[lease.fileno() for lease in self.leases],
             deadline=deadline,
         )
+        working_directory = guard["working_directory"]
+        cwd = Path(working_directory["path"])
+        metadata = cwd.lstat()
+        if (
+            not cwd.is_absolute()
+            or cwd.resolve(strict=True) != cwd
+            or not stat.S_ISDIR(metadata.st_mode)
+            or (metadata.st_dev, metadata.st_ino)
+            != (working_directory["device"], working_directory["inode"])
+            or not any(
+                declaration["path"] == working_directory["manifest"]
+                for declaration in guard["runtime_manifests"]
+            )
+            or checks["read_json"](Path(working_directory["manifest"]), deadline)["root"]
+            != str(cwd)
+        ):
+            raise RuntimeError("Working directory is not a frozen canonical runtime root")
         domains = guard["channel_domains"]
         if not isinstance(domains, list) or len(domains) > 128:
             raise RuntimeError("Private channel domain inventory exceeds its bound")
@@ -134,6 +151,24 @@ class HostOwner:
             raise RuntimeError("Private channel domains differ from the frozen Manager cells")
         for domain in domains:
             checks["check_runtime_domain"](domain, deadline)
+            path = Path(domain["config_path"])
+            prefix = domain["prefix"]
+            if (
+                not path.is_absolute()
+                or path.resolve(strict=True) != path
+                or str(path) not in guard["input_sha256"]
+                or not isinstance(prefix, str)
+                or not prefix
+            ):
+                raise RuntimeError("Private channel configuration is not frozen")
+            expected = (
+                f"[global]\nroot-path = {json.dumps(domain['root'], ensure_ascii=False)}\n"
+                f"prefix = {json.dumps(prefix, ensure_ascii=False)}\n"
+                '[global.node]\ndirectory = "nodes"\n'
+                '[global.service]\ndirectory = "services"\n'
+            ).encode()
+            if checks["read_bytes"](path, 65536, deadline) != expected:
+                raise RuntimeError("Channel configuration differs from its declared private domain")
         return guard
 
     def acquire(self) -> None:
@@ -206,6 +241,8 @@ class HostOwner:
         if message.get("environment", {}) != planned["environment"]:
             raise ValueError("Frozen child environment differs")
         guard = self.validate_runtime()
+        if planned["cwd"] != guard["working_directory"]["path"]:
+            raise RuntimeError("Child working directory differs from its frozen runtime root")
         for path, expected in self.contract["file_stamps"][self.host].items():
             info = Path(path).stat()
             if [
@@ -238,6 +275,7 @@ class HostOwner:
         try:
             process = subprocess.Popen(
                 argv,
+                cwd=planned["cwd"],
                 env=environment,
                 stdin=subprocess.PIPE if protocol else subprocess.DEVNULL,
                 stdout=subprocess.PIPE if protocol else stdout,
@@ -413,6 +451,16 @@ class HostOwner:
                 expected["executable"]
             ):
                 raise RuntimeError("Actual child executable differs from the frozen program")
+            cwd = Path(f"/proc/{process.pid}/cwd")
+            working_directory = guard["working_directory"]
+            metadata = cwd.stat()
+            if (
+                planned["cwd"] != working_directory["path"]
+                or str(cwd.resolve(strict=True)) != planned["cwd"]
+                or (metadata.st_dev, metadata.st_ino)
+                != (working_directory["device"], working_directory["inode"])
+            ):
+                raise RuntimeError("Actual child working directory differs from the frozen root")
             environment = dict(planned["environment"])
             observer = self.contract["observer_library"][self.host]
             if type(expected["observer_enabled"]) is not bool:
@@ -428,6 +476,7 @@ class HostOwner:
             if len(dict(entries)) != len(entries) or dict(entries) != environment:
                 raise RuntimeError("Actual child environment differs from the frozen inputs")
             record = checks["capture_process_runtime"](process.pid, item["start_ticks"], deadline)
+            record["cwd"] = planned["cwd"]
             paths = {row["path"] for row in record["files"]}
             if not set(expected["required_mapped_files"]) <= paths:
                 raise RuntimeError("Actual child lacks its required frozen mappings")
@@ -441,10 +490,18 @@ class HostOwner:
         text = ""
         for stream in ("stdout", "stderr"):
             path = self.output / f"{cell}-manager.{stream}.log"
-            text += checks["read_bytes"](path, checks["MAX_LOG_BYTES"], deadline).decode()
+            text += checks["read_bytes"](path, checks["MAX_LOG_BYTES"], deadline).decode() + "\n"
         checks["validate_python_origin"](
             text, self.contract["python_origins"][self.host], manager.pid, deadline
         )
+        for record in result["processes"].values():
+            cwd = Path(f"/proc/{record['owner']['pid']}/cwd")
+            metadata = cwd.stat()
+            if str(cwd.resolve(strict=True)) != record["cwd"] or (
+                metadata.st_dev,
+                metadata.st_ino,
+            ) != (working_directory["device"], working_directory["inode"]):
+                raise RuntimeError("Actual child working directory changed during inspection")
         if any(item["process"].poll() is not None for item in self.children.values()):
             raise RuntimeError("Owned child exited during runtime admission")
         path = self.output / f"{cell}-runtime-admission.json"

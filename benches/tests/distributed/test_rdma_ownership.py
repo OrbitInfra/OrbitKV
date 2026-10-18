@@ -99,13 +99,47 @@ def attach_runtime_inputs(contract, host, tmp_path):
         path.touch(exist_ok=True)
         metadata = path.stat()
         declarations.append({"path": name, "device": metadata.st_dev, "inode": metadata.st_ino})
+    neutral = tmp_path / "neutral"
+    neutral.mkdir()
+    marker = neutral / "MARKER"
+    marker.write_text("CPU contract control\n")
+    manifest = tmp_path / "neutral-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "root": str(neutral),
+                "files": [
+                    {
+                        "path": marker.name,
+                        "realpath": str(marker),
+                        "bytes": marker.stat().st_size,
+                        "sha256": hashlib.sha256(marker.read_bytes()).hexdigest(),
+                    }
+                ],
+            }
+        )
+    )
+    for launches in contract.get("launches", {}).get(host, {}).values():
+        for planned in launches.values():
+            planned["cwd"] = str(neutral)
     guard = tmp_path / "runtime-guard.json"
     guard.write_text(
         json.dumps(
             {
                 "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
                 "input_sha256": {},
-                "runtime_manifests": [],
+                "runtime_manifests": [
+                    {
+                        "path": str(manifest),
+                        "sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                    }
+                ],
+                "working_directory": {
+                    "path": str(neutral),
+                    "manifest": str(manifest),
+                    "device": neutral.stat().st_dev,
+                    "inode": neutral.stat().st_ino,
+                },
                 "protected_resources": [],
                 "locks": declarations,
                 "channel_domains": [],
@@ -409,7 +443,9 @@ def service_owner(tmp_path, argv, environment=None):
 
 
 @pytest.mark.parametrize("boundary", ["launch", "finish"])
-@pytest.mark.parametrize("mutation", ["extra_module", "replaced_channel_directory"])
+@pytest.mark.parametrize(
+    "mutation", ["extra_module", "replaced_channel_directory", "wrong_channel_root"]
+)
 def test_runtime_change_blocks_the_actual_owner_boundary(monkeypatch, tmp_path, boundary, mutation):
     owner, lease = cpu_owner(tmp_path)
     try:
@@ -453,11 +489,26 @@ def test_runtime_change_blocks_the_actual_owner_boundary(monkeypatch, tmp_path, 
             )
         guard_path = Path(owner.contract["runtime_inputs"]["local"]["guard"])
         guard = json.loads(guard_path.read_text())
-        guard["runtime_manifests"] = [
+        guard["runtime_manifests"] += [
             {"path": str(manifest), "sha256": hashlib.sha256(manifest.read_bytes()).hexdigest()}
         ]
+        channel_config = tmp_path / "channel.toml"
+        channel_config.write_text(
+            f'[global]\nroot-path = {json.dumps(str(channel))}\nprefix = "cpu_control_"\n'
+            '[global.node]\ndirectory = "nodes"\n'
+            '[global.service]\ndirectory = "services"\n'
+        )
+        guard["input_sha256"][str(channel_config)] = hashlib.sha256(
+            channel_config.read_bytes()
+        ).hexdigest()
         guard["channel_domains"] = [
-            {"cell": "cell", "root": str(channel), "directories": directories}
+            {
+                "cell": "cell",
+                "root": str(channel),
+                "prefix": "cpu_control_",
+                "config_path": str(channel_config),
+                "directories": directories,
+            }
         ]
         owner.contract["cells"] = [{"id": "cell", "kind": "manager"}]
         guard_path.write_text(json.dumps(guard))
@@ -468,10 +519,22 @@ def test_runtime_change_blocks_the_actual_owner_boundary(monkeypatch, tmp_path, 
         if mutation == "extra_module":
             (runtime / "unexpected.py").write_text("value = 2\n")
             failure = "Runtime file census"
-        else:
+        elif mutation == "replaced_channel_directory":
             (channel / "nodes").rename(channel / "retired-nodes")
             (channel / "nodes").mkdir()
             failure = "Private runtime directory identity"
+        else:
+            channel_config.write_text(
+                channel_config.read_text().replace(str(channel), str(tmp_path / "other-domain"))
+            )
+            guard["input_sha256"][str(channel_config)] = hashlib.sha256(
+                channel_config.read_bytes()
+            ).hexdigest()
+            guard_path.write_text(json.dumps(guard))
+            owner.contract["runtime_hashes"]["local"][str(guard_path)] = hashlib.sha256(
+                guard_path.read_bytes()
+            ).hexdigest()
+            failure = "Channel configuration differs"
         if boundary == "launch":
             planned = owner.contract["launches"]["local"]["cell"]["gpu-reader"]
             with pytest.raises(RuntimeError, match=failure):
@@ -506,11 +569,22 @@ def test_child_receives_only_the_frozen_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("PYTHONINSPECT", "1")
     program = (
         "import json,os,time; print(json.dumps({'ld_audit':'LD_AUDIT' in os.environ,"
-        "'inspect':'PYTHONINSPECT' in os.environ,'input':os.environ.get('S4_CHILD_INPUT')}),flush=True);"
+        "'inspect':'PYTHONINSPECT' in os.environ,'input':os.environ.get('S4_CHILD_INPUT'),"
+        "'module':__file__,'cwd':os.getcwd()}),flush=True);"
         "time.sleep(30)"
     )
+    harness = tmp_path / "harness"
+    harness.mkdir()
+    module = harness / "fixture_entry.py"
+    module.write_text(program)
+    foreign = tmp_path / "foreign-owner-cwd"
+    foreign.mkdir()
+    (foreign / module.name).write_text("raise RuntimeError('unfrozen CWD shadow')\n")
+    monkeypatch.chdir(foreign)
     owner = service_owner(
-        tmp_path, [sys.executable, "-u", "-c", program], {"S4_CHILD_INPUT": "frozen"}
+        tmp_path,
+        [sys.executable, "-u", "-B", "-m", "fixture_entry"],
+        {"S4_CHILD_INPUT": "frozen", "PYTHONPATH": str(harness)},
     )
     try:
         path = tmp_path / "startup-manager.stdout.log"
@@ -522,13 +596,15 @@ def test_child_receives_only_the_frozen_environment(monkeypatch, tmp_path):
             "ld_audit": False,
             "inspect": False,
             "input": "frozen",
+            "module": str(module),
+            "cwd": str(tmp_path / "neutral"),
         }
     finally:
         owner.stop({"name": "manager", "idle_proven": True})
 
 
-@pytest.mark.parametrize("wrong_origin", [False, True])
-def test_actual_owned_runtime_checkpoint_consumes_manager_origin(tmp_path, wrong_origin):
+@pytest.mark.parametrize("failure", [None, "python_origin", "working_directory"])
+def test_actual_owned_runtime_checkpoint_consumes_manager_inputs(tmp_path, failure):
     origins = {
         "torch_file": "/cpu-control/torch/__init__.py",
         "prefix": "/cpu-control",
@@ -545,6 +621,7 @@ def test_actual_owned_runtime_checkpoint_consumes_manager_origin(tmp_path, wrong
     program = """
 import json,os,socket,sys,time
 role=sys.argv[1];expected=json.loads(sys.argv[2])
+if len(sys.argv)>3:os.chdir(sys.argv[3])
 if role=='manager':
     runtime={key:expected[key] for key in ('torch_file','prefix','base_prefix')}
     runtime.update(pid=os.getpid(),sys_path=expected['allowed_sys_path'],no_user_site=1)
@@ -564,11 +641,12 @@ time.sleep(30)
     }
     guard_path = attach_runtime_inputs(contract, "local", tmp_path)
     observed = dict(origins)
-    if wrong_origin:
+    if failure == "python_origin":
         observed["gpu_module_file"] = "/cpu-control/foreign.py"
     for name in ("manager", "fixture"):
         contract["launches"]["local"]["cell"][name] = {
             "argv": [sys.executable, "-u", "-c", program, name, json.dumps(observed)],
+            "cwd": str(tmp_path / "neutral"),
             "environment": environment,
             "kind": "service",
             "runtime": {
@@ -577,6 +655,10 @@ time.sleep(30)
                 "observer_enabled": False,
             },
         }
+    if failure == "working_directory":
+        changed_cwd = tmp_path / "foreign-cwd"
+        changed_cwd.mkdir()
+        contract["launches"]["local"]["cell"]["fixture"]["argv"].append(str(changed_cwd))
     owner = HostOwner(contract, "local", tmp_path)
     try:
         for name in ("manager", "fixture"):
@@ -608,8 +690,11 @@ time.sleep(30)
             guard_path.read_bytes()
         ).hexdigest()
         path = tmp_path / "cell-runtime-admission.json"
-        if wrong_origin:
-            with pytest.raises(RuntimeError, match="Python importer"):
+        if failure:
+            with pytest.raises(
+                RuntimeError,
+                match="Python importer" if failure == "python_origin" else "working directory",
+            ):
                 owner.admit_runtime({"cell": "cell"})
             assert not path.exists()
         else:
