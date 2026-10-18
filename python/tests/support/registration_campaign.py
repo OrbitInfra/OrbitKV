@@ -243,6 +243,40 @@ def inventory(gpu_uuid: str, deadline: float | None = None) -> dict:
     }
 
 
+def check_runtime_domain(domain: dict, deadline: float | None = None) -> None:
+    root = Path(domain["root"])
+    directories = domain["directories"]
+    expected_paths = {str(root), str(root / "nodes"), str(root / "services")}
+    if (
+        not root.is_absolute()
+        or root.resolve(strict=True) != root
+        or not isinstance(directories, list)
+        or len(directories) != 3
+        or {row["path"] for row in directories} != expected_paths
+    ):
+        raise RuntimeError("Invalid private runtime directory declarations")
+    for row in directories:
+        remaining(deadline)
+        path = Path(row["path"])
+        metadata = path.lstat()
+        values = {
+            "device": metadata.st_dev,
+            "inode": metadata.st_ino,
+            "mode": metadata.st_mode,
+            "uid": metadata.st_uid,
+        }
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or path.resolve(strict=True) != path
+            or any(
+                type(row[field]) is not int or row[field] != value
+                for field, value in values.items()
+            )
+        ):
+            raise RuntimeError("Private runtime directory identity changed")
+    remaining(deadline)
+
+
 def check_inputs(
     contract: dict,
     locks: list[int] | None = None,
@@ -349,38 +383,7 @@ def check_inputs(
         finally:
             executor.shutdown(wait=True, cancel_futures=True)
     if "mutable_runtime_domain" in contract:
-        domain = contract["mutable_runtime_domain"]
-        root = Path(domain["root"])
-        directories = domain["directories"]
-        expected_paths = {str(root), str(root / "nodes"), str(root / "services")}
-        if (
-            not root.is_absolute()
-            or root.resolve(strict=True) != root
-            or not isinstance(directories, list)
-            or len(directories) != 3
-            or {row["path"] for row in directories} != expected_paths
-        ):
-            raise RuntimeError("Invalid private runtime directory declarations")
-        for row in directories:
-            remaining(deadline)
-            path = Path(row["path"])
-            metadata = path.lstat()
-            values = {
-                "device": metadata.st_dev,
-                "inode": metadata.st_ino,
-                "mode": metadata.st_mode,
-                "uid": metadata.st_uid,
-            }
-            if (
-                not stat.S_ISDIR(metadata.st_mode)
-                or path.resolve(strict=True) != path
-                or any(
-                    type(row[field]) is not int or row[field] != value
-                    for field, value in values.items()
-                )
-            ):
-                raise RuntimeError("Private runtime directory identity changed")
-        remaining(deadline)
+        check_runtime_domain(contract["mutable_runtime_domain"], deadline)
     protected_resources = contract["protected_resources"]
     if not isinstance(protected_resources, list) or len(protected_resources) > 64:
         raise RuntimeError("Invalid protected resource declarations")
@@ -756,6 +759,140 @@ def validate_python_origin(
     ):
         raise RuntimeError("Manager Python importer leaves the frozen runtime")
     remaining(deadline)
+
+
+def capture_process_runtime(pid: int, start_ticks: int, deadline: float) -> dict:
+    """Capture one live process's actual native mappings and executable bytes."""
+    owner = identity(pid, deadline)
+    if owner["start_ticks"] != start_ticks:
+        raise RuntimeError("Manager runtime process identity changed")
+    raw = read_bytes(Path(f"/proc/{pid}/maps"), 1024 * 1024, deadline).decode()
+    executable = Path(f"/proc/{pid}/exe").resolve(strict=True)
+    paths = {}
+    executable_regions = {}
+    executable_bytes = 0
+    for line in raw.splitlines():
+        fields = line.split(maxsplit=5)
+        if len(fields) == 6 and fields[5].startswith("/"):
+            name = fields[5]
+            if ".so" not in Path(name).name and name != str(executable):
+                continue
+            if name.endswith(" (deleted)"):
+                raise RuntimeError("Manager has a deleted mapped runtime file")
+            major, minor = (int(part, 16) for part in fields[3].split(":"))
+            mapped_identity = (os.makedev(major, minor), int(fields[4]))
+            if name in paths and paths[name] != mapped_identity:
+                raise RuntimeError("Manager mapped runtime identities conflict")
+            paths[name] = mapped_identity
+            if "x" in fields[1]:
+                start, end = (int(value, 16) for value in fields[0].split("-"))
+                if end <= start:
+                    raise RuntimeError("Invalid Manager executable mapping range")
+                executable_bytes += end - start
+                if executable_bytes > MAX_MAPPED_EXECUTABLE_BYTES:
+                    raise RuntimeError("Mapped executable evidence exceeds byte bound")
+                executable_regions.setdefault(name, []).append((start, end, int(fields[2], 16)))
+    if not paths or len(paths) > 2048:
+        raise RuntimeError("Manager mapped file inventory is empty or exceeds its bound")
+    files = []
+    for name in sorted(paths):
+        remaining(deadline)
+        path = Path(name)
+        resolved = path.resolve(strict=True)
+        fd = os.open(resolved, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            metadata = os.fstat(fd)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_ino != paths[name][1]:
+                raise RuntimeError("Manager mapped runtime path was replaced")
+            code_regions = []
+            if metadata.st_dev != paths[name][0]:
+                regions = executable_regions.get(name, [])
+                if not regions:
+                    raise RuntimeError("Mapped runtime identity differs without executable proof")
+                memory = os.open(f"/proc/{pid}/mem", os.O_RDONLY | os.O_NONBLOCK)
+                try:
+                    for start, end, offset in regions:
+                        expected_hash = hashlib.sha256()
+                        actual_hash = hashlib.sha256()
+                        position = 0
+                        while position < end - start:
+                            remaining(deadline)
+                            count = min(1024 * 1024, end - start - position)
+                            expected = os.pread(fd, count, offset + position)
+                            actual = os.pread(memory, count, start + position)
+                            file_count = min(count, max(0, metadata.st_size - offset - position))
+                            if len(expected) != file_count:
+                                raise RuntimeError("Mapped executable file read was short")
+                            # The last executable page can contain zero padding beyond the file.
+                            expected += bytes(count - len(expected))
+                            if len(actual) != count or actual != expected:
+                                raise RuntimeError(
+                                    "Actual mapped executable bytes differ from the file"
+                                )
+                            expected_hash.update(expected)
+                            actual_hash.update(actual)
+                            position += count
+                        code_regions.append(
+                            {
+                                "start": start,
+                                "end": end,
+                                "file_offset": offset,
+                                "file_sha256": expected_hash.hexdigest(),
+                                "mapped_sha256": actual_hash.hexdigest(),
+                            }
+                        )
+                finally:
+                    os.close(memory)
+            value = hashlib.sha256()
+            while True:
+                remaining(deadline)
+                chunk = os.read(fd, 1024 * 1024)
+                if not chunk:
+                    break
+                value.update(chunk)
+            after = os.fstat(fd)
+            current = resolved.stat()
+            if (
+                (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                != (metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns)
+                or (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino)
+                or path.resolve(strict=True) != resolved
+            ):
+                raise RuntimeError("Manager mapped runtime changed during hashing")
+        finally:
+            os.close(fd)
+        files.append(
+            {
+                "path": name,
+                "realpath": str(resolved),
+                "device": metadata.st_dev,
+                "inode": metadata.st_ino,
+                "bytes": metadata.st_size,
+                "sha256": value.hexdigest(),
+                "mapped_device": paths[name][0],
+                "mapped_inode": paths[name][1],
+                "executable_regions": code_regions,
+            }
+        )
+    if (
+        identity(pid, deadline) != owner
+        or Path(f"/proc/{pid}/exe").resolve(strict=True) != executable
+    ):
+        raise RuntimeError("Manager changed during its runtime inventory")
+    final_maps = read_bytes(Path(f"/proc/{pid}/maps"), 1024 * 1024, deadline).decode()
+
+    def runtime_lines(value):
+        return {
+            line
+            for line in value.splitlines()
+            if len(fields := line.split(maxsplit=5)) == 6
+            and fields[5].startswith("/")
+            and (".so" in Path(fields[5]).name or fields[5] == str(executable))
+        }
+
+    if runtime_lines(raw) != runtime_lines(final_maps):
+        raise RuntimeError("Manager mapped runtime changed during capture")
+    return {"owner": owner, "maps": raw, "files": files, "physical_termination_claimed": False}
 
 
 def process_trace_inventory(

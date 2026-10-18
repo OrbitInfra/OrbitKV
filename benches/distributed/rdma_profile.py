@@ -332,6 +332,10 @@ class Campaign:
                         argv = self.contract["launches"][host][cell["id"]][name]["argv"]
                         ports.append(urlsplit("tcp://" + argv[argv.index("--addr") + 1]).port)
                     result.setdefault("readiness", []).append(self.health(host, name, url, ports))
+            result["runtime_admission"] = {
+                host: owner.rpc("admit-runtime", cell=cell["id"])
+                for host, owner in self.hosts.items()
+            }
             source, target = cell["source_host"], cell["target_host"]
             evidence = profile(
                 SimpleNamespace(

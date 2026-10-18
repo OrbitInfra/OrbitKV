@@ -14,6 +14,24 @@ hosts. Verify ELF closure, actual TENT loading and native import before launch;
 never overwrite a mapped library. Keep `harness/benches` separate from the Python
 package so source-only imports cannot shadow the installed extension.
 
+Each host supplies `runtime_inputs` naming the frozen registration-check helper
+and guard JSON; both files also belong in `runtime_hashes`. The existing owner
+consumes complete directory manifests, absent inputs, protected owners and the
+ordered inherited lease FDs after acquisition, before child launch and before
+final lease release. Declare every Manager cell's private channel domain in the
+guard's `channel_domains`, including its `cell`, `config_path`, root and directory
+identities. Runtime checks share a 60-second bound within the 100-second RPC wait.
+
+Child environments are literal frozen dictionaries; `MC_FORCE_TCP` must be
+absent. After both registered GPU fixtures own healthy listeners, the driver
+requests one runtime-admission checkpoint per host before publishing payloads.
+Freeze `python_origins`, `observer_library` and each child's `runtime` executable,
+required mappings and observer mode. The checkpoint reuses the installed-gate
+Python-origin and native-map inspection, including mapped inode/device identity
+and executable-byte checks when overlay device numbers differ. It rejects a
+loaded observer in off mode. These startup checks are outside transfer timing;
+the descriptive driver's PASS does not imply an observation-overhead PASS.
+
 For GPU-pointer cells, compile the byte oracle on each test host before freezing
 its resulting hash. A Manager-only contract uses the existing tensor byte and
 sentinel checks in `shared_cache_bytes`; it does not need this oracle library:

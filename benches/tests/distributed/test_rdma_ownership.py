@@ -3,6 +3,7 @@
 import contextlib
 import errno
 import fcntl
+import hashlib
 import json
 import signal
 import socket
@@ -89,6 +90,35 @@ else:retain('CPU ownership control EOF; no CUDA or native memory in this test')
 """
 
 
+def attach_runtime_inputs(contract, host, tmp_path):
+    helper = Path(__file__).resolve().parents[3] / "python/tests/support/registration_campaign.py"
+    resources = contract.setdefault("resource_locks", [])
+    declarations = []
+    for name in resources:
+        path = Path(name)
+        path.touch(exist_ok=True)
+        metadata = path.stat()
+        declarations.append({"path": name, "device": metadata.st_dev, "inode": metadata.st_ino})
+    guard = tmp_path / "runtime-guard.json"
+    guard.write_text(
+        json.dumps(
+            {
+                "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+                "input_sha256": {},
+                "runtime_manifests": [],
+                "protected_resources": [],
+                "locks": declarations,
+                "channel_domains": [],
+            }
+        )
+    )
+    contract["runtime_inputs"] = {host: {"helper": str(helper), "guard": str(guard)}}
+    contract["runtime_hashes"] = {
+        host: {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in (helper, guard)}
+    }
+    return guard
+
+
 def cpu_owner(tmp_path):
     out = tmp_path / "owner"
     out.mkdir()
@@ -99,6 +129,7 @@ def cpu_owner(tmp_path):
         "hosts": {
             "local": {"boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip()}
         },
+        "resource_locks": [str(tmp_path / "gpu.lock")],
         "file_stamps": {"local": {}},
         "launches": {
             "local": {
@@ -112,6 +143,7 @@ def cpu_owner(tmp_path):
             }
         },
     }
+    attach_runtime_inputs(contract, "local", tmp_path)
     owner = HostOwner(contract, "local", out)
     owner.leases = [lease]
     owner.launch(
@@ -214,16 +246,20 @@ def test_physical_postflight_failure_keeps_real_resource_lease(monkeypatch, tmp_
 def test_real_host_owner_retains_lease_on_controller_eof(tmp_path):
     root = Path(__file__).resolve().parents[3]
     contract = {
-        "hosts": {"local": {"boot_id": "cpu-test", "gpu_uuids": {"7": "cpu-test"}}},
+        "hosts": {
+            "local": {
+                "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+                "gpu_uuids": {"7": "cpu-test"},
+            }
+        },
         "resource_locks": [str(tmp_path / "gpu.lock")],
         "runtime_hashes": {"local": {}},
         "file_stamps": {"local": {}},
         "launches": {"local": {}},
     }
+    attach_runtime_inputs(contract, "local", tmp_path)
     config = tmp_path / "CONTRACT.json"
     config.write_text(json.dumps(contract))
-    import hashlib
-
     index = tmp_path / "INPUTS.json"
     index.write_text(json.dumps({"CONTRACT.json": hashlib.sha256(config.read_bytes()).hexdigest()}))
     (tmp_path / "LAUNCH-ACCEPTED.json").write_text(
@@ -233,7 +269,7 @@ def test_real_host_owner_retains_lease_on_controller_eof(tmp_path):
     )
     program = """
 from benches.distributed import rdma_owner
-rdma_owner.snapshot=lambda:{'boot_id':'cpu-test','gpu':'7, cpu-test, 0\\n','compute':''}
+rdma_owner.snapshot=lambda:{'boot_id':rdma_owner.Path('/proc/sys/kernel/random/boot_id').read_text().strip(),'gpu':'7, cpu-test, 0\\n','compute':''}
 rdma_owner.main()
 """
     process = subprocess.Popen(
@@ -351,19 +387,239 @@ def test_service_status_requires_the_actual_owned_listening_socket(tmp_path, for
         assert receipt["exit_code"] == -signal.SIGTERM and receipt["actual_wait_reap"]
 
 
-def service_owner(tmp_path, argv):
+def service_owner(tmp_path, argv, environment=None):
+    environment = {} if environment is None else environment
     contract = {
         "hosts": {
             "local": {"boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip()}
         },
         "file_stamps": {"local": {}},
         "launches": {
-            "local": {"startup": {"manager": {"argv": argv, "environment": {}, "kind": "service"}}}
+            "local": {
+                "startup": {
+                    "manager": {"argv": argv, "environment": environment, "kind": "service"}
+                }
+            }
         },
     }
+    attach_runtime_inputs(contract, "local", tmp_path)
     owner = HostOwner(contract, "local", tmp_path)
-    owner.launch({"cell": "startup", "name": "manager", "argv": argv, "environment": {}})
+    owner.launch({"cell": "startup", "name": "manager", "argv": argv, "environment": environment})
     return owner
+
+
+@pytest.mark.parametrize("boundary", ["launch", "finish"])
+@pytest.mark.parametrize("mutation", ["extra_module", "replaced_channel_directory"])
+def test_runtime_change_blocks_the_actual_owner_boundary(monkeypatch, tmp_path, boundary, mutation):
+    owner, lease = cpu_owner(tmp_path)
+    try:
+        owner.call({"name": "gpu-reader", "request": {"operation": "stop", "id": "stop"}})
+        owner.stop({"name": "gpu-reader"})
+        runtime = tmp_path / "runtime"
+        runtime.mkdir()
+        payload = runtime / "frozen.py"
+        payload.write_text("value = 1\n")
+        manifest = tmp_path / "runtime-manifest.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "root": str(runtime),
+                    "files": [
+                        {
+                            "path": payload.name,
+                            "realpath": str(payload),
+                            "bytes": payload.stat().st_size,
+                            "sha256": hashlib.sha256(payload.read_bytes()).hexdigest(),
+                        }
+                    ],
+                }
+            )
+        )
+        channel = tmp_path / "channel"
+        channel.mkdir()
+        (channel / "nodes").mkdir()
+        (channel / "services").mkdir()
+        directories = []
+        for path in (channel, channel / "nodes", channel / "services"):
+            metadata = path.stat()
+            directories.append(
+                {
+                    "path": str(path),
+                    "device": metadata.st_dev,
+                    "inode": metadata.st_ino,
+                    "mode": metadata.st_mode,
+                    "uid": metadata.st_uid,
+                }
+            )
+        guard_path = Path(owner.contract["runtime_inputs"]["local"]["guard"])
+        guard = json.loads(guard_path.read_text())
+        guard["runtime_manifests"] = [
+            {"path": str(manifest), "sha256": hashlib.sha256(manifest.read_bytes()).hexdigest()}
+        ]
+        guard["channel_domains"] = [
+            {"cell": "cell", "root": str(channel), "directories": directories}
+        ]
+        owner.contract["cells"] = [{"id": "cell", "kind": "manager"}]
+        guard_path.write_text(json.dumps(guard))
+        owner.contract["runtime_hashes"]["local"][str(guard_path)] = hashlib.sha256(
+            guard_path.read_bytes()
+        ).hexdigest()
+        owner.validate_runtime()
+        if mutation == "extra_module":
+            (runtime / "unexpected.py").write_text("value = 2\n")
+            failure = "Runtime file census"
+        else:
+            (channel / "nodes").rename(channel / "retired-nodes")
+            (channel / "nodes").mkdir()
+            failure = "Private runtime directory identity"
+        if boundary == "launch":
+            planned = owner.contract["launches"]["local"]["cell"]["gpu-reader"]
+            with pytest.raises(RuntimeError, match=failure):
+                owner.launch(
+                    {
+                        "cell": "cell",
+                        "name": "gpu-reader",
+                        "argv": planned["argv"],
+                        "environment": planned["environment"],
+                    }
+                )
+        else:
+            monkeypatch.setattr(
+                "benches.distributed.rdma_owner.snapshot",
+                lambda: {"gpu": "3, cpu, 0\n", "compute": ""},
+            )
+            with pytest.raises(RuntimeError, match=failure):
+                owner.finish()
+            assert owner.uncertain
+        assert owner.children == {}
+        with Path(lease.name).open("a") as contender, pytest.raises(BlockingIOError):
+            fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        for name in list(owner.children):
+            owner.call({"name": name, "request": {"operation": "stop", "id": "cleanup"}})
+            owner.stop({"name": name})
+        lease.close()
+
+
+def test_child_receives_only_the_frozen_environment(monkeypatch, tmp_path):
+    monkeypatch.setenv("LD_AUDIT", "/missing-cpu-control-audit.so")
+    monkeypatch.setenv("PYTHONINSPECT", "1")
+    program = (
+        "import json,os,time; print(json.dumps({'ld_audit':'LD_AUDIT' in os.environ,"
+        "'inspect':'PYTHONINSPECT' in os.environ,'input':os.environ.get('S4_CHILD_INPUT')}),flush=True);"
+        "time.sleep(30)"
+    )
+    owner = service_owner(
+        tmp_path, [sys.executable, "-u", "-c", program], {"S4_CHILD_INPUT": "frozen"}
+    )
+    try:
+        path = tmp_path / "startup-manager.stdout.log"
+        deadline = time.monotonic() + 5
+        while not path.read_text():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert json.loads(path.read_text()) == {
+            "ld_audit": False,
+            "inspect": False,
+            "input": "frozen",
+        }
+    finally:
+        owner.stop({"name": "manager", "idle_proven": True})
+
+
+@pytest.mark.parametrize("wrong_origin", [False, True])
+def test_actual_owned_runtime_checkpoint_consumes_manager_origin(tmp_path, wrong_origin):
+    origins = {
+        "torch_file": "/cpu-control/torch/__init__.py",
+        "prefix": "/cpu-control",
+        "base_prefix": "/cpu-control",
+        "allowed_sys_path": ["/cpu-control"],
+        "gpu_module_file": "/cpu-control/orbitkv/client/gpu.py",
+    }
+    environment = {
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    program = """
+import json,os,socket,sys,time
+role=sys.argv[1];expected=json.loads(sys.argv[2])
+if role=='manager':
+    runtime={key:expected[key] for key in ('torch_file','prefix','base_prefix')}
+    runtime.update(pid=os.getpid(),sys_path=expected['allowed_sys_path'],no_user_site=1)
+    print('CUDA registration Python runtime: '+json.dumps(runtime),flush=True)
+    print('CUDA registration Python helper: '+json.dumps({'pid':os.getpid(),'gpu_module_file':expected['gpu_module_file']}),flush=True)
+listener=socket.socket();listener.bind(('127.0.0.1',0));listener.listen()
+time.sleep(30)
+"""
+    contract = {
+        "hosts": {
+            "local": {"boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip()}
+        },
+        "launches": {"local": {"cell": {}}},
+        "file_stamps": {"local": {}},
+        "python_origins": {"local": origins},
+        "observer_library": {"local": str(tmp_path / "unused-observer.so")},
+    }
+    guard_path = attach_runtime_inputs(contract, "local", tmp_path)
+    observed = dict(origins)
+    if wrong_origin:
+        observed["gpu_module_file"] = "/cpu-control/foreign.py"
+    for name in ("manager", "fixture"):
+        contract["launches"]["local"]["cell"][name] = {
+            "argv": [sys.executable, "-u", "-c", program, name, json.dumps(observed)],
+            "environment": environment,
+            "kind": "service",
+            "runtime": {
+                "executable": str(Path(sys.executable).resolve()),
+                "required_mapped_files": [str(Path(sys.executable).resolve())],
+                "observer_enabled": False,
+            },
+        }
+    owner = HostOwner(contract, "local", tmp_path)
+    try:
+        for name in ("manager", "fixture"):
+            planned = contract["launches"]["local"]["cell"][name]
+            owner.launch(
+                {
+                    "cell": "cell",
+                    "name": name,
+                    "argv": planned["argv"],
+                    "environment": planned["environment"],
+                }
+            )
+        deadline = time.monotonic() + 5
+        while any(
+            not owner.process_status({"name": name})["listen_ports"] for name in owner.children
+        ):
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        checks, guard = owner.runtime_checks()
+        for item in owner.children.values():
+            captured = checks["capture_process_runtime"](
+                item["process"].pid, item["start_ticks"], time.monotonic() + 10
+            )
+            guard["input_sha256"].update(
+                {row["realpath"]: row["sha256"] for row in captured["files"]}
+            )
+        guard_path.write_text(json.dumps(guard))
+        contract["runtime_hashes"]["local"][str(guard_path)] = hashlib.sha256(
+            guard_path.read_bytes()
+        ).hexdigest()
+        path = tmp_path / "cell-runtime-admission.json"
+        if wrong_origin:
+            with pytest.raises(RuntimeError, match="Python importer"):
+                owner.admit_runtime({"cell": "cell"})
+            assert not path.exists()
+        else:
+            receipt = owner.admit_runtime({"cell": "cell"})
+            assert receipt["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+            assert set(receipt["owners"]) == {"manager", "fixture"}
+            assert not receipt["physical_termination_claimed"]
+    finally:
+        for name in list(owner.children):
+            owner.stop({"name": name, "idle_proven": True})
 
 
 @pytest.mark.parametrize("cleanup_failure", [False, True])

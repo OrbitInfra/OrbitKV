@@ -10,6 +10,7 @@ import json
 import os
 import queue
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -91,8 +92,55 @@ class HostOwner:
         self.uncertain = False
         self.work_admitted = False
 
+    def runtime_checks(self) -> tuple[dict, dict]:
+        declaration = self.contract["runtime_inputs"][self.host]
+        contents = {}
+        for name in ("helper", "guard"):
+            path = Path(declaration[name])
+            if not path.is_absolute():
+                raise RuntimeError("Runtime checks require absolute frozen inputs")
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as source:
+                if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                    raise RuntimeError("Runtime checks require regular files")
+                content = source.read(1024 * 1024 + 1)
+            if (
+                len(content) > 1024 * 1024
+                or hashlib.sha256(content).hexdigest()
+                != self.contract["runtime_hashes"][self.host][str(path)]
+            ):
+                raise RuntimeError(f"Frozen runtime check changed: {path}")
+            contents[name] = content
+        checks = {"__name__": "_orbitkv_rdma_runtime", "__file__": declaration["helper"]}
+        exec(compile(contents["helper"], declaration["helper"], "exec"), checks)
+        return checks, json.loads(contents["guard"])
+
+    def validate_runtime(self, deadline: float | None = None) -> dict:
+        if deadline is None:
+            deadline = time.monotonic() + 60
+        checks, guard = self.runtime_checks()
+        if [row["path"] for row in guard["locks"]] != self.contract["resource_locks"]:
+            raise RuntimeError("Runtime guard and owner resource leases differ")
+        checks["check_inputs"](
+            guard,
+            locks=[lease.fileno() for lease in self.leases],
+            deadline=deadline,
+        )
+        domains = guard["channel_domains"]
+        if not isinstance(domains, list) or len(domains) > 128:
+            raise RuntimeError("Private channel domain inventory exceeds its bound")
+        cells = {cell["id"] for cell in self.contract.get("cells", []) if cell["kind"] == "manager"}
+        if len(domains) != len(cells) or {domain["cell"] for domain in domains} != cells:
+            raise RuntimeError("Private channel domains differ from the frozen Manager cells")
+        for domain in domains:
+            checks["check_runtime_domain"](domain, deadline)
+        return guard
+
     def acquire(self) -> None:
-        if snapshot()["boot_id"] != self.contract["hosts"][self.host]["boot_id"]:
+        if (
+            Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+            != self.contract["hosts"][self.host]["boot_id"]
+        ):
             raise RuntimeError("Host boot changed")
         for name in self.contract["resource_locks"]:
             path = Path(name)
@@ -102,6 +150,7 @@ class HostOwner:
             handle = path.open("a")
             self.leases.append(handle)
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.validate_runtime()
         before = snapshot()
         expected_uuids = self.contract["hosts"][self.host]["gpu_uuids"]
         actual_uuids = {
@@ -156,6 +205,7 @@ class HostOwner:
             raise ValueError("Only the exact frozen command may launch")
         if message.get("environment", {}) != planned["environment"]:
             raise ValueError("Frozen child environment differs")
+        guard = self.validate_runtime()
         for path, expected in self.contract["file_stamps"][self.host].items():
             info = Path(path).stat()
             if [
@@ -169,22 +219,17 @@ class HostOwner:
         label = cell + "-" + name
         stdout = (self.output / (label + ".stdout.log")).open("x")
         stderr = (self.output / (label + ".stderr.log")).open("x")
-        environment = os.environ.copy()
-        for key in list(environment):
+        environment = dict(planned["environment"])
+        if "MC_FORCE_TCP" in environment:
+            raise RuntimeError("RDMA requires MC_FORCE_TCP to be absent")
+        if planned["kind"] in ("manager", "fixture"):
+            domains = [domain for domain in guard["channel_domains"] if domain["cell"] == cell]
             if (
-                key.startswith(("ORBITKV_", "MC_", "TENT_"))
-                or key
-                in (
-                    "PYTHONPATH",
-                    "PYTHONHOME",
-                    "PYTHONOPTIMIZE",
-                    "LD_PRELOAD",
-                    "CUDA_VISIBLE_DEVICES",
-                )
-                or key.lower() in ("http_proxy", "https_proxy", "all_proxy")
+                len(domains) != 1
+                or environment.get("ORBITKV_CHANNEL_CONFIG") != domains[0]["config_path"]
+                or domains[0]["config_path"] not in guard["input_sha256"]
             ):
-                environment.pop(key, None)
-        environment.update(planned["environment"])
+                raise RuntimeError("Child channel configuration differs from its frozen domain")
         argv = list(planned["argv"])
         if planned["kind"] == "gpu":
             for lease in self.leases:
@@ -336,6 +381,86 @@ class HostOwner:
             result["listen_ports"] = []
         return result
 
+    def admit_runtime(self, message: dict) -> dict:
+        if self.uncertain:
+            raise RuntimeError("Unknown ownership blocks runtime admission")
+        deadline = time.monotonic() + 60
+        cell = message["cell"]
+        self.validate_runtime(deadline)
+        checks, guard = self.runtime_checks()
+        frozen = {
+            str(Path(path).resolve(strict=True)): sha for path, sha in guard["input_sha256"].items()
+        }
+        for declaration in guard["runtime_manifests"]:
+            raw = checks["read_bytes"](
+                Path(declaration["path"]), checks["MAX_RUNTIME_MANIFEST_BYTES"], deadline
+            )
+            if hashlib.sha256(raw).hexdigest() != declaration["sha256"]:
+                raise RuntimeError("Runtime mapping manifest changed")
+            for row in json.loads(raw)["files"]:
+                if row["realpath"] in frozen and frozen[row["realpath"]] != row["sha256"]:
+                    raise RuntimeError("Conflicting frozen runtime mapping")
+                frozen[row["realpath"]] = row["sha256"]
+        result = {"cell": cell, "host": self.host, "processes": {}}
+        for name in ("manager", "fixture"):
+            item = self.children[name]
+            process = item["process"]
+            if item["cell"] != cell or process.poll() is not None:
+                raise RuntimeError("Runtime admission requires this cell's live owners")
+            planned = self.contract["launches"][self.host][cell][name]
+            expected = planned["runtime"]
+            if Path(f"/proc/{process.pid}/exe").resolve(strict=True) != Path(
+                expected["executable"]
+            ):
+                raise RuntimeError("Actual child executable differs from the frozen program")
+            environment = dict(planned["environment"])
+            observer = self.contract["observer_library"][self.host]
+            if type(expected["observer_enabled"]) is not bool:
+                raise RuntimeError("Observer mode must be explicit")
+            if expected["observer_enabled"]:
+                environment.update(LD_PRELOAD=observer, TENT_NATIVE_TRACE_PID=str(process.pid))
+            raw_environment = checks["read_bytes"](
+                Path(f"/proc/{process.pid}/environ"), 1024 * 1024, deadline
+            )
+            entries = [
+                entry.decode().split("=", 1) for entry in raw_environment.split(b"\0") if entry
+            ]
+            if len(dict(entries)) != len(entries) or dict(entries) != environment:
+                raise RuntimeError("Actual child environment differs from the frozen inputs")
+            record = checks["capture_process_runtime"](process.pid, item["start_ticks"], deadline)
+            paths = {row["path"] for row in record["files"]}
+            if not set(expected["required_mapped_files"]) <= paths:
+                raise RuntimeError("Actual child lacks its required frozen mappings")
+            if (observer in paths) is not expected["observer_enabled"]:
+                raise RuntimeError("Actual observer mapping differs from its frozen mode")
+            for row in record["files"]:
+                if frozen.get(row["realpath"]) != row["sha256"]:
+                    raise RuntimeError(f"Actual runtime mapping is not frozen: {row['path']}")
+            result["processes"][name] = record
+        manager = self.children["manager"]["process"]
+        text = ""
+        for stream in ("stdout", "stderr"):
+            path = self.output / f"{cell}-manager.{stream}.log"
+            text += checks["read_bytes"](path, checks["MAX_LOG_BYTES"], deadline).decode()
+        checks["validate_python_origin"](
+            text, self.contract["python_origins"][self.host], manager.pid, deadline
+        )
+        if any(item["process"].poll() is not None for item in self.children.values()):
+            raise RuntimeError("Owned child exited during runtime admission")
+        path = self.output / f"{cell}-runtime-admission.json"
+        checks["write"](path, result, deadline)
+        return self.event(
+            {
+                "event": "runtime-admitted",
+                "host": self.host,
+                "cell": cell,
+                "path": str(path),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "owners": {name: record["owner"] for name, record in result["processes"].items()},
+                "physical_termination_claimed": False,
+            }
+        )
+
     def stop(self, message: dict) -> dict:
         name = message["name"]
         item = self.children[name]
@@ -383,7 +508,8 @@ class HostOwner:
     def finish(self) -> dict:
         if self.children or self.uncertain:
             raise RuntimeError("Unknown/live ownership blocks lease release")
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + 60
+        quiet_until = time.monotonic() + 30
         adopted = []
         while True:
             while True:
@@ -408,9 +534,14 @@ class HostOwner:
             ]
             after["remaining_sockets"] = sockets
             if gpu_quiet(after) and not remaining and not sockets:
+                try:
+                    self.validate_runtime(deadline)
+                except Exception as error:
+                    self.quarantine(f"Cannot validate final runtime inputs: {error}")
+                    raise
                 write(self.output / "AFTER.json", after)
                 return after
-            if time.monotonic() >= deadline:
+            if time.monotonic() >= quiet_until:
                 self.quarantine("GPU allocations outlive declared child termination")
                 raise RuntimeError("GPU not drained")
             time.sleep(0.2)
@@ -447,6 +578,14 @@ def main() -> None:
         if hashlib.sha256(content).hexdigest() != digest:
             raise RuntimeError(f"Frozen input changed: {name}")
     contract = json.loads(contract_bytes)
+    resources = contract["resource_locks"]
+    if (
+        not isinstance(resources, list)
+        or not 1 <= len(resources) <= 64
+        or any(not isinstance(path, str) or not Path(path).is_absolute() for path in resources)
+        or len(set(resources)) != len(resources)
+    ):
+        raise RuntimeError("RDMA requires a bounded nonempty inventory of resource leases")
     for path, digest in contract["runtime_hashes"][args.host].items():
         if hashlib.sha256(Path(path).read_bytes()).hexdigest() != digest:
             raise RuntimeError(f"Frozen runtime changed: {path}")
@@ -483,6 +622,8 @@ def main() -> None:
                     result = snapshot()
                 elif operation == "process-status":
                     result = owner.process_status(request)
+                elif operation == "admit-runtime":
+                    result = owner.admit_runtime(request)
                 elif operation == "finish":
                     result = owner.finish()
                     finished = True
