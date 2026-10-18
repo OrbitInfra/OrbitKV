@@ -105,7 +105,7 @@ and Publish deadlines never authorize early page reuse.
 Use Qwen3-8B with fixed capacities, prompt sequence, concurrency and tracing:
 
 ```bash
-.venv/vllm-release/bin/python -m benches.single_node \
+.venv/vllm-release/bin/python -m benches.serving.single_node \
   --engine vllm --backend orbitkv --model /workspace/models/qwen3-8b \
   --workload sustained --lengths 1024 4096 --concurrencies 1 4 8 \
   --host-gib 4 --ssd-gib 16 --query-budget-gib 3 \
@@ -125,7 +125,7 @@ hit as evidence of causal latency savings. Default activation requires repeated
 paired measurements, including order reversal, with bounded cleanup and no
 material read amplification.
 
-For current launches, use [the maintained preparation script](../benches/reproduce_preparation.sh)
+For current launches, use [the maintained preparation script](../benches/serving/reproduce_preparation.sh)
 with an explicit external output root.
 
 ## Measured results

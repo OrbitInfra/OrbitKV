@@ -897,7 +897,7 @@ Use the explicit benchmark with a matching frozen package and test support on
 `ORBITKV_MOONCAKE_LIB_DIR`:
 
 ```bash
-python -m benches.metadata --profile 2 --output /var/tmp/orbitkv-evidence/s2-7-2ms-1
+python -m benches.cluster.metadata --profile 2 --output /var/tmp/orbitkv-evidence/s2-7-2ms-1
 ```
 
 The profiles are `legacy` (the frozen S2.6 binary), `0`, `2` and `5`. Each uses

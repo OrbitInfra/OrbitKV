@@ -423,10 +423,17 @@ Manager registry drain. The adapters retain task/page completion state until a
 matched receipt and reject reset/unregister after an unknown wait response.
 This candidate has no page-slot or physical-fault reclamation qualification;
 request metadata and tensor/allocation bytes have separate owners and bounds.
-Independent `6ab9b6e3` accepts code/CPU pending ownership and candidate package
-loading only. The native pending cap excludes Python queues, retained adapter
-tasks and user-held completed handles. Real installed GPU/model fault gates,
-page generations and physical termination remain separate requirements.
+The accepted `d49f6deb` correction exposes `SaveNotSubmittedError` only for an
+explicit rejection before native worker launch. It proves nothing about older
+Saves; unknown allocation, attachment and wait outcomes still retain pages.
+SGLang also keeps already queued tasks behind an unknown offload from advancing
+its completion FIFO. Code/CPU and package review, installed normal DRAM/io_uring
+byte gates, both official-release model gates and same-host TCP shared-cache
+restart gates pass for the frozen `cb19ce82` wheel. See the
+[qualification scope](completion-plan.md#s5--released-engine-integration-and-upstream-contributions).
+The native pending cap excludes Python queues, retained adapter tasks and
+user-held completed handles. Unknown-owner reconciliation, GPU/model fault
+gates, page generations and physical termination remain separate requirements.
 This Publish partitioning does not yet partition oversized raw Restore plans.
 
 Rust `CacheClient`, exposed directly by PyO3 as `CacheManagerClient`, owns query

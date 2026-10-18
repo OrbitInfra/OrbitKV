@@ -165,7 +165,7 @@ location.
 
 ## Byte-exact GPU recovery
 
-Use `benches.shared_cache_bytes` before model comparisons on different GPU
+Use `benches.distributed.shared_cache_bytes` before model comparisons on different GPU
 architectures. It checks four split-K/V layers, source pages spaced by one gap,
 permuted destination pages and untouched sentinel bytes. After an 8 MiB remote
 Restore, the driver evicts the original source's DRAM and requires the received
@@ -181,12 +181,12 @@ The workers expose only fixed test operations; use the trusted test network:
 
 ```bash
 # Host A; on host B use 10.0.0.2 and --instance byte-target.
-python -m benches.shared_cache_bytes worker \
+python -m benches.distributed.shared_cache_bytes worker \
   --host 10.0.0.1 --port 8002 --manager-socket /tmp/orbitkv-50055.sock \
   --instance byte-source --namespace byte-qualification
 
 # Controller; leave both workers running during this command.
-python -m benches.shared_cache_bytes run \
+python -m benches.distributed.shared_cache_bytes run \
   --source-url http://10.0.0.1:8002 --target-url http://10.0.0.2:8002 \
   --source-manager http://10.0.0.1:9091 --target-manager http://10.0.0.2:9091 \
   --output /var/tmp/orbitkv-bench/gpu-byte-roundtrip.json
@@ -203,7 +203,7 @@ several prompt lengths. Each prompt is first computed by the source, then sent
 to a consumer that has never seen it.
 
 ```bash
-python -m benches.shared_cache \
+python -m benches.distributed.shared_cache \
   --engine vllm --model /path/to/immutable-model \
   --source-url http://10.0.0.1:8000 --target-url http://10.0.0.2:8000 \
   --source-manager http://10.0.0.1:9091 --target-manager http://10.0.0.2:9091 \
@@ -310,10 +310,18 @@ ORBITKV_CACHE_MANAGER_BINARY=/path/to/orbitkv-cache-manager \
   tests/e2e/test_shared_cache.py -k vllm --model /workspace/models/qwen3-8b
 ```
 
-Repeat with `.venv/sglang-release/bin/python` and `-k sglang`. Build the Manager
-before starting these processes. Native builds restage Mooncake libraries.
-Raw logs belong in external artifact directories or CI artifacts; retain only
-the final summary and reproduction commands in a PR.
+Repeat with `../.venv/sglang-release/bin/python` and `-k sglang`. The fixture uses
+the installed OrbitKV wheel and explicit eager mode. It resolves input paths
+before starting child processes in a private temporary directory. Its common vLLM launcher
+sets the official `--shutdown-timeout 30`; the consumed shutdown validator
+requires native drain/teardown messages and rejects abort or force-kill logs.
+Service-leader exit zero alone cannot pass this check. Preserve SGLang's native
+child exit statuses and CUDA IPC warnings separately; healthy output and final
+GPU zero do not establish physical lifetime or fault reclamation.
+
+Build the Manager before starting these processes. Native builds restage
+Mooncake libraries. Raw logs belong in external artifact directories or CI
+artifacts; retain only the final summary and reproduction commands in a PR.
 
 Rust tests separately verify stale owner/residency rejection, source budget
 exhaustion, retained source allocations after timeout, cancellation during a
@@ -336,7 +344,7 @@ The production wheel and native libraries are frozen separately from the test
 harness. Payload timing always runs through the actual Rust Manager.
 
 ```bash
-python -m benches.shared_cache_profile \
+python -m benches.distributed.shared_cache_profile \
   --source-url http://source-worker:9100 \
   --target-url http://consumer-worker:9100 \
   --source-manager http://source-manager:9091 \
@@ -372,7 +380,7 @@ logs, hashes, workload order and failure/cleanup evidence stay outside Git.
 
 ## Official-engine cross-host serving restores
 
-Use [the serving restore driver](../benches/README.md#first-and-repeated-cross-host-serving-restores)
+Use [the serving restore driver](../benches/distributed/README.md#first-and-repeated-cross-host-serving-restores)
 for two dedicated official-engine replicas, each connected to its local
 Manager. Freeze matching checkpoint assets, dtype, page layout and computation
 identity. The topology controller records the installed wheel, engine and native

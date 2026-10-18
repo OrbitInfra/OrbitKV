@@ -316,6 +316,15 @@ The object retains exporters until the last queued/user reference is dropped.
 These checks bind registration lifetime; same-allocation page-slot reuse and
 physical failure drain still need their own proofs and hardware gates.
 
+The native Save contract distinguishes `SaveNotSubmittedError` from unknown
+handoffs: only that exception from `start_save` proves the current invocation
+launched no native Publish worker. Handle allocation, attachment and wait errors
+retain the page hold. SGLang also preserves its official completion FIFO: once an
+earlier result is unknown, the worker retains later queued tasks without starting
+them or reporting their completion against the earlier engine node. This does
+not reconcile unknown owners or prove physical drain; qualification is tracked
+in the [completion plan](completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership).
+
 See [layer consumption](engine-local-restore.md#layer-readiness-and-framework-consumption)
 for recurrent, packed-buffer and multi-part limits. Repeated registration of the same binding is rejected, and unregister
 or close drains accepted operations. Native calls release the GIL. A timeout

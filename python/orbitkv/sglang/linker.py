@@ -23,6 +23,7 @@ from orbitkv import (
     QueryCandidates,
     QueryReady,
     RecoveryContract,
+    SaveNotSubmittedError,
 )
 from orbitkv.client.gpu import resolve_device_id
 from orbitkv.logging_utils import TRANSFER_TRACING, trace_transfer
@@ -537,7 +538,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
         ready.record()
         try:
             handle = self.client.prepare_save(self.registration, saves)
-            self._offload_queue.put((handle, ready))
+        except SaveNotSubmittedError:
+            return False
         except BaseException:
             self._retained_offloads.append((transfers, None))
             # A returned acceptance keeps the released engine's tree lock.
@@ -545,6 +547,11 @@ class OrbitKVLinker(UnifiedCacheLinker):
             # path, which would release the source page references.
             logger.exception("Save preparation unknown; source tree ownership retained")
             return True
+        try:
+            self._offload_queue.put((handle, ready))
+        except BaseException:
+            self._retained_offloads.append((transfers, handle))
+            logger.exception("Prepared Save queue handoff unknown; source tree ownership retained")
         return True
 
     def _offload_worker(self) -> None:
@@ -563,7 +570,12 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 try:
                     ready.synchronize()
                     attempted = True
-                    self.client.submit_saves([handle])
+                    try:
+                        self.client.submit_saves([handle])
+                    except SaveNotSubmittedError:
+                        attempted = False
+                        completed = True
+                        raise
                     status = self.client.wait_save(handle)
                     if not status.done:
                         raise RuntimeError("native Save wait returned without completion")
@@ -573,7 +585,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
                         logger.error("OrbitKV SGLang GPU offload failed: %s", message)
                 except Exception:
                     logger.exception("OrbitKV SGLang GPU offload failed")
-                    if not attempted:
+                    if not attempted and not completed:
                         try:
                             completed = self.client.cancel_save(handle)
                         except Exception:

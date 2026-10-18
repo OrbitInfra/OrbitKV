@@ -28,6 +28,12 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   queueing and `submit_saves` for Rust batching. Prepared, submitted and
   caller-held completed metadata remain charged; `cancel_save` applies only
   to proven never-submitted requests. Unknown handoffs retain engine pages.
+  `SaveNotSubmittedError` from `start_save` or `prepare_save` proves explicit
+  native rejection before launch. From `submit_saves` it proves every handle in
+  that batch was never submitted and has been rolled back; duplicate, foreign
+  or mixed submitted handles cannot receive that proof. Argument conversion, Python handle
+  allocation, panic, attachment and wait failures stay unknown. Preserve the
+  original cause and do not infer completion from handle absence.
 - Engine callback changes: use `.agents/skills/engine-integration/SKILL.md` and
   `docs/adapters.md`; release targets and current qualification are distinct.
 - Model/layout identity and hybrid recovery are shared contracts. Do not equate

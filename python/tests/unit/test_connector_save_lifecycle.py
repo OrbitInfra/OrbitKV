@@ -14,6 +14,7 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (  # noqa: E402
     KVConnectorTransferResults,
 )
 
+from orbitkv import SaveNotSubmittedError  # noqa: E402
 from orbitkv.vllm.config import ConnectorContext  # noqa: E402
 from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, SaveIntent  # noqa: E402
 from orbitkv.vllm.worker import WorkerAdapter  # noqa: E402
@@ -138,7 +139,45 @@ def test_preparation_uncertainty_closes_source_admission_without_completing_page
         enqueue_save(worker)
 
 
-@pytest.mark.parametrize("failure", ["pending", "exception", "start"])
+@pytest.mark.parametrize("where", ["attachment", "queue"])
+def test_typed_error_outside_prepare_retains_the_producer_owner(where):
+    worker = make_worker()
+    task = worker._make_save_task(
+        {"r": SaveIntent(block_ids_by_group=((1,),), block_hashes=(b"h",))}, MagicMock()
+    )
+    if where == "attachment":
+
+        class RejectAttachment(type(task)):
+            def __setattr__(self, name, value):
+                if name == "native_handle":
+                    raise SaveNotSubmittedError("not from native prepare")
+                super().__setattr__(name, value)
+
+        task.__class__ = RejectAttachment
+    else:
+        worker._save_queue.put = MagicMock(side_effect=SaveNotSubmittedError("queue handoff"))
+    with pytest.raises(SaveNotSubmittedError):
+        worker._enqueue_save(task)
+    assert worker._retained_save_tasks == [task]
+    assert not worker._save_completion_events["r"].is_set()
+
+
+def test_unknown_request_preparation_also_preserves_boundary_jobs():
+    worker = make_worker()
+    worker._cache_groups = SimpleNamespace(group_count=2)
+    worker._client.prepare_save.side_effect = MemoryError("unknown preparation")
+    worker._current_metadata = OrbitKVConnectorMetadata(
+        save_intents={"r": SaveIntent(block_ids_by_group=((1,),), block_hashes=(b"h",))},
+        boundary_save_intents={7: SaveIntent(block_ids_by_group=((2,),), block_hashes=(b"b",))},
+    )
+    with pytest.raises(MemoryError):
+        worker.wait_for_save()
+    assert len(worker._retained_save_tasks) == 2
+    assert worker._retained_save_tasks[1].boundary_job_ids == [7]
+    assert not worker._completed_boundary_jobs
+
+
+@pytest.mark.parametrize("failure", ["pending", "exception", "start", "typed-wait"])
 def test_native_save_wait_failure_keeps_engine_pages_and_registration(failure):
     worker = make_worker()
     worker._registered_layers = ["layer"]
@@ -153,6 +192,8 @@ def test_native_save_wait_failure_keeps_engine_pages_and_registration(failure):
         worker._client.wait_save.side_effect = RuntimeError("wait failed")
     if failure == "start":
         worker._client.start_save.side_effect = MemoryError("unknown handoff")
+    if failure == "typed-wait":
+        worker._client.wait_save.side_effect = SaveNotSubmittedError("outside start")
     with pytest.raises(RuntimeError, match="engine pages remain held"):
         process_next_save(worker)
     assert not completion.is_set()
@@ -162,6 +203,25 @@ def test_native_save_wait_failure_keeps_engine_pages_and_registration(failure):
         assert worker._retained_save_tasks[0].native_handle is not None
     with pytest.raises(RuntimeError, match="pages remain held"):
         worker.unregister_context()
+
+
+def test_native_save_rejection_completes_only_the_unsubmitted_batch():
+    worker = make_worker()
+    worker._registered_layers = ["layer"]
+    completion = enqueue_save(worker)
+    worker._client.start_save.side_effect = SaveNotSubmittedError("Save admission is full")
+
+    process_next_save(worker)
+
+    assert completion.is_set()
+    assert worker.get_transfer_results({"request"}).finished_sending == {"request"}
+    assert worker._retained_save_tasks == []
+    worker._client.wait_save.assert_not_called()
+
+    worker._client.start_save.side_effect = None
+    next_completion = enqueue_save(worker)
+    process_next_save(worker)
+    assert next_completion.is_set()
 
 
 def test_save_waits_for_each_producer_before_publishing():
@@ -405,7 +465,7 @@ def test_save_worker_survives_a_failing_batch():
         completion = enqueue_save(worker)
     worker._save_queue.put(None)
 
-    with patch.object(worker._client, "save") as save:
+    with patch.object(worker._client, "start_save") as save:
         worker._save_worker()
         save.assert_not_called()
 

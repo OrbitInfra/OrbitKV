@@ -23,7 +23,7 @@ use pyo3::{
 };
 
 use crate::local_restore::{LocalCompletions, LocalRestore, LocalRestoreWorker};
-use crate::{OrbitKVError, OrbitKVInternal, query_response};
+use crate::{OrbitKVError, OrbitKVInternal, SaveNotSubmittedError, query_response};
 
 type PyLeaseLoad = (Vec<u8>, Vec<Vec<Option<u32>>>);
 
@@ -1381,7 +1381,14 @@ impl PyCacheManagerClient {
         registration: &PyGpuRegistration,
         saves: Vec<(String, Vec<u32>, Vec<Vec<u8>>)>,
     ) -> PyResult<Py<PySaveHandle>> {
-        let worker = py.detach(|| self.registered_worker(registration))?;
+        let not_submitted = |error: PyErr| {
+            let rejected = SaveNotSubmittedError::new_err(error.to_string());
+            rejected.set_cause(py, Some(error));
+            rejected
+        };
+        let worker = py
+            .detach(|| self.registered_worker(registration))
+            .map_err(not_submitted)?;
         let request = publish_request(
             registration.instance_id.clone(),
             registration.tp_rank,
@@ -1390,9 +1397,12 @@ impl PyCacheManagerClient {
             registration.generation,
             saves,
         );
-        let bytes = save_request_bytes(&request)?
+        let bytes = save_request_bytes(&request)
+            .map_err(not_submitted)?
             .checked_mul(4)
-            .ok_or_else(|| PyValueError::new_err("prepared Save metadata overflow"))?;
+            .ok_or_else(|| {
+                not_submitted(PyValueError::new_err("prepared Save metadata overflow"))
+            })?;
         let pending = Arc::new(PendingSave {
             instance: registration.instance_id.clone(),
             bytes,
@@ -1408,7 +1418,11 @@ impl PyCacheManagerClient {
         let operation_id = self
             .next_save
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |id| id.checked_add(1))
-            .map_err(|_| OrbitKVInternal::new_err("Save operation identity exhausted"))?;
+            .map_err(|_| {
+                not_submitted(OrbitKVInternal::new_err(
+                    "Save operation identity exhausted",
+                ))
+            })?;
         // Allocate the Python handoff before any native submission. The returned
         // Py object needs no fallible object allocation after spawning work.
         let handle = Py::new(
@@ -1419,7 +1433,7 @@ impl PyCacheManagerClient {
                 pending: Arc::clone(&pending),
             },
         )?;
-        py.detach(|| {
+        let admission = py.detach(|| {
             let local = self
                 .local
                 .lock()
@@ -1466,7 +1480,8 @@ impl PyCacheManagerClient {
             drop(owned);
             drop(local);
             Ok(())
-        })?;
+        });
+        admission.map_err(not_submitted)?;
         Ok(handle)
     }
 
@@ -1492,6 +1507,11 @@ impl PyCacheManagerClient {
     }
 
     fn submit_saves(&self, py: Python<'_>, handles: Vec<Py<PySaveHandle>>) -> PyResult<()> {
+        let not_submitted = |error: PyErr| {
+            let rejected = SaveNotSubmittedError::new_err(error.to_string());
+            rejected.set_cause(py, Some(error));
+            rejected
+        };
         if handles.is_empty() || handles.len() > MAX_PENDING_SAVES {
             return Err(PyValueError::new_err("invalid prepared Save batch size"));
         }
@@ -1505,7 +1525,8 @@ impl PyCacheManagerClient {
             }
             pending.push(Arc::clone(&handle.pending));
         }
-        py.detach(|| {
+        let mut batch_rolled_back = false;
+        let submission = py.detach(|| {
             let _owned = self
                 .saves
                 .lock()
@@ -1518,14 +1539,28 @@ impl PyCacheManagerClient {
                 .as_ref()
                 .ok_or_else(|| PyValueError::new_err("Save already submitted or canceled"))?;
             for saved in &locked {
-                let saved = saved
+                saved
                     .as_ref()
                     .ok_or_else(|| PyValueError::new_err("Save already submitted or canceled"))?;
-                if !Arc::ptr_eq(&saved.worker, &first.worker) {
-                    return Err(PyValueError::new_err(
-                        "Save batch spans different GPU registrations",
+            }
+            if locked.iter().any(|saved| {
+                saved.as_ref().is_some_and(|saved| {
+                    !Arc::ptr_eq(&saved.worker, &first.worker)
+                        || saved.request.pp_rank != first.request.pp_rank
+                })
+            }) {
+                for saved in &mut locked {
+                    drop(saved.take());
+                }
+                for save in &pending {
+                    save.complete(Err(
+                        "Prepared Save registration mismatch; never submitted".into()
                     ));
                 }
+                batch_rolled_back = true;
+                return Err(PyValueError::new_err(
+                    "Save batch spans different GPU registrations",
+                ));
             }
             let first_request = &first.request;
             let mut request = PublishRequest {
@@ -1595,9 +1630,17 @@ impl PyCacheManagerClient {
                 for save in &pending {
                     save.complete(Err(error.to_string()));
                 }
+                batch_rolled_back = true;
                 return Err(OrbitKVInternal::new_err(error.to_string()));
             }
             Ok(())
+        });
+        submission.map_err(|error| {
+            if batch_rolled_back {
+                not_submitted(error)
+            } else {
+                error
+            }
         })
     }
 

@@ -93,7 +93,7 @@ After independently verifying normal Manager exit and owned-process cleanup,
 parse its finalized log into a new external artifact:
 
 ```bash
-python -m benches.raw_copy_shapes \
+python -m benches.transfer.raw_copy_shapes \
   --manager-log /var/tmp/orbitkv-kda/model-001/manager.log \
   --output /var/tmp/orbitkv-kda/model-001/raw-copy-shapes.json
 ```
@@ -126,7 +126,7 @@ actual addresses or pitch.
 
 ## Allocation-aware native comparison
 
-`benches/native_copy_layout.rs` compares the production copy backends with 64
+`benches/transfer/native/native_copy_layout.rs` compares the production copy backends with 64
 separate retained device allocations and either one mapped host registration or
 one per block. Eight layouts match the observed 64 KiB descriptor/range-count
 pairs; a ninth tests host-registration boundaries. Explicit page permutations,
@@ -281,7 +281,7 @@ After an independently reviewed installed model gate and normal shutdown, parse
 the retained engine log into a new external output:
 
 ```bash
-python -m benches.local_restore_shapes \
+python -m benches.transfer.local_restore_shapes \
   --engine-log /var/tmp/orbitkv-kda/h2d-001/engine.log \
   --native-fixture /var/tmp/orbitkv-kda/frozen/native-copy-layout \
   --output /var/tmp/orbitkv-kda/h2d-001/local-h2d.json
@@ -460,7 +460,7 @@ host reader batching is a Rust submission optimization, described in
 
 ## Native driver submission diagnosis
 
-`benches/cuda_driver_trace.cpp` is a benchmark-only CUPTI DRIVER_API collector.
+`benches/transfer/native/cuda_driver_trace.cpp` is a benchmark-only CUPTI DRIVER_API collector.
 It retains at most 262,144 fixed records, formats them after the single-process
 fixture returns, and never changes CUDA arguments, return values or memory owners.
 Incomplete pairs, overflow and output failures invalidate capture. It does not
@@ -477,7 +477,7 @@ dependencies together with the fixture before an independently reviewed launch:
 
 ```bash
 g++ -O2 -std=c++17 -Wall -Wextra -Werror -fPIC -shared \
-  -I/path/to/cuda/include benches/cuda_driver_trace.cpp \
+  -I/path/to/cuda/include benches/transfer/native/cuda_driver_trace.cpp \
   -L/path/to/cuda/lib -lcupti -o /external/diagnosis/cuda_driver_trace.so
 cargo build --release -p orbitkv-core --bench native_copy_layout \
   --no-default-features --features cuda-13
@@ -486,19 +486,19 @@ LD_PRELOAD=/external/diagnosis/cuda_driver_trace.so \
 ORBITKV_CUDA_DRIVER_TRACE_DIR=/external/diagnosis/trace \
   /path/to/native_copy_layout --case d192-r64 --samples 4 \
   --output /external/diagnosis/fixture.jsonl
-python -m benches.cuda_submission \
+python -m benches.transfer.cuda_submission \
   --trace /external/diagnosis/trace/cuda-driver-PID.jsonl \
   --fixture /external/diagnosis/fixture.jsonl
 ```
 
 Use the actual fixture PID in the trace filename and resolve the target's CUPTI
 SONAME through its frozen loader environment. CPU callback/output controls live
-in `benches/tests/cuda_driver_trace_writer.cpp`; compile with the same include
+in `benches/tests/transfer/cuda_driver_trace_writer.cpp`; compile with the same include
 directory, without `-lcupti`, and run `valid`, `unpaired`, `overflow`, `duplicate`
 and the `orphan-exit`, `natural-duplicate`, `sealed-pair` controls in separate new
 trace directories. Only `valid` and the rejected post-seal pair must exit zero;
 every incomplete/duplicate/overflow capture must fail. Analyzer units
-run with `pytest benches/tests/test_cuda_submission.py`.
+run with `pytest benches/tests/transfer/test_cuda_submission.py`.
 
 The analyzer requires one complete matching process, thread and directional
 fixture, checks copy/launch counts against the compiled geometry, and reports
@@ -533,7 +533,7 @@ After an independently reviewed capture, join one process's driver trace to its
 actual engine batches through the existing production geometry validator:
 
 ```bash
-python -m benches.cuda_submission \
+python -m benches.transfer.cuda_submission \
   --trace /external/capture/cuda-driver-PID.jsonl \
   --engine-log /external/capture/engine.log \
   --native-fixture /path/to/native_copy_layout
@@ -591,11 +591,11 @@ explicit unregistration/close plus normal component and Manager waits. Keep
 every slow sample and failed cell.
 
 ```bash
-python -m benches.sglang_kv_oracle --model-config /path/to/frozen-config.json \
+python -m benches.transfer.sglang_kv_oracle --model-config /path/to/frozen-config.json \
   --length 4096 --backend direct --warmup 1 --samples 2 \
   --manager-socket /path/to/owned.sock --manager-url http://127.0.0.1:20642 \
   --gpu-uuid GPU-full-physical-uuid --output /external/pilot/cell/bytes
-python -m benches.copy_observation --contract /external/pilot/contract.json \
+python -m benches.transfer.copy_observation --contract /external/pilot/contract.json \
   --directory /external/pilot/cells --native-fixture /path/to/frozen-validator
 ```
 
@@ -644,7 +644,7 @@ symlink trace directory, and preinitialized engine/native modules.
 mkdir /external/new-pilot/cell/driver
 ORBITKV_CUDA_DRIVER_TRACE_DIR=/external/new-pilot/cell/driver \
 ORBITKV_TRACE_TRANSFERS=1 ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT=65536 \
-python -m benches.sglang_kv_oracle --model-config /path/to/frozen-config.json \
+python -m benches.transfer.sglang_kv_oracle --model-config /path/to/frozen-config.json \
   --length 4096 --backend direct --warmup 1 --samples 2 \
   --driver-collector /external/frozen/cuda-driver-trace.so \
   --manager-socket /path/to/owned.sock --manager-url http://127.0.0.1:20642 \
@@ -694,7 +694,7 @@ publication boundary. The completed component cohort below fails the unchanged
 observation-overhead guard.
 
 The component contract `s4.copy-observation-components.v1` uses the same
-`benches.copy_observation` analyzer and byte oracle with 16 fresh processes:
+`benches.transfer.copy_observation` analyzer and byte oracle with 16 fresh processes:
 
 | Independent block | First | Second | Third | Fourth |
 | --- | --- | --- | --- | --- |
@@ -801,7 +801,7 @@ transfer/default change. A candidate still needs independent review and the
 unchanged full-byte H20 component cohort and 5% observation guard before
 inference contention or further kernel promotion.
 
-See [CPU reproduction](../benches/README.md#native-trace-cpu-profile) and
+See [CPU reproduction](../benches/transfer/README.md#native-trace-cpu-profile) and
 [PR #248](https://github.com/feichai0017/orbitkv/pull/248). The complete raw
 profile, frozen executable, exact source, input copy and immutable indexes live
 outside the checkout at
@@ -1138,7 +1138,7 @@ enclosing `observed_ns`, synchronous publication/flush, caps, geometry and
 constructor/destructor exclusions remain intact. Labels and result JSON are
 constructed outside the enclosing clock.
 
-The maintained `benches.native_trace_calibration` controller validates full
+The maintained `benches.transfer.native_trace_calibration` controller validates full
 stable geometry, canonical encoded bytes, identities, drain clocks and the
 production layout compiler receipt after every cell. A frozen input index and
 independent launch receipt admit one fixed 16-process cohort: four restarted

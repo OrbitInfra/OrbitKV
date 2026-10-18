@@ -225,7 +225,7 @@ return to zero after completion; retained arenas remain budgeted until unregiste
 These are single-cohort observations on a deliberately constrained KV budget,
 using synthetic token prompts and real inference. They are neither peak H20
 serving throughput nor a comparison against other cache projects. Reproduction:
-[storage codec comparisons](../benches/README.md#storage-codec-comparisons).
+[storage codec comparisons](../benches/storage/README.md#storage-codec-comparisons).
 
 ### Codec choices under SSD pressure
 
@@ -280,7 +280,7 @@ Allocation, PCIe transfer and GPU work are excluded.
 
 AVX-512 improves these large-buffer cases by 6–14% over AVX2. Wider vectors do
 not remove lookup and memory costs. The same run checks and measures 4 KiB and
-256 KiB buffers; see the [CPU benchmark recipe](../benches/README.md#cpu-codec-benchmark).
+256 KiB buffers; see the [CPU benchmark recipe](../benches/storage/README.md#cpu-codec-benchmark).
 Use `--seconds 0.5 --samples 5` to reproduce this sampling configuration.
 
 ### Model-quality probes

@@ -31,6 +31,12 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   Unknown wait responses/exceptions retain task/page completion state and
   prevent reset/unregister. This code is not a page-slot generation or physical
   fault receipt; installed engine/fault acceptance is still required.
+  Consume `SaveNotSubmittedError` only around the current `start_save` call.
+  SGLang bool completions must remain a contiguous submitted-order prefix: once
+  an offload is retained with unknown completion, its worker must retain already
+  queued later tasks without starting them or emitting a completion bool. A
+  producer-side guard does not protect those queued tasks. A later known
+  rejection cannot release an earlier unknown owner.
 - Python translates engine layout, state boundaries, callbacks and CUDA readiness.
   Existing Rust owners manage shared cache policy, transfers, admission and drain.
 - vLLM uses the KV Connector contract; SGLang uses UnifiedRadixCache and the
@@ -126,11 +132,11 @@ Preserve adapter/salt/model identity and effective committed lengths. Record TP,
 PP, attention DP, EP, P/D topology and transport separately; a one-GPU process test
 does not qualify their distributed combination. Keep evidence outside checkout.
 
-For SGLang copy-backend changes, use `benches.sglang_kv_oracle` to check the
+For SGLang copy-backend changes, use `benches.transfer.sglang_kv_oracle` to check the
 actual released pool, full payload/sentinel coverage, partial destinations,
 event generations and deliberate corruption through the installed native path.
 Its deterministic fixture bytes do not dump model-computed KV. Evaluate the
-consumed model separately with `benches.kernel_pairs`: freeze fresh independent
+consumed model separately with `benches.transfer.kernel_pairs`: freeze fresh independent
 process pairs, exact input/output and installed artifacts, real shutdown receipts
 and the original benefit/regression guards. Keep profiler clocks separate.
 The accepted serial profile and its lifetime limits are recorded in S5.5;

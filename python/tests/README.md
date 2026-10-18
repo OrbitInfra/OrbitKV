@@ -119,7 +119,7 @@ set `ORBITKV_SHARED_COMPLETION_TEST_BINARY` to that test executable. Run
 `cargo test -p orbitkv-py --lib --no-default-features --features cuda-13,mooncake,test-hooks
 local_restore::tests -- --include-ignored --nocapture` from the repository root.
 The benchmark/harness migration also runs
-`pytest benches/tests/test_registration_cleanup.py`: CPU weak-reference controls
+`pytest benches/tests/cluster/test_registration_cleanup.py`: CPU weak-reference controls
 execute the actual workload cleanup bodies, require release after normal
 unregister/close, and retain failed cleanup plus independent queued holds.
 The optional `ORBITKV_CLEANUP_SOURCE_ROOT` selects an archived source for the

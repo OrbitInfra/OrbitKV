@@ -19,6 +19,15 @@ class OrbitKVInternal(OrbitKVError):
 
     ...
 
+class SaveNotSubmittedError(OrbitKVError):
+    """This native Save admission/submission invoked no Publish worker.
+
+    A prepare/start proof concerns this call; a submit proof concerns its full
+    rolled-back prepared batch. Older submitted Saves and physical drain remain separate.
+    """
+
+    ...
+
 class MooncakeTransferEngine:
     def __init__(self, *, bind_host: str, nics: list[str] = ...) -> None: ...
     @property
@@ -194,14 +203,21 @@ class CacheManagerClient:
     def start_save(
         self, registration: GpuRegistration, saves: list[tuple[str, list[int], list[bytes]]]
     ) -> SaveHandle:
-        """Admit a native-held Save; dropping its handle does not cancel or release source pages."""
+        """Admit a native-held Save; dropping its handle does not release source pages.
+
+        SaveNotSubmittedError proves this call was rejected before native launch.
+        Other exceptions can leave a native Save active; retain source pages.
+        """
         ...
     def poll_save(self, handle: SaveHandle) -> RestoreStatus: ...
     def prepare_save(self, registration: GpuRegistration, saves: list[tuple[str, list[int], list[bytes]]]) -> SaveHandle:
-        """Own and budget immutable source metadata before an adapter queues it."""
+        """Own source metadata before queueing; explicit native rejection raises SaveNotSubmittedError."""
         ...
     def submit_saves(self, handles: list[SaveHandle]) -> None:
-        """Atomically submit a same-registration batch; every handle owns its final receipt."""
+        """Submit one batch; SaveNotSubmittedError proves all input handles were safely rolled back.
+
+        Duplicate, foreign or mixed submitted handles stay owned and raise ordinary errors.
+        """
         ...
     def cancel_save(self, handle: SaveHandle) -> bool:
         """Cancel only never-submitted prepared work; submitted native work stays held."""

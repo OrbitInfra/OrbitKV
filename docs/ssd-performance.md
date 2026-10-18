@@ -54,7 +54,7 @@ before evicting DRAM. SSD data uses the same ext4/NVMe mount via a separate fres
 Reproduce with a prebuilt installed wheel and a fresh external directory:
 
 ```bash
-/path/to/release/python -m benches.communication \
+/path/to/release/python -m benches.transfer.communication \
   --manager /path/to/installed/orbitkv-cache-manager-py \
   --tier ssd --ssd-cache-path /mnt/nvme/orbitkv-bench/restore-001 \
   --layout split --layers 36 --block-bytes 262144 \
@@ -116,7 +116,7 @@ remain hypotheses until bounded attribution separates them.
 
 The production counter `orbitkv_ssd_uring_read_operations_total` distinguishes
 queued READV SQEs from reader batches and physical device commands.
-`benches.communication` persists existing stage snapshots before/after each
+`benches.transfer.communication` persists existing stage snapshots before/after each
 cohort, outside the measured request loop, and requires positive READV evidence
 for new SSD experiments. It retains SSD prefetch duration alongside equal
 stored/GPU bytes. Full contract, source, wheel hashes, rejection decisions,
@@ -168,11 +168,11 @@ bundle and cohort are required; neither a retry nor a replacement changes the
 stopped campaign. Preserve failures and raw evidence at
 `/root/orbitkv-artifacts/s5-ssd-peer-batch-20261010/`.
 See [S5.5](completion-plan.md#s55--deployment-matrix-and-upstream-maintenance)
-and [the comparison methodology](../benches/README.md#independent-ssd-read-batch-comparisons).
+and [the comparison methodology](../benches/distributed/README.md#independent-ssd-read-batch-comparisons).
 
 ## Shared-Manager mixed-pressure qualification
 
-`benches.shared_manager_pressure` runs installed official vLLM 0.31.0 and
+`benches.serving.shared_manager_pressure` runs installed official vLLM 0.31.0 and
 SGLang 0.5.21 against one Manager. The fixed workload interleaves reused prefixes
 with deterministic fresh prefixes, fixes each engine to 4,096 native GPU tokens
 and caps client admission separately for each engine, compares every output and token count to its own native engine, and
@@ -217,7 +217,7 @@ Reproduce only with a fresh output/data directory and an idle GPU. Record the
 startup outcome before interpreting any latency sample:
 
 ```bash
-/path/to/vllm-release/python -m benches.shared_manager_pressure \
+/path/to/vllm-release/python -m benches.serving.shared_manager_pressure \
   --vllm-python /path/to/vllm-release/python \
   --sglang-python /path/to/sglang-release/python \
   --model /path/to/immutable-model --transfer-backend direct \

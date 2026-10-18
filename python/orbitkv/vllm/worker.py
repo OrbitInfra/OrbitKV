@@ -12,7 +12,7 @@ from typing import Any, Literal
 import torch
 from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorTransferResults
 
-from orbitkv import RestoreHandle
+from orbitkv import RestoreHandle, SaveNotSubmittedError
 from orbitkv.logging_utils import TRANSFER_TRACING, get_connector_logger, trace_transfer
 from orbitkv.vllm.config import ConnectorContext, parse_env_int
 from orbitkv.vllm.layout import CacheGroupLayout
@@ -732,10 +732,11 @@ class WorkerAdapter:
         # handle_preemptions, boundary-state blocks are pinned by the
         # scheduler until the job id comes back in OrbitKVWorkerMetadata. So
         # every save can run asynchronously behind the forward pass.
+        tasks = []
         if metadata.save_intents:
-            self._enqueue_save(self._make_save_task(metadata.save_intents, ready))
+            tasks.append(self._make_save_task(metadata.save_intents, ready))
         if metadata.boundary_save_intents:
-            self._enqueue_save(
+            tasks.append(
                 SaveTask(
                     registration=self._registration,
                     metadata=OrbitKVConnectorMetadata(
@@ -749,6 +750,14 @@ class WorkerAdapter:
                     boundary_job_ids=list(metadata.boundary_save_intents),
                 )
             )
+        for index, task in enumerate(tasks):
+            try:
+                self._enqueue_save(task)
+            except BaseException:
+                for follower in tasks[index + 1 :]:
+                    follower.native_attempted = True
+                    self._retained_save_tasks.append(follower)
+                raise
 
     def build_connector_worker_meta(self) -> OrbitKVWorkerMetadata | None:
         with self._save_completion_lock:
@@ -802,9 +811,20 @@ class WorkerAdapter:
         # Preparation submits no native copy. Unknown handoff still retains
         # completion markers rather than exposing a queued owner's pages.
         task.native_attempted = True
+        task.blocks = sum(len(ids) for _name, ids, _hashes in saves)
         try:
-            task.blocks = sum(len(ids) for _name, ids, _hashes in saves)
-            task.native_handle = self._client.prepare_save(task.registration, saves)
+            handle = self._client.prepare_save(task.registration, saves)
+        except SaveNotSubmittedError:
+            task.native_completed = True
+            self._complete_save_requests(task.request_ids)
+            with self._save_completion_lock:
+                self._completed_boundary_jobs.extend(task.boundary_job_ids)
+            return
+        except BaseException:
+            self._retained_save_tasks.append(task)
+            raise
+        try:
+            task.native_handle = handle
             task.metadata = OrbitKVConnectorMetadata()
             self._save_queue.put(task)
         except BaseException:
@@ -896,7 +916,12 @@ class WorkerAdapter:
                 raise RuntimeError("save batch spans different GPU registrations")
             if self._retained_save_tasks:
                 raise RuntimeError("previous native Save completion remains unknown")
-            self._client.submit_saves([task.native_handle for task in batch])
+            try:
+                self._client.submit_saves([task.native_handle for task in batch])
+            except SaveNotSubmittedError:
+                for task in batch:
+                    task.native_completed = True
+                raise
             ok, message = True, ""
             for task in batch:
                 status = self._client.wait_save(task.native_handle)
