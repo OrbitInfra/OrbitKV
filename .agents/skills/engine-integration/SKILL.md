@@ -99,6 +99,12 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
 
 ## Replace internal coupling safely
 
+The producer-admission candidate reserves native Save handles before adapter
+queues. vLLM keeps completion markers; SGLang returns ownership acceptance on
+unknown preparation so its released wrapper cannot drop tree locks. Rust owns
+batch merge and submission; only never-submitted cancellation may release a
+prepared owner. Preserve the same installed CPU/GPU/engine qualification gates.
+
 Audit every remaining Hook against `docs/engine-release-audit.md`. SGLang 0.5.21
 captures graphs before the tree-cache factory; preserve pre-capture events until
 a safe released callback exists. Its linker lookup lacks pending tickets, so

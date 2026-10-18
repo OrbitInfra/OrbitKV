@@ -38,6 +38,14 @@ cross-host rank coordination, HA or the remaining CUDA IPC lifetime contracts.
 
 ## Ownership contract
 
+The producer-admission candidate calls native `prepare_save` from the producer
+handoff before queueing. Rust holds and budgets immutable source requests,
+batches `submit_saves`, and keeps registration/exporter owners until completion.
+`cancel_save` succeeds only before native submission. An unknown handoff keeps
+engine completion pending; SGLang also preserves its FIFO tree locks. This code
+requires matching package and engine gates and adds no page-generation or
+physical-failure qualification.
+
 | Responsibility | Owner |
 | --- | --- |
 | Request scheduling, batching, model execution, HBM allocation and native prefix cache | Inference engine |

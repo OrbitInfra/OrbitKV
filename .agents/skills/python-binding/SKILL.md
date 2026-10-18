@@ -24,6 +24,10 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   engine-page holds until the actual receipt; close/unregister must serialize
   admission and wait for accepted Saves. The synchronous `save` workload API
   still waits to its established completion and has no new timeout return.
+  The producer-admission candidate additionally uses `prepare_save` before
+  queueing and `submit_saves` for Rust batching. Prepared, submitted and
+  caller-held completed metadata remain charged; `cancel_save` applies only
+  to proven never-submitted requests. Unknown handoffs retain engine pages.
 - Engine callback changes: use `.agents/skills/engine-integration/SKILL.md` and
   `docs/adapters.md`; release targets and current qualification are distinct.
 - Model/layout identity and hybrid recovery are shared contracts. Do not equate

@@ -68,7 +68,29 @@ fn pending_save_retains_after_handle_drop_and_delayed_reply() {
     let client = native_client(Arc::clone(&inner), [37; 16]);
     let registration = registration(&client, [37; 16]);
     let tensors = Arc::downgrade(&registration._tensors);
-    let handle = Python::attach(|py| client.start_save(py, &registration, Vec::new())).unwrap();
+    let usage_before = *SAVE_USAGE.lock().unwrap();
+    let prepared = Python::attach(|py| client.prepare_save(py, &registration, Vec::new())).unwrap();
+    assert_eq!(SAVE_USAGE.lock().unwrap().0, usage_before.0 + 1);
+    assert!(Python::attach(|py| client.cancel_save(py, &prepared.borrow(py))).unwrap());
+    assert!(
+        Python::attach(|py| client.poll_save(py, &prepared.borrow(py)))
+            .unwrap()
+            .done
+    );
+    assert!(Python::attach(|py| client.submit_saves(py, vec![prepared.clone_ref(py)])).is_err());
+    drop(prepared);
+    let first = Python::attach(|py| client.prepare_save(py, &registration, Vec::new())).unwrap();
+    let handle = Python::attach(|py| client.prepare_save(py, &registration, Vec::new())).unwrap();
+    assert!(Python::attach(|py| client.submit_saves(py, vec![first.clone_ref(py), first.clone_ref(py)])).is_err());
+    assert!(
+        !Python::attach(|py| client.poll_save(py, &first.borrow(py)))
+            .unwrap()
+            .done
+    );
+    Python::attach(|py| client.submit_saves(py, vec![first.clone_ref(py), handle.clone_ref(py)]))
+        .unwrap();
+    assert!(!Python::attach(|py| client.cancel_save(py, &handle.borrow(py))).unwrap());
+    drop(first);
     {
         let mut usage = SAVE_USAGE.lock().unwrap();
         let saved = *usage;
@@ -76,7 +98,7 @@ fn pending_save_retains_after_handle_drop_and_delayed_reply() {
         drop(usage);
         assert!(Python::attach(|py| client.start_save(py, &registration, Vec::new())).is_err());
         *SAVE_USAGE.lock().unwrap() = saved;
-        assert_eq!(client.saves.lock().unwrap().len(), 1);
+        assert_eq!(client.saves.lock().unwrap().len(), 2);
     }
     drop(registration);
     let started = Instant::now();
@@ -118,6 +140,8 @@ fn pending_save_wait_is_a_receipt_wait_not_a_timeout_completion() {
         bytes: 0,
         result: Mutex::new(None),
         completed: Condvar::new(),
+        prepared: Mutex::new(None),
+        charged: AtomicBool::new(false),
     });
     assert!(!pending.status(Duration::from_millis(1)).done);
     let receipt = Arc::clone(&pending);

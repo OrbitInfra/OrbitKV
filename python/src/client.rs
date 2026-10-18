@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, LazyLock, Mutex, Weak};
 use std::time::Duration;
 
@@ -64,6 +64,14 @@ struct PendingSave {
     bytes: usize,
     result: Mutex<Option<Result<(), String>>>,
     completed: Condvar,
+    prepared: Mutex<Option<PreparedSave>>,
+    charged: AtomicBool,
+}
+
+struct PreparedSave {
+    request: PublishRequest,
+    worker: Arc<LocalRestoreWorker>,
+    _tensors: Arc<Vec<Py<PyAny>>>,
 }
 
 #[pyclass(name = "SaveHandle", frozen)]
@@ -84,11 +92,6 @@ impl PendingSave {
             return;
         }
         *receipt = Some(result);
-        let mut usage = SAVE_USAGE
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        usage.0 -= 1;
-        usage.1 -= self.bytes;
         self.completed.notify_all();
     }
 
@@ -131,6 +134,16 @@ impl PendingSave {
                 std::io::stderr().lock(),
                 "Publish remains pending; caller and native source owners remain held"
             );
+        }
+    }
+}
+
+impl Drop for PendingSave {
+    fn drop(&mut self) {
+        if self.charged.swap(false, Ordering::AcqRel) {
+            let mut usage = SAVE_USAGE.lock().unwrap_or_else(|e| e.into_inner());
+            usage.0 -= 1;
+            usage.1 -= self.bytes;
         }
     }
 }
@@ -420,6 +433,15 @@ impl PyCacheManagerClient {
             .cloned()
             .collect::<Vec<_>>();
         for save in pending {
+            if save
+                .prepared
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take()
+                .is_some()
+            {
+                save.complete(Err("Client retired before Save submission".into()));
+            }
             while !save.status(Duration::from_secs(60)).done {}
         }
     }
@@ -1345,6 +1367,20 @@ impl PyCacheManagerClient {
         registration: &PyGpuRegistration,
         saves: Vec<(String, Vec<u32>, Vec<Vec<u8>>)>,
     ) -> PyResult<Py<PySaveHandle>> {
+        let handle = self.prepare_save(py, registration, saves)?;
+        if let Err(error) = self.submit_saves(py, vec![handle.clone_ref(py)]) {
+            self.cancel_save(py, &handle.borrow(py))?;
+            return Err(error);
+        }
+        Ok(handle)
+    }
+
+    fn prepare_save(
+        &self,
+        py: Python<'_>,
+        registration: &PyGpuRegistration,
+        saves: Vec<(String, Vec<u32>, Vec<Vec<u8>>)>,
+    ) -> PyResult<Py<PySaveHandle>> {
         let worker = py.detach(|| self.registered_worker(registration))?;
         let request = publish_request(
             registration.instance_id.clone(),
@@ -1354,12 +1390,20 @@ impl PyCacheManagerClient {
             registration.generation,
             saves,
         );
-        let bytes = save_request_bytes(&request)?;
+        let bytes = save_request_bytes(&request)?
+            .checked_mul(4)
+            .ok_or_else(|| PyValueError::new_err("prepared Save metadata overflow"))?;
         let pending = Arc::new(PendingSave {
             instance: registration.instance_id.clone(),
             bytes,
             result: Mutex::new(None),
             completed: Condvar::new(),
+            prepared: Mutex::new(Some(PreparedSave {
+                request,
+                worker: Arc::clone(&worker),
+                _tensors: Arc::clone(&registration._tensors),
+            })),
+            charged: AtomicBool::new(false),
         });
         let operation_id = self
             .next_save
@@ -1417,16 +1461,120 @@ impl PyCacheManagerClient {
             owned.insert(operation_id, Arc::clone(&pending));
             usage.0 += 1;
             usage.1 += bytes;
+            pending.charged.store(true, Ordering::Release);
             drop(usage);
-            let result = Arc::clone(&pending);
+            drop(owned);
+            drop(local);
+            Ok(())
+        })?;
+        Ok(handle)
+    }
+
+    fn cancel_save(&self, py: Python<'_>, handle: &PySaveHandle) -> PyResult<bool> {
+        self.save_handle(handle)?;
+        Ok(py.detach(|| {
+            let _owned = self.saves.lock().unwrap_or_else(|e| e.into_inner());
+            let prepared = handle
+                .pending
+                .prepared
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take();
+            if prepared.is_none() {
+                return false;
+            }
+            drop(prepared);
+            handle
+                .pending
+                .complete(Err("Save canceled before native submission".into()));
+            true
+        }))
+    }
+
+    fn submit_saves(&self, py: Python<'_>, handles: Vec<Py<PySaveHandle>>) -> PyResult<()> {
+        if handles.is_empty() || handles.len() > MAX_PENDING_SAVES {
+            return Err(PyValueError::new_err("invalid prepared Save batch size"));
+        }
+        let mut ids = std::collections::HashSet::new();
+        let mut pending = Vec::with_capacity(handles.len());
+        for handle in &handles {
+            let handle = handle.borrow(py);
+            self.save_handle(&handle)?;
+            if !ids.insert(handle.operation_id) {
+                return Err(PyValueError::new_err("duplicate prepared Save handle"));
+            }
+            pending.push(Arc::clone(&handle.pending));
+        }
+        py.detach(|| {
+            let _owned = self
+                .saves
+                .lock()
+                .map_err(|_| OrbitKVInternal::new_err("Save owner lock poisoned"))?;
+            let mut locked = pending
+                .iter()
+                .map(|save| save.prepared.lock().unwrap_or_else(|e| e.into_inner()))
+                .collect::<Vec<_>>();
+            let first = locked[0]
+                .as_ref()
+                .ok_or_else(|| PyValueError::new_err("Save already submitted or canceled"))?;
+            for saved in &locked {
+                let saved = saved
+                    .as_ref()
+                    .ok_or_else(|| PyValueError::new_err("Save already submitted or canceled"))?;
+                if !Arc::ptr_eq(&saved.worker, &first.worker) {
+                    return Err(PyValueError::new_err(
+                        "Save batch spans different GPU registrations",
+                    ));
+                }
+            }
+            let first_request = &first.request;
+            let mut request = PublishRequest {
+                instance_id: first_request.instance_id.clone(),
+                registration_generation: first_request.registration_generation,
+                tp_rank: first_request.tp_rank,
+                pp_rank: first_request.pp_rank,
+                device_id: first_request.device_id,
+                layers: Vec::new(),
+            };
+            for saved in &locked {
+                let saved = saved
+                    .as_ref()
+                    .ok_or_else(|| PyValueError::new_err("prepared owner absent"))?;
+                if saved.request.pp_rank != request.pp_rank {
+                    return Err(PyValueError::new_err(
+                        "Save batch spans pipeline registrations",
+                    ));
+                }
+                for layer in &saved.request.layers {
+                    if let Some(target) = request
+                        .layers
+                        .iter_mut()
+                        .find(|target| target.layer_name == layer.layer_name)
+                    {
+                        target.block_ids.extend_from_slice(&layer.block_ids);
+                        target
+                            .block_hashes
+                            .extend(layer.block_hashes.iter().cloned());
+                    } else {
+                        request.layers.push(layer.clone());
+                    }
+                }
+            }
+            let prepared = locked
+                .iter_mut()
+                .map(|saved| {
+                    saved.take().ok_or_else(|| {
+                        PyValueError::new_err("Save ownership disappeared during submission")
+                    })
+                })
+                .collect::<PyResult<Vec<_>>>()?;
+            drop(locked);
+            let result = pending.clone();
             let client = Arc::clone(&self.inner);
-            let tensors = Arc::clone(&registration._tensors);
             let submitted = std::thread::Builder::new()
                 .name("orbitkv-publish".into())
                 .spawn(move || {
-                    // These owners outlive every native chunk, including retained calls.
-                    let _worker = worker;
-                    let _tensors = tensors;
+                    let _owner = prepared;
                     let outcome =
                         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             client.publish(&request)
@@ -1438,18 +1586,19 @@ impl PyCacheManagerClient {
                                 std::thread::park_timeout(Duration::from_secs(60));
                             },
                         };
-                    result.complete(outcome);
+                    drop(_owner);
+                    for save in result {
+                        save.complete(outcome.clone());
+                    }
                 });
             if let Err(error) = submitted {
-                pending.complete(Err(error.to_string()));
-                owned.remove(&operation_id);
+                for save in &pending {
+                    save.complete(Err(error.to_string()));
+                }
                 return Err(OrbitKVInternal::new_err(error.to_string()));
             }
-            drop(owned);
-            drop(local);
             Ok(())
-        })?;
-        Ok(handle)
+        })
     }
 
     fn poll_save(&self, py: Python<'_>, handle: &PySaveHandle) -> PyResult<RestoreStatus> {

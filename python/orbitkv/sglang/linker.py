@@ -11,7 +11,7 @@ import time
 import uuid
 from concurrent.futures import CancelledError
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import torch
 from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
@@ -29,9 +29,6 @@ from orbitkv.logging_utils import TRANSFER_TRACING, trace_transfer
 
 from .config import derive_namespace, resolve_static_loras, resolve_transfer_backend
 from .events import _LayerDoneCounter
-
-if TYPE_CHECKING:
-    from orbitkv import GpuRegistration
 
 logger = logging.getLogger(__name__)
 
@@ -144,10 +141,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self._expired_queries: set[str] = set()
         self._queued_loads: dict[str, _Load] = {}
         self._load_queue: queue.Queue[tuple[int, list[_Load]] | None] = queue.Queue()
-        self._offload_queue: queue.Queue[
-            tuple[GpuRegistration, list[tuple[str, list[int], list[bytes]]], torch.cuda.Event]
-            | None
-        ] = queue.Queue()
+        self._offload_queue: queue.Queue[tuple[object, torch.cuda.Event] | None] = queue.Queue()
         self._completed_loads: queue.Queue[list[str]] = queue.Queue()
         self._load_error: Exception | None = None
         self._completed_offloads: queue.Queue[bool] = queue.Queue()
@@ -541,7 +535,16 @@ class OrbitKVLinker(UnifiedCacheLinker):
             saves.extend((layer, block_ids, hashes) for layer in pool.layer_names)
         ready = torch.cuda.Event()
         ready.record()
-        self._offload_queue.put((self.registration, saves, ready))
+        try:
+            handle = self.client.prepare_save(self.registration, saves)
+            self._offload_queue.put((handle, ready))
+        except BaseException:
+            self._retained_offloads.append((transfers, None))
+            # A returned acceptance keeps the released engine's tree lock.
+            # Unknown preparation must not raise through its offload rejection
+            # path, which would release the source page references.
+            logger.exception("Save preparation unknown; source tree ownership retained")
+            return True
         return True
 
     def _offload_worker(self) -> None:
@@ -550,15 +553,17 @@ class OrbitKVLinker(UnifiedCacheLinker):
             try:
                 if task is None:
                     return
-                registration, saves, ready = task
+                if self._retained_offloads:
+                    self._retained_offloads.append((task, None))
+                    continue
+                handle, ready = task
                 success = False
-                handle = None
                 completed = False
                 attempted = False
                 try:
                     ready.synchronize()
                     attempted = True
-                    handle = self.client.start_save(registration, saves)
+                    self.client.submit_saves([handle])
                     status = self.client.wait_save(handle)
                     if not status.done:
                         raise RuntimeError("native Save wait returned without completion")
@@ -568,7 +573,12 @@ class OrbitKVLinker(UnifiedCacheLinker):
                         logger.error("OrbitKV SGLang GPU offload failed: %s", message)
                 except Exception:
                     logger.exception("OrbitKV SGLang GPU offload failed")
-                if not attempted or completed:
+                    if not attempted:
+                        try:
+                            completed = self.client.cancel_save(handle)
+                        except Exception:
+                            completed = False
+                if completed:
                     self._completed_offloads.put(success)
                 else:
                     self._retained_offloads.append((task, handle))

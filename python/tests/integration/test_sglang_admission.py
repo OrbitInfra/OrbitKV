@@ -37,6 +37,7 @@ def linker(monkeypatch):
     result._pending_queries = {}
     result._expired_queries = set()
     result._queued_loads = {}
+    result._retained_offloads = []
     return result
 
 
@@ -77,7 +78,7 @@ def test_native_save_wait_failure_does_not_complete_offload(linker, failure):
     linker._completed_offloads = queue.Queue()
     linker._retained_offloads = []
     handle = object()
-    linker.client.start_save.return_value = handle
+    linker.client.prepare_save.return_value = handle
     if failure == "pending":
         linker.client.wait_save.return_value = SimpleNamespace(
             done=False, success=False, message="pending"
@@ -85,8 +86,8 @@ def test_native_save_wait_failure_does_not_complete_offload(linker, failure):
     else:
         linker.client.wait_save.side_effect = RuntimeError("wait failed")
     if failure == "start":
-        linker.client.start_save.side_effect = MemoryError("unknown handoff")
-    linker._offload_queue.put((object(), [], MagicMock()))
+        linker.client.submit_saves.side_effect = MemoryError("unknown submission")
+    linker._offload_queue.put((handle, MagicMock()))
     linker._offload_queue.put(None)
     linker._offload_worker()
     assert linker._completed_offloads.empty()
@@ -109,6 +110,30 @@ def test_reset_rechecks_retained_save_after_join(linker):
     )
     with pytest.raises(RuntimeError, match="pages remain held"):
         linker.reset()
+
+
+def test_unknown_preparation_preserves_released_tree_ownership(linker, monkeypatch):
+    import queue
+
+    from sglang.srt.mem_cache.hicache_storage import PoolName
+
+    linker.registration = object()
+    linker._offload_queue = queue.Queue()
+    linker._completed_offloads = queue.Queue()
+    linker.layout.pools = {
+        PoolName.KV: SimpleNamespace(
+            kind="attention", layer_names=["kv:0"], block_ids=lambda *_: [2]
+        )
+    }
+    monkeypatch.setattr("orbitkv.sglang.linker.torch.cuda.Event", MagicMock)
+    transfers = [SimpleNamespace(name=PoolName.KV, keys=["key"], device_indices=[2])]
+    linker.client.prepare_save.side_effect = MemoryError("unknown handoff")
+    assert linker.offload(transfers)
+    assert linker._offload_queue.empty()
+    assert len(linker._retained_offloads) == 1
+    assert linker._completed_offloads.empty()
+    with pytest.raises(RuntimeError, match="source pages cannot be admitted"):
+        linker.offload(transfers)
     linker.layer_done_counter.reset.assert_not_called()
 
 
@@ -726,16 +751,19 @@ def test_offload_keeps_producer_registration_and_reports_rejection(linker, monke
     transfers = [SimpleNamespace(name=PoolName.KV, keys=["key"], device_indices=[2])]
     expected = [("kv:0", [2], linker._hashes(["key"]))]
     if rejected:
-        linker.client.save.side_effect = ValueError("GPU registration is no longer active")
+        linker.client.wait_save.return_value = SimpleNamespace(
+            done=True, success=False, message="failed"
+        )
     else:
-        linker.client.save.return_value = True, ""
+        linker.client.wait_save.return_value = SimpleNamespace(done=True, success=True, message="")
 
     assert linker.offload(transfers)
     linker.registration = object()
     linker._offload_queue.put(None)
     linker._offload_worker()
 
-    linker.client.save.assert_called_once_with(original, expected)
+    linker.client.prepare_save.assert_called_once_with(original, expected)
+    linker.client.submit_saves.assert_called_once_with([linker.client.prepare_save.return_value])
     ready.synchronize.assert_called_once()
     assert linker.pop_completed_offload() is not rejected
     assert linker._offload_queue.unfinished_tasks == 0

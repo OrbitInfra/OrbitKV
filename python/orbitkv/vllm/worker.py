@@ -52,6 +52,7 @@ class SaveTask:
     native_handle: object | None = None
     native_completed: bool = False
     native_attempted: bool = False
+    blocks: int = 0
 
 
 @dataclass
@@ -732,9 +733,9 @@ class WorkerAdapter:
         # scheduler until the job id comes back in OrbitKVWorkerMetadata. So
         # every save can run asynchronously behind the forward pass.
         if metadata.save_intents:
-            self._save_queue.put(self._make_save_task(metadata.save_intents, ready))
+            self._enqueue_save(self._make_save_task(metadata.save_intents, ready))
         if metadata.boundary_save_intents:
-            self._save_queue.put(
+            self._enqueue_save(
                 SaveTask(
                     registration=self._registration,
                     metadata=OrbitKVConnectorMetadata(
@@ -781,6 +782,34 @@ class WorkerAdapter:
             request_ids=request_ids,
             ready=ready,
         )
+
+    def _enqueue_save(self, task: SaveTask) -> None:
+        saves = []
+        for req_id, intent in task.metadata.save_intents.items():
+            try:
+                saves.extend(
+                    (name, list(ids), list(hashes))
+                    for name, ids, hashes in self._layer_saves(intent)
+                )
+            except Exception:
+                logger.exception("Malformed Save intent skipped for request %s", req_id)
+        if not saves:
+            self._complete_save_requests(task.request_ids)
+            with self._save_completion_lock:
+                self._completed_boundary_jobs.extend(task.boundary_job_ids)
+            task.native_completed = True
+            return
+        # Preparation submits no native copy. Unknown handoff still retains
+        # completion markers rather than exposing a queued owner's pages.
+        task.native_attempted = True
+        try:
+            task.blocks = sum(len(ids) for _name, ids, _hashes in saves)
+            task.native_handle = self._client.prepare_save(task.registration, saves)
+            task.metadata = OrbitKVConnectorMetadata()
+            self._save_queue.put(task)
+        except BaseException:
+            self._retained_save_tasks.append(task)
+            raise
 
     def _save_worker(self) -> None:
         logger.debug("[OrbitKVConnector] Save worker thread started")
@@ -842,35 +871,18 @@ class WorkerAdapter:
                 self._retained_save_tasks.extend(batch)
 
     def _save_batch(self, batch: list[SaveTask]) -> None:
-        saves_by_layer: dict[str, tuple[list[int], list[bytes]]] = {}
-
-        for task in batch:
-            for req_id, save_intent in task.metadata.save_intents.items():
-                try:
-                    layer_saves = tuple(self._layer_saves(save_intent))
-                except Exception:
-                    # A malformed intent is a scheduler-side bug; drop this
-                    # request's save rather than the whole batch (or thread).
-                    logger.exception(
-                        "[OrbitKVConnector] req=%s malformed save intent skipped", req_id
-                    )
-                    continue
-                for layer_name, block_ids, block_hashes in layer_saves:
-                    if layer_name not in saves_by_layer:
-                        saves_by_layer[layer_name] = ([], [])
-                    saves_by_layer[layer_name][0].extend(block_ids)
-                    saves_by_layer[layer_name][1].extend(block_hashes)
-
-        if not saves_by_layer:
-            return
-
         # Pages remain pinned until the native Publish completes its D2H copy.
         # Each queued task owns the event recorded by its producing step.
-        for task in batch:
-            task.ready.synchronize()
+        try:
+            for task in batch:
+                task.ready.synchronize()
+        except BaseException:
+            for task in batch:
+                if self._client.cancel_save(task.native_handle):
+                    task.native_completed = True
+            raise
 
-        saves_list = [(name, ids, hashes) for name, (ids, hashes) in saves_by_layer.items()]
-        total_blocks = sum(len(ids) for _, ids, _ in saves_list)
+        total_blocks = sum(task.blocks for task in batch)
 
         save_start = time.perf_counter()
         success = False
@@ -878,22 +890,22 @@ class WorkerAdapter:
         try:
             registration = batch[0].registration
             if registration is None or any(task.registration is not registration for task in batch):
+                for task in batch:
+                    if self._client.cancel_save(task.native_handle):
+                        task.native_completed = True
                 raise RuntimeError("save batch spans different GPU registrations")
             if self._retained_save_tasks:
                 raise RuntimeError("previous native Save completion remains unknown")
-            # Record the conservative attempt before native admission. No Python
-            # allocation/iteration after launch may classify this as unsubmitted.
+            self._client.submit_saves([task.native_handle for task in batch])
+            ok, message = True, ""
             for task in batch:
-                task.native_attempted = True
-            handle = self._client.start_save(registration, saves_list)
-            for task in batch:
-                task.native_handle = handle
-            status = self._client.wait_save(handle)
-            if not status.done:
-                raise RuntimeError("native Save wait returned without completion")
-            ok, message = status.success, status.message
-            for task in batch:
+                status = self._client.wait_save(task.native_handle)
+                if not status.done:
+                    raise RuntimeError("native Save wait returned without completion")
                 task.native_completed = True
+                ok = ok and status.success
+                if not status.success:
+                    message = status.message
 
             if not ok:
                 logger.error(
@@ -903,8 +915,8 @@ class WorkerAdapter:
             else:
                 success = True
                 logger.debug(
-                    "[OrbitKVConnector] Batch saved %d layers, %d total blocks",
-                    len(saves_list),
+                    "[OrbitKVConnector] Batch saved %d tasks, %d total blocks",
+                    len(batch),
                     total_blocks,
                 )
         except Exception as e:

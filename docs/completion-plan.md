@@ -792,6 +792,18 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   reclamation eventually happens when its proof exists. Both adapter lifecycles
   consume the new generation checks. No TTL-based reclamation substitute.
 
+The next producer-admission candidate extends the existing native Save owner:
+`prepare_save` holds the immutable Publish request and registration before the
+adapter queues work, `submit_saves` merges same-registration requests in Rust,
+and `cancel_save` only completes a prepared request whose native worker never
+started. Queued, submitted and caller-held completed handles remain charged
+against the process 1,024-operation/32-MiB metadata cap; merged request scratch
+is conservatively reserved within that charge. The vLLM callback keeps only
+handles and completion metadata after handoff; SGLang retains FIFO tree ownership
+when preparation/submission is unknown. This candidate still requires independent
+code/CPU/package and healthy-GPU adapter gates; it does not implement allocation/
+page generations or physical-failure reclamation.
+
 ## S4 — Finish communication execution and demonstrate gains
 
 **Partial. Depends on S3 for new reuse/early consumption.** Existing transfer,
