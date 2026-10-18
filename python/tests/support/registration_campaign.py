@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import selectors
 import signal
 import stat
 import subprocess
@@ -544,6 +545,144 @@ def cell_environment(cell: dict, gpu_uuid: str) -> dict:
     ):
         raise RuntimeError("Frozen installed TCP/strict/GPU environment is invalid")
     return env
+
+
+def check_dlopen(contract: dict, deadline: float) -> dict:
+    subreaper = ctypes.c_int()
+    if ctypes.CDLL(None).prctl(37, ctypes.byref(subreaper), 0, 0, 0) != 0 or subreaper.value != 1:
+        raise RuntimeError("Dynamic loading preflight requires a child subreaper")
+    declaration = contract.get("runtime_dlopen")
+    if not isinstance(declaration, dict) or set(declaration) != {"python", "helper", "library"}:
+        raise RuntimeError("Installed Save readiness requires an actual frozen dlopen probe")
+    for name in ("python", "helper", "library"):
+        path = declaration[name]
+        if not isinstance(path, str) or not Path(path).is_absolute():
+            raise RuntimeError("Dynamic loading input is not absolute")
+        if path not in contract["input_sha256"]:
+            raise RuntimeError("Dynamic loading input has no frozen digest")
+        if digest(Path(path), deadline) != contract["input_sha256"][path]:
+            raise RuntimeError("Dynamic loading input changed before execution")
+    expected = dict(contract["input_sha256"])
+    for manifest in contract["runtime_manifests"]:
+        raw = read_bytes(Path(manifest["path"]), MAX_RUNTIME_MANIFEST_BYTES, deadline)
+        if hashlib.sha256(raw).hexdigest() != manifest["sha256"]:
+            raise RuntimeError("Dynamic loading manifest changed")
+        values = json.loads(raw)
+        for item in values["files"]:
+            path, sha = item["realpath"], item["sha256"]
+            if path in expected and expected[path] != sha:
+                raise RuntimeError("Conflicting dynamic loading input digests")
+            expected[path] = sha
+    probes = []
+    for index, cell in enumerate(contract["cells"]):
+        probe_deadline = time.monotonic() + min(30, remaining(deadline) / 2)
+        initial_children = {
+            (item["pid"], item["start_ticks"]) for item in descendants(probe_deadline)
+        }
+        output, errors = bytearray(), bytearray()
+        finished = False
+        probe = subprocess.Popen(
+            [
+                declaration["python"],
+                "-I",
+                "-S",
+                "-B",
+                declaration["helper"],
+                declaration["library"],
+            ],
+            env=cell_environment(cell, contract["gpu_uuid"]),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        try:
+            owner = identity(probe.pid)
+            with selectors.DefaultSelector() as reader:
+                for stream, data, limit in (
+                    (probe.stdout, output, MAX_JSON_BYTES),
+                    (probe.stderr, errors, MAX_LOG_BYTES),
+                ):
+                    reader.register(stream, selectors.EVENT_READ, (data, limit))
+                terminal = None
+                while reader.get_map() or terminal is None:
+                    for key, _ in reader.select(min(0.05, remaining(probe_deadline))):
+                        data, limit = key.data
+                        chunk = os.read(key.fd, 65536)
+                        if not chunk:
+                            reader.unregister(key.fileobj)
+                            continue
+                        if len(data) + len(chunk) > limit:
+                            raise RuntimeError("Dynamic loading output exceeded its bound")
+                        data.extend(chunk)
+                    # Keep the direct child unreaped until its process group is
+                    # stopped, so its PID cannot become an unrelated group ID.
+                    terminal = os.waitid(os.P_PID, probe.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                if any(
+                    (item["pid"], item["start_ticks"]) not in initial_children
+                    and item["pid"] != probe.pid
+                    for item in descendants(probe_deadline)
+                ):
+                    raise RuntimeError("Dynamic loading probe left an unexpected child")
+                finished = True
+        finally:
+            try:
+                if not finished:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.killpg(probe.pid, signal.SIGKILL)
+                code = probe.wait(timeout=remaining(deadline))
+                # Adopted children may have left the original session. Only the
+                # new descendants of this controller belong to this probe.
+                while True:
+                    children = [
+                        item
+                        for item in descendants(deadline)
+                        if (item["pid"], item["start_ticks"]) not in initial_children
+                    ]
+                    if not children:
+                        break
+                    for child in children:
+                        try:
+                            fd = os.pidfd_open(child["pid"])
+                        except ProcessLookupError:
+                            continue
+                        try:
+                            if identity(child["pid"])["start_ticks"] != child["start_ticks"]:
+                                continue
+                            signal.pidfd_send_signal(fd, signal.SIGKILL)
+                        except (FileNotFoundError, ProcessLookupError):
+                            continue
+                        finally:
+                            os.close(fd)
+                        with contextlib.suppress(ChildProcessError):
+                            os.waitpid(child["pid"], os.WNOHANG)
+                    time.sleep(min(0.01, remaining(deadline)))
+            finally:
+                probe.stdout.close()
+                probe.stderr.close()
+        if code:
+            detail = errors[:2048].decode(errors="replace")
+            raise RuntimeError(f"Actual dynamic loading probe failed: {detail}")
+        receipt = json.loads(output)
+        if (
+            receipt.get("schema") != "orbitkv.runtime-dlopen.v1"
+            or type(receipt.get("pid")) is not int
+            or receipt["pid"] != owner["pid"]
+            or receipt.get("library") != declaration["library"]
+            or receipt.get("engine_created") is not False
+            or not isinstance(receipt.get("files"), dict)
+            or not receipt["files"]
+            or len(receipt["files"]) > MAX_EVIDENCE_FILES
+            or str(Path(declaration["library"]).resolve()) not in receipt["files"]
+        ):
+            raise RuntimeError("Actual dynamic loading receipt is invalid")
+        for path, sha in receipt["files"].items():
+            if expected.get(path) != sha or digest(Path(path), deadline) != sha:
+                raise RuntimeError(f"Actual dynamic loading has an unfrozen mapping: {path}")
+        probes.append(dict(receipt, cell_index=index, owner=owner, actual_wait_exit=code))
+    if not probes:
+        raise RuntimeError("Dynamic loading preflight has no cell environments")
+    return {"schema": "orbitkv.runtime-dlopen-preflight.v1", "probes": probes}
 
 
 def validate_grant(grant: dict, ready: dict, ready_sha: str, phase: str, controller: dict) -> None:
@@ -1442,6 +1581,12 @@ def main() -> None:
         signal.signal(number, signal.SIG_IGN)
     try:
         check_inputs(contract, deadline=startup_deadline)
+        if contract.get("qualification") == "pending-save-bytes-v1":
+            write(
+                root / "DLOPEN-PREFLIGHT.json",
+                check_dlopen(contract, startup_deadline),
+                startup_deadline,
+            )
         remaining(startup_deadline)
         cpus = contract["cpus"]
         if not cpus or not set(cpus) <= os.sched_getaffinity(0):

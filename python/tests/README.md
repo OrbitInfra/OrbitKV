@@ -388,6 +388,12 @@ after `/flush_cache`, and an actual Cache Manager GPU load after the SGLang
 process restarts while the Cache Manager remains alive. A separate namespace
 provides a true cold inference control for the restarted process.
 
+Both SGLang media select the Manager fixture's installed-package mode. The
+imported OrbitKV package and extension must share one resolved package directory
+before any Manager starts. Its embedded Python then uses that package root and
+the interpreter's site packages, excluding inherited source paths. Put the
+frozen wheel directory first in `PYTHONPATH` when running tests from a checkout.
+
 The SGLang helper sends SIGTERM to the service leader and waits for the native
 worker lifecycle before inspecting process-group clearance. A timeout records
 forced cleanup. The release outcome must also inspect real cleanup receipts and
@@ -611,6 +617,17 @@ binds the result to the handoff digest and both generations. An unlinked counter
 can still be observed through that original descriptor; a replacement pathname
 cannot prove the old slot repaid. Missing, nonzero or unreadable counters reject
 qualification without changing native ownership.
+Before publishing READY, pending-Save campaigns also require `runtime_dlopen`
+with frozen absolute `python`, `helper` and `library` paths. The stdlib-only
+`tests/support/runtime_dlopen.py` child loads the declared TENT library and
+reports its actual file mappings. Every cell environment is checked, and all
+loaded bytes must match direct hashes or complete runtime manifests. Each child
+uses `-I -S -B`, bounded stdout/stderr pipes and a separate process group. The
+controller requires subreaper ownership and reserves time to stop and actually
+reap unexpected constructor descendants, including children that leave the
+original session. A receipt must name the child it started. The preflight
+creates no transfer engine. Successful
+library loading alone cannot substitute for byte, resource or lifecycle gates.
 
 
 ### Static local LoRA installed model gate

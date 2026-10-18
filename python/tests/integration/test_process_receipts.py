@@ -26,10 +26,9 @@ def test_real_service_child_wait_is_required_even_when_leader_exits_zero(
     env["PYTHONPATH"] = str(Path(__file__).parents[2])
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     with (tmp_path / "pytest.log").open("w") as log:
-        process = subprocess.Popen(
+        tracer_process = subprocess.Popen(
             [
                 tracer,
-                "-D",
                 "-ff",
                 "-ttt",
                 "-s",
@@ -50,10 +49,10 @@ def test_real_service_child_wait_is_required_even_when_leader_exits_zero(
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-        assert process.wait(timeout=30) == 0
+        assert tracer_process.wait(timeout=30) == 0
     deadline = time.monotonic() + 5
     owner = json.loads((tmp_path / "root.json").read_text())
-    assert owner["pid"] == process.pid
+    assert owner["parent"] == tracer_process.pid
     observed = [
         owner,
         *(json.loads((tmp_path / f"{role}.json").read_text()) for role in ("service", "child")),

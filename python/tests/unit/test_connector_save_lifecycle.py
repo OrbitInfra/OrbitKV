@@ -255,7 +255,6 @@ def test_hma_request_saves_run_async():
     worker = make_worker()
     worker._cache_groups = SimpleNamespace(has_recurrent_state=True, group_count=1)
     worker._registered_layers = ["layer"]
-    worker._ctx.client.save.return_value = (True, "")
     worker._current_metadata = OrbitKVConnectorMetadata(
         save_intents={
             "request": SaveIntent(
@@ -266,7 +265,7 @@ def test_hma_request_saves_run_async():
     )
 
     worker.wait_for_save()
-    worker._ctx.client.save.assert_not_called()
+    worker._ctx.client.start_save.assert_not_called()
 
     process_next_save(worker)
     worker._ctx.client.start_save.assert_called_once()
