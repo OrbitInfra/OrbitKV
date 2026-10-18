@@ -26,6 +26,32 @@ use crate::{OrbitKVError, OrbitKVInternal, query_response};
 
 type PyLeaseLoad = (Vec<u8>, Vec<Vec<Option<u32>>>);
 
+#[pyclass(name = "PublishProgress", frozen)]
+pub(crate) struct PyPublishProgress {
+    #[pyo3(get)]
+    active: usize,
+    #[pyo3(get)]
+    retained: usize,
+    #[pyo3(get)]
+    active_interval_seconds: f64,
+    #[pyo3(get)]
+    overdue: bool,
+    #[pyo3(get)]
+    manager_alive: Option<bool>,
+}
+
+impl From<orbitkv_channel::PublishProgress> for PyPublishProgress {
+    fn from(progress: orbitkv_channel::PublishProgress) -> Self {
+        Self {
+            active: progress.active,
+            retained: progress.retained,
+            active_interval_seconds: progress.active_interval.as_secs_f64(),
+            overdue: progress.overdue,
+            manager_alive: progress.manager_alive,
+        }
+    }
+}
+
 #[pyclass(name = "ChannelCallObservation", frozen)]
 pub(crate) struct PyChannelCallObservation(ChannelCallObservation);
 
@@ -903,6 +929,12 @@ impl PyCacheManagerClient {
 
     fn peer_alive(&self, py: Python<'_>) -> PyResult<bool> {
         py.detach(|| self.inner.channel().peer_alive())
+            .map_err(client_error)
+    }
+
+    fn publish_progress(&self, py: Python<'_>) -> PyResult<PyPublishProgress> {
+        py.detach(|| self.inner.publish_progress())
+            .map(Into::into)
             .map_err(client_error)
     }
 

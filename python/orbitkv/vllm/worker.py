@@ -227,6 +227,7 @@ class WorkerAdapter:
         self._req_pending_save_tasks: dict[str, int] = {}
         self._completed_saves: set[str] = set()
         self._save_completion_lock = threading.Lock()
+        self._last_publish_warning = 0.0
         self._save_completion_events: dict[str, threading.Event] = {}
         # Boundary-state jobs finished since the last worker-meta report.
         self._completed_boundary_jobs: list[int] = []
@@ -494,6 +495,22 @@ class WorkerAdapter:
         self.register_kv_caches({self._cross_layer_key: kv_cache})
 
     def get_transfer_results(self, finished_req_ids: set[str]) -> KVConnectorTransferResults:
+        try:
+            progress = self._client.publish_progress()
+            if progress.active and (progress.overdue or progress.retained):
+                now = time.monotonic()
+                if now - self._last_publish_warning >= 60:
+                    self._last_publish_warning = now
+                    logger.warning(
+                        "OrbitKV Publish still holds pages: active=%s retained=%s interval_s=%s Manager_alive=%s",
+                        progress.active,
+                        progress.retained,
+                        progress.active_interval_seconds,
+                        progress.manager_alive,
+                    )
+        except Exception:
+            # Observability cannot manufacture a cache completion.
+            logger.debug("OrbitKV Publish activity unavailable", exc_info=True)
         finished_sending: set[str] = set()
 
         with self._save_completion_lock:

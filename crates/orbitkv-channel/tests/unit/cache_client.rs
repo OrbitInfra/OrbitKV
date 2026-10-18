@@ -23,6 +23,75 @@ fn key(instance: &str, group: u32) -> QueryKey {
 }
 
 #[test]
+fn publish_progress_remains_bounded_during_a_real_late_reply() {
+    let release = Arc::new(AtomicBool::new(false));
+    let gate = Arc::clone(&release);
+    let peer = Peer::new(move |command, _, _| {
+        assert_eq!(command.code, CommandCode::Publish);
+        gate.load(Ordering::Acquire).then(Vec::new)
+    });
+    let client = Arc::new(
+        CacheClient::connect(
+            &peer.socket,
+            CallOptions {
+                timeout: Duration::from_millis(5),
+                spin_iterations: 0,
+            },
+        )
+        .unwrap(),
+    );
+    assert_eq!(client.publish_progress().unwrap().active, 0);
+    let source = Arc::new(vec![37; 4096]);
+    let observed = Arc::downgrade(&source);
+    let publisher = Arc::clone(&client);
+    let worker = thread::spawn(move || {
+        let request = PublishRequest {
+            instance_id: "progress".into(),
+            registration_generation: [37; 16],
+            tp_rank: 0,
+            pp_rank: 0,
+            device_id: 0,
+            layers: vec![],
+        };
+        let result = publisher.publish(&request);
+        drop(source);
+        result
+    });
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let progress = match client.publish_progress() {
+            Ok(progress) => progress,
+            Err(ChannelError::PublishObservationUnavailable) => {
+                assert!(Instant::now() < deadline);
+                thread::yield_now();
+                continue;
+            }
+            Err(error) => panic!("{error}"),
+        };
+        if progress.active == 1 && progress.overdue {
+            assert_eq!(progress.retained, 0);
+            assert_eq!(progress.manager_alive, Some(true));
+            assert!(observed.upgrade().is_some());
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        thread::yield_now();
+    }
+    for _ in 0..1000 {
+        assert_eq!(client.publish_progress().unwrap().active, 1);
+    }
+    release.store(true, Ordering::Release);
+    assert!(worker.join().unwrap().is_ok());
+    assert_eq!(client.publish_progress().unwrap().active, 0);
+    assert!(observed.upgrade().is_none());
+    let _locked = client.publisher.lock().unwrap();
+    assert!(matches!(
+        client.publish_progress(),
+        Err(ChannelError::PublishObservationUnavailable)
+    ));
+}
+
+#[test]
 fn polls_reuse_hash_storage_and_changed_demand_revises_one_ticket() {
     let mut queries = Queries::default();
     let key = key("model", 0);

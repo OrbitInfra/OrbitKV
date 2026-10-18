@@ -388,6 +388,21 @@ acceptance does not establish installed GPU or physical fault completion.
 Publish batches split to
 the negotiated descriptor slot capacity, retaining matching page ranges across
 layers until all chunks finish.
+The local Publish activity candidate reports active/retained callers, the elapsed
+interval since activity last became nonempty, overdue status and authenticated
+Manager liveness. It uses immediate local lock attempts and pidfd polling, without
+waiting for the blocked descriptor/lifecycle exchange; contention returns an
+explicit unavailable error. The interval can include several overlapping calls
+and is not a per-request latency. vLLM/SGLang completion polls use it for rate
+limited diagnostics only. Pending, overdue, retained and dead-peer observations
+never mark engine pages complete. At most 1,024 callers enter one channel's
+Publish activity; the existing Save worker budget separately bounds accepted
+Manager work. The original synchronous caller remains held until its established
+completion path; an asynchronous operational return requires a later owner API.
+Independent `26884461` code/CPU and candidate-package API acceptance covers this
+diagnostic scope. Per-poll native/pidfd overhead and debug logging overhead are
+unmeasured; neither package loading nor the controlled SGLang method qualifies
+Manager/GPU operation, asynchronous completion or physical fault reclamation.
 This Publish partitioning does not yet partition oversized raw Restore plans.
 
 Rust `CacheClient`, exposed directly by PyO3 as `CacheManagerClient`, owns query

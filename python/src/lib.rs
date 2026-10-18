@@ -288,6 +288,7 @@ fn orbitkv(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<client::PyCacheManagerClient>()?;
     m.add_class::<client::PyGpuRegistration>()?;
     m.add_class::<client::PyChannelCallObservation>()?;
+    m.add_class::<client::PyPublishProgress>()?;
     m.add_class::<client::PyBlockHashes>()?;
     m.add_class::<client::PyRestoreHandle>()?;
     m.add_class::<client::RestoreStatus>()?;

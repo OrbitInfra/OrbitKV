@@ -151,6 +151,7 @@ fn publish_send_retention_child() {
             }
         }
         let error = client.publish(9, &request).unwrap_err();
+        assert_eq!(client.publish_progress().unwrap().active, 0);
         assert!(matches!(
             error,
             ChannelError::Transport(TransportError::RequestSend(
@@ -239,6 +240,11 @@ fn publish_send_retention_child() {
             Err(mpsc::RecvTimeoutError::Timeout)
         ));
         assert!(!marker.exists());
+        let progress = client.publish_progress().unwrap();
+        assert_eq!(progress.active, 1);
+        assert_eq!(progress.retained, 1);
+        assert!(progress.overdue);
+        assert_eq!(progress.manager_alive, Some(true));
         let (completed, completion) = mpsc::channel();
         let other = std::thread::spawn(move || {
             completed.send(client.release(10, vec![])).unwrap();

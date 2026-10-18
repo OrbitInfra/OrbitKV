@@ -49,6 +49,26 @@ def request(rid, token_count=256):
     return req
 
 
+@pytest.mark.parametrize("alive", [True, False, None])
+def test_publish_activity_does_not_complete_offloads(linker, alive):
+    import queue
+
+    linker._last_publish_warning = 0.0
+    linker._completed_offloads = queue.Queue()
+    linker.client.publish_progress.return_value = SimpleNamespace(
+        active=1,
+        retained=1,
+        overdue=True,
+        active_interval_seconds=61.0,
+        manager_alive=alive,
+    )
+    assert linker.num_completed_offloads() == 0
+    linker.client.publish_progress.side_effect = RuntimeError("observation unavailable")
+    assert linker.num_completed_offloads() == 0
+    linker._completed_offloads.put(True)
+    assert linker.num_completed_offloads() == 1
+
+
 def transfer(keys):
     from sglang.srt.mem_cache.hicache_storage import PoolName
 

@@ -630,6 +630,22 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
 - Add a bounded operational response to a live Manager that never completes a
   Publish, preserving held pages until matched completion or independently
   established physical termination. Process death alone is not a DMA fence.
+  The next local-observation substage exposes synchronous Publish activity,
+  explicit retention, elapsed active interval and authenticated pidfd liveness
+  independently of the descriptor/lifecycle locks. Contention is an unavailable
+  observation, not zero active work. Official vLLM/SGLang completion polls consume
+  it for bounded diagnostics only; neither overdue nor process exit completes
+  an offload. The synchronous call and page holds remain in place. This is not
+  the asynchronous pending-handle response or page-generation implementation;
+  those require their own consumed ownership and installed engine gates.
+  Independent acceptance at `26884461` covers the local observation, CPU controls
+  and candidate installed API. Channel tests, overlap/late-reply controls and
+  an expected fake-zero mutation passed their declared results. Both adapters
+  consume diagnostics; the SGLang method control uses exact isolated 0.5.21.
+  Source/wheel origins and the stale local 0.5.20 result remain separately
+  recorded under `/root/orbitkv-artifacts/s3-publish-observation-20261018/`.
+  [PR #261](https://github.com/feichai0017/orbitkv/pull/261) adds no asynchronous
+  completion, GPU/physical gate or serving-overhead qualification.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-

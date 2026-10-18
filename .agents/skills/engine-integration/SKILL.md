@@ -21,6 +21,11 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
 
 - Engines own request scheduling, GPU allocation, native prefix trees, rank
   collectives, model execution and final request readiness.
+- vLLM transfer-result and SGLang offload-count polls consume native
+  `publish_progress()` for rate limited diagnostics only. An active interval
+  can span overlapping calls; overdue, retained or dead Manager observations
+  do not complete saves or release their engine pages. Missing observations
+  cannot be interpreted as zero active work.
 - Python translates engine layout, state boundaries, callbacks and CUDA readiness.
   Existing Rust owners manage shared cache policy, transfers, admission and drain.
 - vLLM uses the KV Connector contract; SGLang uses UnifiedRadixCache and the
