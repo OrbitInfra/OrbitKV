@@ -27,6 +27,11 @@ from benches.common.artifacts import external_path
 from benches.distributed.shared_cache import drain
 from benches.distributed.shared_cache_profile import profile
 from benches.distributed.tent_gpu import CAPACITY
+from benches.distributed.tent_trace import (
+    observer_overhead,
+    validate_observer_cell,
+    validate_observer_pilot,
+)
 
 
 def save(path: Path, value: dict) -> None:
@@ -418,6 +423,17 @@ class Campaign:
             after=after,
             nic_deltas={host: nic_delta(before[host], after[host]) for host in before},
         )
+        if self.contract.get("observer_pilot"):
+            try:
+                result["native_traces"] = {}
+                for host, owner in self.hosts.items():
+                    result["native_traces"][host] = owner.rpc("native-trace", cell=cell["id"])
+                    save(output, result)
+                result["native_summaries"] = validate_observer_cell(self.contract, result)
+            except Exception as caught:
+                result.update(status="INVALID_NATIVE_TRACE", error=str(caught))
+                save(output, result)
+                raise
         save(output, result)
         return result
 
@@ -476,6 +492,8 @@ def main() -> None:
     if hashlib.sha256(contract_bytes).hexdigest() != json.loads(inputs).get(args.contract.name):
         raise RuntimeError("Contract differs from reviewed inputs")
     contract = json.loads(contract_bytes)
+    if contract.get("observer_pilot"):
+        validate_observer_pilot(contract)
     for relative, digest in contract["source_hashes"].items():
         if (
             hashlib.sha256(
@@ -522,6 +540,12 @@ def main() -> None:
             status["cells"].append({"id": cell["id"], "status": result["status"]})
             status["completed_cells"] += 1
             save(args.output / "STATUS.json", status)
+            campaign.rows.append(result)
+            if contract.get("observer_pilot"):
+                status["observer_overhead"] = observer_overhead(contract, campaign.rows)
+                save(args.output / "STATUS.json", status)
+                if status["observer_overhead"]["status"] == "OVERHEAD_FAIL":
+                    raise RuntimeError("Native observer exceeded a frozen paired overhead guard")
         if any(cell["kind"] == "manager" for cell in contract["cells"]):
             etcd_exit = campaign.stop("h0", "etcd", idle_proven=True)
             if etcd_exit["exit_code"] != -15:
@@ -529,7 +553,11 @@ def main() -> None:
             status["etcd_exit"] = etcd_exit
         status["postflight"] = {host: owner.finish() for host, owner in campaign.hosts.items()}
         status.update(
-            status="PASS_DESCRIPTIVE_PROFILE",
+            status=(
+                "PASS_OBSERVER_PILOT"
+                if contract.get("observer_pilot")
+                else "PASS_DESCRIPTIVE_PROFILE"
+            ),
             active_cell=None,
             qualified_support_changed=False,
             production_strategy_changed=False,
@@ -555,11 +583,15 @@ def main() -> None:
             try:
                 if "etcd" in campaign.active.get("h0", {}):
                     status["cleanup_etcd_exit"] = campaign.stop("h0", "etcd", idle_proven=True)
+                    if status["cleanup_etcd_exit"]["exit_code"] != -15:
+                        raise RuntimeError("Private etcd failed normal failure-path shutdown")
                 status["failure_postflight"] = {
                     host: owner.finish()
                     for host, owner in campaign.hosts.items()
                     if not owner.finished
                 }
+                if status.get("observer_overhead", {}).get("status") == "OVERHEAD_FAIL":
+                    status["status"] = "VALID_OBSERVER_OVERHEAD_FAIL"
             except Exception as cleanup_error:
                 status["cleanup_error"] = str(cleanup_error)
         raise

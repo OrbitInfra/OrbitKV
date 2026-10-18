@@ -835,6 +835,10 @@ records in this section retain each artifact, measured profile and failed gate.
 - [x] Merge the Manager native observer and offline identity/window reader in
   [PR #270](https://github.com/feichai0017/orbitkv/pull/270), with independent
   source/CPU acceptance and final-head CI. Hardware observation is still open.
+- [x] Connect stopped-Manager trace validation and matched-pair overhead checks
+  to the existing RDMA runner. Invalid traces and failed completed pairs stop
+  dependent cells while retaining actual normal waits; this is implementation,
+  not a hardware-pilot result.
 - [ ] Admit the current two-host runtime and pass the matched native-observer
   overhead pilot before diagnosing first peer recovery and warm steady state.
   The runtime guard binds the consumed channel configuration to its checked
@@ -1143,6 +1147,13 @@ remain outside Git at `/root/orbitkv-artifacts/s4-rle-trace-20261016/`.
   executable-byte inspection. Final input validation precedes lease release.
   These are implementation changes; current-runtime hardware admission and the
   matched observation-overhead pilot remain open.
+  The runner now consumes bounded same-cell trace receipts only after normal
+  Manager and fixture exit, checks each host's own Manager identity, and validates
+  consumer-local query windows. The original eight-cell overhead pilot checks
+  independent off/on pairs before admitting later cells and requires full
+  postflight for a pilot PASS. Two pairs per direction and fifty samples per
+  cell do not establish population confidence or stable tail latency; the
+  predeclared guards and all failed cells remain in force.
 - Retain bounded multipart plans and whole-operation ownership. Earlier layer,
   multipart, codec or SSD readiness requires consumer dependencies and final
   physical drain, not only a readiness notification.

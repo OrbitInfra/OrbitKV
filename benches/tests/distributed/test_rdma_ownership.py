@@ -421,7 +421,7 @@ def test_service_status_requires_the_actual_owned_listening_socket(tmp_path, for
         assert receipt["exit_code"] == -signal.SIGTERM and receipt["actual_wait_reap"]
 
 
-def service_owner(tmp_path, argv, environment=None):
+def service_owner(tmp_path, argv, environment=None, observer_enabled=None):
     environment = {} if environment is None else environment
     contract = {
         "hosts": {
@@ -436,10 +436,69 @@ def service_owner(tmp_path, argv, environment=None):
             }
         },
     }
+    if observer_enabled is not None:
+        contract["observer_pilot"] = "manager-native-observer.v1"
+        planned = contract["launches"]["local"]["startup"]["manager"]
+        planned["runtime"] = {"observer_enabled": observer_enabled}
+        if observer_enabled:
+            environment["TENT_NATIVE_TRACE_PATH"] = str(
+                tmp_path / "startup-native-trace/manager.json"
+            )
     attach_runtime_inputs(contract, "local", tmp_path)
     owner = HostOwner(contract, "local", tmp_path)
     owner.launch({"cell": "startup", "name": "manager", "argv": argv, "environment": environment})
     return owner
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["on", "off", "off_symlink", "on_symlink", "foreign", "oversized", "extra", "exit_error"],
+)
+def test_stopped_manager_trace_keeps_actual_wait_and_rejects_bad_files(tmp_path, mode):
+    # A real CPU process emits synthetic records; this is not native/GPU lifetime evidence.
+    program = """
+import json,os,pathlib,signal,sys,time
+root=pathlib.Path(sys.argv[1]);mode=sys.argv[2]
+def stop(*args):
+    path=root/'startup-native-trace'/'manager.json'
+    fields=pathlib.Path('/proc/self/stat').read_text().rsplit(')',1)[1].split()
+    trace={'pid':os.getpid(),'boot_id':pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip(),'start_ticks':int(fields[19])}
+    if mode=='foreign':trace['start_ticks']+=1
+    if mode in ('on_symlink','off_symlink'):path.symlink_to(root/'absent')
+    elif mode!='off':path.write_text('x'*(1024*1024+1) if mode=='oversized' else json.dumps(trace))
+    if mode=='extra':(path.parent/'foreign.json').write_text('{}')
+    sys.exit(17 if mode=='exit_error' else 0)
+signal.signal(signal.SIGTERM,stop)
+(root/'cpu-ready').touch()
+while True:time.sleep(.01)
+"""
+    owner = service_owner(
+        tmp_path,
+        [sys.executable, "-u", "-c", program, str(tmp_path), mode],
+        observer_enabled=not mode.startswith("off"),
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not (tmp_path / "cpu-ready").exists():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        with pytest.raises(RuntimeError, match="stopped pilot"):
+            owner.native_trace({"cell": "startup"})
+        waited = owner.stop({"name": "manager", "idle_proven": True})
+        assert waited["exit_code"] == (17 if mode == "exit_error" else 0)
+        if mode in ("on", "off"):
+            receipt = owner.native_trace({"cell": "startup"})
+            assert receipt["stop"] == waited
+            assert (receipt["content"] is None) is (mode == "off")
+        else:
+            with pytest.raises((RuntimeError, OSError, ValueError)):
+                owner.native_trace({"cell": "startup"})
+        assert owner.history[-1]["actual_wait_reap"]
+        assert owner.history[-1]["exit_code"] == waited["exit_code"]
+        assert not owner.children
+    finally:
+        if owner.children:
+            owner.stop({"name": "manager", "idle_proven": True})
 
 
 @pytest.mark.parametrize("boundary", ["launch", "finish"])
