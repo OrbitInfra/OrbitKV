@@ -328,6 +328,12 @@ earlier result is unknown, the worker retains later queued tasks without startin
 them or reporting their completion against the earlier engine node. This does
 not reconcile unknown owners or prove physical drain; qualification is tracked
 in the [completion plan](completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership).
+The final installed prepared Save gate has scoped normal DRAM/io_uring acceptance
+at `b21b51c3`; it does not replace released vLLM/SGLang lifecycle gates. Those
+gates must observe `prepare_save` at producer handoff, `submit_saves` in the
+worker and the actual wait result, rather than an obsolete `start_save` callback.
+Registration retirement, complete bytes and physical fault termination remain
+separate evidence requirements.
 
 See [layer consumption](engine-local-restore.md#layer-readiness-and-framework-consumption)
 for recurrent, packed-buffer and multi-part limits. Repeated registration of the same binding is rejected, and unregister

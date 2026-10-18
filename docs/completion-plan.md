@@ -901,6 +901,23 @@ and sampled another endpoint. The capture helper now rejects redirects and
 requires the exact local `/metrics` URL with HTTP 200. Real redirect controls
 must show that the target is never contacted. Prior HTTP failures remain
 archived and no rejected source freeze gains launch authorization.
+The single normal formal cohort at `b21b51c3`, tree `cf722138`, is independently
+accepted as `AcceptedInstalledNormalPreparedSaveDramUring`. It consumes wheel
+`1498332007c9a4dccb01308b4a5f205502a698e401efcf8282a514d37ceb40f0`:
+DRAM and NVMe/io_uring each complete three 32,768-byte payload/sentinel oracles,
+16,384 copied bytes per round, prepared cancellation, two-handle Rust submission,
+and original IPC credit 1-to-0 observations. Both Managers and every traced child
+have actual normal waits; frozen inputs and old quarantine owners remain intact.
+Review SHA256 is `cc767519af7508014247f25adab0ce82d9147d0cc4df4e32468496721d006405`;
+raw archive SHA256 is `bfc9d62b6f75dc3b7132d484774090e993b7eb1261cd1c9ad9b1ea10e7a2ee90`,
+under `/root/orbitkv-artifacts/s3-prepared-save-installed-20261019/`.
+This closes that final installed normal-path substage only. Physical faults,
+page generations, GPU-pointer/RDMA and adapter/model lifecycle remain open.
+The next adapter lifetime gate corrects the old vLLM `start_save` observer to
+consume the actual `prepare_save`/`submit_saves` path and registration retirement.
+Both released adapters check complete payload/sentinels and real io_uring reads
+with the matching installed wheel. The official engine releases, byte oracles,
+actual cleanup and negative controls require independent review before launch.
 
 ## S4 — Finish communication execution and demonstrate gains
 

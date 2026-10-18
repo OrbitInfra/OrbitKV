@@ -1,13 +1,19 @@
 """Native recovery validation and the vLLM scheduler/worker CUDA handoff."""
 
+import importlib.metadata
+import json
+import os
 import threading
 import time
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 import requests
+
+from tests.support.metrics import fetch_orbitkv_metrics
 
 pytestmark = pytest.mark.integration
 
@@ -186,38 +192,61 @@ def test_window_and_checkpoint_restore_only_required_destinations(channel_server
         client.close()
 
 
-def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel_server):
+@pytest.mark.gpu
+@pytest.mark.parametrize(
+    "channel_server",
+    [{"tier": "dram", "installed": True}, {"tier": "ssd", "installed": True}],
+    ids=["dram", "ssd"],
+    indirect=True,
+)
+def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel_server, tmp_path):
     torch = pytest.importorskip("torch")
     from orbitkv import BlockHashes, CacheManagerClient, QueryReady
     from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, SaveIntent
     from orbitkv.vllm.worker import WorkerAdapter
 
+    if importlib.metadata.version("vllm") != "0.31.0":
+        pytest.fail("Prepared Save adapter gate requires official vLLM 0.31.0")
     client = CacheManagerClient(channel_server.bootstrap_socket)
     identity = f"producer-{uuid.uuid4().hex}"
     client.start_session_watcher(identity, identity, 1, 1)
     worker = WorkerAdapter(context(client, instance_id=identity, namespace=identity))
     kv = torch.zeros((2, 8, 16, 1, 32), device="cuda", dtype=torch.float32)
+    payload = torch.arange(2 * 16 * 32, dtype=torch.float32).reshape(2, 16, 1, 32)
+    expected = torch.full_like(kv, -167, device="cpu")
+    expected[:, 1] = payload
+    expected[:, 2] = payload
     producer, unrelated = torch.cuda.Stream(), torch.cuda.Stream()
     unrelated_done = torch.cuda.Event()
     submitted = threading.Event()
     overlapped = []
+    prepared_ids = []
     hashes = BlockHashes([b"h" * 32])
 
-    def save(*args):
+    def prepare(*args):
+        handle = client.prepare_save(*args)
+        prepared_ids.append(handle.operation_id)
+        return handle
+
+    def submit(handles):
         overlapped.append(not unrelated_done.query())
         submitted.set()
-        return client.start_save(*args)
+        return client.submit_saves(handles)
 
     try:
         worker.register_kv_caches({"layer": kv})
+        original_registration = worker._registration
+        channel_server.record_runtime()
         worker._client = MagicMock(wraps=client)
-        worker._client.start_save.side_effect = save
+        worker._client.prepare_save.side_effect = prepare
+        worker._client.submit_saves.side_effect = submit
+        kv.fill_(-167)
         torch.cuda.synchronize()
         # A delayed producer verifies that the background thread cannot read
         # the initial zeros. Independent work must not extend its save fence.
         with torch.cuda.stream(producer):
             torch.cuda._sleep(100_000_000)
-            kv[:, 1].fill_(17)
+            kv[:, 1].copy_(payload)
         with torch.cuda.stream(unrelated):
             torch.cuda._sleep(1_500_000_000)
             unrelated_done.record()
@@ -229,10 +258,25 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel
             )
             worker.wait_for_save()
 
+        assert len(prepared_ids) == 1, "producer did not reserve native ownership before return"
         assert submitted.wait(10), "the save worker never submitted Publish"
         worker._save_queue.join()
         assert overlapped == [True], "Publish waited for unrelated GPU work"
         assert worker.get_transfer_results({"save"}).finished_sending == {"save"}
+        worker._client.prepare_save.assert_called_once()
+        worker._client.submit_saves.assert_called_once()
+        worker._client.wait_save.assert_called_once()
+        worker._client.start_save.assert_not_called()
+        if channel_server.ssd_cache_path:
+            synced = requests.post(
+                f"http://127.0.0.1:{channel_server.http_port}/cache/sync", timeout=35
+            )
+            synced.raise_for_status()
+            assert synced.json()["local_flush_complete"] is True
+            from tests.support.cache_manager import evict_dram_after_ssd_writes
+
+            evict_dram_after_ssd_writes(channel_server.http_port)
+        before_restore = fetch_orbitkv_metrics(channel_server.http_port)
         deadline = time.monotonic() + 10
         while True:
             ready = client.query_prefetch(identity, hashes, "restore")
@@ -252,12 +296,58 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel
             timeout=10,
         )
         assert restored.success, restored.message
-        assert torch.equal(kv[:, 2].cpu(), torch.full_like(kv[:, 2], 17, device="cpu"))
+        torch.cuda.synchronize()
+        actual = kv.cpu()
+        assert torch.equal(actual, expected), "complete payload/untouched sentinel differs"
+        actual[0, 2, 0, 0, 0] += 1
+        assert not torch.equal(actual, expected), "mutation was invisible to full-byte oracle"
+        actual[0, 2, 0, 0, 0] -= 1
+        (tmp_path / "vllm-prepared-save.payload.bin").write_bytes(actual.numpy().tobytes())
+        after_restore = fetch_orbitkv_metrics(channel_server.http_port)
+        if channel_server.ssd_cache_path:
+            for name in (
+                "orbitkv_ssd_prefetch_bytes_total",
+                "orbitkv_ssd_uring_read_operations_total",
+            ):
+                assert name in after_restore and after_restore[name] > before_restore.get(name, 0)
+        worker.unregister_context()
+        assert worker._registration is None
+        worker.register_kv_caches({"layer": kv})
+        replacement = worker._registration
+        assert replacement.generation != original_registration.generation
+        from orbitkv import SaveNotSubmittedError
+
+        with pytest.raises(SaveNotSubmittedError, match="no longer active"):
+            client.prepare_save(original_registration, [("layer", [1], [b"h" * 32])])
+        receipt = {
+            "pid": os.getpid(),
+            "start_ticks": int(Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]),
+            "release": "0.31.0",
+            "prepared_ids": prepared_ids,
+            "producer_reserved": True,
+            "prepared_submission_consumed": True,
+            "full_destination_bytes": kv[:, 2].numel() * kv.element_size(),
+            "full_buffer_bytes": kv.numel() * kv.element_size(),
+            "full_byte_oracle": True,
+            "mutation_rejected": True,
+            "tier": "ssd-uring" if channel_server.ssd_cache_path else "dram",
+            "read_before": before_restore,
+            "read_after": after_restore,
+            "replacement_generation": replacement.generation.hex(),
+            "stale_registration_rejected": True,
+            "physical_fault_termination_claimed": False,
+        }
     finally:
         producer.synchronize()
         unrelated.synchronize()
         worker.shutdown()
         client.close()
+    if worker._save_thread.is_alive() or worker._registration is not None:
+        raise RuntimeError("vLLM worker or GPU registration survived normal shutdown")
+    receipt.update(workers_joined=True, registration_retired=True, client_closed=True)
+    (tmp_path / "vllm-prepared-save.native-release.json").write_text(
+        json.dumps(receipt, indent=2) + "\n"
+    )
 
 
 @pytest.mark.parametrize(

@@ -3,23 +3,36 @@
 from __future__ import annotations
 
 import gc
+import importlib.metadata
 import json
 import os
 import time
 import weakref
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
+import requests
+
+from tests.support.metrics import fetch_orbitkv_metrics
 
 pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 
 
 @pytest.mark.parametrize("independent_hold", [False, True], ids=["sole-owner", "independent-hold"])
+@pytest.mark.parametrize(
+    "channel_server",
+    [{"tier": "dram", "installed": True}, {"tier": "ssd", "installed": True}],
+    ids=["dram", "ssd"],
+    indirect=True,
+)
 def test_sglang_close_retires_only_its_registration(
     channel_server, model, monkeypatch, tmp_path, independent_hold
 ):
     torch = pytest.importorskip("torch")
     pytest.importorskip("sglang")
+    if importlib.metadata.version("sglang") != "0.5.21":
+        pytest.fail("Prepared Save pool gate requires official SGLang 0.5.21")
     from sglang.srt.mem_cache.allocator.paged import PagedTokenToKVPoolAllocator
     from sglang.srt.mem_cache.cache_init_params import CacheInitParams
     from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
@@ -62,13 +75,14 @@ def test_sglang_close_retires_only_its_registration(
             enable_alt_stream=False,
             kv_cache_layout="nhd",
         )
-        requests = ReqToTokenPool(2, 256, "cuda:0", False)
+        request_pool = ReqToTokenPool(2, 256, "cuda:0", False)
         allocator = PagedTokenToKVPoolAllocator(256, 64, torch.int64, "cuda:0", pool, False)
-        params = CacheInitParams(False, requests, allocator, 64)
-        layout = GpuLayout.from_pool(64, pool, requests, {ComponentType.FULL})
+        params = CacheInitParams(False, request_pool, allocator, 64)
+        layout = GpuLayout.from_pool(64, pool, request_pool, {ComponentType.FULL})
         counter = _LayerDoneCounter(layout)
         pool.register_layer_transfer_counter(counter)
         linker = OrbitKVLinker(args, params)
+        channel_server.record_runtime()
         exporters = [weakref.ref(tensor) for tensor in layout.pools[PoolName.KV].entry.kv_buffer]
         assert len(exporters) == 4
         generation = linker.registration.generation.hex()
@@ -76,20 +90,88 @@ def test_sglang_close_retires_only_its_registration(
             {"object_id": id(tensor), "shape": list(tensor.shape), "dtype": str(tensor.dtype)}
             for tensor in layout.pools[PoolName.KV].entry.kv_buffer
         ]
-        for tensor in pool.k_buffer + pool.v_buffer:
-            tensor.fill_(1.25)
+        expected = []
+        for index, tensor in enumerate(pool.k_buffer + pool.v_buffer):
+            tensor.fill_(-167)
+            tensor[64:128] = (
+                torch.arange(tensor[64:128].numel(), device="cuda").reshape(tensor[64:128].shape)
+                % 127
+                + index * 128
+            ).to(tensor.dtype)
+            original = tensor.cpu()
+            original[128:192] = original[64:128]
+            expected.append(original)
         del tensor
+        native_client = linker.client
+        observed = MagicMock(wraps=native_client)
+        linker.client = observed
         transfer = PoolTransfer(
             name=PoolName.KV,
             device_indices=torch.arange(64, 128, device="cuda:0"),
             keys=["registration-retirement"],
         )
         assert linker.offload([transfer])
+        observed.prepare_save.assert_called_once()
         deadline = time.monotonic() + 30
         while not linker.num_completed_offloads():
             assert time.monotonic() < deadline, "Real SGLang offload did not complete"
             time.sleep(0.01)
         assert linker.pop_completed_offload() is True
+        observed.submit_saves.assert_called_once()
+        observed.wait_save.assert_called_once()
+        observed.start_save.assert_not_called()
+        if channel_server.ssd_cache_path:
+            synced = requests.post(
+                f"http://127.0.0.1:{channel_server.http_port}/cache/sync", timeout=35
+            )
+            synced.raise_for_status()
+            assert synced.json()["local_flush_complete"] is True
+            from tests.support.cache_manager import evict_dram_after_ssd_writes
+
+            evict_dram_after_ssd_writes(channel_server.http_port)
+        before_restore = fetch_orbitkv_metrics(channel_server.http_port)
+        from orbitkv import BlockHashes, QueryReady
+
+        deadline = time.monotonic() + 30
+        while True:
+            query = native_client.query_prefetch(
+                linker.instance_id, BlockHashes(linker._hashes(transfer.keys)), "prepared-lifetime"
+            )
+            if isinstance(query, QueryReady) and query.num_hit_blocks == 1:
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        layers = list(linker.layout.pools[PoolName.KV].layer_names)
+        restore = native_client.start_restore(
+            linker.instance_id,
+            0,
+            0,
+            [layers],
+            [(query.lease, [[2]])],
+            ready_stream=torch.cuda.current_stream().cuda_stream,
+        )
+        restored = native_client.wait_restore(restore, timeout=30)
+        assert restored.done and restored.success, restored.message
+        torch.cuda.synchronize()
+        payloads = []
+        for tensor, original in zip(pool.k_buffer + pool.v_buffer, expected, strict=True):
+            actual = tensor.cpu()
+            assert torch.equal(actual, original), "SGLang complete pool/sentinel oracle differs"
+            actual.flatten()[0] += 1
+            assert not torch.equal(actual, original), "mutation escaped pool byte oracle"
+            actual.flatten()[0] -= 1
+            payloads.append(actual.view(torch.uint8).numpy().tobytes())
+        del tensor, actual, original, expected, restore
+        (tmp_path / "sglang-prepared-save.payload.bin").write_bytes(b"".join(payloads))
+        after_restore = fetch_orbitkv_metrics(channel_server.http_port)
+        if channel_server.ssd_cache_path:
+            for name in (
+                "orbitkv_ssd_prefetch_bytes_total",
+                "orbitkv_ssd_uring_read_operations_total",
+            ):
+                assert name in after_restore and after_restore[name] > before_restore.get(name, 0)
+        linker.client = native_client
+        del observed, native_client
         retained = linker.registration if independent_hold else None
         instance = linker.instance_id
         close_attempted = True
@@ -99,7 +181,7 @@ def test_sglang_close_retires_only_its_registration(
         assert linker._load_queue.unfinished_tasks == linker._offload_queue.unfinished_tasks == 0
         with pytest.raises(OrbitKVError, match="reconnect"):
             linker.client.health()
-        del linker, pool, requests, allocator, params, layout, counter, transfer
+        del linker, pool, request_pool, allocator, params, layout, counter, transfer
         linker = None
         torch.cuda.synchronize()
         gc.collect()
@@ -125,6 +207,13 @@ def test_sglang_close_retires_only_its_registration(
                     "workers_joined": True,
                     "registration_retired": True,
                     "client_closed": True,
+                    "release": "0.5.21",
+                    "prepared_submission_consumed": True,
+                    "full_byte_oracle": True,
+                    "mutation_rejected": True,
+                    "tier": "ssd-uring" if channel_server.ssd_cache_path else "dram",
+                    "read_before": before_restore,
+                    "read_after": after_restore,
                     "completed_mono_ns": time.monotonic_ns(),
                 },
                 indent=2,
