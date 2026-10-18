@@ -215,7 +215,7 @@ Do not default to running all of `python/tests`. Current project taste is `uv` +
 
 ```bash
 uv run python examples/basic_vllm.py --model /path/to/immutable-model
-.venv/vllm-release/bin/python -m benches.single_node --engine vllm --backend orbitkv --model /path/to/model --output /var/tmp/orbitkv-bench/run-001
+.venv/vllm-release/bin/python -m benches.serving.single_node --engine vllm --backend orbitkv --model /path/to/model --output /var/tmp/orbitkv-bench/run-001
 ```
 
 ## Run Services

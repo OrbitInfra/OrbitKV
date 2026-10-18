@@ -73,7 +73,7 @@ harness = false
 
 [[bench]]
 name = "cpu_codec"
-path = "../../benches/cpu_codec.rs"
+path = "../../benches/storage/native/cpu_codec.rs"
 harness = false
 
 [[bench]]
@@ -82,17 +82,17 @@ harness = false
 
 [[bench]]
 name = "native_kernel_copy"
-path = "../../benches/native_kernel_copy.rs"
+path = "../../benches/transfer/native/native_kernel_copy.rs"
 harness = false
 
 [[bench]]
 name = "native_copy_layout"
-path = "../../benches/native_copy_layout.rs"
+path = "../../benches/transfer/native/native_copy_layout.rs"
 harness = false
 
 [[test]]
 name = "native_copy_layout"
-path = "../../benches/tests/native_copy_layout.rs"
+path = "../../benches/tests/transfer/native_copy_layout.rs"
 
 [[example]]
 name = "pinned_alloc"

@@ -823,6 +823,27 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
 channel, SSD/codec and engine-hook owners retain responsibility. Contracts are
 in [transport](transport.md) and [engine-local Restore](engine-local-restore.md).
 
+The checkboxes below record bounded deliveries, not completion of S4. The
+records in this section retain each artifact, measured profile and failed gate.
+
+- [x] Implement reviewed KDA copy work, bounded SSD host batching, separated
+  read/write submission and GPU/NUMA identity. Keep CUDA sources separate.
+- [x] Accept the explicit SGLang kernel profile: Qwen3-32B, raw BF16,
+  TP1/PP1, eager, serial 4K/8K controls; no production-default change.
+- [x] Complete the descriptive 36-cell two-H20 Manager RDMA collection from
+  the historical `37b48c50` runtime; retain its IPC/lifetime limits.
+- [x] Merge the Manager native observer and offline identity/window reader in
+  [PR #270](https://github.com/feichai0017/orbitkv/pull/270), with independent
+  source/CPU acceptance and final-head CI. Hardware observation is still open.
+- [ ] Admit the current two-host runtime and pass the matched native-observer
+  overhead pilot before diagnosing first peer recovery and warm steady state.
+- [ ] Reduce engine-local H2D observation cost until the complete matched
+  overhead guard passes; earlier valid failed cohorts remain failed.
+- [ ] Pass inference-contention and repeatable end-to-end performance gates
+  before promoting further copy/SSD/scheduling changes or selecting defaults.
+- [ ] Complete S3 physical-lifetime gates before new reuse, fault reclamation
+  or earlier multipart/SSD/codec consumption.
+
 KDA copy work, bounded SSD host batching, separated SSD read/write submission,
 GPU/NUMA identity and descriptor/control measurements are implemented within
 their reviewed scopes. CUDA sources live in separate files. Rejected descriptor
@@ -1131,6 +1152,28 @@ and the immutable plan; historical evidence is not requalified by this summary.
 S2/S3 and measured S4 paths. Engine adapters and native client owners implement
 the boundary. Use released [LMCache/FlexKV integration contracts](adapters.md#lmcache-and-flexkv-reference)
 as references without duplicating their implementation layers.
+
+Checked items cover only the named accepted profiles or implementation scope;
+they do not close their remaining lifecycle and deployment gates.
+
+- [x] S5.1: accept the official vLLM 0.31.0 / SGLang 0.5.21 release and
+  interface audit, without a fork runtime dependency.
+- [x] S5.2: accept installed-wheel dense TP1/PP1 healthy cache/restart profiles,
+  including the current Save ownership regression and scoped shared-cache
+  serving. Preserve the native-child and physical-lifetime limits below.
+- [x] S5.3: submit the public SGLang worker-preparation and pending-lookup
+  contributions with independently accepted CPU scope; released adoption is open.
+- [x] S5.4: implement release-only native P/D selection and remove the custom
+  P/D connectors/proxy. The native fault matrix is still open.
+- [x] S5.5: accept the bounded local native/OrbitKV/LMCache comparison and
+  physical two-H20 dense RDMA serving profiles described below.
+- [ ] S5.3: consume released public lifecycle replacements, qualify complete
+  hybrid-state recovery and test cancellation/preemption/page reuse with S3 drain.
+- [ ] S5.4: qualify installed native P/D transfer cancellation, peer loss,
+  partial submit, delayed ACK, restart and page reuse with independent cache.
+- [ ] S5.5: qualify each additional model, Graph, rank and deployment claim,
+  including attention DP, TP/PP/EP, containers and fault profiles. Demonstrate
+  matched serving gains separately from descriptive comparisons.
 
 ### S5.1 — Release and interface audit
 

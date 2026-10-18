@@ -49,7 +49,7 @@ external recovery and matched performance remain distinct gates.
 For an independently owned native service and frozen token-ID inputs:
 
 ```bash
-uv run --isolated --no-project --with requests python -m benches.native_model_readiness \
+uv run --isolated --no-project --with requests python -m benches.serving.native_model_readiness \
   --engine vllm --url http://127.0.0.1:8000 --model /path/to/immutable-model \
   --prompts /path/to/frozen-token-ids.json --output-tokens 16 --repeats 2 \
   --output /var/tmp/orbitkv-native-readiness/vllm-001

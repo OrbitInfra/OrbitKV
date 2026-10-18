@@ -157,7 +157,7 @@ Shutdown must stop channel admission, await all admitted Publish continuations,
 then flush insert/SSD owners before flushing diagnostic output.
 
 Manager worker raw-copy shapes share that bounded timeline. After independently
-checking normal shutdown and owned-resource cleanup, use `benches.raw_copy_shapes`
+checking normal shutdown and owned-resource cleanup, use `benches.transfer.raw_copy_shapes`
 to require complete flush/count/shape coverage. Bind raw batches to the actual
 Manager receipt and require one completion process for a one-Manager gate.
 Engine-local asynchronous H2D is outside this trace. CPU submission and host

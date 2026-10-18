@@ -38,11 +38,11 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3]))
     from transformers import AutoTokenizer
 
-    from benches.launch import configure
-    from benches.metrics import metrics
-    from benches.runtime import server
-    from benches.shared_cache import drain, qualify, synchronize, verify_restore
-    from benches.workload import evict_host_cache, generate
+    from benches.common.launch import configure
+    from benches.common.metrics import metrics
+    from benches.common.runtime import server
+    from benches.common.workload import evict_host_cache, generate
+    from benches.distributed.shared_cache import drain, qualify, synchronize, verify_restore
 
     config = json.loads((model / "config.json").read_text())
     assert config["model_type"] == "qwen3", "this gate qualifies dense Qwen3"

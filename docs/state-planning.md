@@ -796,7 +796,7 @@ equal-coverage candidate must have fresh compatible evidence. The selected
 source still performs authoritative acquisition/admission. Pre-payload rejection
 can replan; submitted payload failure cannot switch media.
 There are no Python hot-loop callbacks, extra GPU synchronizations or payload
-reads for telemetry. See [the paired workload](../benches/README.md#cost-observation-overhead)
+reads for telemetry. See [the paired workload](../benches/serving/README.md#cost-observation-overhead)
 for the predeclared overhead budget and final qualification evidence.
 
 ### Choose a legal boundary and completion target
