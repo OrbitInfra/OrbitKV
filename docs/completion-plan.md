@@ -699,9 +699,11 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   vLLM 0.31.0 V1/direct DRAM with Graph NONE (six passed, one unsupported-hybrid
   skip), and SGLang 0.5.21 direct DRAM/io_uring SSD (two passed), all Qwen3-8B
   dense TP1/PP1. They exercise output, actual load-byte and restart controls;
-  both controllers and their original SSH owners return zero. Official SGLang
-  internal SIGKILL exits remain physical-lifetime limits. Evidence, independent
-  reviews and the original rejected design are at
+  both controllers and their original SSH owners return zero. Fresh same-host
+  TCP shared-cache gates also pass in both official environments, including
+  consumer restart recovery and an empty-source restart miss; see S5.2 below.
+  Official SGLang internal SIGKILL exits remain physical-lifetime limits.
+  Evidence, independent reviews and the original rejected design are at
   `/root/orbitkv-artifacts/s3-save-no-submit-20261018/`. This does not reconcile
   unknown admitted work or qualify page generations, physical faults or native
   P/D; S3/S4/S5 remain Partial.
@@ -1233,36 +1235,35 @@ profiles do not reconcile unknown owners, bound the Python queues or qualify
 physical faults, page generations, hybrid state, P/D or a performance gain.
 See [PR #268](https://github.com/feichai0017/orbitkv/pull/268) and the external
 reviews under `/root/orbitkv-artifacts/s3-save-no-submit-20261018/`.
-Final trigger review also requires the same-host TCP shared-cache serving gate
-in both official engine environments, because these producer adapters serve
-shared-cache workloads. Those gates remain unqualified for this artifact.
-CPU preparation reproduces the old fixture's missing `installed_artifact` and
-`enforce_eager` arguments. The corrected fixture selects a complete installed
-wheel and the documented deterministic eager profile without duplicate flags.
-Manager restart now uses its existing service context as the sole SIGTERM/wait
-owner; engine stops also consume the native shutdown validator. The prior
-fixture's manual Manager wait conflicted with that context's ownership check.
-Shared-cache drain also rejects missing or invalid ownership gauges rather than
-treating them as zero, and waits for any present optional owner gauges to clear.
-Both Manager and engine leaders inherit the test owner's existing GPU lease
-descriptors through the shared service launcher.
-The fresh `28c62db6` shared-cache fixture runs the vLLM case to completion:
-one selected test passes, with two remote-hit prompts, consumer index/engine
-restart recovery and a source-restart miss. The outer frozen acceptance still
-fails: all four engine logs show the official default `abort/0s`, including
-force-kill requests, rather than the required `drain/30s`. Eight service-leader
-waits of zero do not override this native evidence. The original controller
-retains its resource lease; the SGLang shared case has not started. Preserve this
-failed cohort and do not claim complete shared-cache qualification.
+Final trigger acceptance also covers fresh same-host TCP shared-cache serving
+from the same wheel in both official environments: one selected case per engine,
+dense Qwen3-8B TP1/PP1 eager, two replicas and two DRAM Managers on one GPU.
+Each case verifies three remote restores totalling 301,989,888 READ bytes and
+the same H2D bytes, matching generated output, consumer index/engine restart
+recovery, and restart of the empty source with zero remote/H2D bytes. All eight
+engine/Manager leader waits per case and both original controllers/SSH owners
+return zero.
+This is healthy correctness evidence; it adds no RDMA, SSD, HA, P/D, physical
+fault or performance qualification.
 
-The correction sets the common vLLM launcher to the released
-`--shutdown-timeout 30`, as the ordinary model fixture already does. Its consumed
-shutdown validator now requires the native drain/teardown messages and rejects
-abort or force-kill diagnostics, so pytest cannot accept only an API-owner exit.
-Fresh installed shared-cache qualification remains required. The four Managers'
-`closeSource status 2` records are the documented unsupported CUDA physical
-receipt, with source engine/registration/pool retention until process exit;
-they are not a newly established upstream defect or physical drain proof.
+The fixture selects the complete installed wheel and explicit eager profile.
+Its existing Manager service context solely owns SIGTERM/wait; missing or
+invalid ownership gauges reject drain. Manager and engine leaders inherit the
+original GPU lease descriptors. The common vLLM launcher uses the released
+`--shutdown-timeout 30`; the consumed native validator requires drain/teardown
+messages and rejects abort or force-kill diagnostics. All four current vLLM
+engine logs pass, with no SIGKILL requests. SGLang's native child SIGKILL exits
+and CUDA IPC warnings remain preserved, separately from its zero leader waits.
+
+The earlier `28c62db6` vLLM shared cohort remains failed: its functional test
+passed, but all four native logs used the official default `abort/0s` and
+requested force killing. Its retained resource owner is not released by the new
+case. The SGLang preparation that failed its protected-supervision check before
+READY also remains failed. GPU7's old SSH wait remains unknown. No failed case
+is replaced or reclassified.
+Managers' `closeSource status 2` records are the documented unsupported CUDA
+physical receipt, retaining source engines, registrations and pools until
+process exit; they are not physical drain proof or a new upstream defect.
 
 ### S5.3 — Public lifecycle and hybrid-state contracts
 

@@ -310,10 +310,17 @@ ORBITKV_CACHE_MANAGER_BINARY=/path/to/orbitkv-cache-manager \
   tests/e2e/test_shared_cache.py -k vllm --model /workspace/models/qwen3-8b
 ```
 
-Repeat with `.venv/sglang-release/bin/python` and `-k sglang`. Build the Manager
-before starting these processes. Native builds restage Mooncake libraries.
-Raw logs belong in external artifact directories or CI artifacts; retain only
-the final summary and reproduction commands in a PR.
+Repeat with `.venv/sglang-release/bin/python` and `-k sglang`. The fixture uses
+the installed OrbitKV wheel and explicit eager mode. Its common vLLM launcher
+sets the official `--shutdown-timeout 30`; the consumed shutdown validator
+requires native drain/teardown messages and rejects abort or force-kill logs.
+Service-leader exit zero alone cannot pass this check. Preserve SGLang's native
+child exit statuses and CUDA IPC warnings separately; healthy output and final
+GPU zero do not establish physical lifetime or fault reclamation.
+
+Build the Manager before starting these processes. Native builds restage
+Mooncake libraries. Raw logs belong in external artifact directories or CI
+artifacts; retain only the final summary and reproduction commands in a PR.
 
 Rust tests separately verify stale owner/residency rejection, source budget
 exhaustion, retained source allocations after timeout, cancellation during a
