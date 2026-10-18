@@ -614,9 +614,11 @@ qualification without changing native ownership.
 Before publishing READY, pending-Save campaigns also require `runtime_dlopen`
 with frozen absolute `python`, `helper` and `library` paths. The stdlib-only
 `tests/support/runtime_dlopen.py` child loads the declared TENT library and
-reports its actual file mappings. All loaded bytes must match direct hashes or
-complete runtime manifests. The child uses the cell's loader environment and
-`-I -S -B`, has a bounded wait, and does not create a transfer engine. Successful
+reports its actual file mappings. Every cell environment is checked, and all
+loaded bytes must match direct hashes or complete runtime manifests. Each child
+uses `-I -S -B`, bounded stdout/stderr pipes and a separate process group. The
+controller reserves time to stop and actually reap unexpected constructor
+children; a receipt must name the child it started. The preflight creates no transfer engine. Successful
 library loading alone cannot substitute for byte, resource or lifecycle gates.
 
 

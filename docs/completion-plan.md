@@ -772,6 +772,15 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   before resource admission/READY and rejects every mapped file outside direct
   digests or complete runtime manifests. This consumes actual native loader
   behavior without creating a transfer engine or claiming a CUDA/GDS result.
+  Independent review accepts the exact `af3f2023` readiness-2 precheck: both
+  media, all six complete payloads, twelve original-counter transitions and
+  actual process waits pass. This authorizes a fresh formal freeze only.
+  The first reusable guard at `04373784` is rejected: only the first cell's
+  environment was probed, child identity was not bound, and output/descendant
+  cleanup were incomplete. Its CPU counterexamples remain archived. The
+  correction probes every cell environment, bounds live output, binds the actual
+  child PID and stops/reaps its process group before return. It requires a new
+  source review and does not reclassify the rejected guard or qualify faults.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-
