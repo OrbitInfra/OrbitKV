@@ -17,6 +17,7 @@ import pytest
 import requests
 
 from tests.support.cluster import etcd_server
+from tests.support.gpu_identity import inherited_gpu_lock_fds
 
 pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
@@ -137,6 +138,7 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
                     launch.env,
                     launch.manager_url,
                     tmp_path / f"{node}-manager-{run}.log",
+                    pass_fds=inherited_gpu_lock_fds(),
                 )
             )
             current = read_member()
@@ -175,6 +177,7 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
                     launch.base_url,
                     tmp_path / f"{node}-engine-{run}.log",
                     engine=engine,
+                    pass_fds=inherited_gpu_lock_fds(),
                 )
             )
 

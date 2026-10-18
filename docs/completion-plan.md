@@ -1244,6 +1244,8 @@ owner; engine stops also consume the native shutdown validator. The prior
 fixture's manual Manager wait conflicted with that context's ownership check.
 Shared-cache drain also rejects missing or invalid ownership gauges rather than
 treating them as zero, and waits for any present optional owner gauges to clear.
+Both Manager and engine leaders inherit the test owner's existing GPU lease
+descriptors through the shared service launcher.
 These corrections require a fresh freeze and independent launch review before
 either GPU gate.
 
