@@ -308,7 +308,7 @@ The object retains exporters until the last queued/user reference is dropped.
 These checks bind registration lifetime; same-allocation page-slot reuse and
 physical failure drain still need their own proofs and hardware gates.
 
-The Save rejection candidate distinguishes `SaveNotSubmittedError` from unknown
+The native Save contract distinguishes `SaveNotSubmittedError` from unknown
 handoffs: only that exception from `start_save` proves the current invocation
 launched no native Publish worker. Handle allocation, attachment and wait errors
 retain the page hold. SGLang also preserves its official completion FIFO: once an

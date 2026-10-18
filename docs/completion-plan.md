@@ -688,9 +688,20 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   queued tasks without submitting them or advancing the completion FIFO. The
   same candidate exposes `SaveNotSubmittedError` only for explicit native
   prelaunch rejection; adapters consume it only around `start_save`, preserving
-  unknown attachment/wait holds. Real CPU channel and selected-release FIFO
-  controls, a fresh installed wheel and both official model/media gates remain
-  required before acceptance. Evidence and the original rejected design are at
+  unknown attachment/wait holds. Independent acceptance covers production
+  `d49f6deb`, harness `5d2a800e`, the real CPU channel and selected-release FIFO
+  controls. The repaired `cb19ce82` wheel passes new installed DRAM/io_uring
+  save/unregister/restore gates: six complete payload/sentinel comparisons,
+  six genuine retired-registration rejections with unchanged recorded I/O
+  observations, and twelve original-descriptor credit repayments. Recorded I/O
+  observations are not a count of GPU Publish operations or physical drain
+  proof. Fresh official-release model gates also pass from this wheel:
+  vLLM 0.31.0 V1/direct DRAM with Graph NONE (six passed, one unsupported-hybrid
+  skip), and SGLang 0.5.21 direct DRAM/io_uring SSD (two passed), all Qwen3-8B
+  dense TP1/PP1. They exercise output, actual load-byte and restart controls;
+  both controllers and their original SSH owners return zero. Official SGLang
+  internal SIGKILL exits remain physical-lifetime limits. Evidence, independent
+  reviews and the original rejected design are at
   `/root/orbitkv-artifacts/s3-save-no-submit-20261018/`. This does not reconcile
   unknown admitted work or qualify page generations, physical faults or native
   P/D; S3/S4/S5 remain Partial.
@@ -1202,6 +1213,26 @@ adapter retention after native prelaunch exceptions remains an availability
 follow-up. Historical failed runs and quarantines retain their verdicts.
 See [PR #262](https://github.com/feichai0017/orbitkv/pull/262) and the sealed
 reviews under `/root/orbitkv-artifacts/s5-installed-pending-save-model-20261018/`.
+A later append-only audit found that those model recipes retained an older
+wheel identity. The actual frozen runtime bytes and functional observations
+remain recorded, while canonical recipe provenance has that explicit limit.
+The corrected `cb19ce82` preparation binds the current wheel and all four
+protocol domains separately; it does not change a production protocol.
+
+**Save rejection and FIFO regression (2026-10-18):** production `d49f6deb`,
+harness `5d2a800e` and repaired wheel `cb19ce82` pass fresh installed DRAM/io_uring
+byte gates and both official-release Qwen3-8B model gates described under
+[S3](#s3--transfer-lifetime-and-generation-safe-ownership). A known native
+prelaunch rejection can release only the current invocation's hold; unknown
+start, attachment and wait outcomes remain retained. SGLang preserves its
+completion prefix even for tasks already queued behind an unknown result.
+The current vLLM logs pass the unchanged strict native validator; the six actual
+SGLang adopted child `-9` exits remain recorded. Engine/model inputs stay frozen,
+and prior failed preparations and cohorts retain their verdicts. These healthy
+profiles do not reconcile unknown owners, bound the Python queues or qualify
+physical faults, page generations, hybrid state, P/D or a performance gain.
+See [PR #268](https://github.com/feichai0017/orbitkv/pull/268) and the external
+reviews under `/root/orbitkv-artifacts/s3-save-no-submit-20261018/`.
 
 ### S5.3 — Public lifecycle and hybrid-state contracts
 
