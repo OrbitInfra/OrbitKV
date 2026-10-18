@@ -1005,6 +1005,14 @@ def validate_cell(
             for role in ("source", "consumer")
         }:
             raise RuntimeError("Save registration credit round/role identities differ")
+        if pending_bytes and {
+            path.name for path in evidence_paths(directory, "round-*.credit-release.json", deadline)
+        } != {
+            f"round-{index}-{role}.credit-release.json"
+            for index in range(3)
+            for role in ("source", "consumer")
+        }:
+            raise RuntimeError("Missing original Save credit release receipts")
         generations = set()
         for path in credits:
             row = read_json(path, deadline)
@@ -1074,6 +1082,41 @@ def validate_cell(
                     raise RuntimeError("Duplicate physical registration counter slot")
                 physical_slots.add(physical)
                 identities.add((normalized, offset))
+            if pending_bytes:
+                final = read_json(
+                    path.with_name(path.name.replace(".credit-owner.json", ".credit-release.json")),
+                    deadline,
+                )
+                if (
+                    final.get("schema") != "orbitkv.cuda-credit-release.v1"
+                    or final.get("owner") != pytest_owner
+                    or final.get("instance_id") != row.get("instance_id")
+                    or final.get("handoff_sha256") != digest(path, deadline)
+                    or final.get("physical_termination_claimed") is not False
+                    or type(final.get("observed_mono_ns")) is not int
+                    or final["observed_mono_ns"] <= 0
+                    or any(
+                        final.get(field) != evidence[field]
+                        for field in ("registration_generation", "export_owner_generation")
+                    )
+                    or not isinstance(final.get("counters"), list)
+                    or len(final["counters"]) != len(evidence["credits"])
+                ):
+                    raise RuntimeError("Original Save credit release identity is unproven")
+                for before, after in zip(evidence["credits"], final["counters"], strict=True):
+                    expected = {
+                        "counter_name": before["counter_name"],
+                        "counter_offset": before["counter_offset"],
+                        "device": before["observation"]["device"],
+                        "inode": before["observation"]["inode"],
+                        "before": 1,
+                        "after": 0,
+                    }
+                    if after != expected or any(
+                        type(after.get(field)) is not int
+                        for field in ("counter_offset", "device", "inode", "before", "after")
+                    ):
+                        raise RuntimeError("Original Save counter did not repay its exact slot")
         releases = evidence_paths(directory, "*.native-release.json", deadline)
         if len(releases) != (3 if pending_bytes else 4):
             raise RuntimeError("Missing complete native client release receipts")
@@ -1206,6 +1249,12 @@ def validate_cell(
                     raise RuntimeError("Save release completion timestamp is invalid")
                 if release["completed_mono_ns"] <= previous_release:
                     raise RuntimeError("Save release chronology regressed")
+                for role in ("source", "consumer"):
+                    credit_release = read_json(
+                        summaries[0].parent / f"round-{index}-{role}.credit-release.json", deadline
+                    )
+                    if credit_release["observed_mono_ns"] > release["completed_mono_ns"]:
+                        raise RuntimeError("Save credit repayment follows its release receipt")
                 previous_release = release["completed_mono_ns"]
                 if release.get("source") != row.get("source_identity") or release.get(
                     "consumer"

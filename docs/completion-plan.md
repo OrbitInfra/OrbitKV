@@ -747,6 +747,16 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   evidence despite a zero-exit leader. A new source/runtime freeze, traced
   readiness and independent launch acceptance are required; this correction
   does not qualify the failed cohort or physical fault termination.
+  Independent Source/CPU acceptance at `39a2b674` covers the mandatory frozen
+  tracer and actual process-wait controls; no new GPU cells have run. A separate
+  credit audit found that normal unregister receipts did not archive original
+  counter repayment: the six handoff snapshots were still 1, and the old file
+  is now absent. The next installed gate holds read-only descriptors opened
+  against each handoff's exact inode/slot through unregister and requires a
+  typed, generation-bound 1-to-0 observation. Missing, replayed, foreign,
+  nonzero or late observations cannot qualify release. This is normal IPC
+  credit evidence, not physical CUDA/RDMA fault termination. Old formal failure
+  and GPU4 quarantine remain unchanged; new resource admission is independent.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-

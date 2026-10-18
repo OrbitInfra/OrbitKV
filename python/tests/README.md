@@ -604,6 +604,13 @@ uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26
 The control checks a real threaded service-child wait, a nonzero child behind
 a zero-exit leader, and a missing trace. It also reproduces rejection without
 tracing. These CPU process receipts do not establish GPU/RDMA termination.
+The pending-Save byte gate also opens each original IPC counter descriptor at
+handoff and keeps it until the exact registered context has unregistered. Its
+release record requires the same device/inode/slot to change from 1 to 0 and
+binds the result to the handoff digest and both generations. An unlinked counter
+can still be observed through that original descriptor; a replacement pathname
+cannot prove the old slot repaid. Missing, nonzero or unreadable counters reject
+qualification without changing native ownership.
 
 
 ### Static local LoRA installed model gate
