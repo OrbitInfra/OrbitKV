@@ -863,6 +863,45 @@ def test_manager_importer_origin_is_identity_bound_and_inside_frozen_roots(fault
             campaign.validate_python_origin(text, expected, 17, time.monotonic() + 1)
 
 
+@pytest.mark.parametrize("fault", [None, "changed", "missing", "extra"])
+def test_repeated_registration_helpers_keep_one_exact_runtime_origin(fault):
+    expected = {
+        "torch_file": "/site/torch/__init__.py",
+        "gpu_module_file": "/site/orbitkv/client/gpu.py",
+        "prefix": "/usr",
+        "base_prefix": "/usr",
+        "allowed_sys_path": ["/site"],
+        "helper_records": 6,
+    }
+    runtime = {
+        "pid": 17,
+        "torch_file": expected["torch_file"],
+        "prefix": "/usr",
+        "base_prefix": "/usr",
+        "sys_path": ["/site"],
+        "no_user_site": 1,
+    }
+    helper = {"pid": 17, "gpu_module_file": expected["gpu_module_file"]}
+    rows = [json.dumps(helper)] * 6
+    if fault == "changed":
+        rows[-1] = json.dumps(dict(helper, gpu_module_file="/wrong/gpu.py"))
+    elif fault == "missing":
+        rows.pop()
+    elif fault == "extra":
+        rows.append(rows[0])
+    text = (
+        "CUDA registration Python runtime: "
+        + json.dumps(runtime)
+        + "\n"
+        + "\n".join("CUDA registration Python helper: " + row for row in rows)
+    )
+    if fault is None:
+        campaign.validate_python_origin(text, expected, 17)
+    else:
+        with pytest.raises(RuntimeError):
+            campaign.validate_python_origin(text, expected, 17)
+
+
 @pytest.mark.parametrize(
     "fault",
     [
@@ -1124,6 +1163,169 @@ def test_native_credit_oracle_refuses_malformed_types_and_aliased_slots(
     args, kwargs = captured[0]
     with pytest.raises((RuntimeError, ValueError)):
         validate(*args, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "payload",
+        "sentinel",
+        "release",
+        "close",
+        "credit",
+        "rounds",
+        "replay",
+        "foreign-close",
+        "missing-identity",
+        "float-round",
+        "credit-identity",
+        "chronology",
+        "ssd-valid",
+        "ssd-missing",
+        "ssd-regressed",
+        "ssd-nan",
+        "ssd-boolean",
+        "ssd-before-missing",
+        "ssd-read-replay",
+    ],
+)
+def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
+    tmp_path, monkeypatch, fault
+):
+    import hashlib
+
+    captured = []
+    validate = campaign.validate_cell
+    monkeypatch.setattr(
+        campaign, "validate_cell", lambda *args, **kwargs: captured.append((args, kwargs))
+    )
+    test_native_cell_requires_command_record_bound_to_observed_manager(tmp_path, None)
+    monkeypatch.setattr(campaign, "validate_cell", validate)
+    args, kwargs = captured[0]
+    cell, directory, owner, observed = args
+    ssd = fault is not None and fault.startswith("ssd-")
+    cell.update(kind="pending-save-bytes", tier="ssd-uring" if ssd else "dram")
+    credit = json.loads((tmp_path / "registration.credit-owner.json").read_text())
+    (tmp_path / "registration.credit-owner.json").unlink()
+    for path in tmp_path.glob("*.native-release.json"):
+        path.unlink()
+    rows = []
+    for index in range(3):
+        for role in ["source", "consumer"]:
+            import copy
+            from uuid import UUID
+
+            snapshot = copy.deepcopy(credit)
+            snapshot["instance_id"] = role
+            ordinal = 2 * index + int(role == "consumer") + 1
+            snapshot["evidence"]["registration_generation"] = str(UUID(int=ordinal))
+            snapshot["evidence"]["export_owner_generation"] = str(UUID(int=ordinal + 10))
+            (tmp_path / f"round-{index}-{role}.credit-owner.json").write_text(json.dumps(snapshot))
+        payload = bytearray([167] * 32768)
+        for source, target in zip((0, 2, 4, 6), (1, 3, 5, 7), strict=True):
+            payload[target * 4096 : (target + 1) * 4096] = bytes(
+                (source * 4096 + offset + source * 37 + index * 71) % 251 for offset in range(4096)
+            )
+        if fault in ("payload", "sentinel") and index == 0:
+            payload[4096 if fault == "payload" else 0] ^= 1
+        (tmp_path / f"round-{index}.payload.bin").write_bytes(payload)
+        rows.append(
+            {
+                "round": index,
+                "copied_bytes": 16384,
+                "observed_bytes": 32768,
+                "full_oracle": True,
+                "mutation_rejected": True,
+                "normal_unregister": True,
+                "tier": "ssd-uring" if ssd else "dram",
+                "read_before": {
+                    "orbitkv_ssd_prefetch_bytes_total": index * 16384 if index else None,
+                    "orbitkv_ssd_uring_read_operations_total": index * 4 if index else None,
+                },
+                "read_after": {
+                    "orbitkv_ssd_prefetch_bytes_total": (index + 1) * 16384,
+                    "orbitkv_ssd_uring_read_operations_total": (index + 1) * 4,
+                },
+                "source_identity": "source",
+                "consumer_identity": "consumer",
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+        )
+        (tmp_path / f"round-{index}.native-release.json").write_text(
+            json.dumps(
+                {
+                    "owner": owner,
+                    "unregistered": fault != "release",
+                    "source": "source",
+                    "consumer": "consumer",
+                    "physical_fault_termination_claimed": False,
+                    "completed_mono_ns": index + 1,
+                }
+            )
+        )
+    (tmp_path / "clients.native-close.json").write_text(
+        json.dumps(
+            {
+                "owner": owner,
+                "closed": fault != "close",
+                "normal_unregister": True,
+                "source": "source",
+                "consumer": "consumer",
+            }
+        )
+    )
+    (tmp_path / "PENDING-SAVE-BYTES.json").write_text(
+        json.dumps(rows[:2] if fault == "rounds" else rows)
+    )
+    if fault == "credit":
+        (tmp_path / "round-0-source.credit-owner.json").unlink()
+    elif fault == "replay":
+        snapshot = (tmp_path / "round-0-source.credit-owner.json").read_text()
+        (tmp_path / "round-1-source.credit-owner.json").write_text(snapshot)
+    elif fault == "foreign-close":
+        path = tmp_path / "clients.native-close.json"
+        row = json.loads(path.read_text())
+        row["source"] = "foreign"
+        path.write_text(json.dumps(row))
+    elif fault == "missing-identity":
+        rows[0].pop("source_identity")
+        (tmp_path / "PENDING-SAVE-BYTES.json").write_text(json.dumps(rows))
+    elif fault == "float-round":
+        rows[0]["round"] = False
+        rows[1]["round"] = 1.0
+        (tmp_path / "PENDING-SAVE-BYTES.json").write_text(json.dumps(rows))
+    elif fault == "credit-identity":
+        path = tmp_path / "round-0-source.credit-owner.json"
+        row = json.loads(path.read_text())
+        row["instance_id"] = "foreign"
+        path.write_text(json.dumps(row))
+    elif fault == "chronology":
+        path = tmp_path / "round-2.native-release.json"
+        row = json.loads(path.read_text())
+        row["completed_mono_ns"] = 1
+        path.write_text(json.dumps(row))
+    elif ssd and fault != "ssd-valid":
+        name = "orbitkv_ssd_prefetch_bytes_total"
+        if fault == "ssd-missing":
+            rows[0].pop("read_after")
+        elif fault == "ssd-regressed":
+            rows[0]["read_before"][name] = 16384
+        elif fault == "ssd-nan":
+            rows[0]["read_after"][name] = float("nan")
+        elif fault == "ssd-before-missing":
+            rows[0]["read_before"] = {}
+        elif fault == "ssd-read-replay":
+            rows[1]["read_before"] = rows[0]["read_before"]
+            rows[1]["read_after"] = rows[0]["read_after"]
+        else:
+            rows[0]["read_after"][name] = True
+        (tmp_path / "PENDING-SAVE-BYTES.json").write_text(json.dumps(rows))
+    if fault is None or fault == "ssd-valid":
+        validate(*args, **kwargs)
+    else:
+        with pytest.raises(RuntimeError):
+            validate(*args, **kwargs)
 
 
 def test_expired_or_oversized_oracle_cannot_get_success(tmp_path, monkeypatch):
