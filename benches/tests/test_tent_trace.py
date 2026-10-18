@@ -268,6 +268,8 @@ def test_manager_trace_rejects_foreign_or_repeated_query_window(section, field, 
     sample = cell["evidence"]["samples"][1]
     target = sample if section == "sample" else sample[section]
     target[field] = value
+    window = sample["query_window"]
+    sample["timing"]["query_ms"] = (window["ready_mono_ns"] - window["begin_mono_ns"]) / 1e6
     with pytest.raises(ValueError):
         tent_trace.summarize_manager(trace(), cell)
 

@@ -304,8 +304,9 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
 
 Run modes `complete`, `fork`, `exec`, `active` and `unpublished` with separate
 `TENT_NATIVE_TRACE_PATH` files and each writer's actual pre-exec owner PID.
-The first three must exit zero with 1,024 parent events and literal child wait0
-for the child modes; a descendant cannot overwrite the parent's trace. `active`
+The first three must exit zero with 1,024 parent events. The child modes must
+also report `actual_child_exit: 0`, recorded by the parent's `waitpid`;
+a descendant cannot overwrite the parent's trace. `active`
 and `unpublished` must exit 2 and cannot produce acceptable evidence. Also check
 actual shared-library preload with an exec descendant, malformed/missing owners,
 an intentionally foreign owner and disabled tracing. These synthetic CPU controls
