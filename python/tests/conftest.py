@@ -2,6 +2,7 @@
 
 import os
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -212,6 +213,16 @@ def channel_server(request, tmp_path):
     pool_size = "256mb" if mode == "ssd" else "100mb"
     if isinstance(configuration, dict):
         pool_size = configuration.get("pool_size", pool_size)
+    runtime_python_paths = None
+    if isinstance(configuration, dict) and configuration.get("installed") is True:
+        import importlib
+
+        package = importlib.import_module("orbitkv")
+        extension = importlib.import_module("orbitkv.orbitkv")
+        package_directory = Path(package.__file__).resolve().parent
+        if Path(extension.__file__).resolve().parent != package_directory:
+            raise RuntimeError("Installed Manager fixture extension leaves its package directory")
+        runtime_python_paths = (str(package_directory.parent),)
     server = CacheManagerProcess(
         port=find_available_port(),
         log_path=tmp_path / "orbitkv-cache-manager.log",
@@ -220,6 +231,7 @@ def channel_server(request, tmp_path):
         query_instance_budget="64kb" if mode == "budget" else None,
         http_port=find_available_port(),
         channel_service=service_name,
+        runtime_python_paths=runtime_python_paths,
         channel_session_epoch=0x0B17_17C0,
         bootstrap_socket=bootstrap_socket,
         ssd_cache_path=tmp_path / "cache.bin" if mode == "ssd" else None,

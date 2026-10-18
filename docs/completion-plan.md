@@ -972,6 +972,11 @@ keep cold/native-HBM/full/partial/restart/failure controls, exact outputs, actua
 restore bytes, installed-file integrity and truthful process cleanup. Remove
 obsolete code only after its replacement is consumed and passes the same contract.
 
+The SGLang model fixture now selects the imported package/extension root for
+both media before launching its Manager, preventing checkout sources from
+shadowing a frozen wheel. CPU path controls do not replace matching-wheel model
+or lifetime qualification; those gates remain open for each new artifact.
+
 **Scoped installed-wheel acceptance (2026-10-14):** SGLang
 pending-query admission consumes authenticated native `peer_alive()`, without a
 health RPC or using peer death as a DMA fence. Peer failure preserves the query
