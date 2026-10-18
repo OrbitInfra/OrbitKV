@@ -193,13 +193,16 @@ def test_window_and_checkpoint_restore_only_required_destinations(channel_server
 
 
 @pytest.mark.gpu
+@pytest.mark.parametrize("fence", [True, False], ids=["fenced", "no-fence-control"])
 @pytest.mark.parametrize(
     "channel_server",
     [{"tier": "dram", "installed": True}, {"tier": "ssd", "installed": True}],
     ids=["dram", "ssd"],
     indirect=True,
 )
-def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel_server, tmp_path):
+def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
+    channel_server, tmp_path, fence
+):
     torch = pytest.importorskip("torch")
     from orbitkv import BlockHashes, CacheManagerClient, QueryReady
     from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, SaveIntent
@@ -213,14 +216,17 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel
     worker = WorkerAdapter(context(client, instance_id=identity, namespace=identity))
     kv = torch.zeros((2, 8, 16, 1, 32), device="cuda", dtype=torch.float32)
     payload = torch.arange(2 * 16 * 32, dtype=torch.float32).reshape(2, 16, 1, 32)
+    producer_payload = payload.to("cuda")
     expected = torch.full_like(kv, -167, device="cpu")
     expected[:, 1] = payload
     expected[:, 2] = payload
     producer, unrelated = torch.cuda.Stream(), torch.cuda.Stream()
     unrelated_done = torch.cuda.Event()
+    producer_done = torch.cuda.Event()
     submitted = threading.Event()
     overlapped = []
     prepared_ids = []
+    producer_ready_at_submit = []
     hashes = BlockHashes([b"h" * 32])
 
     def prepare(*args):
@@ -230,8 +236,26 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel
 
     def submit(handles):
         overlapped.append(not unrelated_done.query())
+        producer_ready_at_submit.append(producer_done.query())
         submitted.set()
         return client.submit_saves(handles)
+
+    if not fence:
+        make_task = worker._make_save_task
+
+        class WithoutFence:
+            def __init__(self, event):
+                self.event = event
+
+            def synchronize(self):
+                pass
+
+        def omit_fence(*args, **kwargs):
+            task = make_task(*args, **kwargs)
+            task.ready = WithoutFence(task.ready)
+            return task
+
+        worker._make_save_task = omit_fence
 
     try:
         worker.register_kv_caches({"layer": kv})
@@ -245,12 +269,14 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel
         # A delayed producer verifies that the background thread cannot read
         # the initial zeros. Independent work must not extend its save fence.
         with torch.cuda.stream(producer):
-            torch.cuda._sleep(100_000_000)
-            kv[:, 1].copy_(payload)
-        with torch.cuda.stream(unrelated):
             torch.cuda._sleep(1_500_000_000)
+            kv[:, 1].copy_(producer_payload)
+            producer_done.record()
+        with torch.cuda.stream(unrelated):
+            torch.cuda._sleep(3_000_000_000)
             unrelated_done.record()
         with torch.cuda.stream(producer):
+            assert not producer_done.query(), "producer completed before handoff fence test"
             worker._current_metadata = OrbitKVConnectorMetadata(
                 save_intents={
                     "save": SaveIntent(block_ids_by_group=((1,),), block_hashes=(b"h" * 32,))
@@ -262,6 +288,7 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel
         assert submitted.wait(10), "the save worker never submitted Publish"
         worker._save_queue.join()
         assert overlapped == [True], "Publish waited for unrelated GPU work"
+        assert producer_ready_at_submit == [fence], "native submission did not prove its fence"
         assert worker.get_transfer_results({"save"}).finished_sending == {"save"}
         worker._client.prepare_save.assert_called_once()
         worker._client.submit_saves.assert_called_once()
@@ -296,12 +323,20 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel
             timeout=10,
         )
         assert restored.success, restored.message
+        producer.synchronize()
         torch.cuda.synchronize()
         actual = kv.cpu()
-        assert torch.equal(actual, expected), "complete payload/untouched sentinel differs"
-        actual[0, 2, 0, 0, 0] += 1
-        assert not torch.equal(actual, expected), "mutation was invisible to full-byte oracle"
-        actual[0, 2, 0, 0, 0] -= 1
+        oracle_matches = torch.equal(actual, expected)
+        if fence:
+            assert oracle_matches, "complete payload/untouched sentinel differs"
+            actual[0, 2, 0, 0, 0] += 1
+            assert not torch.equal(actual, expected), "mutation was invisible to full-byte oracle"
+            actual[0, 2, 0, 0, 0] -= 1
+        else:
+            assert not oracle_matches, "no-fence control unexpectedly passed the positive oracle"
+            untouched = expected.clone()
+            untouched[:, 2].fill_(-167)
+            assert torch.equal(actual, untouched), "negative control corrupted unowned bytes"
         (tmp_path / "vllm-prepared-save.payload.bin").write_bytes(actual.numpy().tobytes())
         after_restore = fetch_orbitkv_metrics(channel_server.http_port)
         if channel_server.ssd_cache_path:
@@ -325,11 +360,16 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel
             "release": "0.31.0",
             "prepared_ids": prepared_ids,
             "producer_reserved": True,
+            "producer_pending_at_handoff": True,
             "prepared_submission_consumed": True,
             "full_destination_bytes": kv[:, 2].numel() * kv.element_size(),
             "full_buffer_bytes": kv.numel() * kv.element_size(),
             "full_byte_oracle": True,
             "mutation_rejected": True,
+            "fence_enabled": fence,
+            "positive_byte_oracle_passed": oracle_matches,
+            "producer_ready_at_submit": producer_ready_at_submit,
+            "qualification_passed": fence,
             "tier": "ssd-uring" if channel_server.ssd_cache_path else "dram",
             "read_before": before_restore,
             "read_after": after_restore,

@@ -130,28 +130,32 @@ def test_sglang_close_retires_only_its_registration(
 
             evict_dram_after_ssd_writes(channel_server.http_port)
         before_restore = fetch_orbitkv_metrics(channel_server.http_port)
-        from orbitkv import BlockHashes, QueryReady
-
         deadline = time.monotonic() + 30
+        rid = "prepared-lifetime"
+        linker._origins[rid] = 0
+        load = PoolTransfer(
+            name=PoolName.KV,
+            device_indices=torch.arange(128, 192, device="cuda:0"),
+            keys=transfer.keys,
+        )
         while True:
-            query = native_client.query_prefetch(
-                linker.instance_id, BlockHashes(linker._hashes(transfer.keys)), "prepared-lifetime"
-            )
-            if isinstance(query, QueryReady) and query.num_hit_blocks == 1:
+            boundaries = linker.lookup(rid, [load])
+            if boundaries == [1] and linker.prepare_recovery(rid, 64) == 1:
                 break
             assert time.monotonic() < deadline
             time.sleep(0.01)
-        layers = list(linker.layout.pools[PoolName.KV].layer_names)
-        restore = native_client.start_restore(
-            linker.instance_id,
-            0,
-            0,
-            [layers],
-            [(query.lease, [[2]])],
-            ready_stream=torch.cuda.current_stream().cuda_stream,
-        )
-        restored = native_client.wait_restore(restore, timeout=30)
-        assert restored.done and restored.success, restored.message
+        # The released recovery wrapper supplies this semantic boundary before load.
+        linker._load_boundaries[rid] = (64, {})
+        assert linker.load(rid, [load])
+        index = linker.start_layer_wise_loading()
+        assert index >= 0
+        linker.layer_done_counter.set_consumer(index)
+        while not linker.num_completed_loads():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert linker.pop_completed_load() == [rid]
+        observed.start_restore.assert_called_once()
+        observed.wait_restore.assert_called_once()
         torch.cuda.synchronize()
         payloads = []
         for tensor, original in zip(pool.k_buffer + pool.v_buffer, expected, strict=True):
@@ -161,7 +165,7 @@ def test_sglang_close_retires_only_its_registration(
             assert not torch.equal(actual, original), "mutation escaped pool byte oracle"
             actual.flatten()[0] -= 1
             payloads.append(actual.view(torch.uint8).numpy().tobytes())
-        del tensor, actual, original, expected, restore
+        del tensor, actual, original, expected, load
         (tmp_path / "sglang-prepared-save.payload.bin").write_bytes(b"".join(payloads))
         after_restore = fetch_orbitkv_metrics(channel_server.http_port)
         if channel_server.ssd_cache_path:
@@ -209,6 +213,7 @@ def test_sglang_close_retires_only_its_registration(
                     "client_closed": True,
                     "release": "0.5.21",
                     "prepared_submission_consumed": True,
+                    "linker_load_consumed": True,
                     "full_byte_oracle": True,
                     "mutation_rejected": True,
                     "tier": "ssd-uring" if channel_server.ssd_cache_path else "dram",

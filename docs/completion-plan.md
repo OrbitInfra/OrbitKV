@@ -918,6 +918,14 @@ consume the actual `prepare_save`/`submit_saves` path and registration retiremen
 Both released adapters check complete payload/sentinels and real io_uring reads
 with the matching installed wheel. The official engine releases, byte oracles,
 actual cleanup and negative controls require independent review before launch.
+The first adapter harness checkpoint `0d5430d7` remains rejected: a synchronous
+CPU-to-GPU source copy waited before handoff and could hide a missing producer
+fence, while SGLang Restore bypassed the linker consumer. The correction uses
+preallocated GPU payload with an asynchronous producer stream, proves its event
+is pending before handoff, and includes a same-data no-fence byte control whose
+positive oracle must fail. SGLang now consumes its actual lookup/recovery/load,
+layer activation and completed-load paths. These are test candidates pending
+independent review and GPU execution, not engine page-generation implementation.
 
 ## S4 — Finish communication execution and demonstrate gains
 
