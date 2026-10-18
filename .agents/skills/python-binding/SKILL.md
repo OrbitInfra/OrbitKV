@@ -18,6 +18,12 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   Its active interval, overdue bit, retained count and pidfd liveness are never
   completion receipts. Keep engine pages held while synchronous `save` runs;
   callers must not turn diagnostic failure into save completion.
+- The native Save handle candidate uses `start_save`, `poll_save` and
+  `wait_save`. Explicit wait timeouts return pending; omitted timeout waits in
+  Rust. Dropping a handle never cancels native work. Keep exporter/context and
+  engine-page holds until the actual receipt; close/unregister must serialize
+  admission and wait for accepted Saves. The synchronous `save` workload API
+  still waits to its established completion and has no new timeout return.
 - Engine callback changes: use `.agents/skills/engine-integration/SKILL.md` and
   `docs/adapters.md`; release targets and current qualification are distinct.
 - Model/layout identity and hybrid recovery are shared contracts. Do not equate

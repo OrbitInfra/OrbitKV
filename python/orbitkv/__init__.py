@@ -15,6 +15,7 @@ _NATIVE_EXPORTS = {
     "GpuRegistration",
     "ChannelCallObservation",
     "PublishProgress",
+    "SaveHandle",
     "BlockHashes",
     "MooncakeTransferEngine",
     "OrbitKVError",

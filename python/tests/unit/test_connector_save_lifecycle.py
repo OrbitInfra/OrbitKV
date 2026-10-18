@@ -45,6 +45,7 @@ def make_worker() -> WorkerAdapter:
         )
 
     worker._registration = object()
+    worker._client.wait_save.return_value = SimpleNamespace(done=True, success=True, message="")
     return worker
 
 
@@ -93,6 +94,32 @@ def test_publish_progress_never_completes_held_engine_pages(alive):
     assert not completion.is_set()
 
 
+@pytest.mark.parametrize("failure", ["pending", "exception", "start"])
+def test_native_save_wait_failure_keeps_engine_pages_and_registration(failure):
+    worker = make_worker()
+    worker._registered_layers = ["layer"]
+    completion = enqueue_save(worker)
+    handle = object()
+    worker._client.start_save.return_value = handle
+    if failure == "pending":
+        worker._client.wait_save.return_value = SimpleNamespace(
+            done=False, success=False, message="pending"
+        )
+    else:
+        worker._client.wait_save.side_effect = RuntimeError("wait failed")
+    if failure == "start":
+        worker._client.start_save.side_effect = MemoryError("unknown handoff")
+    with pytest.raises(RuntimeError, match="engine pages remain held"):
+        process_next_save(worker)
+    assert not completion.is_set()
+    assert not worker.get_transfer_results({"request"}).finished_sending
+    assert worker._retained_save_tasks[0].native_attempted
+    if failure != "start":
+        assert worker._retained_save_tasks[0].native_handle is handle
+    with pytest.raises(RuntimeError, match="pages remain held"):
+        worker.unregister_context()
+
+
 def test_save_waits_for_each_producer_before_publishing():
     worker = make_worker()
     worker._registered_layers = ["layer"]
@@ -115,7 +142,7 @@ def test_save_waits_for_each_producer_before_publishing():
         calls.append("publish")
         return True, ""
 
-    worker._client.save.side_effect = save
+    worker._client.start_save.side_effect = save
     with patch("torch.cuda.synchronize", side_effect=AssertionError("device-wide wait")):
         worker._process_save_batch([worker._save_queue.get_nowait() for _ in events])
     assert completion.is_set()
@@ -134,7 +161,7 @@ def test_blocks_are_not_reused_until_every_save_task_completes():
                 stored_blocks[block_hash] = gpu_blocks[block_id]
         return True, ""
 
-    worker._ctx.client.save.side_effect = save
+    worker._ctx.client.start_save.side_effect = save
     enqueue_save(worker, 1, b"first hash")
     enqueue_save(worker, 2, b"second hash")
     process_next_save(worker)
@@ -185,7 +212,10 @@ def test_boundary_state_saves_run_async_and_report_job_completion():
         saved.extend(saves)
         return False, "store unavailable"
 
-    worker._ctx.client.save.side_effect = save
+    worker._ctx.client.start_save.side_effect = save
+    worker._ctx.client.wait_save.return_value = SimpleNamespace(
+        done=True, success=False, message="store unavailable"
+    )
     worker._current_metadata = OrbitKVConnectorMetadata(
         boundary_save_intents={
             7: SaveIntent(
@@ -196,7 +226,7 @@ def test_boundary_state_saves_run_async_and_report_job_completion():
     )
 
     worker.wait_for_save()
-    worker._ctx.client.save.assert_not_called()
+    worker._ctx.client.start_save.assert_not_called()
     assert worker.build_connector_worker_meta() is None
 
     process_next_save(worker)
@@ -239,7 +269,7 @@ def test_hma_request_saves_run_async():
     worker._ctx.client.save.assert_not_called()
 
     process_next_save(worker)
-    worker._ctx.client.save.assert_called_once()
+    worker._ctx.client.start_save.assert_called_once()
     finished_sending = worker.get_transfer_results({"request"}).finished_sending
     assert finished_sending == {"request"}
 
@@ -248,14 +278,17 @@ def test_save_uses_the_selected_data_plane():
     worker = make_worker()
     worker._registered_layers = ["layer"]
     cache_client = MagicMock(transport="iceoryx2")
-    cache_client.save.return_value = (True, "")
+    cache_client.start_save.return_value = object()
+    cache_client.wait_save.return_value = SimpleNamespace(done=True, success=True, message="")
     worker._client = cache_client
     enqueue_save(worker)
 
     process_next_save(worker)
 
-    cache_client.save.assert_called_once_with(worker._registration, [("layer", [1], [b"hash"])])
-    worker._ctx.client.save.assert_not_called()
+    cache_client.start_save.assert_called_once_with(
+        worker._registration, [("layer", [1], [b"hash"])]
+    )
+    worker._ctx.client.start_save.assert_not_called()
 
 
 def test_preemption_waits_for_every_save_task():
@@ -313,7 +346,7 @@ def test_malformed_save_intent_is_skipped_and_still_completes():
 
     process_next_save(worker)
 
-    (_, saves), _ = worker._ctx.client.save.call_args
+    (_, saves), _ = worker._ctx.client.start_save.call_args
     assert saves == [("layer", [2], [b"h2"])]
     finished_sending = worker.get_transfer_results({"torn", "good"}).finished_sending
     assert finished_sending == {"torn", "good"}
@@ -352,7 +385,7 @@ def test_shutdown_publishes_pending_saves_before_unregistering():
         calls.append("unregister")
         return True, ""
 
-    worker._ctx.client.save.side_effect = save
+    worker._ctx.client.start_save.side_effect = save
     worker._ctx.client.unregister_context.side_effect = unregister
     # Process the queued batch and shutdown sentinel deterministically at join.
     worker._save_thread = MagicMock()
@@ -383,7 +416,7 @@ def test_queued_save_keeps_the_registration_captured_by_its_producer(boundary):
 
     process_next_save(worker)
 
-    worker._client.save.assert_called_once_with(original, [("layer", [1], [b"hash"])])
+    worker._client.start_save.assert_called_once_with(original, [("layer", [1], [b"hash"])])
 
 
 def test_batch_with_two_registration_owners_is_rejected_before_publish(caplog):
@@ -395,7 +428,7 @@ def test_batch_with_two_registration_owners_is_rejected_before_publish(caplog):
 
     worker._process_save_batch([worker._save_queue.get_nowait() for _ in range(2)])
 
-    worker._client.save.assert_not_called()
+    worker._client.start_save.assert_not_called()
     assert "save batch spans different GPU registrations" in caplog.text
     assert completion.is_set()
 

@@ -69,6 +69,49 @@ def test_publish_activity_does_not_complete_offloads(linker, alive):
     assert linker.num_completed_offloads() == 1
 
 
+@pytest.mark.parametrize("failure", ["pending", "exception", "start"])
+def test_native_save_wait_failure_does_not_complete_offload(linker, failure):
+    import queue
+
+    linker._offload_queue = queue.Queue()
+    linker._completed_offloads = queue.Queue()
+    linker._retained_offloads = []
+    handle = object()
+    linker.client.start_save.return_value = handle
+    if failure == "pending":
+        linker.client.wait_save.return_value = SimpleNamespace(
+            done=False, success=False, message="pending"
+        )
+    else:
+        linker.client.wait_save.side_effect = RuntimeError("wait failed")
+    if failure == "start":
+        linker.client.start_save.side_effect = MemoryError("unknown handoff")
+    linker._offload_queue.put((object(), [], MagicMock()))
+    linker._offload_queue.put(None)
+    linker._offload_worker()
+    assert linker._completed_offloads.empty()
+    if failure != "start":
+        assert linker._retained_offloads[0][1] is handle
+    assert len(linker._retained_offloads) == 1
+    with pytest.raises(RuntimeError, match="pages remain held"):
+        linker.reset()
+
+
+def test_reset_rechecks_retained_save_after_join(linker):
+    import queue
+
+    linker._retained_offloads = []
+    linker.layer_done_counter = MagicMock()
+    linker._load_queue = queue.Queue()
+    linker._offload_queue = MagicMock()
+    linker._offload_queue.join.side_effect = lambda: linker._retained_offloads.append(
+        (object(), object())
+    )
+    with pytest.raises(RuntimeError, match="pages remain held"):
+        linker.reset()
+    linker.layer_done_counter.reset.assert_not_called()
+
+
 def transfer(keys):
     from sglang.srt.mem_cache.hicache_storage import PoolName
 

@@ -191,6 +191,15 @@ class CacheManagerClient:
     def publish_progress(self) -> PublishProgress:
         """Bounded local observation independent of Publish/UDS call locks; may report contention."""
         ...
+    def start_save(
+        self, registration: GpuRegistration, saves: list[tuple[str, list[int], list[bytes]]]
+    ) -> SaveHandle:
+        """Admit a native-held Save; dropping its handle does not cancel or release source pages."""
+        ...
+    def poll_save(self, handle: SaveHandle) -> RestoreStatus: ...
+    def wait_save(self, handle: SaveHandle, *, timeout: float | None = None) -> RestoreStatus:
+        """A deadline returns pending; omission waits in Rust while source owners remain held."""
+        ...
     def retained_registration_attempts(self) -> list[tuple[bytes, str, int, list[str], bool]]:
         """Exporter generation, instance, charged bytes, credit states, export-return uncertainty."""
         ...
@@ -353,6 +362,11 @@ class CacheManagerClient:
         """Consume the terminal result without the GIL; timeout preserves ownership."""
         ...
     def restore_completions_ready(self, *, timeout: float = 0.0) -> bool: ...
+
+class SaveHandle:
+    """Client-bound native Save identity, created only by start_save."""
+    @property
+    def operation_id(self) -> int: ...
 
 class RestoreHandle:
     """Client-bound GPU restore identity, created only by start_restore."""

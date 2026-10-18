@@ -1,6 +1,158 @@
 use super::*;
 use crate::local_restore::tests::{ProcessOwner, idle_registration_worker};
 
+#[test]
+#[ignore = "real CPU bootstrap/channel native Save owner control; no CUDA allocations or DMA"]
+fn pending_save_retains_after_handle_drop_and_delayed_reply() {
+    use orbitkv_channel::{
+        BootstrapServer, CommandCode, RESPONSE_FLAG_REQUEST_CONSUMED, Response, TransportServer,
+    };
+    use std::sync::atomic::AtomicBool;
+    use std::time::Instant;
+    Python::initialize();
+    let directory = std::path::PathBuf::from(format!("/var/tmp/okv-save-{}", std::process::id()));
+    std::fs::create_dir(&directory).unwrap();
+    let socket = directory.join("save.sock");
+    let name = format!("orbitkv/test/pending-save/{}", std::process::id());
+    let bootstrap = BootstrapServer::bind(&socket, &name, 71, 64 * 1024, 4096).unwrap();
+    bootstrap.set_nonblocking(true).unwrap();
+    let transport = TransportServer::bind(&name).unwrap();
+    let release = Arc::new(AtomicBool::new(false));
+    let stop = Arc::new(AtomicBool::new(false));
+    let gate = Arc::clone(&release);
+    let stopping = Arc::clone(&stop);
+    let peer = std::thread::spawn(move || {
+        let mut sessions = HashMap::new();
+        let mut pending = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !stopping.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline);
+            while let Some(session) = bootstrap.try_accept().unwrap() {
+                sessions.insert(session.client_token(), session);
+            }
+            transport
+                .try_serve_deferred_for_epoch(71, |command, reply| {
+                    assert_eq!(command.code, CommandCode::Publish);
+                    let session = sessions.get_mut(&command.arg0).unwrap();
+                    let slot = bootstrap
+                        .descriptor_slot(command.descriptor.offset)
+                        .unwrap();
+                    session
+                        .validate_request(command.descriptor, command.arg0, slot)
+                        .unwrap();
+                    PublishRequest::decode(&bootstrap.arena().read(command.descriptor).unwrap())
+                        .unwrap();
+                    pending.push((command, reply));
+                    Ok(())
+                })
+                .unwrap();
+            if gate.load(Ordering::Acquire) {
+                for (command, reply) in pending.drain(..) {
+                    let session = sessions.get_mut(&command.arg0).unwrap();
+                    let mut response = Response::ok(command);
+                    response.descriptor = bootstrap
+                        .arena()
+                        .write_response(command.descriptor, &[])
+                        .unwrap();
+                    response.value1 = RESPONSE_FLAG_REQUEST_CONSUMED;
+                    session.complete_request().unwrap();
+                    reply
+                        .send_and_notify(response, session.reply_notification_fd())
+                        .unwrap();
+                }
+            }
+            std::thread::sleep(Duration::from_micros(100));
+        }
+    });
+    let inner = Arc::new(CacheClient::connect(&socket, CallOptions::default()).unwrap());
+    let client = native_client(Arc::clone(&inner), [37; 16]);
+    let registration = registration(&client, [37; 16]);
+    let tensors = Arc::downgrade(&registration._tensors);
+    let handle = Python::attach(|py| client.start_save(py, &registration, Vec::new())).unwrap();
+    {
+        let mut usage = SAVE_USAGE.lock().unwrap();
+        let saved = *usage;
+        usage.0 = MAX_PENDING_SAVES;
+        drop(usage);
+        assert!(Python::attach(|py| client.start_save(py, &registration, Vec::new())).is_err());
+        *SAVE_USAGE.lock().unwrap() = saved;
+        assert_eq!(client.saves.lock().unwrap().len(), 1);
+    }
+    drop(registration);
+    let started = Instant::now();
+    let response =
+        Python::attach(|py| client.wait_save(py, &handle.borrow(py), Some(0.001))).unwrap();
+    assert!(!response.done);
+    assert!(started.elapsed() < Duration::from_secs(1));
+    let foreign = native_client(
+        Arc::new(CacheClient::connect(&socket, CallOptions::default()).unwrap()),
+        [37; 16],
+    );
+    assert!(Python::attach(|py| foreign.poll_save(py, &handle.borrow(py))).is_err());
+    let observed = Python::attach(|py| Arc::clone(&handle.borrow(py).pending));
+    drop(handle);
+    assert!(
+        tensors.upgrade().is_some(),
+        "native Save lost exporter ownership with the handle"
+    );
+    assert!(!observed.status(Duration::ZERO).done);
+    release.store(true, Ordering::Release);
+    assert!(observed.status(Duration::from_secs(5)).success);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while tensors.upgrade().is_some() {
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    stop.store(true, Ordering::Release);
+    peer.join().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    println!(
+        "actual_channel_Save=1 bounded_pending=1 foreign_rejected=1 handle_drop_retained=1 late_receipt_release=1 no_DMA=true"
+    );
+}
+
+#[test]
+fn pending_save_wait_is_a_receipt_wait_not_a_timeout_completion() {
+    let pending = Arc::new(PendingSave {
+        instance: "cpu".into(),
+        bytes: 0,
+        result: Mutex::new(None),
+        completed: Condvar::new(),
+    });
+    assert!(!pending.status(Duration::from_millis(1)).done);
+    let receipt = Arc::clone(&pending);
+    let worker = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(5));
+        *receipt.result.lock().unwrap() = Some(Err("failed after drained copy".into()));
+        receipt.completed.notify_all();
+    });
+    let result = pending.wait();
+    assert!(result.done);
+    assert!(!result.success);
+    assert!(result.message.contains("drained copy"));
+    worker.join().unwrap();
+}
+
+#[test]
+fn save_request_admission_accounts_for_spare_capacity() {
+    let mut hashes = Vec::with_capacity(37);
+    hashes.push(Vec::with_capacity(4096));
+    let request = PublishRequest {
+        instance_id: "capacity".into(),
+        registration_generation: [37; 16],
+        tp_rank: 0,
+        pp_rank: 0,
+        device_id: 0,
+        layers: vec![PublishLayer {
+            layer_name: "layer".into(),
+            block_ids: Vec::with_capacity(1024),
+            block_hashes: hashes,
+        }],
+    };
+    let bytes = save_request_bytes(&request).unwrap();
+    assert!(bytes >= 37 * std::mem::size_of::<Vec<u8>>() + 4096 + 1024 * 4);
+}
+
 fn registration(client: &PyCacheManagerClient, generation: [u8; 16]) -> PyGpuRegistration {
     PyGpuRegistration {
         instance_id: "same-instance".into(),
@@ -19,6 +171,8 @@ fn registration(client: &PyCacheManagerClient, generation: [u8; 16]) -> PyGpuReg
 fn native_client(inner: Arc<CacheClient>, generation: [u8; 16]) -> PyCacheManagerClient {
     PyCacheManagerClient {
         inner,
+        saves: Arc::new(Mutex::new(HashMap::new())),
+        next_save: AtomicU64::new(1),
         completions: Arc::new(LocalCompletions::new().unwrap()),
         local: Mutex::new(HashMap::from([(
             ("same-instance".into(), 1, 3),

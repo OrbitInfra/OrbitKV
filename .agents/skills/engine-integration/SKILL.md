@@ -26,6 +26,11 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   can span overlapping calls; overdue, retained or dead Manager observations
   do not complete saves or release their engine pages. Missing observations
   cannot be interpreted as zero active work.
+- The Save handle candidate is consumed by both adapter save workers. They
+  hand off registered sources using `start_save` and await `wait_save` in Rust.
+  Unknown wait responses/exceptions retain task/page completion state and
+  prevent reset/unregister. This code is not a page-slot generation or physical
+  fault receipt; installed engine/fault acceptance is still required.
 - Python translates engine layout, state boundaries, callbacks and CUDA readiness.
   Existing Rust owners manage shared cache policy, transfers, admission and drain.
 - vLLM uses the KV Connector contract; SGLang uses UnifiedRadixCache and the
