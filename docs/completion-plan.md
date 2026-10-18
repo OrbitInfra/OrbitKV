@@ -826,6 +826,9 @@ in [transport](transport.md) and [engine-local Restore](engine-local-restore.md)
 The checkboxes below record bounded deliveries, not completion of S4. The
 records in this section retain each artifact, measured profile and failed gate.
 
+- [x] Classify benchmarks and their tests by behavior, consolidate shared
+  fixtures, and retire the obsolete upstream-ABI READ probe/comparison entry
+  points. Historical reproduction stays bound to immutable source and evidence.
 - [x] Implement reviewed KDA copy work, bounded SSD host batching, separated
   read/write submission and GPU/NUMA identity. Keep CUDA sources separate.
 - [x] Accept the explicit SGLang kernel profile: Qwen3-32B, raw BF16,

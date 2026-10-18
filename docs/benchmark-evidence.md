@@ -247,15 +247,13 @@ one/two/four NIC selections, NUMA placement and concurrent clients/GPU pairs.
 Registration or a transport's internal counter alone does not prove physical
 GPUDirect RDMA; retain NIC counters, payload checks and negative route controls.
 
-`benches.distributed.tent_stage` exposes a private CPU-mmap READ diagnostic through the
-pinned C ABI. Its open/allocate/submit/terminal/free intervals separate the API
-boundaries; lazy metadata and QP initialization may still occur after submit.
-The one-millisecond polling backoff is part of the observation. SHA validation
-is outside native timing. Require fresh consumer processes for cold samples,
-exact payload checks, accepted batch free and source stop after all readers
-drain. See [the protocol](../benches/distributed/README.md#native-tent-first-read-diagnostic).
-This cannot establish Manager or model latency, physical GPUDirect RDMA, or
-native requester-crash reclamation.
+Current first-READ diagnosis uses the owned Manager cells in
+`benches.distributed.rdma_profile` and the installed Rust client. The retired
+[CPU-mmap probe](https://github.com/feichai0017/orbitkv/blob/800a755fe88e119cd10b19c28c27e02d78d40d09/benches/distributed/tent_stage.py)
+uses an upstream 48-byte ABI, while the current production request is 88 bytes.
+Reproduce historical evidence with its frozen source and libraries; do not use
+that probe with a production runtime. Its original private-buffer timing does
+not establish Manager/model latency, GPUDirect RDMA or crash reclamation.
 
 For the pinned native build, the benchmark-only `tent_native_trace.cpp` records
 metadata RPC, endpoint construction, connect and bootstrap RPC without changing
@@ -281,10 +279,11 @@ after that release to use one receive MR covering the same 256 slots. An
 isolated comparison should rebuild both the release baseline and only that
 three-file repair with identical compiler/configuration/dependencies. Verify
 all other shared libraries are identical, test slot adjacency and wraparound,
-and retain release cleanup ownership when adapting source context. Use
-[`benches.distributed.tent_compare`](../benches/distributed/README.md#native-tent-library-comparison)
-without tracing; source deltas, hashes, input readiness failures, valid smoke
-and formal results belong outside the checkout. Neither upstream's own
+and retain release cleanup ownership when adapting source context. The retired
+[comparison controller](https://github.com/feichai0017/orbitkv/blob/800a755fe88e119cd10b19c28c27e02d78d40d09/benches/distributed/tent_compare.py)
+is retained only at that immutable revision for historical reproduction. Source
+deltas, hashes, input readiness failures, valid smoke and formal results belong
+outside the checkout. Neither upstream's own
 measurements nor a private-buffer result qualifies OrbitKV's consumed path.
 
 NVLink is a same-host GPU fabric. Hardware link status is readiness evidence,
