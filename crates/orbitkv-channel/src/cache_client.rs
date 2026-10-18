@@ -255,6 +255,17 @@ impl CacheClient {
         &self.socket
     }
 
+    pub fn publish_progress(&self) -> Result<crate::PublishProgress, ChannelError> {
+        let publisher = self
+            .publisher
+            .try_lock()
+            .map_err(|_| ChannelError::PublishObservationUnavailable)?;
+        match publisher.as_ref() {
+            Some(publisher) => publisher.publish_progress(),
+            None => Ok(crate::PublishProgress::default()),
+        }
+    }
+
     pub fn close(&self) {
         self.closed.store(true, Ordering::Release);
         self.channel.close();

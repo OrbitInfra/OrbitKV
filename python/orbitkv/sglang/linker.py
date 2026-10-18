@@ -151,6 +151,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self._completed_loads: queue.Queue[list[str]] = queue.Queue()
         self._load_error: Exception | None = None
         self._completed_offloads: queue.Queue[bool] = queue.Queue()
+        self._retained_offloads: list[tuple[object, object]] = []
+        self._last_publish_warning = 0.0
         self._load_thread = threading.Thread(
             target=self._load_worker, daemon=True, name="orbitkv-sglang-load"
         )
@@ -509,6 +511,10 @@ class OrbitKVLinker(UnifiedCacheLinker):
             ) from self._load_error
 
     def offload(self, transfers: list[PoolTransfer]) -> bool:
+        if self._retained_offloads:
+            raise RuntimeError(
+                "native Save completion unknown; new source pages cannot be admitted"
+            )
         by_name = {transfer.name: transfer for transfer in transfers}
         if (
             len(by_name) != len(transfers)
@@ -546,27 +552,58 @@ class OrbitKVLinker(UnifiedCacheLinker):
                     return
                 registration, saves, ready = task
                 success = False
+                handle = None
+                completed = False
+                attempted = False
                 try:
                     ready.synchronize()
-                    success, message = self.client.save(registration, saves)
+                    attempted = True
+                    handle = self.client.start_save(registration, saves)
+                    status = self.client.wait_save(handle)
+                    if not status.done:
+                        raise RuntimeError("native Save wait returned without completion")
+                    success, message = status.success, status.message
+                    completed = True
                     if not success:
                         logger.error("OrbitKV SGLang GPU offload failed: %s", message)
                 except Exception:
                     logger.exception("OrbitKV SGLang GPU offload failed")
-                self._completed_offloads.put(success)
+                if not attempted or completed:
+                    self._completed_offloads.put(success)
+                else:
+                    self._retained_offloads.append((task, handle))
             finally:
                 self._offload_queue.task_done()
 
     def num_completed_offloads(self) -> int:
+        try:
+            progress = self.client.publish_progress()
+            if progress.active and (progress.overdue or progress.retained):
+                now = time.monotonic()
+                if now - self._last_publish_warning >= 60:
+                    self._last_publish_warning = now
+                    logger.warning(
+                        "OrbitKV Publish still holds pages: active=%s retained=%s interval_s=%s Manager_alive=%s",
+                        progress.active,
+                        progress.retained,
+                        progress.active_interval_seconds,
+                        progress.manager_alive,
+                    )
+        except Exception:
+            logger.debug("OrbitKV Publish activity unavailable", exc_info=True)
         return self._completed_offloads.qsize()
 
     def pop_completed_offload(self) -> bool:
         return self._completed_offloads.get_nowait()
 
     def reset(self) -> None:
+        if self._retained_offloads:
+            raise RuntimeError("native Save completion unknown; offload pages remain held")
         self.layer_done_counter.cancel_pending()
         self._load_queue.join()
         self._offload_queue.join()
+        if self._retained_offloads:
+            raise RuntimeError("native Save completion unknown; offload pages remain held")
         for rid in list(self._pending_queries):
             self.cancel_query(rid)
         self._expired_queries.clear()

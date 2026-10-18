@@ -630,6 +630,58 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
 - Add a bounded operational response to a live Manager that never completes a
   Publish, preserving held pages until matched completion or independently
   established physical termination. Process death alone is not a DMA fence.
+  The next local-observation substage exposes synchronous Publish activity,
+  explicit retention, elapsed active interval and authenticated pidfd liveness
+  independently of the descriptor/lifecycle locks. Contention is an unavailable
+  observation, not zero active work. Official vLLM/SGLang completion polls consume
+  it for bounded diagnostics only; neither overdue nor process exit completes
+  an offload. The synchronous call and page holds remain in place. This is not
+  the asynchronous pending-handle response or page-generation implementation;
+  those require their own consumed ownership and installed engine gates.
+  Independent acceptance at `26884461` covers the local observation, CPU controls
+  and candidate installed API. Channel tests, overlap/late-reply controls and
+  an expected fake-zero mutation passed their declared results. Both adapters
+  consume diagnostics; the SGLang method control uses exact isolated 0.5.21.
+  Source/wheel origins and the stale local 0.5.20 result remain separately
+  recorded under `/root/orbitkv-artifacts/s3-publish-observation-20261018/`.
+  [PR #261](https://github.com/feichai0017/orbitkv/pull/261) adds no asynchronous
+  completion, GPU/physical gate or serving-overhead qualification.
+  The next native Save owner candidate returns a client-bound `SaveHandle`
+  after admission, retains the exporter/registration/native caller and charges
+  the process 1,024-operation/32-MiB request-metadata budget. `wait_save` with an
+  explicit timeout returns pending; omission waits in Rust. A dropped handle
+  does not cancel work. Client close/unregister serializes admission and waits
+  for admitted Saves before releasing its registered context. Both official
+  adapters hand off to the handle and report completion only after its returned
+  receipt; an unknown wait result retains the adapter task and prevents reset
+  or unregister. The existing synchronous workload Save remains supported and
+  does not inherit an asynchronous deadline. This candidate awaits code,
+  matching-package, GPU/model and independent acceptance. It does not establish
+  page-slot generations, native-fault termination or orphan reclamation.
+  The first pending-handle candidate `8c6c58e5` has review findings: fallible
+  Python handle allocation after native launch and a SGLang reset/join race.
+  Preserve that candidate/wheel and its CPU controls. The correction allocates
+  the complete Python handoff before spawning native work and rechecks retained
+  offloads after queue join. It requires a new exact freeze and independent
+  review; the prior passing CPU controls do not close those findings.
+  Follow-up review of `88254d91` found a vLLM post-launch handle-attachment
+  window: Python iteration failure could leave task markers unset and report
+  completion. The next correction marks a conservative native attempt on every
+  task before launch. Unknown start/attachment/wait outcomes retain adapter
+  completion and reject further source admission; SGLang uses the same attempt
+  boundary. Prelaunch and receipt-proven errors remain distinct. Preserve both
+  rejected freezes and new independent controls.
+  Independent acceptance at `6ab9b6e3` covers the corrected code/CPU pending
+  Save owner and matching package loading. The original post-start attachment
+  counterexample now keeps completion unset and source admission closed; exact
+  SGLang 0.5.21 wheel method controls also retain unknown starts and reject reset.
+  The inherited unchanged native CPU controls, both rejected freezes and final
+  review are archived under
+  `/root/orbitkv-artifacts/s3-publish-pending-owner-20261018/`;
+  [PR #262](https://github.com/feichai0017/orbitkv/pull/262) carries this boundary.
+  Native pending admission does not bound the Python queue, retained task list
+  or user-held completed handles. Installed GPU/model, physical termination,
+  allocation/page generations and adapter-fault qualification remain open.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-

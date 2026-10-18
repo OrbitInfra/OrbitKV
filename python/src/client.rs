@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, Weak};
 use std::time::Duration;
 
 use orbitkv_channel::lifecycle::LifecycleCommand;
@@ -25,6 +26,140 @@ use crate::local_restore::{LocalCompletions, LocalRestore, LocalRestoreWorker};
 use crate::{OrbitKVError, OrbitKVInternal, query_response};
 
 type PyLeaseLoad = (Vec<u8>, Vec<Vec<Option<u32>>>);
+
+const MAX_PENDING_SAVES: usize = 1024;
+const MAX_PENDING_SAVE_BYTES: usize = 32 * 1024 * 1024;
+static SAVE_USAGE: LazyLock<Mutex<(usize, usize)>> = LazyLock::new(|| Mutex::new((0, 0)));
+
+fn save_request_bytes(request: &PublishRequest) -> PyResult<usize> {
+    let mut bytes = std::mem::size_of::<PendingSave>() + std::mem::size_of::<PublishRequest>();
+    let overflow = || PyValueError::new_err("Save metadata size overflow");
+    let mut charge = |count: usize, width: usize| -> PyResult<()> {
+        bytes = bytes
+            .checked_add(count.checked_mul(width).ok_or_else(overflow)?)
+            .ok_or_else(overflow)?;
+        Ok(())
+    };
+    charge(request.instance_id.capacity(), 2)?;
+    charge(
+        request.layers.capacity(),
+        std::mem::size_of::<PublishLayer>(),
+    )?;
+    for layer in &request.layers {
+        charge(layer.layer_name.capacity(), 1)?;
+        charge(layer.block_ids.capacity(), std::mem::size_of::<u32>())?;
+        charge(
+            layer.block_hashes.capacity(),
+            std::mem::size_of::<Vec<u8>>(),
+        )?;
+        for hash in &layer.block_hashes {
+            charge(hash.capacity(), 1)?;
+        }
+    }
+    Ok(bytes)
+}
+
+struct PendingSave {
+    instance: String,
+    bytes: usize,
+    result: Mutex<Option<Result<(), String>>>,
+    completed: Condvar,
+}
+
+#[pyclass(name = "SaveHandle", frozen)]
+pub(crate) struct PySaveHandle {
+    #[pyo3(get)]
+    operation_id: u64,
+    owner: Weak<CacheClient>,
+    pending: Arc<PendingSave>,
+}
+
+impl PendingSave {
+    fn complete(&self, result: Result<(), String>) {
+        let mut receipt = self
+            .result
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if receipt.is_some() {
+            return;
+        }
+        *receipt = Some(result);
+        let mut usage = SAVE_USAGE
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        usage.0 -= 1;
+        usage.1 -= self.bytes;
+        self.completed.notify_all();
+    }
+
+    fn status(&self, timeout: Duration) -> RestoreStatus {
+        let result = self
+            .result
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let (result, _) = self
+            .completed
+            .wait_timeout_while(result, timeout, |result| result.is_none())
+            .unwrap_or_else(|poison| poison.into_inner());
+        match result.as_ref() {
+            Some(Ok(())) => RestoreStatus {
+                done: true,
+                success: true,
+                message: String::new(),
+            },
+            Some(Err(message)) => RestoreStatus {
+                done: true,
+                success: false,
+                message: message.clone(),
+            },
+            None => RestoreStatus {
+                done: false,
+                success: false,
+                message: "Publish remains pending; source pages remain held".into(),
+            },
+        }
+    }
+
+    fn wait(&self) -> RestoreStatus {
+        loop {
+            let result = self.status(Duration::from_secs(60));
+            if result.done {
+                return result;
+            }
+            use std::io::Write;
+            let _ = writeln!(
+                std::io::stderr().lock(),
+                "Publish remains pending; caller and native source owners remain held"
+            );
+        }
+    }
+}
+
+#[pyclass(name = "PublishProgress", frozen)]
+pub(crate) struct PyPublishProgress {
+    #[pyo3(get)]
+    active: usize,
+    #[pyo3(get)]
+    retained: usize,
+    #[pyo3(get)]
+    active_interval_seconds: f64,
+    #[pyo3(get)]
+    overdue: bool,
+    #[pyo3(get)]
+    manager_alive: Option<bool>,
+}
+
+impl From<orbitkv_channel::PublishProgress> for PyPublishProgress {
+    fn from(progress: orbitkv_channel::PublishProgress) -> Self {
+        Self {
+            active: progress.active,
+            retained: progress.retained,
+            active_interval_seconds: progress.active_interval.as_secs_f64(),
+            overdue: progress.overdue,
+            manager_alive: progress.manager_alive,
+        }
+    }
+}
 
 #[pyclass(name = "ChannelCallObservation", frozen)]
 pub(crate) struct PyChannelCallObservation(ChannelCallObservation);
@@ -270,9 +405,33 @@ pub(crate) struct PyCacheManagerClient {
     inner: Arc<CacheClient>,
     completions: Arc<LocalCompletions>,
     local: Mutex<HashMap<(String, u32, i32), Arc<LocalRestoreWorker>>>,
+    saves: Arc<Mutex<HashMap<u64, Arc<PendingSave>>>>,
+    next_save: AtomicU64,
 }
 
 impl PyCacheManagerClient {
+    fn wait_pending_saves(&self, instance: Option<&str>) {
+        let pending = self
+            .saves
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .values()
+            .filter(|save| instance.is_none_or(|id| save.instance == id))
+            .cloned()
+            .collect::<Vec<_>>();
+        for save in pending {
+            while !save.status(Duration::from_secs(60)).done {}
+        }
+    }
+
+    fn save_handle(&self, handle: &PySaveHandle) -> PyResult<()> {
+        if !Weak::ptr_eq(&Arc::downgrade(&self.inner), &handle.owner) {
+            return Err(PyValueError::new_err(
+                "Save handle belongs to another client",
+            ));
+        }
+        Ok(())
+    }
     fn registered_worker(
         &self,
         registration: &PyGpuRegistration,
@@ -335,6 +494,8 @@ impl PyCacheManagerClient {
             .map_err(client_error)?;
         Ok(Self {
             inner: Arc::new(inner),
+            saves: Arc::new(Mutex::new(HashMap::new())),
+            next_save: AtomicU64::new(1),
             local: Mutex::new(HashMap::new()),
             completions: Arc::new(
                 LocalCompletions::new()
@@ -349,6 +510,7 @@ impl PyCacheManagerClient {
                 .local
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner());
+            self.wait_pending_saves(None);
             for worker in local.values() {
                 worker.wait_drained();
             }
@@ -906,6 +1068,12 @@ impl PyCacheManagerClient {
             .map_err(client_error)
     }
 
+    fn publish_progress(&self, py: Python<'_>) -> PyResult<PyPublishProgress> {
+        py.detach(|| self.inner.publish_progress())
+            .map(Into::into)
+            .map_err(client_error)
+    }
+
     fn unregister_context(&self, py: Python<'_>, instance_id: String) -> PyResult<(bool, String)> {
         py.detach(|| {
             let mut local = self
@@ -917,6 +1085,7 @@ impl PyCacheManagerClient {
                     "CUDA registration attempt pending or retained; unregister refused",
                 ));
             }
+            self.wait_pending_saves(Some(&instance_id));
             for ((instance, _, _), worker) in local.iter() {
                 if instance == &instance_id {
                     worker.wait_drained();
@@ -1168,6 +1337,139 @@ impl PyCacheManagerClient {
             self.inner.publish(&request).map_err(client_error)?;
             Ok((true, String::new()))
         })
+    }
+
+    fn start_save(
+        &self,
+        py: Python<'_>,
+        registration: &PyGpuRegistration,
+        saves: Vec<(String, Vec<u32>, Vec<Vec<u8>>)>,
+    ) -> PyResult<Py<PySaveHandle>> {
+        let worker = py.detach(|| self.registered_worker(registration))?;
+        let request = publish_request(
+            registration.instance_id.clone(),
+            registration.tp_rank,
+            registration.pp_rank,
+            worker.manager_device_id,
+            registration.generation,
+            saves,
+        );
+        let bytes = save_request_bytes(&request)?;
+        let pending = Arc::new(PendingSave {
+            instance: registration.instance_id.clone(),
+            bytes,
+            result: Mutex::new(None),
+            completed: Condvar::new(),
+        });
+        let operation_id = self
+            .next_save
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |id| id.checked_add(1))
+            .map_err(|_| OrbitKVInternal::new_err("Save operation identity exhausted"))?;
+        // Allocate the Python handoff before any native submission. The returned
+        // Py object needs no fallible object allocation after spawning work.
+        let handle = Py::new(
+            py,
+            PySaveHandle {
+                operation_id,
+                owner: Arc::downgrade(&self.inner),
+                pending: Arc::clone(&pending),
+            },
+        )?;
+        py.detach(|| {
+            let local = self
+                .local
+                .lock()
+                .map_err(|_| OrbitKVInternal::new_err("local executor lock poisoned"))?;
+            let key = (
+                registration.instance_id.clone(),
+                registration.tp_rank,
+                registration.device_id,
+            );
+            if !local
+                .get(&key)
+                .is_some_and(|current| Arc::ptr_eq(current, &worker))
+            {
+                return Err(PyValueError::new_err(
+                    "GPU registration retired before Save admission",
+                ));
+            }
+            let mut owned = self
+                .saves
+                .lock()
+                .map_err(|_| OrbitKVInternal::new_err("Save owner lock poisoned"))?;
+            owned.retain(|_, save| {
+                save.result
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .is_none()
+            });
+            let mut usage = SAVE_USAGE
+                .lock()
+                .map_err(|_| OrbitKVInternal::new_err("Save admission lock poisoned"))?;
+            let total = usage.1.checked_add(bytes);
+            if usage.0 >= MAX_PENDING_SAVES
+                || total.is_none_or(|bytes| bytes > MAX_PENDING_SAVE_BYTES)
+            {
+                return Err(OrbitKVError::new_err(
+                    "process Save owner admission is full",
+                ));
+            }
+            owned.insert(operation_id, Arc::clone(&pending));
+            usage.0 += 1;
+            usage.1 += bytes;
+            drop(usage);
+            let result = Arc::clone(&pending);
+            let client = Arc::clone(&self.inner);
+            let tensors = Arc::clone(&registration._tensors);
+            let submitted = std::thread::Builder::new()
+                .name("orbitkv-publish".into())
+                .spawn(move || {
+                    // These owners outlive every native chunk, including retained calls.
+                    let _worker = worker;
+                    let _tensors = tensors;
+                    let outcome =
+                        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            client.publish(&request)
+                        })) {
+                            Ok(outcome) => outcome.map_err(|error| error.to_string()),
+                            Err(_) => loop {
+                                // Ordinary unwind cannot release exported allocations or
+                                // native caller ownership without a completion receipt.
+                                std::thread::park_timeout(Duration::from_secs(60));
+                            },
+                        };
+                    result.complete(outcome);
+                });
+            if let Err(error) = submitted {
+                pending.complete(Err(error.to_string()));
+                owned.remove(&operation_id);
+                return Err(OrbitKVInternal::new_err(error.to_string()));
+            }
+            drop(owned);
+            drop(local);
+            Ok(())
+        })?;
+        Ok(handle)
+    }
+
+    fn poll_save(&self, py: Python<'_>, handle: &PySaveHandle) -> PyResult<RestoreStatus> {
+        self.save_handle(handle)?;
+        Ok(py.detach(|| handle.pending.status(Duration::ZERO)))
+    }
+
+    #[pyo3(signature = (handle, *, timeout=None))]
+    fn wait_save(
+        &self,
+        py: Python<'_>,
+        handle: &PySaveHandle,
+        timeout: Option<f64>,
+    ) -> PyResult<RestoreStatus> {
+        self.save_handle(handle)?;
+        let timeout = timeout.map(seconds).transpose()?;
+        Ok(py.detach(|| match timeout {
+            Some(timeout) => handle.pending.status(timeout),
+            None => handle.pending.wait(),
+        }))
     }
 
     fn save_diagnostic(

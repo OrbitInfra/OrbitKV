@@ -388,6 +388,38 @@ acceptance does not establish installed GPU or physical fault completion.
 Publish batches split to
 the negotiated descriptor slot capacity, retaining matching page ranges across
 layers until all chunks finish.
+The local Publish activity candidate reports active/retained callers, the elapsed
+interval since activity last became nonempty, overdue status and authenticated
+Manager liveness. It uses immediate local lock attempts and pidfd polling, without
+waiting for the blocked descriptor/lifecycle exchange; contention returns an
+explicit unavailable error. The interval can include several overlapping calls
+and is not a per-request latency. vLLM/SGLang completion polls use it for rate
+limited diagnostics only. Pending, overdue, retained and dead-peer observations
+never mark engine pages complete. At most 1,024 callers enter one channel's
+Publish activity; the existing Save worker budget separately bounds accepted
+Manager work. The original synchronous caller remains held until its established
+completion path; an asynchronous operational return requires a later owner API.
+Independent `26884461` code/CPU and candidate-package API acceptance covers this
+diagnostic scope. Per-poll native/pidfd overhead and debug logging overhead are
+unmeasured; neither package loading nor the controlled SGLang method qualifies
+Manager/GPU operation, asynchronous completion or physical fault reclamation.
+
+The native Save handle candidate admits a request under a process-wide
+1,024-operation/32-MiB request-metadata budget, including retained vector capacity.
+It retains the native caller, registration worker and tensor exporters on a Rust
+thread. Dropping a Python handle does not cancel accepted work or release pages.
+`wait_save(timeout=...)` returns pending when its wait expires; no timeout is a
+terminal receipt. Without a timeout, the existing Rust owner waits through late
+completion and retains unknown outcomes. Client close/unregister blocks new
+admission while waiting for accepted Saves, then follows the existing worker and
+Manager registry drain. The adapters retain task/page completion state until a
+matched receipt and reject reset/unregister after an unknown wait response.
+This candidate has no page-slot or physical-fault reclamation qualification;
+request metadata and tensor/allocation bytes have separate owners and bounds.
+Independent `6ab9b6e3` accepts code/CPU pending ownership and candidate package
+loading only. The native pending cap excludes Python queues, retained adapter
+tasks and user-held completed handles. Real installed GPU/model fault gates,
+page generations and physical termination remain separate requirements.
 This Publish partitioning does not yet partition oversized raw Restore plans.
 
 Rust `CacheClient`, exposed directly by PyO3 as `CacheManagerClient`, owns query
