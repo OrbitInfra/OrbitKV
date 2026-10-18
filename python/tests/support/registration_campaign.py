@@ -15,6 +15,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
@@ -544,6 +545,69 @@ def cell_environment(cell: dict, gpu_uuid: str) -> dict:
     ):
         raise RuntimeError("Frozen installed TCP/strict/GPU environment is invalid")
     return env
+
+
+def check_dlopen(contract: dict, deadline: float) -> dict:
+    declaration = contract.get("runtime_dlopen")
+    if not isinstance(declaration, dict) or set(declaration) != {"python", "helper", "library"}:
+        raise RuntimeError("Installed Save readiness requires an actual frozen dlopen probe")
+    for name in ("python", "helper", "library"):
+        path = declaration[name]
+        if not isinstance(path, str) or not Path(path).is_absolute():
+            raise RuntimeError("Dynamic loading input is not absolute")
+        if path not in contract["input_sha256"]:
+            raise RuntimeError("Dynamic loading input has no frozen digest")
+        if digest(Path(path), deadline) != contract["input_sha256"][path]:
+            raise RuntimeError("Dynamic loading input changed before execution")
+    expected = dict(contract["input_sha256"])
+    for manifest in contract["runtime_manifests"]:
+        raw = read_bytes(Path(manifest["path"]), MAX_RUNTIME_MANIFEST_BYTES, deadline)
+        if hashlib.sha256(raw).hexdigest() != manifest["sha256"]:
+            raise RuntimeError("Dynamic loading manifest changed")
+        values = json.loads(raw)
+        for item in values["files"]:
+            path, sha = item["realpath"], item["sha256"]
+            if path in expected and expected[path] != sha:
+                raise RuntimeError("Conflicting dynamic loading input digests")
+            expected[path] = sha
+    with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+        probe = subprocess.run(
+            [
+                declaration["python"],
+                "-I",
+                "-S",
+                "-B",
+                declaration["helper"],
+                declaration["library"],
+            ],
+            env=cell_environment(contract["cells"][0], contract["gpu_uuid"]),
+            stdin=subprocess.DEVNULL,
+            stdout=output,
+            stderr=errors,
+            timeout=min(30, remaining(deadline)),
+        )
+        remaining(deadline)
+        output.seek(0)
+        raw = output.read(MAX_JSON_BYTES + 1)
+        if probe.returncode or len(raw) > MAX_JSON_BYTES:
+            raise RuntimeError("Actual dynamic loading probe failed or exceeded its output bound")
+        receipt = json.loads(raw)
+    if (
+        receipt.get("schema") != "orbitkv.runtime-dlopen.v1"
+        or type(receipt.get("pid")) is not int
+        or receipt["pid"] <= 0
+        or receipt.get("library") != declaration["library"]
+        or receipt.get("engine_created") is not False
+        or not isinstance(receipt.get("files"), dict)
+        or not receipt["files"]
+        or len(receipt["files"]) > MAX_EVIDENCE_FILES
+        or str(Path(declaration["library"]).resolve()) not in receipt["files"]
+    ):
+        raise RuntimeError("Actual dynamic loading receipt is invalid")
+    for path, sha in receipt["files"].items():
+        if expected.get(path) != sha or digest(Path(path), deadline) != sha:
+            raise RuntimeError(f"Actual dynamic loading has an unfrozen mapping: {path}")
+    return dict(receipt, actual_wait_exit=0)
 
 
 def validate_grant(grant: dict, ready: dict, ready_sha: str, phase: str, controller: dict) -> None:
@@ -1442,6 +1506,12 @@ def main() -> None:
         signal.signal(number, signal.SIG_IGN)
     try:
         check_inputs(contract, deadline=startup_deadline)
+        if contract.get("qualification") == "pending-save-bytes-v1":
+            write(
+                root / "DLOPEN-PREFLIGHT.json",
+                check_dlopen(contract, startup_deadline),
+                startup_deadline,
+            )
         remaining(startup_deadline)
         cpus = contract["cpus"]
         if not cpus or not set(cpus) <= os.sched_getaffinity(0):

@@ -611,6 +611,13 @@ binds the result to the handoff digest and both generations. An unlinked counter
 can still be observed through that original descriptor; a replacement pathname
 cannot prove the old slot repaid. Missing, nonzero or unreadable counters reject
 qualification without changing native ownership.
+Before publishing READY, pending-Save campaigns also require `runtime_dlopen`
+with frozen absolute `python`, `helper` and `library` paths. The stdlib-only
+`tests/support/runtime_dlopen.py` child loads the declared TENT library and
+reports its actual file mappings. All loaded bytes must match direct hashes or
+complete runtime manifests. The child uses the cell's loader environment and
+`-I -S -B`, has a bounded wait, and does not create a transfer engine. Successful
+library loading alone cannot substitute for byte, resource or lifecycle gates.
 
 
 ### Static local LoRA installed model gate

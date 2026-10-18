@@ -761,6 +761,17 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   basename survived the receipt census. The correction requires exactly six
   unique full paths paired with their handoffs in the same directories; extra
   and moved receipts are explicit negative controls before a new freeze.
+  Source/CPU acceptance at `af3f2023` closes that receipt census. New GPU7
+  readiness completed DRAM and actual NVMe/io_uring SSD, with all twelve
+  original-counter descriptors observed at zero and actual process waits;
+  independent result acceptance and a new formal freeze remain pending.
+  Its first READY was rejected before any cell because five actual TENT dlopen
+  dependencies were missing from the frozen closure. The second closure covers
+  those dependencies and mapped locale data; all old freezes remain immutable.
+  The next reusable readiness guard launches a frozen stdlib-only dlopen helper
+  before resource admission/READY and rejects every mapped file outside direct
+  digests or complete runtime manifests. This consumes actual native loader
+  behavior without creating a transfer engine or claiming a CUDA/GDS result.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-
