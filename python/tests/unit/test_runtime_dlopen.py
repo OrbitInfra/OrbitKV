@@ -43,13 +43,21 @@ def dlopen_contract():
     frozen = json.loads(probe.stdout)["files"]
     for path in [str(helper), executable]:
         frozen[path] = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-    return {
+    contract = {
         "runtime_dlopen": {"python": executable, "helper": str(helper), "library": str(libc)},
         "input_sha256": frozen,
         "runtime_manifests": [],
         "gpu_uuid": "GPU-cpu-fixture",
         "cells": [{"environment": env}],
     }
+    state = ctypes.c_int()
+    libc = ctypes.CDLL(None)
+    assert libc.prctl(37, ctypes.byref(state), 0, 0, 0) == 0
+    assert libc.prctl(36, 1, 0, 0, 0) == 0
+    try:
+        yield contract
+    finally:
+        assert libc.prctl(36, state.value, 0, 0, 0) == 0
 
 
 @pytest.mark.parametrize(
@@ -99,7 +107,16 @@ def test_each_cell_loader_environment_is_checked(tmp_path, dlopen_contract):
 
 
 @pytest.mark.parametrize(
-    "control", ["normal", "foreign-pid", "stderr", "fork-exit", "fork-timeout"]
+    "control",
+    [
+        "normal",
+        "foreign-pid",
+        "stderr",
+        "fork-exit",
+        "fork-timeout",
+        "fork-session",
+        "no-subreaper",
+    ],
 )
 def test_probe_has_bounded_output_and_actual_child_wait(tmp_path, dlopen_contract, control):
     contract = dlopen_contract
@@ -107,7 +124,16 @@ def test_probe_has_bounded_output_and_actual_child_wait(tmp_path, dlopen_contrac
     original = contract["runtime_dlopen"]["helper"]
     prefix = "import os,sys,time,runpy,json,io,contextlib\n"
     if control.startswith("fork-"):
-        prefix += "if os.fork() == 0:\n os.close(1);os.close(2);time.sleep(120);os._exit(0)\n"
+        prefix += "ready_read,ready_write=os.pipe()\nif os.fork() == 0:\n os.close(ready_read)\n"
+        if control == "fork-session":
+            prefix += " os.setsid()\n"
+        prefix += (
+            " os.close(1);os.close(2);os.write(ready_write,b'1');os.close(ready_write)\n"
+            " time.sleep(120);os._exit(0)\n"
+            "os.close(ready_write)\n"
+            "if os.read(ready_read,1)!=b'1':raise RuntimeError('child readiness failed')\n"
+            "os.close(ready_read)\n"
+        )
         if control == "fork-timeout":
             prefix += "time.sleep(120)\n"
     elif control == "stderr":
@@ -132,7 +158,8 @@ def test_probe_has_bounded_output_and_actual_child_wait(tmp_path, dlopen_contrac
         "import ctypes,sys,json,time,os,signal\n"
         f"sys.path.insert(0,{str(Path(__file__).parents[2])!r})\n"
         "from tests.support import registration_campaign as c\n"
-        "if ctypes.CDLL(None).prctl(36,1,0,0,0):raise RuntimeError('subreaper failed')\n"
+        f"if {control != 'no-subreaper'!r} and ctypes.CDLL(None).prctl(36,1,0,0,0):"
+        "raise RuntimeError('subreaper failed')\n"
         "c.MAX_LOG_BYTES=65536\n"
         "try:\n"
         f" result=c.check_dlopen(json.load(open({str(contract_path)!r})),"

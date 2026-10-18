@@ -617,8 +617,10 @@ with frozen absolute `python`, `helper` and `library` paths. The stdlib-only
 reports its actual file mappings. Every cell environment is checked, and all
 loaded bytes must match direct hashes or complete runtime manifests. Each child
 uses `-I -S -B`, bounded stdout/stderr pipes and a separate process group. The
-controller reserves time to stop and actually reap unexpected constructor
-children; a receipt must name the child it started. The preflight creates no transfer engine. Successful
+controller requires subreaper ownership and reserves time to stop and actually
+reap unexpected constructor descendants, including children that leave the
+original session. A receipt must name the child it started. The preflight
+creates no transfer engine. Successful
 library loading alone cannot substitute for byte, resource or lifecycle gates.
 
 

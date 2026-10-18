@@ -548,6 +548,9 @@ def cell_environment(cell: dict, gpu_uuid: str) -> dict:
 
 
 def check_dlopen(contract: dict, deadline: float) -> dict:
+    subreaper = ctypes.c_int()
+    if ctypes.CDLL(None).prctl(37, ctypes.byref(subreaper), 0, 0, 0) != 0 or subreaper.value != 1:
+        raise RuntimeError("Dynamic loading preflight requires a child subreaper")
     declaration = contract.get("runtime_dlopen")
     if not isinstance(declaration, dict) or set(declaration) != {"python", "helper", "library"}:
         raise RuntimeError("Installed Save readiness requires an actual frozen dlopen probe")
@@ -573,6 +576,9 @@ def check_dlopen(contract: dict, deadline: float) -> dict:
     probes = []
     for index, cell in enumerate(contract["cells"]):
         probe_deadline = time.monotonic() + min(30, remaining(deadline) / 2)
+        initial_children = {
+            (item["pid"], item["start_ticks"]) for item in descendants(probe_deadline)
+        }
         output, errors = bytearray(), bytearray()
         finished = False
         probe = subprocess.Popen(
@@ -613,7 +619,8 @@ def check_dlopen(contract: dict, deadline: float) -> dict:
                     # stopped, so its PID cannot become an unrelated group ID.
                     terminal = os.waitid(os.P_PID, probe.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
                 if any(
-                    item["group"] == probe.pid and item["pid"] != probe.pid
+                    (item["pid"], item["start_ticks"]) not in initial_children
+                    and item["pid"] != probe.pid
                     for item in descendants(probe_deadline)
                 ):
                     raise RuntimeError("Dynamic loading probe left an unexpected child")
@@ -624,15 +631,32 @@ def check_dlopen(contract: dict, deadline: float) -> dict:
                     with contextlib.suppress(ProcessLookupError):
                         os.killpg(probe.pid, signal.SIGKILL)
                 code = probe.wait(timeout=remaining(deadline))
-                # main() establishes subreaper ownership before this preflight.
-                # Unexpected constructor children must be killed and actually reaped.
+                # Adopted children may have left the original session. Only the
+                # new descendants of this controller belong to this probe.
                 while True:
-                    try:
-                        pid, _ = os.waitpid(-probe.pid, os.WNOHANG)
-                    except ChildProcessError:
+                    children = [
+                        item
+                        for item in descendants(deadline)
+                        if (item["pid"], item["start_ticks"]) not in initial_children
+                    ]
+                    if not children:
                         break
-                    if pid == 0:
-                        time.sleep(min(0.01, remaining(deadline)))
+                    for child in children:
+                        try:
+                            fd = os.pidfd_open(child["pid"])
+                        except ProcessLookupError:
+                            continue
+                        try:
+                            if identity(child["pid"])["start_ticks"] != child["start_ticks"]:
+                                continue
+                            signal.pidfd_send_signal(fd, signal.SIGKILL)
+                        except (FileNotFoundError, ProcessLookupError):
+                            continue
+                        finally:
+                            os.close(fd)
+                        with contextlib.suppress(ChildProcessError):
+                            os.waitpid(child["pid"], os.WNOHANG)
+                    time.sleep(min(0.01, remaining(deadline)))
             finally:
                 probe.stdout.close()
                 probe.stderr.close()

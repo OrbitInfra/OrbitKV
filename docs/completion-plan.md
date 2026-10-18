@@ -781,6 +781,10 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   correction probes every cell environment, bounds live output, binds the actual
   child PID and stops/reaps its process group before return. It requires a new
   source review and does not reclassify the rejected guard or qualify faults.
+  Follow-up `88a646cd` closes those original controls but remains rejected:
+  a child can leave the process group and survive through READY. The next
+  correction requires the controller's existing subreaper and accounts for its
+  complete newly adopted subtree; normal return requires no new descendants.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-
