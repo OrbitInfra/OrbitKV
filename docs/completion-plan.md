@@ -862,6 +862,17 @@ process-wait gates remain mandatory. Missing, replayed or malformed admission
 evidence is rejected. Old v1 freezes/results are preserved and cannot launch
 through the new controller. Source review, new runtime/resource freeze and
 independent launch acceptance precede any GPU campaign.
+The first harness checkpoint `f609a6d8` remains rejected: the actual metrics
+parser emits floats while the admission receipt requires integral byte fields,
+and a fresh Manager did not export the Save byte counter before its first copy.
+The correction validates finite, nonnegative integral observations within the
+exact numeric range before canonical integer conversion; missing values remain
+errors. The existing native Save counter now records zero at Core metrics
+initialization. A real fresh OpenTelemetry/Prometheus child fails on the old
+code and passes after initialization. These software readiness controls and
+the original rejection are archived under
+`/root/orbitkv-artifacts/s3-prepared-save-installed-20261019/`. The changed
+Manager bytes require a new matched wheel and independent review before launch.
 
 ## S4 — Finish communication execution and demonstrate gains
 

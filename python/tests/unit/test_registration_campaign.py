@@ -11,8 +11,21 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import requests
 
 from tests.support import registration_campaign as campaign
+
+
+@pytest.mark.parametrize("text", ["", "NaN", "inf", "-1", "0.5", "9007199254740994"])
+def test_save_byte_snapshot_rejects_missing_or_inexact_counter(monkeypatch, text):
+    from tests.integration.test_pending_save_bytes import save_bytes_snapshot
+
+    response = requests.Response()
+    response.status_code = 200
+    response._content = f"orbitkv_save_bytes_total {text}\n".encode()
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
+    with pytest.raises(RuntimeError, match="counter is missing"):
+        save_bytes_snapshot(1)
 
 
 def cpu_ready_inputs(tmp_path):
@@ -1280,6 +1293,15 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
 ):
     import hashlib
 
+    from tests.integration.test_pending_save_bytes import save_bytes_snapshot
+
+    def parsed_save_bytes(value):
+        response = requests.Response()
+        response.status_code = 200
+        response._content = f"orbitkv_save_bytes_total {value}\n".encode()
+        monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
+        return save_bytes_snapshot(1)
+
     captured = []
     validate = campaign.validate_cell
     monkeypatch.setattr(
@@ -1357,8 +1379,8 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
                     "canceled_success": False,
                     "submitted_cancel_refused": 2,
                     "completed_successfully": 2,
-                    "prepare_copy_bytes": 0,
-                    "submitted_copy_bytes": 16384,
+                    "prepare_copy_bytes": parsed_save_bytes(0) - parsed_save_bytes(0),
+                    "submitted_copy_bytes": parsed_save_bytes(16384) - parsed_save_bytes(0),
                     "started_mono_ns": index * 10 + 1,
                     "completed_mono_ns": index * 10 + 2,
                     "physical_fault_termination_claimed": False,

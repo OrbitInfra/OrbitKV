@@ -110,18 +110,21 @@ fn initial_ownership_metrics_child() {
         counter.add(-7, &[]);
     }
     assert_gauges(0.0);
-    let load_bytes = |expected| {
+    let byte_counters = |expected| {
         let families = registry.gather();
-        let family = families
-            .iter()
-            .find(|family| family.name() == "orbitkv_load_bytes_total")
-            .unwrap();
-        assert_eq!(family.get_metric().len(), 1);
-        assert_eq!(family.get_metric()[0].get_counter().value(), expected);
+        for name in ["orbitkv_load_bytes_total", "orbitkv_save_bytes_total"] {
+            let family = families
+                .iter()
+                .find(|family| family.name() == name)
+                .unwrap_or_else(|| panic!("Missing initial byte counter: {name}"));
+            assert_eq!(family.get_metric().len(), 1);
+            assert_eq!(family.get_metric()[0].get_counter().value(), expected);
+        }
     };
-    load_bytes(0.0);
+    byte_counters(0.0);
     metrics.load_bytes.add(4096, &[]);
-    load_bytes(4096.0);
+    metrics.save_bytes.add(4096, &[]);
+    byte_counters(4096.0);
     provider.shutdown().unwrap();
 }
 

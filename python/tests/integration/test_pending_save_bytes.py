@@ -7,6 +7,7 @@ normal-path gate does not establish failed CUDA/RDMA/SSD physical termination.
 import contextlib
 import hashlib
 import json
+import math
 import os
 import time
 import uuid
@@ -19,6 +20,18 @@ from tests.support.metrics import fetch_orbitkv_metrics
 from tests.support.registration_campaign import identity, write
 
 pytestmark = [pytest.mark.integration, pytest.mark.gpu]
+
+
+def save_bytes_snapshot(http_port: int) -> int:
+    value = fetch_orbitkv_metrics(http_port).get("orbitkv_save_bytes_total")
+    if (
+        type(value) not in (int, float)
+        or not math.isfinite(value)
+        or not 0 <= value <= 2**53
+        or value != int(value)
+    ):
+        raise RuntimeError("Save byte counter is missing, nonintegral or outside exact range")
+    return int(value)
 
 
 def register(client, identity, namespace, tensor):
@@ -123,9 +136,7 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                 for index in source_indices
             ]
             admission_started = time.monotonic_ns()
-            admission_before = fetch_orbitkv_metrics(channel_server.http_port)
-            if "orbitkv_save_bytes_total" not in admission_before:
-                raise RuntimeError("Missing native Save byte counter before preparation")
+            admission_before = save_bytes_snapshot(channel_server.http_port)
             canceled = source.prepare_save(
                 source_registration,
                 [("bytes", [source_indices[0]], [hashlib.sha256(b"never-published").digest()])],
@@ -152,11 +163,8 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                 pending = source.wait_save(handle, timeout=0)
                 if pending.done or pending.success:
                     raise RuntimeError("Prepared batch completed before Rust submission")
-            admission_prepared = fetch_orbitkv_metrics(channel_server.http_port)
-            if (
-                admission_prepared["orbitkv_save_bytes_total"]
-                != admission_before["orbitkv_save_bytes_total"]
-            ):
+            admission_prepared = save_bytes_snapshot(channel_server.http_port)
+            if admission_prepared != admission_before:
                 raise RuntimeError("Preparation/cancellation copied source bytes")
             source.submit_saves(handles)
             for handle in handles:
@@ -187,10 +195,8 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                 "orbitkv_inflight_bytes",
             ]
             before = wait_idle(channel_server.http_port, idle_names)
-            if (
-                before["orbitkv_save_bytes_total"] - admission_before["orbitkv_save_bytes_total"]
-                != 16384
-            ):
+            submitted_bytes = save_bytes_snapshot(channel_server.http_port) - admission_before
+            if submitted_bytes != 16384:
                 raise RuntimeError("Rust submitted batch copied an unexpected number of bytes")
             admission = {
                 "api": "prepare_save/submit_saves/cancel_save",
@@ -201,10 +207,8 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                 "canceled_success": canceled_status.success,
                 "submitted_cancel_refused": 2,
                 "completed_successfully": 2,
-                "prepare_copy_bytes": admission_prepared["orbitkv_save_bytes_total"]
-                - admission_before["orbitkv_save_bytes_total"],
-                "submitted_copy_bytes": before["orbitkv_save_bytes_total"]
-                - admission_before["orbitkv_save_bytes_total"],
+                "prepare_copy_bytes": admission_prepared - admission_before,
+                "submitted_copy_bytes": submitted_bytes,
                 "started_mono_ns": admission_started,
                 "completed_mono_ns": admission_completed,
                 "physical_fault_termination_claimed": False,
