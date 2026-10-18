@@ -962,6 +962,13 @@ the other stream's release. The correction requires a present 64-hex digest in
 the frozen inputs and independently attempts both releases, records errors,
 and leaves failed device completion unknown. Its CPU controls and source gates
 are software evidence only; a separate readiness-only GPU gate is required.
+The next `cuda-stream-readiness-v1` profile exercises only the test CUDA Driver
+wait/write-value helper, two independently released streams and a deterministic
+4-KiB payload/sentinel oracle. It starts no Manager, retains valid allocation
+owners through stream synchronization, and requires frozen helper bytes plus
+complete child trace/waits. Source review, resource postflight and independent
+GPU launch acceptance precede execution. This diagnostic is distinct from a
+replacement of the rejected adapter cohort and cannot qualify physical faults.
 
 ## S4 — Finish communication execution and demonstrate gains
 

@@ -330,7 +330,11 @@ def check_inputs(
             or digest(path, deadline) != executable["sha256"]
         ):
             raise RuntimeError(f"Frozen executable changed or cannot execute: {path}")
-    if contract.get("qualification") in ("pending-save-bytes-v2", "prepared-adapter-lifetime-v1"):
+    if contract.get("qualification") in (
+        "pending-save-bytes-v2",
+        "prepared-adapter-lifetime-v1",
+        "cuda-stream-readiness-v1",
+    ):
         for cell in contract["cells"]:
             tracer = cell.get("process_trace_binary")
             if (
@@ -1337,6 +1341,31 @@ def validate_cell(
             or "panicked at" in text
         ):
             raise RuntimeError(f"Native/worker failure remains in log: {path}")
+    if cell["kind"] == "cuda-readiness":
+        summaries = evidence_paths(directory, "STREAM-READINESS.json", deadline)
+        if len(summaries) != 1 or receipts:
+            raise RuntimeError("CUDA readiness has missing evidence or unexpected services")
+        summary = read_json(summaries[0], deadline)
+        if (
+            summary.get("owner") != pytest_owner
+            or summary.get("helper_sha256") != cell.get("cuda_gate_sha256")
+            or summary.get("pending_before_release") != [True, True]
+            or summary.get("independent_release") is not True
+            or type(summary.get("observed_bytes")) is not int
+            or summary["observed_bytes"] != 4096
+            or summary.get("mutation_rejected") is not True
+            or summary.get("streams_synchronized") is not True
+            or summary.get("Manager_created") is not False
+            or summary.get("physical_fault_qualification") is not False
+        ):
+            raise RuntimeError("Explicit CUDA readiness evidence differs")
+        raw = read_bytes(summaries[0].parent / "STREAM-READINESS.payload.bin", 4096, deadline)
+        if raw != struct.pack("=1024i", *range(1024)) or hashlib.sha256(
+            raw
+        ).hexdigest() != summary.get("payload_sha256"):
+            raise RuntimeError("Recomputed CUDA readiness bytes differ")
+        remaining(deadline)
+        return
     if cell["kind"] in ("native", "pending-save-bytes", "vllm-prepared", "sglang-prepared"):
         expected_origin = cell.get("manager_python")
         if not expected_origin:
@@ -2002,6 +2031,7 @@ def main() -> None:
         None,
         "pending-save-bytes-v2",
         "prepared-adapter-lifetime-v1",
+        "cuda-stream-readiness-v1",
     ):
         raise RuntimeError("Unsupported qualification contract; historical freezes stay immutable")
     remaining(startup_deadline)
@@ -2011,21 +2041,40 @@ def main() -> None:
     if contract["schema"] != "orbitkv.explicit-registration-campaign.v1":
         raise RuntimeError("Unknown campaign schema")
     adapter_profile = contract.get("qualification") == "prepared-adapter-lifetime-v1"
+    readiness_profile = contract.get("qualification") == "cuda-stream-readiness-v1"
     expected = (
-        [("vllm-prepared", 1)] * 4 + [("sglang-prepared", 1)] * 4
-        if adapter_profile
+        [("cuda-readiness", 1)]
+        if readiness_profile
         else (
-            [("pending-save-bytes", 1), ("pending-save-bytes", 1)]
-            if contract.get("qualification") == "pending-save-bytes-v2"
+            [("vllm-prepared", 1)] * 4 + [("sglang-prepared", 1)] * 4
+            if adapter_profile
             else (
-                [("native", 2)]
-                if contract["phase"] == "precheck"
-                else [("credits", 2), ("native", 2), ("vllm-worker", 1), ("sglang-pool", 2)]
+                [("pending-save-bytes", 1), ("pending-save-bytes", 1)]
+                if contract.get("qualification") == "pending-save-bytes-v2"
+                else (
+                    [("native", 2)]
+                    if contract["phase"] == "precheck"
+                    else [("credits", 2), ("native", 2), ("vllm-worker", 1), ("sglang-pool", 2)]
+                )
             )
         )
     )
     if [(cell["kind"], cell["passed"]) for cell in contract["cells"]] != expected:
         raise RuntimeError("Frozen registration gate cells differ")
+    if readiness_profile:
+        cell = contract["cells"][0]
+        library = cell.get("environment", {}).get("ORBITKV_TEST_CUDA_GATE_LIB")
+        if (
+            not isinstance(library, str)
+            or not Path(library).is_absolute()
+            or library not in contract["input_sha256"]
+            or not isinstance(cell.get("cuda_gate_sha256"), str)
+            or not re.fullmatch("[0-9a-f]{64}", cell["cuda_gate_sha256"])
+            or cell["cuda_gate_sha256"] != contract["input_sha256"][library]
+            or not cell.get("process_trace_binary")
+            or cell.get("cleanup_receipts") != 0
+        ):
+            raise RuntimeError("Invalid frozen CUDA readiness inputs")
     if adapter_profile:
         declarations = [
             ("vllm-prepared", "dram", True),
@@ -2096,7 +2145,11 @@ def main() -> None:
         signal.signal(number, signal.SIG_IGN)
     try:
         check_inputs(contract, deadline=startup_deadline)
-        if contract.get("qualification") == "pending-save-bytes-v2" or adapter_profile:
+        if (
+            contract.get("qualification") == "pending-save-bytes-v2"
+            or adapter_profile
+            or readiness_profile
+        ):
             write(
                 root / "DLOPEN-PREFLIGHT.json",
                 check_dlopen(contract, startup_deadline),
