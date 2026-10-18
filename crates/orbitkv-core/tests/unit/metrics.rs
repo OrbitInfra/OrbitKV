@@ -63,6 +63,22 @@ fn initial_ownership_metrics_child() {
             &metrics.ssd_write_queue_pending,
         ),
         ("orbitkv_ssd_write_inflight", &metrics.ssd_write_inflight),
+        (
+            "orbitkv_save_active_operations",
+            &metrics.save_active_operations,
+        ),
+        (
+            "orbitkv_save_active_metadata_bytes",
+            &metrics.save_active_metadata_bytes,
+        ),
+        (
+            "orbitkv_save_active_logical_bytes",
+            &metrics.save_active_logical_bytes,
+        ),
+        (
+            "orbitkv_save_retained_operations",
+            &metrics.save_retained_operations,
+        ),
         #[cfg(feature = "mooncake")]
         (
             "orbitkv_transfer_completion_outstanding",

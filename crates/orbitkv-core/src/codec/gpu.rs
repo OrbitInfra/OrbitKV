@@ -126,9 +126,12 @@ impl Drop for Arena {
 
 fn drain(stream: &CudaStream) {
     if let Err(error) = stream.synchronize() {
-        log::error!("Cannot establish GPU codec completion: {error}; terminating Cache Manager");
-        // A returned error would release engine pages still referenced by CUDA.
-        std::process::abort();
+        use std::io::Write;
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "GPU codec synchronization failed: {error}"
+        );
+        crate::transfer::retain_gpu_work();
     }
 }
 

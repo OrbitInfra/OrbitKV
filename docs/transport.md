@@ -331,12 +331,30 @@ worker branch is removed. See [engine-local Restore](engine-local-restore.md)
 for full ownership, limits, and pending qualification gates.
 
 Both native and Manager executors drain accepted copy work after partial
-enqueue failure. If CUDA cannot establish completion, the owning process
-terminates without reporting reusable pages. A wait timeout or dropped Python
+enqueue failure. The SaveTask owner candidate retains its source, destination
+and admission owners after reply loss or an execution unwind. Failed Manager
+stream or codec synchronization retains the call instead of using process exit
+as completion evidence. Engine-local Restore failure handling remains separate. A wait timeout or dropped Python
 handle does not cancel accepted work; the connector must retain logical
 GPU-page assignments until a terminal result. A proven drained failure can use
 vLLM's single-cache-group recomputation path; hybrid failures retain their
 existing fail-closed engine semantics.
+
+A missing GPU save worker reply leaves the admitted Publish future pending.
+The caller retains its instance and imported GPU context; no consumed error is
+published from reply loss alone. The SaveTask execution boundary borrows its
+resources across raw/codec operations and contains an ordinary Rust unwind.
+SaveTask also owns the registered instance through caller-future cancellation.
+The shared process admission limits accepted Save operations to 1,024 and retained
+request metadata to 32 MiB, including vector spare capacity. Worker completion
+and proven pre-submit rejection repay the charge; reply loss and loss of logical
+admission owners do not. Active operation, metadata and logical-byte gauges
+remain charged on parked sync/unwind paths, and reply/owner loss additionally
+increments the retained-operation gauge. Logical bytes describe requested GPU
+ranges and are distinct from physical pool/SSD/GPU budgets. Arbitrary SSD worker
+unwind has not gained a physical termination proof.
+This preserves software ownership; it does not prove that a failed device access
+ended. Actual GPU fault gates and bounded operational reporting remain separate.
 
 ### Publish and query control
 
@@ -363,10 +381,11 @@ without reusing the slot; the original source owner remains held.
 Only a matched valid result following the Manager copy drain, or
 a proven never-submitted send failure, permits return. This conservative
 retention still blocks the caller; bounded operational responses and adapter
-page-generation consumers remain separate pending work. Manager GPU-worker
-disappearance or reply loss can still produce a consumed Internal response
-without an independently established physical drain; that existing gap is not
-qualified by the transport caller-retention controls. Publish batches split to
+page-generation consumers remain separate pending work. The independently
+accepted SaveTask correction keeps a lost worker reply pending and retains
+admission instead of publishing a consumed error. Its code/CPU and package-load
+acceptance does not establish installed GPU or physical fault completion.
+Publish batches split to
 the negotiated descriptor slot capacity, retaining matching page ranges across
 layers until all chunks finish.
 This Publish partitioning does not yet partition oversized raw Restore plans.

@@ -579,11 +579,45 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   and logger unwind. The historical unsafe send-exception mutation must fail
   the same source-retention control. This is transport-boundary hardening,
   tracked in [PR #259](https://github.com/feichai0017/orbitkv/pull/259).
-  Manager worker/reply loss can still produce a consumed Internal response
-  without physical drain proof; that owner gap, bounded live-stall response,
+  Independent acceptance at `47e4f18a` covers code/CPU transport only; main
+  `3b48b463` has the same reviewed tree. The review and immutable controls are
+  under `/root/orbitkv-artifacts/s3-publish-lifetime-20261018/independent-47e4-review-1/`.
+  The accepted SaveTask correction below prevents worker/reply loss alone from
+  producing a consumed Internal response. Bounded live-stall response,
   finite parked-operation admission, page generations and physical reclamation
   remain open. New installed-package or GPU/fault qualification cannot be
   inherited from the earlier registration wheel or these CPU controls.
+  The next SaveTask owner correction keeps an admitted `batch_save` future
+  pending after oneshot reply loss instead of publishing a consumed error.
+  Borrowed SaveTask resources and admission survive execution unwinds; raw
+  copy and codec D2H boundaries retain their outer resources. Stream or codec
+  synchronization failures retain those owners instead of terminating the
+  Manager and exposing page reuse through process death. Real CPU queue/reply
+  loss and isolated borrowed-owner/admission controls establish the software
+  boundary; actual GPU partial-submit, delayed completion, failed sync and
+  installed adapter byte/lifetime gates remain required. This candidate does
+  not establish RDMA/SSD physical termination or provide a finite live-stall
+  response, and no historical quarantine is released.
+  SaveTask now carries the existing registration instance after caller-future
+  cancellation. A process-wide owner admits at most 1,024 Save operations and
+  32 MiB of retained request-vector/SaveTask metadata, counting spare capacity.
+  Missing receipts remain charged; only pre-submission rejection or the actual
+  worker completion boundary repays admission. Active metadata and logical-byte
+  gauges distinguish this budget from the existing physical pool/SSD/GPU owners;
+  logical bytes are measured, not a new physical payload cap. Reply/owner loss
+  has an explicit retained-operation gauge; parked sync/unwind work remains in
+  the active gauges. CPU saturation, overflow, cancellation, reply-loss and
+  fresh metric controls are archived under
+  `/root/orbitkv-artifacts/s3-publish-worker-drain-20261018/`.
+  Independent acceptance at `df8886ed` covers code/CPU Save ownership and matching
+  package loading: 320 Core tests passed, 26 ignored, shared-Python Clippy passed,
+  the historical reply-loss-error mutation failed, and the isolated wheel loaded
+  its extension plus bundled TENT. The review is under
+  `/root/orbitkv-artifacts/s3-publish-worker-drain-20261018/independent-df8886-review-1/`;
+  [PR #260](https://github.com/feichai0017/orbitkv/pull/260) carries the implementation.
+  Package loading does not establish installed Manager/device operation.
+  Arbitrary SSD-worker unwind and engine-local Restore failures remain
+  separate open ownership/qualification items.
 - A native `peer_alive()` observation uses the authenticated Manager pidfd,
   without a control RPC or taking a blocked Publish/lifecycle lock. Restore
   readiness and pending-result checks consume that observation. A live stalled

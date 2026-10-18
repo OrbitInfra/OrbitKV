@@ -112,3 +112,54 @@ fn failed_submission_waits_for_already_enqueued_stream_work() {
             .contains("partial submission")
     );
 }
+
+#[test]
+fn gpu_unwind_retains_borrowed_owner_and_admission_in_an_isolated_process() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "transfer::tests::gpu_unwind_retention_child",
+            "--nocapture",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("caller_owner_retained=true admission_charged=true no_DMA=true"));
+}
+
+#[test]
+#[ignore = "isolated no-DMA CPU ownership fixture"]
+fn gpu_unwind_retention_child() {
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
+    let owner = Arc::new(vec![37; 4096]);
+    let observed = Arc::downgrade(&owner);
+    let admission = Arc::new(tokio::sync::Semaphore::new(1));
+    let permit = Arc::clone(&admission).try_acquire_owned().unwrap();
+    let (reached, entered) = mpsc::channel();
+    let (returned, result) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _permit = permit;
+        contain_gpu_unwind(|| {
+            assert_eq!(owner.as_slice(), &[37; 4096]);
+            reached.send(()).unwrap();
+            fn controlled_unwind() {
+                panic!("controlled worker execution unwind");
+            }
+            controlled_unwind();
+        });
+        drop(owner);
+        returned.send(()).unwrap();
+    });
+    entered.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(matches!(
+        result.recv_timeout(Duration::from_millis(50)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert!(observed.upgrade().is_some());
+    assert!(Arc::clone(&admission).try_acquire_owned().is_err());
+    println!("caller_owner_retained=true admission_charged=true no_DMA=true");
+    // Only an isolated CPU fixture process exits with its deliberately parked thread.
+}

@@ -291,6 +291,7 @@ impl Job {
             Task::Load(task) => finish_load(task, result, self.started, self.bytes, outcome),
             Task::Save(task) => {
                 drop(task.ssd_admission);
+                task.admission.complete();
                 let _ = task.reply.send(result.map(|()| task.layers));
             }
         }
