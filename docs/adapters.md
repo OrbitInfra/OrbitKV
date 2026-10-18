@@ -38,6 +38,14 @@ cross-host rank coordination, HA or the remaining CUDA IPC lifetime contracts.
 
 ## Ownership contract
 
+The producer-admission candidate calls native `prepare_save` from the producer
+handoff before queueing. Rust holds and budgets immutable source requests,
+batches `submit_saves`, and keeps registration/exporter owners until completion.
+`cancel_save` succeeds only before native submission. An unknown handoff keeps
+engine completion pending; SGLang also preserves its FIFO tree locks. This code
+requires matching package and engine gates and adds no page-generation or
+physical-failure qualification.
+
 | Responsibility | Owner |
 | --- | --- |
 | Request scheduling, batching, model execution, HBM allocation and native prefix cache | Inference engine |
@@ -311,7 +319,11 @@ physical failure drain still need their own proofs and hardware gates.
 The native Save contract distinguishes `SaveNotSubmittedError` from unknown
 handoffs: only that exception from `start_save` proves the current invocation
 launched no native Publish worker. Handle allocation, attachment and wait errors
-retain the page hold. SGLang also preserves its official completion FIFO: once an
+retain the page hold.
+Native producer methods and their registration/handle arguments are resolved
+before the typed catch. Python method or argument lookup errors retain pages;
+the exception type alone cannot establish that native code ran and rolled back.
+SGLang also preserves its official completion FIFO: once an
 earlier result is unknown, the worker retains later queued tasks without starting
 them or reporting their completion against the earlier engine node. This does
 not reconcile unknown owners or prove physical drain; qualification is tracked

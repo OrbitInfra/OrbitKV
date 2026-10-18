@@ -46,6 +46,25 @@ def make_worker() -> WorkerAdapter:
         )
 
     worker._registration = object()
+    worker._registered_layers = ["layer"]
+    worker._client.prepare_save.side_effect = lambda registration, saves: SimpleNamespace(
+        registration=registration,
+        saves=[(name, list(ids), list(hashes)) for name, ids, hashes in saves],
+    )
+
+    def submit(handles):
+        saves = {}
+        for handle in handles:
+            for name, ids, hashes in handle.saves:
+                ids_out, hashes_out = saves.setdefault(name, ([], []))
+                ids_out.extend(ids)
+                hashes_out.extend(hashes)
+        return worker._client.start_save(
+            handles[0].registration, [(name, ids, hashes) for name, (ids, hashes) in saves.items()]
+        )
+
+    worker._client.submit_saves.side_effect = submit
+    worker._client.cancel_save.return_value = True
     worker._client.wait_save.return_value = SimpleNamespace(done=True, success=True, message="")
     return worker
 
@@ -95,7 +114,117 @@ def test_publish_progress_never_completes_held_engine_pages(alive):
     assert not completion.is_set()
 
 
-@pytest.mark.parametrize("failure", ["pending", "exception", "start", "typed-wait", "attachment"])
+def test_producer_reserves_before_queue_and_drops_python_payload():
+    worker = make_worker()
+    completion = enqueue_save(worker)
+    task = worker._save_queue.get_nowait()
+    worker._client.prepare_save.assert_called_once_with(
+        worker._registration, [("layer", [1], [b"hash"])]
+    )
+    worker._client.submit_saves.assert_not_called()
+    assert task.native_handle is not None and task.native_attempted
+    assert not task.metadata.save_intents
+    assert not completion.is_set()
+
+
+def test_preparation_uncertainty_closes_source_admission_without_completing_pages():
+    worker = make_worker()
+    worker._client.prepare_save.side_effect = MemoryError("unknown preparation handoff")
+    with pytest.raises(MemoryError):
+        enqueue_save(worker)
+    assert worker._save_queue.empty()
+    assert len(worker._retained_save_tasks) == 1
+    assert not worker._save_completion_events["request"].is_set()
+    with pytest.raises(RuntimeError, match="cannot be admitted"):
+        enqueue_save(worker)
+
+
+@pytest.mark.parametrize("where", ["attachment", "queue"])
+def test_typed_error_outside_prepare_retains_the_producer_owner(where):
+    worker = make_worker()
+    task = worker._make_save_task(
+        {"r": SaveIntent(block_ids_by_group=((1,),), block_hashes=(b"h",))}, MagicMock()
+    )
+    if where == "attachment":
+
+        class RejectAttachment(type(task)):
+            def __setattr__(self, name, value):
+                if name == "native_handle":
+                    raise SaveNotSubmittedError("not from native prepare")
+                super().__setattr__(name, value)
+
+        task.__class__ = RejectAttachment
+    else:
+        worker._save_queue.put = MagicMock(side_effect=SaveNotSubmittedError("queue handoff"))
+    with pytest.raises(SaveNotSubmittedError):
+        worker._enqueue_save(task)
+    assert worker._retained_save_tasks == [task]
+    assert not worker._save_completion_events["r"].is_set()
+
+
+@pytest.mark.parametrize("where", ["prepare-method", "registration", "submit-method", "handle"])
+def test_python_lookup_rejection_never_proves_native_rollback(where):
+    worker = make_worker()
+    task = worker._make_save_task(
+        {"r": SaveIntent(block_ids_by_group=((1,),), block_hashes=(b"h",))}, MagicMock()
+    )
+    submit = worker._client.submit_saves
+    prepare = worker._client.prepare_save
+    if where.startswith("submit") or where == "handle":
+        worker._enqueue_save(task)
+        worker._save_queue.get_nowait()
+
+    if where.endswith("method"):
+        attribute = "prepare_save" if where == "prepare-method" else "submit_saves"
+
+        class RejectLookup:
+            def __getattribute__(self, name):
+                if name == attribute:
+                    raise SaveNotSubmittedError("Python method lookup before native call")
+                return getattr(worker_client, name)
+
+        worker_client = worker._client
+        worker._client = RejectLookup()
+    else:
+        attribute = "registration" if where == "registration" else "native_handle"
+
+        class RejectArgument(type(task)):
+            def __getattribute__(self, name):
+                if name == attribute:
+                    raise SaveNotSubmittedError("Python argument lookup before native call")
+                return super().__getattribute__(name)
+
+        task.__class__ = RejectArgument
+
+    if where.startswith("prepare") or where == "registration":
+        with pytest.raises(SaveNotSubmittedError):
+            worker._enqueue_save(task)
+        prepare.assert_not_called()
+    else:
+        with pytest.raises(RuntimeError, match="pages remain held"):
+            worker._process_save_batch([task])
+    submit.assert_not_called()
+    assert worker._retained_save_tasks == [task]
+    assert task.native_attempted and not task.native_completed
+    assert not worker._save_completion_events["r"].is_set()
+
+
+def test_unknown_request_preparation_also_preserves_boundary_jobs():
+    worker = make_worker()
+    worker._cache_groups = SimpleNamespace(group_count=2)
+    worker._client.prepare_save.side_effect = MemoryError("unknown preparation")
+    worker._current_metadata = OrbitKVConnectorMetadata(
+        save_intents={"r": SaveIntent(block_ids_by_group=((1,),), block_hashes=(b"h",))},
+        boundary_save_intents={7: SaveIntent(block_ids_by_group=((2,),), block_hashes=(b"b",))},
+    )
+    with pytest.raises(MemoryError):
+        worker.wait_for_save()
+    assert len(worker._retained_save_tasks) == 2
+    assert worker._retained_save_tasks[1].boundary_job_ids == [7]
+    assert not worker._completed_boundary_jobs
+
+
+@pytest.mark.parametrize("failure", ["pending", "exception", "start", "typed-wait"])
 def test_native_save_wait_failure_keeps_engine_pages_and_registration(failure):
     worker = make_worker()
     worker._registered_layers = ["layer"]
@@ -112,24 +241,13 @@ def test_native_save_wait_failure_keeps_engine_pages_and_registration(failure):
         worker._client.start_save.side_effect = MemoryError("unknown handoff")
     if failure == "typed-wait":
         worker._client.wait_save.side_effect = SaveNotSubmittedError("outside start")
-    if failure == "attachment":
-        task = worker._save_queue.get_nowait()
-
-        class RejectAttachment(type(task)):
-            def __setattr__(self, name, value):
-                if name == "native_handle":
-                    raise SaveNotSubmittedError("outside start")
-                super().__setattr__(name, value)
-
-        task.__class__ = RejectAttachment
-        worker._save_queue.put(task)
     with pytest.raises(RuntimeError, match="engine pages remain held"):
         process_next_save(worker)
     assert not completion.is_set()
     assert not worker.get_transfer_results({"request"}).finished_sending
     assert worker._retained_save_tasks[0].native_attempted
-    if failure not in {"start", "attachment"}:
-        assert worker._retained_save_tasks[0].native_handle is handle
+    if failure != "start":
+        assert worker._retained_save_tasks[0].native_handle is not None
     with pytest.raises(RuntimeError, match="pages remain held"):
         worker.unregister_context()
 
@@ -310,16 +428,17 @@ def test_save_uses_the_selected_data_plane():
     worker = make_worker()
     worker._registered_layers = ["layer"]
     cache_client = MagicMock(transport="iceoryx2")
-    cache_client.start_save.return_value = object()
+    cache_client.prepare_save.return_value = object()
     cache_client.wait_save.return_value = SimpleNamespace(done=True, success=True, message="")
     worker._client = cache_client
     enqueue_save(worker)
 
     process_next_save(worker)
 
-    cache_client.start_save.assert_called_once_with(
+    cache_client.prepare_save.assert_called_once_with(
         worker._registration, [("layer", [1], [b"hash"])]
     )
+    cache_client.submit_saves.assert_called_once_with([cache_client.prepare_save.return_value])
     worker._ctx.client.start_save.assert_not_called()
 
 

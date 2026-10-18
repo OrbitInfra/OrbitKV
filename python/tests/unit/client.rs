@@ -71,7 +71,58 @@ fn pending_save_retains_after_handle_drop_and_delayed_reply() {
     let client = native_client(Arc::clone(&inner), [37; 16]);
     let registration = registration(&client, [37; 16]);
     let tensors = Arc::downgrade(&registration._tensors);
-    let handle = Python::attach(|py| client.start_save(py, &registration, Vec::new())).unwrap();
+    let usage_before = *SAVE_USAGE.lock().unwrap();
+    let prepared = Python::attach(|py| client.prepare_save(py, &registration, Vec::new())).unwrap();
+    assert_eq!(SAVE_USAGE.lock().unwrap().0, usage_before.0 + 1);
+    assert!(Python::attach(|py| client.cancel_save(py, &prepared.borrow(py))).unwrap());
+    assert!(
+        Python::attach(|py| client.poll_save(py, &prepared.borrow(py)))
+            .unwrap()
+            .done
+    );
+    assert!(Python::attach(|py| client.submit_saves(py, vec![prepared.clone_ref(py)])).is_err());
+    drop(prepared);
+    let first = Python::attach(|py| client.prepare_save(py, &registration, Vec::new())).unwrap();
+    let handle = Python::attach(|py| client.prepare_save(py, &registration, Vec::new())).unwrap();
+    assert!(Python::attach(|py| client.submit_saves(py, vec![first.clone_ref(py), first.clone_ref(py)])).is_err());
+    assert!(
+        !Python::attach(|py| client.poll_save(py, &first.borrow(py)))
+            .unwrap()
+            .done
+    );
+    Python::attach(|py| client.submit_saves(py, vec![first.clone_ref(py), handle.clone_ref(py)]))
+        .unwrap();
+    assert!(!Python::attach(|py| client.cancel_save(py, &handle.borrow(py))).unwrap());
+    drop(first);
+    let queued = Python::attach(|py| client.prepare_save(py, &registration, Vec::new())).unwrap();
+    let mixed = Python::attach(|py| {
+        client.submit_saves(py, vec![handle.clone_ref(py), queued.clone_ref(py)])
+    });
+    Python::attach(|py| {
+        assert!(
+            !mixed
+                .unwrap_err()
+                .is_instance_of::<SaveNotSubmittedError>(py)
+        );
+    });
+    assert!(
+        !Python::attach(|py| client.poll_save(py, &handle.borrow(py)))
+            .unwrap()
+            .done
+    );
+    assert!(
+        !Python::attach(|py| client.poll_save(py, &queued.borrow(py)))
+            .unwrap()
+            .done
+    );
+    assert!(Python::attach(|py| client.cancel_save(py, &queued.borrow(py))).unwrap());
+    drop(queued);
+    client
+        .saves
+        .lock()
+        .unwrap()
+        .retain(|_, save| save.result.lock().unwrap().is_none());
+    Python::attach(|_| {});
     let deadline = Instant::now() + Duration::from_secs(2);
     while requests.load(Ordering::Acquire) != 1 {
         assert!(Instant::now() < deadline);
@@ -83,7 +134,7 @@ fn pending_save_retains_after_handle_drop_and_delayed_reply() {
             assert!(error.cause(py).is_some());
         });
         assert_eq!(requests.load(Ordering::Acquire), 1);
-        assert_eq!(client.saves.lock().unwrap().len(), 1);
+        assert_eq!(client.saves.lock().unwrap().len(), 2);
     };
     for metadata_full in [false, true] {
         let mut usage = SAVE_USAGE.lock().unwrap();
@@ -150,6 +201,8 @@ fn pending_save_wait_is_a_receipt_wait_not_a_timeout_completion() {
         bytes: 0,
         result: Mutex::new(None),
         completed: Condvar::new(),
+        prepared: Mutex::new(None),
+        charged: AtomicBool::new(false),
     });
     assert!(!pending.status(Duration::from_millis(1)).done);
     let receipt = Arc::clone(&pending);
@@ -183,6 +236,147 @@ fn save_request_admission_accounts_for_spare_capacity() {
     };
     let bytes = save_request_bytes(&request).unwrap();
     assert!(bytes >= 37 * std::mem::size_of::<Vec<u8>>() + 4096 + 1024 * 4);
+}
+
+#[test]
+#[ignore = "CPU native prepared Save admission gate; requires the channel fixture"]
+fn prepared_admission_limit_and_complete_batch_rollback() {
+    Python::initialize();
+    Python::attach(|_| {});
+    let mut process = ProcessOwner::start("pending-until-exit");
+    let client = native_client(Arc::clone(&process.client), [1; 16]);
+    let authority = registration(&client, [1; 16]);
+    let initial = *SAVE_USAGE.lock().unwrap();
+    let mut handles = Vec::new();
+    for _ in 0..MAX_PENDING_SAVES {
+        handles.push(Python::attach(|py| client.prepare_save(py, &authority, Vec::new())).unwrap());
+    }
+    let rejected =
+        Python::attach(|py| client.prepare_save(py, &authority, Vec::new())).unwrap_err();
+    Python::attach(|py| assert!(rejected.is_instance_of::<SaveNotSubmittedError>(py)));
+    for handle in &handles {
+        assert!(Python::attach(|py| client.cancel_save(py, &handle.borrow(py))).unwrap());
+    }
+    assert_eq!(SAVE_USAGE.lock().unwrap().0, initial.0 + MAX_PENDING_SAVES);
+    drop(handles);
+    Python::attach(|_| {});
+    let old = Python::attach(|py| client.prepare_save(py, &authority, Vec::new())).unwrap();
+    client.local.lock().unwrap().insert(
+        ("same-instance".into(), 1, 3),
+        Arc::new(idle_registration_worker([2; 16], 7)),
+    );
+    let fresh = registration(&client, [2; 16]);
+    let new = Python::attach(|py| client.prepare_save(py, &fresh, Vec::new())).unwrap();
+    let rejected =
+        Python::attach(|py| client.submit_saves(py, vec![old.clone_ref(py), new.clone_ref(py)]))
+            .unwrap_err();
+    Python::attach(|py| assert!(rejected.is_instance_of::<SaveNotSubmittedError>(py)));
+    assert!(
+        Python::attach(|py| client.poll_save(py, &old.borrow(py)))
+            .unwrap()
+            .done
+    );
+    assert!(
+        Python::attach(|py| client.poll_save(py, &new.borrow(py)))
+            .unwrap()
+            .done
+    );
+    drop(old);
+    drop(new);
+    let pending = Python::attach(|py| client.prepare_save(py, &fresh, Vec::new())).unwrap();
+    Python::attach(|py| client.close(py));
+    assert!(
+        Python::attach(|py| client.poll_save(py, &pending.borrow(py)))
+            .unwrap()
+            .done
+    );
+    assert!(Python::attach(|py| client.submit_saves(py, vec![pending.clone_ref(py)])).is_err());
+    drop(pending);
+    drop(authority);
+    drop(fresh);
+    drop(client);
+    process.stop();
+    Python::attach(|_| {});
+    assert_eq!(*SAVE_USAGE.lock().unwrap(), initial);
+}
+
+#[test]
+#[ignore = "Isolated CPU native spawn-failure gate; seccomp applies only to this test thread"]
+fn prepared_spawn_failure_rolls_back_every_unsubmitted_handle() {
+    Python::initialize();
+    let mut process = ProcessOwner::start("pending-until-exit");
+    let client = native_client(Arc::clone(&process.client), [1; 16]);
+    let authority = registration(&client, [1; 16]);
+    let first = Python::attach(|py| client.prepare_save(py, &authority, Vec::new())).unwrap();
+    let second = Python::attach(|py| client.prepare_save(py, &authority, Vec::new())).unwrap();
+    let mut filter = [
+        libc::sock_filter {
+            code: 0x20,
+            jt: 0,
+            jf: 0,
+            k: 0,
+        },
+        libc::sock_filter {
+            code: 0x15,
+            jt: 0,
+            jf: 1,
+            k: libc::SYS_clone as u32,
+        },
+        libc::sock_filter {
+            code: 0x06,
+            jt: 0,
+            jf: 0,
+            k: 0x00050000 | libc::EAGAIN as u32,
+        },
+        libc::sock_filter {
+            code: 0x15,
+            jt: 0,
+            jf: 1,
+            k: libc::SYS_clone3 as u32,
+        },
+        libc::sock_filter {
+            code: 0x06,
+            jt: 0,
+            jf: 0,
+            k: 0x00050000 | libc::EAGAIN as u32,
+        },
+        libc::sock_filter {
+            code: 0x06,
+            jt: 0,
+            jf: 0,
+            k: 0x7fff0000,
+        },
+    ];
+    let program = libc::sock_fprog {
+        len: filter.len() as u16,
+        filter: filter.as_mut_ptr(),
+    };
+    unsafe {
+        assert_eq!(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), 0);
+        assert_eq!(libc::prctl(libc::PR_SET_SECCOMP, 2, &program), 0);
+    }
+    let rejected = Python::attach(|py| {
+        client.submit_saves(py, vec![first.clone_ref(py), second.clone_ref(py)])
+    })
+    .unwrap_err();
+    Python::attach(|py| {
+        assert!(rejected.is_instance_of::<SaveNotSubmittedError>(py));
+        assert!(rejected.cause(py).is_some());
+    });
+    for handle in [&first, &second] {
+        let status = Python::attach(|py| client.poll_save(py, &handle.borrow(py))).unwrap();
+        assert!(status.done && !status.success);
+        assert!(!Python::attach(|py| client.cancel_save(py, &handle.borrow(py))).unwrap());
+    }
+    Python::attach(|py| client.close(py));
+    drop(first);
+    drop(second);
+    drop(authority);
+    drop(client);
+    process.stop();
+    println!(
+        "actual_clone_EAGAIN=1 no_Publish_worker=1 batch_rollbacks=2 typed_rejection=1 no_DMA=true"
+    );
 }
 
 fn registration(client: &PyCacheManagerClient, generation: [u8; 16]) -> PyGpuRegistration {

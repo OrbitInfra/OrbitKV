@@ -20,9 +20,10 @@ class OrbitKVInternal(OrbitKVError):
     ...
 
 class SaveNotSubmittedError(OrbitKVError):
-    """This start_save invocation launched no native Publish worker.
+    """This native Save admission/submission invoked no Publish worker.
 
-    It does not complete older Saves or prove any physical transfer has drained.
+    A prepare/start proof concerns this call; a submit proof concerns its full
+    rolled-back prepared batch. Older submitted Saves and physical drain remain separate.
     """
 
     ...
@@ -209,6 +210,18 @@ class CacheManagerClient:
         """
         ...
     def poll_save(self, handle: SaveHandle) -> RestoreStatus: ...
+    def prepare_save(self, registration: GpuRegistration, saves: list[tuple[str, list[int], list[bytes]]]) -> SaveHandle:
+        """Own source metadata before queueing; explicit native rejection raises SaveNotSubmittedError."""
+        ...
+    def submit_saves(self, handles: list[SaveHandle]) -> None:
+        """Submit one batch; SaveNotSubmittedError proves all input handles were safely rolled back.
+
+        Duplicate, foreign or mixed submitted handles stay owned and raise ordinary errors.
+        """
+        ...
+    def cancel_save(self, handle: SaveHandle) -> bool:
+        """Cancel only never-submitted prepared work; submitted native work stays held."""
+        ...
     def wait_save(self, handle: SaveHandle, *, timeout: float | None = None) -> RestoreStatus:
         """A deadline returns pending; omission waits in Rust while source owners remain held."""
         ...
