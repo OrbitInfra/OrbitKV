@@ -826,6 +826,9 @@ in [transport](transport.md) and [engine-local Restore](engine-local-restore.md)
 The checkboxes below record bounded deliveries, not completion of S4. The
 records in this section retain each artifact, measured profile and failed gate.
 
+- [x] Classify benchmarks and their tests by behavior, consolidate shared
+  fixtures, and retire the obsolete upstream-ABI READ probe/comparison entry
+  points. Historical reproduction stays bound to immutable source and evidence.
 - [x] Implement reviewed KDA copy work, bounded SSD host batching, separated
   read/write submission and GPU/NUMA identity. Keep CUDA sources separate.
 - [x] Accept the explicit SGLang kernel profile: Qwen3-32B, raw BF16,
@@ -839,11 +842,13 @@ records in this section retain each artifact, measured profile and failed gate.
   to the existing RDMA runner. Invalid traces and failed completed pairs stop
   dependent cells while retaining actual normal waits; this is implementation,
   not a hardware-pilot result.
-- [ ] Admit the current two-host runtime and pass the matched native-observer
-  overhead pilot before diagnosing first peer recovery and warm steady state.
+- [x] Validate the frozen current two-host Manager/fixture runtime after real
+  GPU registration, including consumed Python origins and native mappings.
   The runtime guard binds the consumed channel configuration to its checked
   private root and prefix, launches children from a frozen neutral directory,
   and verifies their actual working directories before payload admission.
+- [ ] Pass the matched native-observer overhead pilot before diagnosing first
+  peer recovery and warm steady state. The current pilot failed its tail guard.
 - [ ] Reduce engine-local H2D observation cost until the complete matched
   overhead guard passes; earlier valid failed cohorts remain failed.
 - [ ] Pass inference-contention and repeatable end-to-end performance gates
@@ -1145,8 +1150,8 @@ remain outside Git at `/root/orbitkv-artifacts/s4-rle-trace-20261016/`.
   the actual Manager Python origins and both live processes' native mappings
   before payload publication, reusing the installed-gate inode/device and
   executable-byte inspection. Final input validation precedes lease release.
-  These are implementation changes; current-runtime hardware admission and the
-  matched observation-overhead pilot remain open.
+  Current-runtime admission is recorded below; the matched observation-overhead
+  pilot remains unqualified.
   The runner now consumes bounded same-cell trace receipts only after normal
   Manager and fixture exit, checks each host's own Manager identity, and validates
   consumer-local query windows. The original eight-cell overhead pilot checks
@@ -1154,11 +1159,25 @@ remain outside Git at `/root/orbitkv-artifacts/s4-rle-trace-20261016/`.
   postflight for a pilot PASS. Two pairs per direction and fifty samples per
   cell do not establish population confidence or stable tail latency; the
   predeclared guards and all failed cells remain in force.
+
 - Retain bounded multipart plans and whole-operation ownership. Earlier layer,
   multipart, codec or SSD readiness requires consumer dependencies and final
   physical drain, not only a readiness notification.
 - Run matched native/OrbitKV/LMCache serving comparisons after model recovery
   qualifies. Larger-model native output controls do not close this gate.
+
+**Current-runtime Manager observer pilot (2026-10-19): valid overhead FAIL.**
+Harness `8864879a` consumed the unchanged installed `d49f6deb` runtime on two
+H20 hosts. The first four cells completed 224 exact-byte/sentinel restores
+(200 measured); the second pair exceeded the frozen query-plus-restore tail
+guard: 13.192735 versus 11.466028 ms, a 1.726707 ms difference above 0.25 ms.
+All completed-pair median guards passed. The remaining four cells, including
+the reverse direction, were not started. Independent review accepts the failed prefix,
+normal Manager/fixture and owner waits, unchanged inputs and empty owned-resource
+postflight. The original eight-cell contract, slow sample, driver exit 1 and
+failed result remain at
+`/root/orbitkv-artifacts/s4-recovery-path-profile-20261018/manager-observer-cohort-886-1/`.
+This does not admit deeper instrumentation, transport promotion or a new default.
 
 **Acceptance:** correct GPU bytes and outputs, unchanged resource/lifetime
 contracts, repeatable matched gains with uncertainty and frozen cold/small-path

@@ -10,8 +10,8 @@ import statistics
 from pathlib import Path
 
 from benches.common.artifacts import external_path
+from benches.common.metrics import geometric_mean, geometric_mean_interval
 from benches.distributed.shared_cache_profile import validate_query_window
-from benches.distributed.tent_compare import geometric, interval
 
 STAGES = frozenset({"metadata_rpc", "endpoint_construct", "endpoint_connect", "bootstrap_rpc"})
 
@@ -415,7 +415,7 @@ def observer_overhead(contract: dict, results: list[dict]) -> dict:
         directions[source] = {}
         for metric in ("manager_fetch_ms", "query_restore_ms"):
             ratios = [row["metrics"][metric]["median_ratio"] for row in rows]
-            mean, ci = geometric(ratios), interval(ratios, seed=42, draws=10000)
+            mean, ci = geometric_mean(ratios), geometric_mean_interval(ratios, seed=42, draws=10000)
             directions[source][metric] = {
                 "independent_pairs": 2,
                 "geometric_mean_ratio": mean,
