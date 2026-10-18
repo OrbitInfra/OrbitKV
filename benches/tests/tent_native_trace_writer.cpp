@@ -1,3 +1,5 @@
+#include <sys/wait.h>
+
 #include <thread>
 #include <vector>
 
@@ -6,7 +8,7 @@
 int main(int argc, char** argv) {
     if (argc != 2) return 1;
     const std::string mode(argv[1]);
-    if (mode == "complete") {
+    if (mode == "complete" || mode == "fork" || mode == "exec") {
         const char* stages[] = {"metadata_rpc", "endpoint_construct", "endpoint_connect",
                                 "bootstrap_rpc"};
         std::vector<std::thread> workers;
@@ -19,6 +21,31 @@ int main(int argc, char** argv) {
             });
         }
         for (auto& worker : workers) worker.join();
+        if (mode != "complete") {
+            const pid_t child = fork();
+            if (child < 0) return 1;
+            if (child == 0) {
+                if (mode == "exec") {
+                    execl(argv[0], argv[0], "foreign", nullptr);
+                    _exit(1);
+                }
+                {
+                    Span span("endpoint_construct");
+                    span.finish(0);
+                }
+                std::exit(0);
+            }
+            int status = 0;
+            if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
+                WEXITSTATUS(status) != 0) return 1;
+            std::printf("{\"child\":%ld,\"actual_child_exit\":%d}\n",
+                        static_cast<long>(child), WEXITSTATUS(status));
+        }
+        return 0;
+    }
+    if (mode == "foreign") {
+        Span span("endpoint_construct");
+        span.finish(0);
         return 0;
     }
     if (mode == "active") {

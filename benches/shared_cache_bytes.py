@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import signal
 import socket
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 import requests
 
@@ -39,6 +41,17 @@ def worker(args: argparse.Namespace) -> None:
         for index in range(len(SOURCE_PAGES))
     ]
     hashes = BlockHashes(source_hashes)
+    actor = (
+        {
+            "pid": os.getpid(),
+            "start_ticks": int(Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]),
+            "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+            "instance": args.instance,
+            "namespace": args.namespace,
+        }
+        if args.profile
+        else None
+    )
     pattern = (
         torch.arange(LAYERS * 2 * BLOCKS * segment_bytes, dtype=torch.int32)
         .remainder_(251)
@@ -147,6 +160,12 @@ def worker(args: argparse.Namespace) -> None:
                         if args.profile:
                             result.update(
                                 query_id=request,
+                                query_window={
+                                    **actor,
+                                    "clock": "CLOCK_MONOTONIC",
+                                    "begin_mono_ns": query_started,
+                                    "ready_mono_ns": restore_started,
+                                },
                                 timing={
                                     "clear_ms": (query_started - clear_started) / 1e6,
                                     "query_ms": (restore_started - query_started) / 1e6,

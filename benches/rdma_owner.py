@@ -217,6 +217,9 @@ class HostOwner:
         }
         self.children[name] = item
         self.work_admitted = True
+        item["start_ticks"] = int(
+            (Path("/proc") / str(process.pid) / "stat").read_text().rsplit(")", 1)[1].split()[19]
+        )
         if protocol:
 
             def reader():
@@ -297,6 +300,9 @@ class HostOwner:
         code = process.poll()
         result = {
             "pid": process.pid,
+            "host": self.host,
+            "boot_id": self.contract["hosts"][self.host]["boot_id"],
+            "start_ticks": item["start_ticks"],
             "cell": item["cell"],
             "name": message["name"],
             "exit_code": code,
@@ -370,6 +376,7 @@ class HostOwner:
                 "native_stopped": item["native_stopped"],
                 "forced_cleanup": False,
                 "boot_id": self.contract["hosts"][self.host]["boot_id"],
+                "start_ticks": item["start_ticks"],
             }
         )
 

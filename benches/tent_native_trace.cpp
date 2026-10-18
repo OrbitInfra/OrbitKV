@@ -7,9 +7,12 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <limits>
 #include <string>
 
 #include "tent/common/status.h"
@@ -40,6 +43,33 @@ std::atomic<bool> published[kLimit]{};
 constexpr uint64_t kSealed = uint64_t{1} << 63;
 std::atomic<uint64_t> active_spans{0};
 
+pid_t trace_owner() {
+    static const pid_t owner = [] {
+        const char* path = std::getenv("TENT_NATIVE_TRACE_PATH");
+        if (!path) return pid_t{0};
+        const char* text = std::getenv("TENT_NATIVE_TRACE_PID");
+        if (!*path || !text || *text < '1' || *text > '9') {
+            dprintf(STDERR_FILENO, "TENT trace requires its owner PID before exec\n");
+            _exit(2);
+        }
+        pid_t value = 0;
+        for (; *text; ++text) {
+            if (*text < '0' || *text > '9' ||
+                value > (std::numeric_limits<pid_t>::max() - (*text - '0')) / 10) {
+                dprintf(STDERR_FILENO, "TENT trace has an invalid owner PID\n");
+                _exit(2);
+            }
+            value = value * 10 + (*text - '0');
+        }
+        return value;
+    }();
+    return owner;
+}
+
+__attribute__((constructor)) void validate_owner() { (void)trace_owner(); }
+
+bool owns_trace() { return trace_owner() != 0 && getpid() == trace_owner(); }
+
 uint64_t now() {
     timespec value{};
     clock_gettime(CLOCK_MONOTONIC, &value);
@@ -58,10 +88,15 @@ Function original(const char* symbol) {
 
 class Span {
    public:
-    explicit Span(const char* stage) : stage_(stage), begin_(now()), tid_(syscall(SYS_gettid)) {
+    explicit Span(const char* stage) : stage_(stage) {
+        if (!owns_trace()) return;
+        enabled_ = true;
+        begin_ = now();
+        tid_ = syscall(SYS_gettid);
         if (active_spans.fetch_add(1, std::memory_order_acq_rel) & kSealed) _exit(2);
     }
     ~Span() {
+        if (!enabled_ || !owns_trace()) return;
         const uint64_t end = now();
         const size_t index = count.fetch_add(1, std::memory_order_relaxed);
         if (index < kLimit) {
@@ -74,15 +109,39 @@ class Span {
 
    private:
     const char* stage_;
-    uint64_t begin_;
-    long tid_;
+    uint64_t begin_ = 0;
+    long tid_ = 0;
     int status_ = -1;
+    bool enabled_ = false;
 };
 
 __attribute__((destructor)) void write_events() {
+    if (!owns_trace()) return;
     const char* path = std::getenv("TENT_NATIVE_TRACE_PATH");
-    if (!path) return;
+    if (!path || !*path) _exit(2);
     if (active_spans.exchange(kSealed, std::memory_order_acq_rel) != 0) _exit(2);
+    char boot_id[37]{};
+    FILE* identity = std::fopen("/proc/sys/kernel/random/boot_id", "r");
+    if (!identity) _exit(2);
+    const int boot_fields = std::fscanf(identity, "%36[0-9a-f-]", boot_id);
+    if (std::fclose(identity) != 0 || boot_fields != 1 || std::strlen(boot_id) != 36) _exit(2);
+    char stat[4096]{};
+    identity = std::fopen("/proc/self/stat", "r");
+    if (!identity) _exit(2);
+    const bool read_stat = std::fgets(stat, sizeof(stat), identity) != nullptr;
+    if (std::fclose(identity) != 0 || !read_stat) _exit(2);
+    char* field = std::strrchr(stat, ')');
+    if (!field || field[1] != ' ') _exit(2);
+    field += 2;
+    for (size_t i = 0; i < 19; ++i) {
+        field = std::strchr(field, ' ');
+        if (!field) _exit(2);
+        ++field;
+    }
+    char* end = nullptr;
+    errno = 0;
+    const auto start_ticks = std::strtoull(field, &end, 10);
+    if (errno || !start_ticks || end == field || *end != ' ') _exit(2);
     const int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     if (fd < 0) {
         perror("TENT trace output");
@@ -97,9 +156,11 @@ __attribute__((destructor)) void write_events() {
     const size_t retained = seen < kLimit ? seen : kLimit;
     std::fprintf(output,
                  "{\"schema\":\"tent.native-trace.v1\",\"pid\":%ld,"
+                 "\"boot_id\":\"%s\",\"start_ticks\":%llu,"
                  "\"clock\":\"CLOCK_MONOTONIC\",\"seen\":%zu,"
                  "\"limit\":%zu,\"overflow\":%s,\"events\":[",
-                 static_cast<long>(getpid()), seen, kLimit, seen > kLimit ? "true" : "false");
+                 static_cast<long>(getpid()), boot_id, start_ticks, seen, kLimit,
+                 seen > kLimit ? "true" : "false");
     for (size_t i = 0; i < retained; ++i) {
         if (!published[i].load(std::memory_order_acquire)) _exit(2);
         const auto& event = events[i];

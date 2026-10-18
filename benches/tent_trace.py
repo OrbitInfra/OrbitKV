@@ -8,6 +8,7 @@ import statistics
 from pathlib import Path
 
 from .artifacts import external_path
+from .shared_cache_profile import validate_query_window
 
 STAGES = frozenset({"metadata_rpc", "endpoint_construct", "endpoint_connect", "bootstrap_rpc"})
 
@@ -48,7 +49,9 @@ def summarize(trace: dict, role: str, pid: int, cold_sample: dict | None = None)
         or trace.get("clock") != "CLOCK_MONOTONIC"
         or type(trace.get("pid")) is not int
         or trace["pid"] != pid
+        or type(pid) is not int
         or pid <= 0
+        or type(trace.get("limit")) is not int
         or trace.get("limit") != 4096
         or trace.get("overflow") is not False
     ):
@@ -63,7 +66,12 @@ def summarize(trace: dict, role: str, pid: int, cold_sample: dict | None = None)
     ):
         raise ValueError("Native trace count does not match retained events")
     for row in events:
-        if not isinstance(row, dict) or row.get("stage") not in STAGES or row.get("status") != 0:
+        if (
+            not isinstance(row, dict)
+            or row.get("stage") not in STAGES
+            or type(row.get("status")) is not int
+            or row["status"] != 0
+        ):
             raise ValueError("Native trace has an unknown stage or unsuccessful call")
         if any(
             type(row.get(field)) is not int for field in ("begin_mono_ns", "end_mono_ns", "tid")
@@ -97,14 +105,140 @@ def summarize(trace: dict, role: str, pid: int, cold_sample: dict | None = None)
     return result
 
 
+def summarize_manager(trace: dict, cell_result: dict) -> dict:
+    """Link one consumer Manager trace to its local fixture's query windows."""
+    if cell_result.get("status") != "PASS_DESCRIPTIVE_PROFILE" or any(
+        key in cell_result for key in ("error", "cleanup_error")
+    ):
+        raise ValueError("Manager cell must have completed with successful cleanup")
+    cell = cell_result["cell"]
+    host = cell["target_host"]
+    boot = cell_result["before"][host]["boot_id"]
+    if host == cell["source_host"] or cell_result["after"][host]["boot_id"] != boot:
+        raise ValueError("Consumer must retain its own host and boot throughout the cell")
+    owners = {}
+    for name, expected_exit in (("manager", 0), ("fixture", 143)):
+        ready = [
+            row
+            for row in cell_result["readiness"]
+            if row.get("host") == host and row.get("name") == name
+        ]
+        stopped = [
+            row
+            for row in cell_result["exits"]
+            if row.get("host") == host and row.get("name") == name
+        ]
+        if len(ready) != 1 or len(stopped) != 1:
+            raise ValueError("Expected one same-host readiness and actual wait per owner")
+        ready, stopped = ready[0], stopped[0]
+        if (
+            type(ready.get("pid")) is not int
+            or ready["pid"] <= 0
+            or type(ready.get("start_ticks")) is not int
+            or ready["start_ticks"] <= 0
+            or stopped.get("start_ticks") != ready["start_ticks"]
+            or any(
+                row.get("cell") != cell["id"] or row.get("boot_id") != boot
+                for row in (ready, stopped)
+            )
+            or stopped.get("pid") != ready["pid"]
+            or ready.get("exit_code") is not None
+            or ready.get("actual_wait_reap") is not False
+            or stopped.get("actual_wait_reap") is not True
+            or stopped.get("forced_cleanup") is not False
+            or type(stopped.get("exit_code")) is not int
+            or stopped["exit_code"] != expected_exit
+        ):
+            raise ValueError("Manager trace requires matching live owners and normal actual waits")
+        owners[name] = ready
+    if owners["manager"]["pid"] == owners["fixture"]["pid"]:
+        raise ValueError("Manager and query actor must be distinct processes")
+    if (
+        trace.get("boot_id") != boot
+        or type(trace.get("start_ticks")) is not int
+        or trace["start_ticks"] != owners["manager"]["start_ticks"]
+    ):
+        raise ValueError("Native trace does not belong to this Manager's boot and process start")
+    result = summarize(trace, "consumer", owners["manager"]["pid"])
+    evidence = cell_result["evidence"]
+    if evidence.get("status") != "PASS_DESCRIPTIVE_PROFILE" or not evidence.get("samples"):
+        raise ValueError("Manager profile lacks validated remote samples")
+    windows = []
+    queries = set()
+    previous_ready = 0
+    actor = None
+    for iteration, sample in enumerate(evidence["samples"]):
+        window = sample["query_window"]
+        validate_query_window(window, sample["timing"]["query_ms"])
+        query = sample.get("query_id")
+        identity = (window["instance"], window["namespace"])
+        if (
+            window["pid"] != owners["fixture"]["pid"]
+            or window["start_ticks"] != owners["fixture"]["start_ticks"]
+            or window["boot_id"] != boot
+            or window["begin_mono_ns"] < previous_ready
+            or type(sample.get("iteration")) is not int
+            or sample["iteration"] != iteration
+            or sample.get("phase") not in {"cold", "warmup", "measured"}
+            or (sample["phase"] == "cold") != (iteration == 0)
+            or not isinstance(query, str)
+            or not query
+            or query in queries
+            or (actor is not None and identity != actor)
+        ):
+            raise ValueError("Query windows differ from the local actor, cell order or identity")
+        actor = identity
+        queries.add(query)
+        previous_ready = window["ready_mono_ns"]
+        windows.append(
+            {
+                "iteration": iteration,
+                "phase": sample["phase"],
+                "query_id": query,
+                "actor": window,
+                "observed_ms": sample["timing"]["query_ms"],
+                "stages": stage_summary(
+                    trace["events"], (window["begin_mono_ns"], window["ready_mono_ns"])
+                ),
+            }
+        )
+    result.update(
+        schema="tent.manager-trace.summary.v1",
+        host=host,
+        boot_id=boot,
+        cell=cell["id"],
+        client_query_windows=windows,
+        scope=(
+            "Same-host client query-prefetch windows include IPC and polling sleeps; "
+            "they are not native READ terminal/free boundaries. Stage temporal unions "
+            "may overlap, do not establish causality and cannot be added or compared "
+            "across host clocks. Zero warm setup calls are valid."
+        ),
+    )
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--trace", type=Path, required=True)
-    parser.add_argument("--endpoint-stdout", type=Path, required=True)
-    parser.add_argument("--endpoint-exit-code", type=int, required=True)
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--endpoint-stdout", type=Path)
+    inputs.add_argument("--manager-cell", type=Path)
+    parser.add_argument("--endpoint-exit-code", type=int)
     parser.add_argument("--role", choices=("source", "consumer"), required=True)
     parser.add_argument("--output", type=external_path, required=True)
     args = parser.parse_args()
+    if args.manager_cell is not None:
+        if args.role != "consumer" or args.endpoint_exit_code is not None:
+            raise ValueError("Manager mode uses consumer role and actual waits from its cell")
+        result = summarize_manager(
+            json.loads(args.trace.read_text()), json.loads(args.manager_cell.read_text())
+        )
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        with args.output.open("x") as output:
+            output.write(json.dumps(result, indent=2) + "\n")
+        print(json.dumps(result))
+        return
     if args.endpoint_exit_code != 0:
         raise ValueError("Endpoint process must exit zero")
     records = []

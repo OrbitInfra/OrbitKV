@@ -217,8 +217,22 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror -shared -fPIC \
 ```
 
 Verify all four interposed symbols exist in the frozen `libtent_shared.so` before
-launch. Set `LD_PRELOAD` to the diagnostic library and `TENT_NATIVE_TRACE_PATH` to
-a unique external JSON path on each endpoint. The fixed 4,096-event array records
+launch. Set `TENT_NATIVE_TRACE_PATH` to a unique external JSON path on each
+endpoint. Bind `TENT_NATIVE_TRACE_PID` before executing the traced program;
+start the wrapper without `LD_PRELOAD` and install it only for the final exec:
+
+```bash
+TENT_NATIVE_TRACE_PATH=/external/native-trace/consumer.trace.json \
+  sh -c 'export TENT_NATIVE_TRACE_PID=$$; \
+  export LD_PRELOAD=/external/native-trace/libtent_native_trace.so; exec "$@"' \
+  trace-owner /frozen/endpoint-program --endpoint-arguments
+```
+
+Freeze the actual executable and arguments rather than the example placeholders.
+Only that PID records or writes output. Fork/exec descendants retain ordinary
+native forwarding but cannot write their parent's path. A missing or malformed
+owner with tracing enabled exits 2 before main. Do not preload import/dlopen
+readiness checks with a formal cell's output path. The fixed 4,096-event array records
 metadata RPC, endpoint construction, connect and bootstrap RPC; it writes only
 after normal process teardown. Per-slot publication uses release/acquire;
 teardown seals span admission and rejects unfinished calls or unpublished slots.
@@ -249,12 +263,34 @@ be compared across hosts. The controller must separately prove reaped zero exits
 and absent PIDs; a parsed stop record alone cannot establish that cleanup.
 
 Existing `rpc_server_threads` and `transports.rdma.num_lanes` settings are
-experimental candidates, not OrbitKV defaults. Change one knob per frozen
-cohort, keep first-READ and warmed samples separate, alternate matched run order,
-and report independent-pair uncertainty and CPU/thread costs. Reducing lanes also
-reduces worker/QP/CQ parallelism, so it needs throughput and consumed Manager
-recovery controls. A private-buffer improvement alone cannot promote either
-configuration or establish model latency.
+previously evaluated experimental candidates, not OrbitKV defaults. Preserve
+their rejected results; do not restart those candidates without new evidence.
+A private-buffer improvement alone cannot establish model latency.
+
+For the current epoch-checked production runtime, use `benches.rdma_profile`'s
+Manager cells and `benches.shared_cache_profile`, which consume the installed
+Rust client. The older `tent_stage` ctypes probe describes an unpatched upstream
+48-byte request; the production request includes source epoch evidence and is
+88 bytes on Linux x86-64. Do not give the old probe a production library.
+
+The GPU worker records a `query_window` beside its duration statistics. After
+actual normal fixture and Manager waits, link the consumer trace to that cell:
+
+```bash
+python -m benches.tent_trace \
+  --trace /external/native-trace/consumer.trace.json \
+  --manager-cell /external/manager-profile/cell.json --role consumer \
+  --output /external/native-trace/manager-summary.json
+```
+
+The reader matches the consumer's host, boot, cell, distinct Manager/fixture
+PIDs and process starts, query identity, readiness and actual waits. Client query-prefetch windows
+include IPC and polling sleeps; they do not identify native READ terminal/free
+boundaries. Per-stage clipped temporal unions can overlap and cannot be added
+or compared across hosts. Warm windows can have zero setup calls. Freeze and
+independently review the complete runtime and resource ownership, then pass
+matched observer-off/on overhead controls before consuming instrumented timings.
+Existing payload, remote-byte, H2D-byte and resource-drain oracles remain required.
 
 When changing the C++ recorder, compile and run the CPU writer controls against
 the same pinned header. These controls require a C++ compiler and are separate
@@ -266,10 +302,15 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
   benches/tests/tent_native_trace_writer.cpp -ldl -o /external/native-trace/writer-control
 ```
 
-Run modes `complete`, `active` and `unpublished` with separate
-`TENT_NATIVE_TRACE_PATH` files. `complete` must exit zero with 1,024 fully published
-events; `active` and `unpublished` must exit 2 and cannot produce acceptable
-evidence. These synthetic writer controls do not measure transport performance.
+Run modes `complete`, `fork`, `exec`, `active` and `unpublished` with separate
+`TENT_NATIVE_TRACE_PATH` files and each writer's actual pre-exec owner PID.
+The first three must exit zero with 1,024 parent events. The child modes must
+also report `actual_child_exit: 0`, recorded by the parent's `waitpid`;
+a descendant cannot overwrite the parent's trace. `active`
+and `unpublished` must exit 2 and cannot produce acceptable evidence. Also check
+actual shared-library preload with an exec descendant, malformed/missing owners,
+an intentionally foreign owner and disabled tracing. These synthetic CPU controls
+do not measure transport performance.
 
 ### Native TENT library comparison
 

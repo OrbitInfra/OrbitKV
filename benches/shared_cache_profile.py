@@ -11,6 +11,7 @@ import json
 import math
 import statistics
 import time
+import uuid
 
 import requests
 
@@ -18,6 +19,29 @@ from .artifacts import external_path
 from .metrics import REMOTE_STAGES
 from .shared_cache import IDLE_METRICS, drain, synchronize
 from .workload import evict_host_cache
+
+
+def validate_query_window(window: dict, query_ms: float) -> None:
+    if not isinstance(window, dict) or window.get("clock") != "CLOCK_MONOTONIC":
+        raise ValueError("Expected a client query-prefetch CLOCK_MONOTONIC window")
+    if any(
+        type(window.get(field)) is not int or window[field] <= 0 for field in ("pid", "start_ticks")
+    ):
+        raise ValueError("Invalid query actor PID or process start")
+    for field in ("instance", "namespace", "boot_id"):
+        if not isinstance(window.get(field), str) or not window[field]:
+            raise ValueError("Missing query actor identity")
+    if str(uuid.UUID(window["boot_id"])) != window["boot_id"]:
+        raise ValueError("Invalid query actor boot ID")
+    begin, ready = (window.get(field) for field in ("begin_mono_ns", "ready_mono_ns"))
+    if any(type(value) is not int for value in (begin, ready)) or not 0 <= begin < ready:
+        raise ValueError("Invalid client query-prefetch clock boundaries")
+    if (
+        type(query_ms) not in (int, float)
+        or not math.isfinite(query_ms)
+        or not math.isclose(query_ms, (ready - begin) / 1e6, rel_tol=1e-12, abs_tol=1e-9)
+    ):
+        raise ValueError("Query duration differs from the recorded client window")
 
 
 def sample_evidence(before: dict, after: dict, restored: dict, payload_bytes: int) -> dict:
@@ -54,12 +78,16 @@ def sample_evidence(before: dict, after: dict, restored: dict, payload_bytes: in
     timing = restored["timing"]
     if any(not math.isfinite(value) or value < 0 for value in timing.values()):
         raise AssertionError("Invalid GPU worker timing")
+    validate_query_window(restored.get("query_window"), timing["query_ms"])
+    if not isinstance(restored.get("query_id"), str) or not restored["query_id"]:
+        raise ValueError("Missing query identity")
     return {
         **counters,
         "remote_stages_ms": stages,
         "manager_fetch_ms": fetch_ms,
         "tent_read_payload_gb_s": payload_bytes / (stages["read"] * 1e6),
         "timing": timing,
+        "query_window": restored["query_window"],
     }
 
 
