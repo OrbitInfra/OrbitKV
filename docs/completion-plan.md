@@ -682,6 +682,71 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   Native pending admission does not bound the Python queue, retained task list
   or user-held completed handles. Installed GPU/model, physical termination,
   allocation/page generations and adapter-fault qualification remain open.
+  The next installed gate exercises the accepted SaveHandle with deterministic
+  per-round GPU payloads, normal unregister, fresh consumer registration and
+  full Restore/sentinel checks over DRAM and actual io_uring SSD. It rejects
+  missing ownership metrics and requires actual SSD read bytes after source
+  DRAM eviction. This reusable gate awaits exact source review, runtime
+  readiness and independent launch acceptance; no hardware result is claimed.
+  Source-only acceptance at `870aed65` covers the strict byte/metric/unregister
+  oracle and recorded registration/runtime evidence. The next controller update
+  consumes exactly DRAM then io_uring cells, verifies six credit snapshots,
+  three normal release receipts and both client closes, and independently
+  recomputes each complete payload/sentinel from archived bytes. Missing,
+  corrupted or false release evidence rejects success. Its CPU controls and
+  code review do not substitute for the new runtime/resource freeze or launch
+  acceptance; historical failures remain unchanged.
+  Controller candidate `de68e81c` is rejected for replayable/missing identity
+  and loose numeric types in new receipts. The correction binds all six
+  round/role snapshots to distinct registration/export generations, nonempty
+  source/consumer identities, exact client close/release records and increasing
+  typed timestamps. Replayed, foreign, missing, malformed and regressed CPU
+  evidence is preserved and must be rejected before hardware launch.
+  New runtime readiness on 2026-10-18 failed at CUDA registration: the client
+  loaded the new wheel, but the Manager test fixture prepended source-only
+  `orbitkv` to embedded Python. No successful GPU context or Save/READ was
+  admitted. The Manager received SIGTERM and its direct wait recorded exit 0;
+  the readiness result remains failed and the task-owned GPU4/CPU/SSD/control
+  locks are quarantined pending independent credit/resource disposition.
+  Raw readiness archive is outside Git under
+  `/root/orbitkv-artifacts/s3-installed-save-gates-20261018/`.
+  The fixture correction explicitly consumes the installed package root from
+  matching imported package/extension paths. It requires new readiness evidence
+  and cannot turn the previous failure into formal qualification.
+  Corrected installed DRAM readiness then completed three exact GPU-byte rounds
+  with normal Manager and owner waits. Separate SSD readiness failed after its
+  byte assertion because the gate requested a nonexistent generic SSD-read
+  counter. The actual io_uring owner reports stored bytes through
+  `orbitkv_ssd_prefetch_bytes_total` and READV submission through
+  `orbitkv_ssd_uring_read_operations_total`; the correction records both before
+  and after, preserving absent-before explicitly, and requires advancing actual
+  reads. Both readiness outcomes remain separate from formal qualification;
+  the SSD failure owner and evidence require scoped disposition.
+  Read-counter candidate `8c9056dd` is rejected because missing before fields
+  and replayed initial counters could satisfy all three rounds. The correction
+  requires exact counter key sets and successive cumulative intervals: after
+  advances in every round, later before values are present and cannot fall below
+  the preceding after. Original CPU counterexamples remain preserved.
+  The installed gate performs six registrations per Manager. Its origin oracle
+  requires a frozen exact helper-record count and identical process/path records
+  across those registrations; missing, extra or changed helpers reject the cell.
+  This admits repeated evidence only for the declared count, without weakening
+  the one-runtime-origin contract. Runtime verification disables bytecode writes;
+  new census/contract versions preserve earlier failed input checks.
+  The exact `4e141786` formal launch was independently accepted once, then its
+  first DRAM cell passed all three payload/sentinel rounds but failed process
+  ownership validation: Manager child PID 25718 had no terminal wait receipt.
+  The freeze omitted process tracing, so its later disappearance cannot supply
+  that missing result. The controller retains its five resource locks; SSD was
+  not launched. Preserve this fail-stop cohort and raw archive SHA256
+  `93a3b9f4e98c059ca8c95f9a030ed205b49382394a4a550cc7263853425e7090`
+  under `/root/orbitkv-artifacts/s3-installed-save-gates-20261018/`.
+  The next harness correction requires the process tracer in both executable
+  identity and input-digest declarations before admission. Real CPU child/wait
+  controls exercise the existing census and reject missing or nonzero child
+  evidence despite a zero-exit leader. A new source/runtime freeze, traced
+  readiness and independent launch acceptance are required; this correction
+  does not qualify the failed cohort or physical fault termination.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-

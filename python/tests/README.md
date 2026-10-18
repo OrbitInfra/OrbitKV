@@ -595,6 +595,22 @@ fault gates and results remain at immutable commit `9aee895e` and its external
 handoff. Do not count those as official-release passes. Preserve failures,
 controls, wheel/engine hashes and raw runs outside the checkout.
 
+The installed pending-Save campaign requires a frozen `strace` executable and
+its runtime closure. Its process census records service child creation, exit and
+actual parent waits; leader exit zero cannot replace an unobserved child result.
+Run the explicit CPU integration control before GPU readiness:
+
+```bash
+cd python
+uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' \
+  pytest -m integration tests/integration/test_process_receipts.py \
+  --process-trace-binary /path/to/frozen/strace --basetemp /external/cpu-receipts
+```
+
+The control checks a real threaded service-child wait, a nonzero child behind
+a zero-exit leader, and a missing trace. It also reproduces rejection without
+tracing. These CPU process receipts do not establish GPU/RDMA termination.
+
 
 ### Static local LoRA installed model gate
 

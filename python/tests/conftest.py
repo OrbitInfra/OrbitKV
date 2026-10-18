@@ -60,6 +60,11 @@ def orbitkv_pool_size(request) -> str:
 def pytest_addoption(parser):
     """Add custom command line options for E2E tests."""
     parser.addoption(
+        "--process-trace-binary",
+        default=None,
+        help="Frozen strace executable for the CPU campaign receipt integration gate",
+    )
+    parser.addoption(
         "--release-query-control",
         action="store_true",
         default=False,
