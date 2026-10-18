@@ -1071,6 +1071,23 @@ output and recovery assertions do not replace strict native shutdown, physical
 lifetime or fault qualification, and prior failed cohorts keep their original
 verdicts.
 
+**Pending Save wheel acceptance (2026-10-18): scoped healthy profiles.**
+The corrected `6ab9b6e3` source, frozen `c5652f94` wheel, `1247cbbf` installed
+fixture and `a34c9d2a` runtime guard pass new official-release H20 model gates.
+Qwen3-8B dense TP1/PP1 uses vLLM 0.31.0 V1/direct DRAM with Graph NONE
+(six passed, one unsupported-hybrid skip), and SGLang 0.5.21 direct DRAM plus
+real io_uring SSD (two passed). Independent reviews verify the original
+output/byte/restart controls, unchanged frozen inputs, four vLLM and eight
+SGLang normal service-leader waits, actual parent waits and released current
+resource ownership. The current vLLM logs pass the unchanged strict validator.
+Official SGLang internal SIGKILL exits remain preserved; these healthy
+same-host controls do not qualify physical faults, complete native lifetime,
+page generations, hybrid recovery, P/D or a performance advantage. Conservative
+adapter retention after native prelaunch exceptions remains an availability
+follow-up. Historical failed runs and quarantines retain their verdicts.
+See [PR #262](https://github.com/feichai0017/orbitkv/pull/262) and the sealed
+reviews under `/root/orbitkv-artifacts/s5-installed-pending-save-model-20261018/`.
+
 ### S5.3 — Public lifecycle and hybrid-state contracts
 
 **Partial.** Idle process-scoped vLLM external reset is accepted at `6d874384`;
