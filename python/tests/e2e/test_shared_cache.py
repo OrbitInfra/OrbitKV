@@ -1,7 +1,7 @@
 """Same-host TP=1 serving qualification; not a physical two-host/RDMA benchmark.
 
 Trigger: peer transfer, global-index recovery, source ownership or adapter changes.
-Requires ETCD_BIN, a prebuilt Manager, one GPU and the selected engine environment.
+Requires ETCD_BIN, a complete installed wheel, one GPU and the selected engine environment.
 """
 
 import base64
@@ -49,7 +49,7 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
     with contextlib.ExitStack() as resources:
         endpoint, _ = resources.enter_context(etcd_server(tmp_path))
         launches, managers, engines = {}, {}, {}
-        registrations, membership_history, manager_processes = {}, [], {}
+        registrations, membership_history = {}, []
         cluster = "shared-cache-serving"
         starts = {"source": 0, "consumer": 0}
         engine_starts = {"source": 0, "consumer": 0}
@@ -75,6 +75,8 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
                 prepare_requests="off",
                 trace_transfers=False,
                 deterministic_inference=True,
+                installed_artifact=True,
+                enforce_eager=True,
                 read_batch_mib=32,
                 read_timeout_ms=0,
                 read_max_batches=0,
@@ -95,7 +97,7 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
                 ]
             )
             if engine == "vllm":
-                launch.command.extend(["--gpu-memory-utilization", "0.35", "--enforce-eager"])
+                launch.command.extend(["--gpu-memory-utilization", "0.35"])
             else:
                 launch.command.extend(["--mem-fraction-static", "0.35"])
             launches[node] = launch
@@ -129,7 +131,7 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
             else:
                 assert read_member() is None, f"unexpected existing member: {node}"
             expiry_seconds = time.monotonic() - started
-            manager_processes[node] = managers[node].enter_context(
+            managers[node].enter_context(
                 server(
                     launch.manager_command,
                     launch.env,
@@ -162,12 +164,6 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
             if with_engine:
                 start_engine(node)
 
-        def stop_manager(node):
-            process = manager_processes[node]
-            process.terminate()
-            assert process.wait(timeout=10) == 0, f"Manager did not exit cleanly: {node}"
-            managers[node].close()
-
         def start_engine(node):
             launch = launches[node]
             run = engine_starts[node]
@@ -178,6 +174,7 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
                     launch.env,
                     launch.base_url,
                     tmp_path / f"{node}-engine-{run}.log",
+                    engine=engine,
                 )
             )
 
@@ -200,7 +197,7 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
 
         # Restart the consumer; rebuild from membership and owner streams. Source KV survives.
         engines["consumer"].close()
-        stop_manager("consumer")
+        managers["consumer"].close()
         start("consumer")
         synchronize(source.manager_url, target.manager_url)
         before = metrics(target.manager_url)
@@ -214,7 +211,7 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
         evict_host_cache(target.manager_url)
         synchronize(target.manager_url, source.manager_url)
         engines["source"].close()
-        stop_manager("source")
+        managers["source"].close()
         start("source", with_engine=False)
         start_engine("consumer")
         before = metrics(target.manager_url)

@@ -15,7 +15,7 @@ from pathlib import Path
 import requests
 
 from .artifacts import external_path
-from .metrics import REMOTE_STAGES, delta, metrics
+from .metrics import DRAIN_GAUGES, REMOTE_STAGES, delta, metrics, validate_ownership
 from .workload import evict_host_cache, generate
 
 IDLE_METRICS = (
@@ -36,8 +36,12 @@ def drain(*manager_urls: str, timeout: float = 30) -> list[dict]:
     quiet = 0
     while True:
         snapshots = [metrics(url) for url in manager_urls]
+        for snapshot in snapshots:
+            validate_ownership(snapshot, drained=False)
+            if "orbitkv_transfer_completion_outstanding" not in snapshot:
+                raise ValueError("Missing OrbitKV transfer completion ownership snapshot")
         busy = [
-            {name: snapshot[name] for name in IDLE_METRICS if snapshot.get(name, 0)}
+            {name: snapshot[name] for name in DRAIN_GAUGES if snapshot.get(name, 0)}
             for snapshot in snapshots
         ]
         quiet = 0 if any(busy) else quiet + 1

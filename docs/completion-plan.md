@@ -1233,6 +1233,19 @@ profiles do not reconcile unknown owners, bound the Python queues or qualify
 physical faults, page generations, hybrid state, P/D or a performance gain.
 See [PR #268](https://github.com/feichai0017/orbitkv/pull/268) and the external
 reviews under `/root/orbitkv-artifacts/s3-save-no-submit-20261018/`.
+Final trigger review also requires the same-host TCP shared-cache serving gate
+in both official engine environments, because these producer adapters serve
+shared-cache workloads. Those gates remain unqualified for this artifact.
+CPU preparation reproduces the old fixture's missing `installed_artifact` and
+`enforce_eager` arguments. The corrected fixture selects a complete installed
+wheel and the documented deterministic eager profile without duplicate flags.
+Manager restart now uses its existing service context as the sole SIGTERM/wait
+owner; engine stops also consume the native shutdown validator. The prior
+fixture's manual Manager wait conflicted with that context's ownership check.
+Shared-cache drain also rejects missing or invalid ownership gauges rather than
+treating them as zero, and waits for any present optional owner gauges to clear.
+These corrections require a fresh freeze and independent launch review before
+either GPU gate.
 
 ### S5.3 — Public lifecycle and hybrid-state contracts
 

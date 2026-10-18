@@ -1,5 +1,6 @@
 import pytest
 
+from benches.metrics import REQUIRED_OWNERSHIP_GAUGES
 from benches.shared_cache import drain, qualify, verify_restore, verify_source_ssd
 
 
@@ -123,9 +124,45 @@ def test_forced_source_ssd_qualification_evicts_dram_and_checks_both_nodes(monke
         "orbitkv_transfer_reserved_bytes",
         "orbitkv_transfer_completion_outstanding",
         "orbitkv_ssd_read_pinned_bytes",
+        "orbitkv_ssd_cufile_inflight_batches",
+        "orbitkv_storage_codec_reserved_bytes",
     ],
 )
 def test_finished_requests_do_not_hide_unreleased_transfer_resources(monkeypatch, metric):
-    monkeypatch.setattr("benches.shared_cache.metrics", lambda _: {metric: 1})
+    snapshot = dict.fromkeys(REQUIRED_OWNERSHIP_GAUGES, 0)
+    snapshot.update(orbitkv_transfer_completion_outstanding=0)
+    snapshot[metric] = 1
+    monkeypatch.setattr("benches.shared_cache.metrics", lambda _: snapshot)
     with pytest.raises(TimeoutError, match=metric):
         drain("source", "consumer", timeout=0)
+
+
+@pytest.mark.parametrize(
+    "metric,value",
+    [
+        ("orbitkv_query_reserved_bytes", None),
+        ("orbitkv_transfer_completion_outstanding", None),
+        ("orbitkv_inflight_bytes", True),
+        ("orbitkv_transfer_completion_outstanding", float("nan")),
+        ("orbitkv_storage_codec_reserved_bytes", -1),
+    ],
+)
+def test_shared_drain_rejects_missing_or_invalid_ownership(monkeypatch, metric, value):
+    snapshot = dict.fromkeys(REQUIRED_OWNERSHIP_GAUGES, 0)
+    snapshot.update(orbitkv_transfer_completion_outstanding=0)
+    if value is None:
+        del snapshot[metric]
+    else:
+        snapshot[metric] = value
+    monkeypatch.setattr("benches.shared_cache.metrics", lambda _: snapshot)
+    with pytest.raises(ValueError, match="ownership|metric"):
+        drain("consumer", timeout=0)
+
+
+def test_shared_drain_waits_for_present_ownership_to_reach_zero(monkeypatch):
+    idle = dict.fromkeys(REQUIRED_OWNERSHIP_GAUGES, 0)
+    idle.update(orbitkv_transfer_completion_outstanding=0)
+    snapshots = iter([{**idle, "orbitkv_transfer_completion_outstanding": 1}, idle, idle, idle])
+    monkeypatch.setattr("benches.shared_cache.metrics", lambda _: next(snapshots))
+    monkeypatch.setattr("benches.shared_cache.time.sleep", lambda _: None)
+    assert drain("consumer") == [idle]
