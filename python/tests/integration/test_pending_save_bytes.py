@@ -133,10 +133,11 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                 release_receipt(source_counters),
                 time.monotonic() + 30,
             )
-            with pytest.raises(SaveNotSubmittedError, match="no longer active") as rejected:
-                source.start_save(source_registration, [("bytes", source_indices, hashes)])
-            assert isinstance(rejected.value.__cause__, ValueError)
-            del handle, source_registration
+            synced = requests.post(
+                f"http://127.0.0.1:{channel_server.http_port}/cache/sync", timeout=35
+            )
+            synced.raise_for_status()
+            assert synced.json()["local_flush_complete"] is True
             idle_names = [
                 "orbitkv_save_active_operations",
                 "orbitkv_save_active_metadata_bytes",
@@ -149,7 +150,7 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                 write_deadline = time.monotonic() + 30
                 while True:
                     written = fetch_orbitkv_metrics(channel_server.http_port)
-                    if written["orbitkv_ssd_write_bytes_total"] > writes_before:
+                    if written.get("orbitkv_ssd_write_bytes_total", 0) >= writes_before + 16384:
                         break
                     assert time.monotonic() < write_deadline, written
                     time.sleep(0.01)
@@ -158,6 +159,37 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                     idle_names + ["orbitkv_ssd_write_inflight", "orbitkv_ssd_write_queue_pending"],
                 )
                 assert before["orbitkv_ssd_write_bytes_total"] > 0
+            io_names = (
+                "orbitkv_save_bytes_total",
+                "orbitkv_load_bytes_total",
+                "orbitkv_ssd_write_bytes_total",
+                "orbitkv_ssd_prefetch_bytes_total",
+                "orbitkv_ssd_uring_read_operations_total",
+            )
+            io_before_rejection = {name: before.get(name) for name in io_names}
+            assert io_before_rejection["orbitkv_save_bytes_total"] >= 16384
+            assert io_before_rejection["orbitkv_load_bytes_total"] is not None
+            rejected_started = time.monotonic_ns()
+            with pytest.raises(SaveNotSubmittedError, match="no longer active") as rejected:
+                source.start_save(source_registration, [("bytes", source_indices, hashes)])
+            rejected_ended = time.monotonic_ns()
+            assert isinstance(rejected.value.__cause__, ValueError)
+            observed = fetch_orbitkv_metrics(channel_server.http_port)
+            io_after_rejection = {name: observed.get(name) for name in io_names}
+            assert io_after_rejection == io_before_rejection, "I/O advanced across rejection"
+            rejection = {
+                "instance_id": source_id,
+                "exception": type(rejected.value).__name__,
+                "cause": type(rejected.value.__cause__).__name__,
+                "started_mono_ns": rejected_started,
+                "ended_mono_ns": rejected_ended,
+                "io_before": io_before_rejection,
+                "io_after": io_after_rejection,
+                "publish_count_claimed": False,
+                "physical_termination_claimed": False,
+            }
+            del handle, source_registration
+            if channel_server.ssd_cache_path is not None:
                 reply = requests.post(
                     f"http://127.0.0.1:{channel_server.http_port}/cache/memory/cleanup", timeout=30
                 )
@@ -252,6 +284,7 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                     "source_identity": source_id,
                     "consumer_identity": consumer_id,
                     "normal_unregister": True,
+                    "rejected_save": rejection,
                     "read_before": read_before,
                     "read_after": {name: after.get(name) for name in read_before},
                 }

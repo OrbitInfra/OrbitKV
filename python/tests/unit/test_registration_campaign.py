@@ -1238,6 +1238,14 @@ def test_native_credit_oracle_refuses_malformed_types_and_aliased_slots(
         "ssd-boolean",
         "ssd-before-missing",
         "ssd-read-replay",
+        "rejection-missing",
+        "rejection-type",
+        "rejection-io",
+        "rejection-boolean",
+        "rejection-boolean-after",
+        "rejection-missing-counter",
+        "rejection-late",
+        "rejection-count-claim",
     ],
 )
 def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
@@ -1313,6 +1321,22 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
                 "full_oracle": True,
                 "mutation_rejected": True,
                 "normal_unregister": True,
+                "rejected_save": {
+                    "instance_id": "source",
+                    "exception": "SaveNotSubmittedError",
+                    "cause": "ValueError",
+                    "started_mono_ns": index * 4 + 2,
+                    "ended_mono_ns": index * 4 + 3,
+                    "io_before": {
+                        "orbitkv_save_bytes_total": (index + 1) * 16384,
+                        "orbitkv_load_bytes_total": index * 16384,
+                        "orbitkv_ssd_write_bytes_total": (index + 1) * 16384 if ssd else None,
+                        "orbitkv_ssd_prefetch_bytes_total": index * 16384 if ssd else None,
+                        "orbitkv_ssd_uring_read_operations_total": index * 4 if ssd else None,
+                    },
+                    "publish_count_claimed": False,
+                    "physical_termination_claimed": False,
+                },
                 "tier": "ssd-uring" if ssd else "dram",
                 "read_before": {
                     "orbitkv_ssd_prefetch_bytes_total": index * 16384 if index else None,
@@ -1335,10 +1359,11 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
                     "source": "source",
                     "consumer": "consumer",
                     "physical_fault_termination_claimed": False,
-                    "completed_mono_ns": index + 1,
+                    "completed_mono_ns": index * 4 + 4,
                 }
             )
         )
+        rows[-1]["rejected_save"]["io_after"] = dict(rows[-1]["rejected_save"]["io_before"])
     (tmp_path / "clients.native-close.json").write_text(
         json.dumps(
             {
@@ -1403,6 +1428,27 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
         row = json.loads(path.read_text())
         row["completed_mono_ns"] = 1
         path.write_text(json.dumps(row))
+    elif fault is not None and fault.startswith("rejection-"):
+        rejected = rows[0]["rejected_save"]
+        if fault == "rejection-missing":
+            rows[0].pop("rejected_save")
+        elif fault == "rejection-type":
+            rejected["exception"] = "RuntimeError"
+        elif fault == "rejection-io":
+            rejected["io_after"]["orbitkv_save_bytes_total"] += 1
+        elif fault == "rejection-boolean":
+            rejected["io_before"]["orbitkv_load_bytes_total"] = False
+            rejected["io_after"]["orbitkv_load_bytes_total"] = False
+        elif fault == "rejection-boolean-after":
+            rejected["io_after"]["orbitkv_load_bytes_total"] = False
+        elif fault == "rejection-missing-counter":
+            rejected["io_before"].pop("orbitkv_ssd_write_bytes_total")
+            rejected["io_after"].pop("orbitkv_ssd_write_bytes_total")
+        elif fault == "rejection-late":
+            rejected["ended_mono_ns"] = 1000
+        elif fault == "rejection-count-claim":
+            rejected["publish_count_claimed"] = True
+        (tmp_path / "PENDING-SAVE-BYTES.json").write_text(json.dumps(rows))
     elif ssd and fault != "ssd-valid":
         name = "orbitkv_ssd_prefetch_bytes_total"
         if fault == "ssd-missing":
