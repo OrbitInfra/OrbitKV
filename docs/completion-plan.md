@@ -757,6 +757,10 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   nonzero or late observations cannot qualify release. This is normal IPC
   credit evidence, not physical CUDA/RDMA fault termination. Old formal failure
   and GPU4 quarantine remain unchanged; new resource admission is independent.
+  Credit-receipt candidate `d975e121` remains rejected: a nested duplicate
+  basename survived the receipt census. The correction requires exactly six
+  unique full paths paired with their handoffs in the same directories; extra
+  and moved receipts are explicit negative controls before a new freeze.
 
 **Acceptance:** real tests for requester/source crash, delayed/lost grants and
   release ACKs, partial submission, repeated page reuse and restart. No use-after-

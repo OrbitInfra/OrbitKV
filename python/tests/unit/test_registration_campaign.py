@@ -1228,6 +1228,8 @@ def test_native_credit_oracle_refuses_malformed_types_and_aliased_slots(
         "credit-release-bool",
         "credit-release-inode",
         "credit-release-late",
+        "credit-release-duplicate",
+        "credit-release-moved",
         "chronology",
         "ssd-valid",
         "ssd-missing",
@@ -1378,6 +1380,12 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
         row = json.loads(path.read_text())
         if fault == "credit-release-missing":
             path.unlink()
+        elif fault in ("credit-release-duplicate", "credit-release-moved"):
+            nested = tmp_path / "extra" / path.name
+            nested.parent.mkdir()
+            nested.write_bytes(path.read_bytes())
+            if fault == "credit-release-moved":
+                path.unlink()
         else:
             if fault == "credit-release-replay":
                 row = json.loads((tmp_path / "round-0-source.credit-release.json").read_text())
