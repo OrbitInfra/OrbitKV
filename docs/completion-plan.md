@@ -887,6 +887,15 @@ syntax before exact decimal conversion and rejects duplicate label sets. Real
 exporter scope labels are consumed. Malformed tokens, oversized text and a
 trickled response cannot receive a byte receipt. All rejected source/package
 checkpoints stay preserved; fresh runtime and launch review remain required.
+The `a348dbcb` HTTP deadline checkpoint remains rejected: a real peer sending
+one byte every four seconds returned only after twelve seconds despite the
+ten-second claim. The metrics capture now runs in a stdlib-only test subprocess
+with direct local HTTP and a bounded body; the parent enforces its actual wait
+deadline and reaps that CPU-only child on timeout. This child holds no cache,
+GPU or native transfer owner, and its forced timeout is not a drain receipt.
+The real HTTP trickle regression runs separately as an integration control;
+source feedback keeps deterministic parser controls. A new source/launch freeze
+must include this helper and its actual child wait/trace census.
 
 ## S4 — Finish communication execution and demonstrate gains
 

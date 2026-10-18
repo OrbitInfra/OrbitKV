@@ -11,9 +11,18 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-import requests
 
 from tests.support import registration_campaign as campaign
+
+
+def capture_save_metrics(monkeypatch, raw):
+    from tests.integration import test_pending_save_bytes as byte_gate
+
+    monkeypatch.setattr(
+        byte_gate.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, stdout=raw, stderr=b""),
+    )
 
 
 @pytest.mark.parametrize(
@@ -33,11 +42,7 @@ from tests.support import registration_campaign as campaign
 def test_save_byte_snapshot_rejects_missing_or_inexact_counter(monkeypatch, text):
     from tests.integration.test_pending_save_bytes import save_bytes_snapshot
 
-    response = requests.Response()
-    response.status_code = 200
-    response._content = f"orbitkv_save_bytes_total {text}\n".encode()
-    response._content_consumed = True
-    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
+    capture_save_metrics(monkeypatch, f"orbitkv_save_bytes_total {text}\n".encode())
     with pytest.raises(RuntimeError, match="counter is missing"):
         save_bytes_snapshot(1)
 
@@ -48,11 +53,7 @@ def test_save_byte_snapshot_preserves_exact_raw_integer(monkeypatch, text):
 
     from tests.integration.test_pending_save_bytes import save_bytes_snapshot
 
-    response = requests.Response()
-    response.status_code = 200
-    response._content = f"orbitkv_save_bytes_total {text}\n".encode()
-    response._content_consumed = True
-    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
+    capture_save_metrics(monkeypatch, f"orbitkv_save_bytes_total {text}\n".encode())
     value = save_bytes_snapshot(1)
     assert type(value) is int and value == int(Decimal(text))
 
@@ -70,11 +71,7 @@ def test_save_byte_snapshot_preserves_exact_raw_integer(monkeypatch, text):
 def test_save_byte_snapshot_bounds_raw_response(monkeypatch, body):
     from tests.integration.test_pending_save_bytes import save_bytes_snapshot
 
-    response = requests.Response()
-    response.status_code = 200
-    response._content = body.encode()
-    response._content_consumed = True
-    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
+    capture_save_metrics(monkeypatch, body.encode())
     with pytest.raises(RuntimeError, match="counter"):
         save_bytes_snapshot(1)
 
@@ -82,29 +79,76 @@ def test_save_byte_snapshot_bounds_raw_response(monkeypatch, body):
 def test_save_byte_snapshot_consumes_actual_exporter_labels(monkeypatch):
     from tests.integration.test_pending_save_bytes import save_bytes_snapshot
 
-    response = requests.Response()
-    response.status_code = 200
-    response._content = (
+    raw = (
         b'orbitkv_save_bytes_total{otel_scope_name="orbitkv-core",otel_scope_schema_url=""} 8192\n'
         b'orbitkv_save_bytes_total{otel_scope_name="other-core",otel_scope_schema_url=""} 8192.0\n'
     )
-    response._content_consumed = True
-    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
+    capture_save_metrics(monkeypatch, raw)
     assert save_bytes_snapshot(1) == 16384
 
 
-def test_save_byte_snapshot_deadline_stops_trickled_response(monkeypatch):
-    from tests.integration import test_pending_save_bytes as byte_gate
+@pytest.mark.integration
+@pytest.mark.parametrize("mode", ["normal", "oversized", "trickle", "slow-headers"])
+def test_save_byte_snapshot_actual_http_is_bounded(mode):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-    response = requests.Response()
-    response.status_code = 200
-    response._content = b"orbitkv_save_bytes_total 0\n"
-    response._content_consumed = True
-    ticks = iter((0.0, 11.0))
-    monkeypatch.setattr(byte_gate.time, "monotonic", lambda: next(ticks))
-    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
-    with pytest.raises(RuntimeError, match="time bound"):
-        byte_gate.save_bytes_snapshot(1)
+    from tests.integration.test_pending_save_bytes import save_bytes_snapshot
+
+    stopped = threading.Event()
+
+    class Trickle(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if mode == "slow-headers":
+                self.connection.settimeout(1)
+                self.wfile.write(b"HTTP/1.1 200 ")
+                self.wfile.flush()
+                while not stopped.wait(4):
+                    try:
+                        self.wfile.write(b"x")
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        return
+                return
+            self.send_response(200)
+            if mode in ("normal", "oversized"):
+                body = b"orbitkv_save_bytes_total 0\n"
+                if mode == "oversized":
+                    body = b"# x\n" * (1024**2 // 4 + 1)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                self.wfile.flush()
+                return
+            self.send_header("Content-Length", "100")
+            self.end_headers()
+            while not stopped.wait(4):
+                try:
+                    self.wfile.write(b"x")
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Trickle)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        started = time.monotonic()
+        if mode == "normal":
+            assert save_bytes_snapshot(server.server_port) == 0
+        else:
+            with pytest.raises(RuntimeError, match="time bound|byte bound"):
+                save_bytes_snapshot(server.server_port)
+        assert time.monotonic() - started < 11
+    finally:
+        stopped.set()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+        assert not thread.is_alive()
 
 
 def cpu_ready_inputs(tmp_path):
@@ -1375,12 +1419,9 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
     from tests.integration.test_pending_save_bytes import save_bytes_snapshot
 
     def parsed_save_bytes(value):
-        response = requests.Response()
-        response.status_code = 200
-        response._content = f"orbitkv_save_bytes_total {value}\n".encode()
-        response._content_consumed = True
-        monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
-        return save_bytes_snapshot(1)
+        with monkeypatch.context() as capture:
+            capture_save_metrics(capture, f"orbitkv_save_bytes_total {value}\n".encode())
+            return save_bytes_snapshot(1)
 
     captured = []
     validate = campaign.validate_cell

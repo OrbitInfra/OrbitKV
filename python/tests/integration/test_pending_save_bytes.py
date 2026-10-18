@@ -9,9 +9,12 @@ import hashlib
 import json
 import os
 import re
+import subprocess
+import sys
 import time
 import uuid
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
 import pytest
 import requests
@@ -25,15 +28,19 @@ pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 
 def save_bytes_snapshot(http_port: int) -> int:
     deadline = time.monotonic() + 10
-    raw = bytearray()
-    with requests.get(f"http://localhost:{http_port}/metrics", timeout=5, stream=True) as response:
-        response.raise_for_status()
-        # Read one buffered byte at a time so a trickling peer cannot hide a
-        # whole chunk behind requests' per-read timeout.
-        for chunk in response.iter_content(1):
-            if time.monotonic() >= deadline or len(raw) + len(chunk) > 1024**2:
-                raise RuntimeError("Save byte counter response exceeded its byte/time bound")
-            raw.extend(chunk)
+    helper = Path(__file__).parents[1] / "support/save_metrics_http.py"
+    try:
+        response = subprocess.run(
+            [sys.executable, "-I", "-S", "-B", str(helper), str(http_port)],
+            capture_output=True,
+            timeout=max(0.001, deadline - time.monotonic()),
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("Save byte counter response exceeded its time bound") from error
+    raw = response.stdout
+    if response.returncode or len(raw) > 1024**2:
+        raise RuntimeError("Save byte counter response failed or exceeded its byte bound")
     if time.monotonic() >= deadline:
         raise RuntimeError("Save byte counter response exceeded its time bound")
     samples = []
