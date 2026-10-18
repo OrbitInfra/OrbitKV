@@ -224,10 +224,10 @@ def channel_server(request, tmp_path):
 
         package = importlib.import_module("orbitkv")
         extension = importlib.import_module("orbitkv.orbitkv")
-        package_root = Path(package.__file__).resolve().parent.parent
-        if not Path(extension.__file__).resolve().is_relative_to(package_root):
-            raise RuntimeError("Installed Manager fixture extension leaves its package root")
-        runtime_python_paths = (str(package_root),)
+        package_directory = Path(package.__file__).resolve().parent
+        if Path(extension.__file__).resolve().parent != package_directory:
+            raise RuntimeError("Installed Manager fixture extension leaves its package directory")
+        runtime_python_paths = (str(package_directory.parent),)
     server = CacheManagerProcess(
         port=find_available_port(),
         log_path=tmp_path / "orbitkv-cache-manager.log",

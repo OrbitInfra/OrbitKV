@@ -168,7 +168,10 @@ def _stop_server(process: subprocess.Popen, directory: Path, timeout: float = 30
 @pytest.mark.parametrize(
     "channel_server",
     [
-        pytest.param({"tier": tier, "pool_size": "512mb", "ssd_cache_capacity": "8gb"}, id=tier)
+        pytest.param(
+            {"tier": tier, "pool_size": "512mb", "ssd_cache_capacity": "8gb", "installed": True},
+            id=tier,
+        )
         for tier in ("dram", "ssd")
     ],
     indirect=True,

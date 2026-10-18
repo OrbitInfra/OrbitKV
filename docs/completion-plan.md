@@ -1127,6 +1127,11 @@ keep cold/native-HBM/full/partial/restart/failure controls, exact outputs, actua
 restore bytes, installed-file integrity and truthful process cleanup. Remove
 obsolete code only after its replacement is consumed and passes the same contract.
 
+The SGLang model fixture now selects the imported package/extension root for
+both media before launching its Manager, preventing checkout sources from
+shadowing a frozen wheel. CPU path controls do not replace matching-wheel model
+or lifetime qualification; those gates remain open for each new artifact.
+
 **Scoped installed-wheel acceptance (2026-10-14):** SGLang
 pending-query admission consumes authenticated native `peer_alive()`, without a
 health RPC or using peer death as a DMA fence. Peer failure preserves the query
@@ -1168,6 +1173,23 @@ Recheck the actual artifact for each newly claimed engine/media profile. Healthy
 output and recovery assertions do not replace strict native shutdown, physical
 lifetime or fault qualification, and prior failed cohorts keep their original
 verdicts.
+
+**Pending Save wheel acceptance (2026-10-18): scoped healthy profiles.**
+The corrected `6ab9b6e3` source, frozen `c5652f94` wheel, `1247cbbf` installed
+fixture and `a34c9d2a` runtime guard pass new official-release H20 model gates.
+Qwen3-8B dense TP1/PP1 uses vLLM 0.31.0 V1/direct DRAM with Graph NONE
+(six passed, one unsupported-hybrid skip), and SGLang 0.5.21 direct DRAM plus
+real io_uring SSD (two passed). Independent reviews verify the original
+output/byte/restart controls, unchanged frozen inputs, four vLLM and eight
+SGLang normal service-leader waits, actual parent waits and released current
+resource ownership. The current vLLM logs pass the unchanged strict validator.
+Official SGLang internal SIGKILL exits remain preserved; these healthy
+same-host controls do not qualify physical faults, complete native lifetime,
+page generations, hybrid recovery, P/D or a performance advantage. Conservative
+adapter retention after native prelaunch exceptions remains an availability
+follow-up. Historical failed runs and quarantines retain their verdicts.
+See [PR #262](https://github.com/feichai0017/orbitkv/pull/262) and the sealed
+reviews under `/root/orbitkv-artifacts/s5-installed-pending-save-model-20261018/`.
 
 ### S5.3 — Public lifecycle and hybrid-state contracts
 

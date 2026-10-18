@@ -1,5 +1,6 @@
 """Manager test launches keep source and installed package modes distinct."""
 
+import importlib
 import json
 import os
 import subprocess
@@ -13,6 +14,67 @@ from tests.support import cache_manager, registration_campaign
 from tests.support.cache_manager import CacheManagerProcess, manager_pythonpath
 from tests.support.paths import PYTHON_ROOT
 from tests.support.vllm_helpers import CacheManager, VLLMServer
+
+
+@pytest.mark.parametrize("case", ["source", "installed", "foreign-package", "foreign-site"])
+def test_channel_server_binds_installed_package_before_manager_start(tmp_path, monkeypatch, case):
+    from tests.conftest import channel_server
+
+    package_directory = tmp_path / "wheel" / "orbitkv"
+    extension_directory = {
+        "foreign-package": package_directory.parent / "other-package",
+        "foreign-site": tmp_path / "other-wheel" / "orbitkv",
+    }.get(case, package_directory)
+    original_import = importlib.import_module
+
+    def import_module(name, *args, **kwargs):
+        if name in {"orbitkv", "orbitkv.orbitkv"}:
+            assert case != "source", "Source fixture must not import the native extension"
+            path = (
+                package_directory / "__init__.py"
+                if name == "orbitkv"
+                else extension_directory / "orbitkv.so"
+            )
+            return SimpleNamespace(__file__=str(path))
+        return original_import(name, *args, **kwargs)
+
+    settings = {}
+    stopped = []
+
+    def manager(**kwargs):
+        settings.update(kwargs)
+        return SimpleNamespace(
+            _binary_path="controlled-manager",
+            start=lambda: True,
+            stop=lambda: stopped.append(True),
+        )
+
+    monkeypatch.setattr(importlib, "import_module", import_module)
+    monkeypatch.setattr(cache_manager, "CacheManagerProcess", manager)
+    monkeypatch.setattr(cache_manager, "find_available_port", lambda: 12345)
+    configuration = {
+        "--ssd-backend": "uring",
+        "--ssd-read-path": "uring",
+        "--cache-protected-percent": 0,
+        "--ssd-write-policy": "reuse",
+        "--storage-codec": "raw",
+    }
+    request = SimpleNamespace(
+        param={"tier": "dram", "installed": case != "source"},
+        config=SimpleNamespace(getoption=configuration.__getitem__),
+    )
+    fixture = channel_server.__wrapped__(request, tmp_path)
+    if case.startswith("foreign-"):
+        with pytest.raises(RuntimeError, match="extension leaves its package directory"):
+            next(fixture)
+        assert settings == {} and stopped == []
+    else:
+        next(fixture)
+        expected = None if case == "source" else (str(package_directory.parent),)
+        assert settings["runtime_python_paths"] == expected
+        with pytest.raises(StopIteration):
+            next(fixture)
+        assert stopped == [True]
 
 
 def test_manager_pythonpath_defaults_to_source_then_inherited_paths():
