@@ -2050,6 +2050,9 @@ def main() -> None:
                 if (
                     not isinstance(library, str)
                     or not Path(library).is_absolute()
+                    or library not in contract["input_sha256"]
+                    or not isinstance(cell.get("cuda_gate_sha256"), str)
+                    or not re.fullmatch("[0-9a-f]{64}", cell["cuda_gate_sha256"])
                     or cell.get("cuda_gate_sha256") != contract["input_sha256"].get(library)
                 ):
                     raise RuntimeError("Missing exact frozen CUDA stream gate")

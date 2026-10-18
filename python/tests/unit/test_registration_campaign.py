@@ -69,6 +69,38 @@ def test_vllm_gate_cleanup_closes_original_counter_fd_on_every_error(tmp_path, f
         os.fstat(fd)
 
 
+@pytest.mark.parametrize("failed_index", [0, 1])
+def test_cuda_gate_cleanup_attempts_both_releases_and_keeps_unknown(tmp_path, failed_index):
+    path = Path(__file__).parents[1] / "integration/test_vllm_recovery.py"
+    function = next(
+        node
+        for node in ast.parse(path.read_text()).body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work"
+    )
+    cleanup = next(node for node in function.body if isinstance(node, ast.Try)).finalbody
+    calls = []
+
+    def release(_operation, _stream, index):
+        calls.append(index)
+        if index == failed_index:
+            raise RuntimeError("controlled release refusal")
+
+    scope = {
+        "stream_gate": release,
+        "release_stream": object(),
+        "tmp_path": tmp_path,
+        "json": json,
+        "counters": contextlib.ExitStack(),
+    }
+    with pytest.raises(RuntimeError, match="release remains unknown"):
+        exec(compile(ast.Module(body=cleanup, type_ignores=[]), str(path), "exec"), scope)
+    assert calls == [0, 1]
+    evidence = json.loads((tmp_path / "stream-gate-release-errors.json").read_text())
+    assert evidence["errors"][0]["index"] == failed_index
+    assert evidence["physical_termination_claimed"] is False
+
+
 @pytest.mark.parametrize("engine", ["vllm-positive", "vllm-negative", "sglang-sole", "sglang-held"])
 @pytest.mark.parametrize(
     "fault",

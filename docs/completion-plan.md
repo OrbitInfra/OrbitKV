@@ -956,6 +956,12 @@ wait/release values and freezes its `.cu` library as an input. The producer stay
 pending until the test releases it; no-fence observes stale bytes before release.
 This candidate requires independent source and fresh GPU launch review. It
 does not authorize release of the preceding quarantine or native error owners.
+The initial stream-gate checkpoint `327beaa5` remains rejected: missing or
+malformed equal hashes could pass admission, and the first failed release skipped
+the other stream's release. The correction requires a present 64-hex digest in
+the frozen inputs and independently attempts both releases, records errors,
+and leaves failed device completion unknown. Its CPU controls and source gates
+are software evidence only; a separate readiness-only GPU gate is required.
 
 ## S4 — Finish communication execution and demonstrate gains
 

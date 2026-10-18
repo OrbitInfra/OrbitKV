@@ -434,8 +434,20 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
         }
     finally:
         try:
-            stream_gate("orbitkv_test_stream_release", release_stream, 0)
-            stream_gate("orbitkv_test_stream_release", release_stream, 1)
+            release_errors = []
+            for index in (0, 1):
+                try:
+                    stream_gate("orbitkv_test_stream_release", release_stream, index)
+                except BaseException as error:
+                    release_errors.append({"index": index, "error": repr(error)})
+            if release_errors:
+                (tmp_path / "stream-gate-release-errors.json").write_text(
+                    json.dumps(
+                        {"errors": release_errors, "physical_termination_claimed": False}, indent=2
+                    )
+                    + "\n"
+                )
+                raise RuntimeError(f"CUDA gate release remains unknown: {release_errors}")
             release_stream.synchronize()
             producer.synchronize()
             unrelated.synchronize()
