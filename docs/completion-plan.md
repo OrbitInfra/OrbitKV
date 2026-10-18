@@ -944,6 +944,18 @@ finite budget, and closes read-only evidence descriptors in an outer finally.
 Real CPU descriptor controls cover synchronization, shutdown, credit and client
 close errors. These changes grant no native completion proof; new matrix review
 and hardware launch remain required.
+The first real adapter precheck at `2aae5db7` fail-stopped at its initial vLLM
+cell: the producer event had already completed before handoff, so the delay did
+not provide a fence counterfactual. Seven cells remain unlaunched. The Manager
+has a normal exit receipt, but the failed client has no original credit-release
+receipt and emits a CUDA IPC warning; its controller keeps resource quarantine.
+Preserve this failed precheck under
+`/root/orbitkv-artifacts/s3-adapter-prepared-lifetime-20261019/`.
+The next test-only CUDA stream gate replaces the timing assumption with explicit
+wait/release values and freezes its `.cu` library as an input. The producer stays
+pending until the test releases it; no-fence observes stale bytes before release.
+This candidate requires independent source and fresh GPU launch review. It
+does not authorize release of the preceding quarantine or native error owners.
 
 ## S4 — Finish communication execution and demonstrate gains
 

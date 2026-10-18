@@ -1,6 +1,7 @@
 """Native recovery validation and the vLLM scheduler/worker CUDA handoff."""
 
 import contextlib
+import ctypes
 import hashlib
 import importlib.metadata
 import json
@@ -226,6 +227,22 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
     expected[:, 1] = payload
     expected[:, 2] = payload
     producer, unrelated = torch.cuda.Stream(), torch.cuda.Stream()
+    release_stream = torch.cuda.Stream()
+    gate_flags = torch.zeros(2, device="cuda", dtype=torch.int32)
+    gate_path = Path(os.environ["ORBITKV_TEST_CUDA_GATE_LIB"]).resolve(strict=True)
+    gate = ctypes.CDLL(str(gate_path))
+    if gate.orbitkv_test_stream_gate_version() != 1:
+        raise RuntimeError("CUDA readiness helper ABI differs")
+    for name in ("orbitkv_test_stream_wait", "orbitkv_test_stream_release"):
+        function = getattr(gate, name)
+        function.argtypes = [ctypes.c_uint64, ctypes.c_uint64]
+        function.restype = ctypes.c_int
+
+    def stream_gate(operation, stream, index):
+        status = getattr(gate, operation)(stream.cuda_stream, gate_flags.data_ptr() + index * 4)
+        if status != 0:
+            raise RuntimeError(f"CUDA readiness gate failed: {operation} status={status}")
+
     unrelated_done = torch.cuda.Event()
     producer_done = torch.cuda.Event()
     submitted = threading.Event()
@@ -284,11 +301,11 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
         # A delayed producer verifies that the background thread cannot read
         # the initial zeros. Independent work must not extend its save fence.
         with torch.cuda.stream(producer):
-            torch.cuda._sleep(1_500_000_000)
+            stream_gate("orbitkv_test_stream_wait", producer, 0)
             kv[:, 1].copy_(producer_payload)
             producer_done.record()
         with torch.cuda.stream(unrelated):
-            torch.cuda._sleep(3_000_000_000)
+            stream_gate("orbitkv_test_stream_wait", unrelated, 1)
             unrelated_done.record()
         with torch.cuda.stream(producer):
             assert not producer_done.query(), "producer completed before handoff fence test"
@@ -300,6 +317,9 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
             worker.wait_for_save()
 
         assert len(prepared_ids) == 1, "producer did not reserve native ownership before return"
+        if fence:
+            stream_gate("orbitkv_test_stream_release", release_stream, 0)
+            release_stream.synchronize()
         assert submitted.wait(10), "the save worker never submitted Publish"
         worker._save_queue.join()
         assert overlapped == [True], "Publish waited for unrelated GPU work"
@@ -309,6 +329,11 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
         worker._client.submit_saves.assert_called_once()
         worker._client.wait_save.assert_called_once()
         worker._client.start_save.assert_not_called()
+        if not fence:
+            stream_gate("orbitkv_test_stream_release", release_stream, 0)
+            release_stream.synchronize()
+        stream_gate("orbitkv_test_stream_release", release_stream, 1)
+        release_stream.synchronize()
         if channel_server.ssd_cache_path:
             synced = requests.post(
                 f"http://127.0.0.1:{channel_server.http_port}/cache/sync", timeout=35
@@ -387,6 +412,8 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
             "prepared_ids": prepared_ids,
             "producer_reserved": True,
             "producer_pending_at_handoff": True,
+            "explicit_stream_gate": True,
+            "cuda_gate_sha256": hashlib.sha256(gate_path.read_bytes()).hexdigest(),
             "prepared_submission_consumed": True,
             "full_destination_bytes": kv[:, 2].numel() * kv.element_size(),
             "full_buffer_bytes": kv.numel() * kv.element_size(),
@@ -407,6 +434,9 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
         }
     finally:
         try:
+            stream_gate("orbitkv_test_stream_release", release_stream, 0)
+            stream_gate("orbitkv_test_stream_release", release_stream, 1)
+            release_stream.synchronize()
             producer.synchronize()
             unrelated.synchronize()
             worker.shutdown()

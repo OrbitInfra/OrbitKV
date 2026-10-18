@@ -1046,6 +1046,8 @@ def validate_adapter_bytes(
             or row.get("producer_ready_at_submit") != [fence]
             or row.get("producer_pending_at_handoff") is not True
             or row.get("producer_reserved") is not True
+            or row.get("explicit_stream_gate") is not True
+            or row.get("cuda_gate_sha256") != cell.get("cuda_gate_sha256")
             or row.get("stale_registration_rejected") is not True
             or len(raw) != 2 * 8 * 16 * 32 * 4
             or type(row.get("full_destination_bytes")) is not int
@@ -2043,6 +2045,14 @@ def main() -> None:
                 or not cell.get("process_trace_binary")
             ):
                 raise RuntimeError("Frozen adapter positive/negative matrix differs")
+            if kind == "vllm-prepared":
+                library = cell.get("environment", {}).get("ORBITKV_TEST_CUDA_GATE_LIB")
+                if (
+                    not isinstance(library, str)
+                    or not Path(library).is_absolute()
+                    or cell.get("cuda_gate_sha256") != contract["input_sha256"].get(library)
+                ):
+                    raise RuntimeError("Missing exact frozen CUDA stream gate")
     if contract.get("qualification") == "pending-save-bytes-v2" or adapter_profile:
         if not adapter_profile and [cell.get("tier") for cell in contract["cells"]] != [
             "dram",

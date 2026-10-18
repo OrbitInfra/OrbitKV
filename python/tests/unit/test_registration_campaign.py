@@ -51,6 +51,8 @@ def test_vllm_gate_cleanup_closes_original_counter_fd_on_every_error(tmp_path, f
         pass
 
     scope = {
+        "stream_gate": lambda *_: None,
+        "release_stream": SimpleNamespace(synchronize=noop),
         "producer": SimpleNamespace(synchronize=raise_error if fault == "producer" else noop),
         "unrelated": SimpleNamespace(synchronize=noop),
         "worker": SimpleNamespace(shutdown=raise_error if fault == "shutdown" else noop),
@@ -97,6 +99,7 @@ def test_adapter_byte_evidence_rejects_corruption_and_false_completion(tmp_path,
         "tier": "dram",
         "fence": fence,
         "independent_hold": hold,
+        "cuda_gate_sha256": "a" * 64,
     }
     row = {
         "pid": 1,
@@ -121,6 +124,8 @@ def test_adapter_byte_evidence_rejects_corruption_and_false_completion(tmp_path,
             positive_byte_oracle_passed=fence,
             producer_ready_at_submit=[fence],
             producer_pending_at_handoff=True,
+            explicit_stream_gate=True,
+            cuda_gate_sha256="a" * 64,
             producer_reserved=True,
             stale_registration_rejected=True,
             full_destination_bytes=4096,
