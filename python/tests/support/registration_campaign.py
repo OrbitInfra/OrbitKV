@@ -14,6 +14,7 @@ import re
 import selectors
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import time
@@ -329,7 +330,7 @@ def check_inputs(
             or digest(path, deadline) != executable["sha256"]
         ):
             raise RuntimeError(f"Frozen executable changed or cannot execute: {path}")
-    if contract.get("qualification") == "pending-save-bytes-v2":
+    if contract.get("qualification") in ("pending-save-bytes-v2", "prepared-adapter-lifetime-v1"):
         for cell in contract["cells"]:
             tracer = cell.get("process_trace_binary")
             if (
@@ -996,6 +997,201 @@ def traced_child_wait(directory: Path, child: dict, deadline: float | None = Non
     return task["exit_code"]
 
 
+def validate_adapter_bytes(
+    cell: dict, directory: Path, owner: dict, deadline: float | None
+) -> None:
+    vllm = cell["kind"] == "vllm-prepared"
+    basename = "vllm-prepared-save" if vllm else "sglang-registration"
+    receipts = evidence_paths(directory, basename + ".native-release.json", deadline)
+    if len(receipts) != 1:
+        raise RuntimeError("Missing exact adapter lifetime receipt")
+    path = receipts[0]
+    row = read_json(path, deadline)
+    if (
+        row.get("pid") != owner["pid"]
+        or row.get("start_ticks") != owner["start_ticks"]
+        or row.get("release") != ("0.31.0" if vllm else "0.5.21")
+        or row.get("tier") != cell["tier"]
+        or any(
+            row.get(field) is not True
+            for field in (
+                "workers_joined",
+                "registration_retired",
+                "client_closed",
+                "prepared_submission_consumed",
+                "full_byte_oracle",
+                "mutation_rejected",
+            )
+        )
+        or row.get("physical_fault_termination_claimed") is not False
+        or type(row.get("completed_mono_ns")) is not int
+        or row["completed_mono_ns"] <= 0
+    ):
+        raise RuntimeError("Adapter lifetime identity/completion differs")
+    payload_name = "vllm-prepared-save" if vllm else "sglang-prepared-save"
+    raw = read_bytes(path.parent / (payload_name + ".payload.bin"), 4 * 1024**2, deadline)
+    if (
+        type(row.get("full_buffer_bytes")) is not int
+        or len(raw) != row["full_buffer_bytes"]
+        or hashlib.sha256(raw).hexdigest() != row.get("payload_sha256")
+    ):
+        raise RuntimeError("Adapter payload archive differs")
+    if vllm:
+        fence = cell.get("fence")
+        if (
+            type(fence) is not bool
+            or row.get("fence_enabled") is not fence
+            or row.get("qualification_passed") is not fence
+            or row.get("positive_byte_oracle_passed") is not fence
+            or row.get("producer_ready_at_submit") != [fence]
+            or row.get("producer_pending_at_handoff") is not True
+            or row.get("producer_reserved") is not True
+            or row.get("stale_registration_rejected") is not True
+            or len(raw) != 2 * 8 * 16 * 32 * 4
+            or type(row.get("full_destination_bytes")) is not int
+            or row["full_destination_bytes"] != 2 * 16 * 32 * 4
+            or not isinstance(row.get("prepared_ids"), list)
+            or len(row["prepared_ids"]) != 1
+            or type(row["prepared_ids"][0]) is not int
+            or row["prepared_ids"][0] <= 0
+        ):
+            raise RuntimeError("Producer fence positive/negative receipt differs")
+        for field in ("registration_generation", "replacement_generation"):
+            value = row.get(field)
+            if (
+                not isinstance(value, str)
+                or not re.fullmatch("[0-9a-f]{32}", value)
+                or UUID(hex=value).int == 0
+            ):
+                raise RuntimeError("Adapter registration generation is invalid")
+        if row["registration_generation"] == row["replacement_generation"]:
+            raise RuntimeError("Reused adapter registration generation")
+        expected = []
+        for plane in range(2):
+            for block in range(8):
+                remaining(deadline)
+                for offset in range(16 * 32):
+                    expected.append(
+                        plane * 16 * 32 + offset if block == 1 or block == 2 and fence else -167
+                    )
+        expected_raw = struct.pack("=" + "f" * len(expected), *expected)
+    else:
+        if (
+            row.get("linker_load_consumed") is not True
+            or row.get("offload_completed") is not True
+            or type(cell.get("independent_hold")) is not bool
+            or row.get("independent_hold") is not cell["independent_hold"]
+            or type(row.get("exporters_after_close")) is not int
+            or row["exporters_after_close"] != (4 if cell["independent_hold"] else 0)
+            or type(row.get("exporters_after_last_hold")) is not int
+            or row["exporters_after_last_hold"] != 0
+            or len(raw) != 4 * 320 * 8 * 128 * 2
+        ):
+            raise RuntimeError("SGLang pool/last owner receipt differs")
+        expected_raw = bytearray()
+        for layer in range(4):
+            for slot in range(320):
+                remaining(deadline)
+                for offset in range(8 * 128):
+                    value = (
+                        ((slot % 64) * 8 * 128 + offset) % 127 + layer * 16
+                        if 64 <= slot < 192
+                        else -167
+                    )
+                    expected_raw.extend(struct.pack("=f", value)[2:])
+    if raw != expected_raw:
+        raise RuntimeError("Recomputed full adapter payload/sentinel failed")
+    roles = ("original", "replacement") if vllm else ("original",)
+    for role in roles:
+        remaining(deadline)
+        handoff = path.parent / (role + ".credit-owner.json")
+        released = path.parent / (role + ".credit-release.json")
+        initial, final = read_json(handoff, deadline), read_json(released, deadline)
+        evidence = initial.get("evidence", {})
+        if (
+            initial.get("owner") != owner
+            or final.get("owner") != owner
+            or final.get("instance_id") != initial.get("instance_id")
+            or final.get("handoff_sha256") != digest(handoff, deadline)
+            or final.get("physical_termination_claimed") is not False
+            or initial.get("instance_id") != row.get("instance_id")
+            or evidence.get("schema") != "orbitkv.cuda-credit-observation.v1"
+            or final.get("schema") != "orbitkv.cuda-credit-release.v1"
+            or type(final.get("observed_mono_ns")) is not int
+            or final["observed_mono_ns"] <= 0
+            or final["observed_mono_ns"] > row["completed_mono_ns"]
+        ):
+            raise RuntimeError("Adapter original credit owner/receipt differs")
+        if (
+            not isinstance(evidence.get("credits"), list)
+            or len(evidence["credits"]) != (1 if vllm else 4)
+            or len(final.get("counters", [])) != len(evidence["credits"])
+        ):
+            raise RuntimeError("Missing exact adapter original credit slots")
+        for field in ("registration_generation", "export_owner_generation"):
+            value = evidence.get(field)
+            if (
+                not isinstance(value, str)
+                or str(UUID(value)) != value
+                or UUID(value).int == 0
+                or final.get(field) != value
+            ):
+                raise RuntimeError("Adapter credit generation changed")
+        registration = (
+            row["registration_generation"] if role == "original" else row["replacement_generation"]
+        )
+        if UUID(evidence["registration_generation"]).hex != registration:
+            raise RuntimeError("Adapter receipt and exporter registration differ")
+        seen_credits = set()
+        for original, counter in zip(evidence["credits"], final["counters"], strict=True):
+            observation = original.get("observation", {})
+            marker = (original.get("counter_name"), original.get("counter_offset"))
+            if (
+                marker in seen_credits
+                or type(original.get("exclusive_value_at_export")) is not int
+                or original.get("exclusive_value_at_export") != 1
+                or type(observation.get("observed_value")) is not int
+                or observation.get("observed_value") != 1
+                or observation.get("same_object") is not True
+                or observation.get("path_error") is not None
+                or observation.get("read_error") is not None
+            ):
+                raise RuntimeError("Adapter original credit observation is unproven")
+            seen_credits.add(marker)
+            expected_counter = {
+                "counter_name": original.get("counter_name"),
+                "counter_offset": original.get("counter_offset"),
+                "device": observation.get("device"),
+                "inode": observation.get("inode"),
+                "before": 1,
+                "after": 0,
+            }
+            if counter != expected_counter or any(
+                type(counter.get(field)) is not int
+                for field in ("counter_offset", "device", "inode", "before", "after")
+            ):
+                raise RuntimeError("Adapter original counter did not repay its exact slot")
+    if cell["tier"] == "ssd-uring":
+        for name in ("orbitkv_ssd_prefetch_bytes_total", "orbitkv_ssd_uring_read_operations_total"):
+            before, after = (
+                row.get("read_before", {}).get(name),
+                row.get("read_after", {}).get(name),
+            )
+            if (
+                type(after) not in (int, float)
+                or not math.isfinite(after)
+                or after <= 0
+                or before is not None
+                and (
+                    type(before) not in (int, float)
+                    or not math.isfinite(before)
+                    or before < 0
+                    or after <= before
+                )
+            ):
+                raise RuntimeError("Adapter Restore has no actual advancing io_uring read")
+
+
 def validate_cell(
     cell: dict,
     directory: Path,
@@ -1106,7 +1302,7 @@ def validate_cell(
             or "panicked at" in text
         ):
             raise RuntimeError(f"Native/worker failure remains in log: {path}")
-    if cell["kind"] in ("native", "pending-save-bytes"):
+    if cell["kind"] in ("native", "pending-save-bytes", "vllm-prepared", "sglang-prepared"):
         expected_origin = cell.get("manager_python")
         if not expected_origin:
             raise RuntimeError("Frozen Manager Python origin contract is required")
@@ -1267,6 +1463,10 @@ def validate_cell(
             for row in [read_json(path, deadline)]
         }:
             raise RuntimeError("Manager runtime records do not match actual cleanup owners")
+        if cell["kind"] in ("vllm-prepared", "sglang-prepared"):
+            validate_adapter_bytes(cell, directory, pytest_owner, deadline)
+            remaining(deadline)
+            return
         pending_bytes = cell["kind"] == "pending-save-bytes"
         credits = evidence_paths(
             directory,
@@ -1763,7 +1963,11 @@ def main() -> None:
     contract_bytes = read_bytes(args.contract, 16 * MAX_JSON_BYTES, startup_deadline)
     contract_sha = hashlib.sha256(contract_bytes).hexdigest()
     contract = json.loads(contract_bytes)
-    if contract.get("qualification") not in (None, "pending-save-bytes-v2"):
+    if contract.get("qualification") not in (
+        None,
+        "pending-save-bytes-v2",
+        "prepared-adapter-lifetime-v1",
+    ):
         raise RuntimeError("Unsupported qualification contract; historical freezes stay immutable")
     remaining(startup_deadline)
     root = args.contract.parent
@@ -1771,19 +1975,46 @@ def main() -> None:
         raise RuntimeError("Unknown registration gate phase")
     if contract["schema"] != "orbitkv.explicit-registration-campaign.v1":
         raise RuntimeError("Unknown campaign schema")
+    adapter_profile = contract.get("qualification") == "prepared-adapter-lifetime-v1"
     expected = (
-        [("pending-save-bytes", 1), ("pending-save-bytes", 1)]
-        if contract.get("qualification") == "pending-save-bytes-v2"
+        [("vllm-prepared", 1)] * 4 + [("sglang-prepared", 1)] * 4
+        if adapter_profile
         else (
-            [("native", 2)]
-            if contract["phase"] == "precheck"
-            else [("credits", 2), ("native", 2), ("vllm-worker", 1), ("sglang-pool", 2)]
+            [("pending-save-bytes", 1), ("pending-save-bytes", 1)]
+            if contract.get("qualification") == "pending-save-bytes-v2"
+            else (
+                [("native", 2)]
+                if contract["phase"] == "precheck"
+                else [("credits", 2), ("native", 2), ("vllm-worker", 1), ("sglang-pool", 2)]
+            )
         )
     )
     if [(cell["kind"], cell["passed"]) for cell in contract["cells"]] != expected:
         raise RuntimeError("Frozen registration gate cells differ")
-    if contract.get("qualification") == "pending-save-bytes-v2":
-        if [cell.get("tier") for cell in contract["cells"]] != ["dram", "ssd-uring"]:
+    if adapter_profile:
+        declarations = [
+            ("vllm-prepared", "dram", True),
+            ("vllm-prepared", "dram", False),
+            ("vllm-prepared", "ssd-uring", True),
+            ("vllm-prepared", "ssd-uring", False),
+            ("sglang-prepared", "dram", False),
+            ("sglang-prepared", "dram", True),
+            ("sglang-prepared", "ssd-uring", False),
+            ("sglang-prepared", "ssd-uring", True),
+        ]
+        for cell, (kind, tier, flag) in zip(contract["cells"], declarations, strict=True):
+            field = "fence" if kind == "vllm-prepared" else "independent_hold"
+            if (
+                cell.get("tier") != tier
+                or cell.get(field) is not flag
+                or not cell.get("process_trace_binary")
+            ):
+                raise RuntimeError("Frozen adapter positive/negative matrix differs")
+    if contract.get("qualification") == "pending-save-bytes-v2" or adapter_profile:
+        if not adapter_profile and [cell.get("tier") for cell in contract["cells"]] != [
+            "dram",
+            "ssd-uring",
+        ]:
             raise RuntimeError("Frozen installed Save medium order differs")
         for cell in contract["cells"]:
             argv = cell.get("argv", [])
@@ -1813,7 +2044,7 @@ def main() -> None:
         signal.signal(number, signal.SIG_IGN)
     try:
         check_inputs(contract, deadline=startup_deadline)
-        if contract.get("qualification") == "pending-save-bytes-v2":
+        if contract.get("qualification") == "pending-save-bytes-v2" or adapter_profile:
             write(
                 root / "DLOPEN-PREFLIGHT.json",
                 check_dlopen(contract, startup_deadline),

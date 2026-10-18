@@ -1,5 +1,7 @@
 """Native recovery validation and the vLLM scheduler/worker CUDA handoff."""
 
+import contextlib
+import hashlib
 import importlib.metadata
 import json
 import os
@@ -13,7 +15,10 @@ from unittest.mock import MagicMock
 import pytest
 import requests
 
+from tests.support.ipc_credit import hold_counters, release_receipt
 from tests.support.metrics import fetch_orbitkv_metrics
+from tests.support.registration_campaign import identity as process_identity
+from tests.support.registration_campaign import write
 
 pytestmark = pytest.mark.integration
 
@@ -228,6 +233,7 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
     prepared_ids = []
     producer_ready_at_submit = []
     hashes = BlockHashes([b"h" * 32])
+    counters = contextlib.ExitStack()
 
     def prepare(*args):
         handle = client.prepare_save(*args)
@@ -260,6 +266,15 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
     try:
         worker.register_kv_caches({"layer": kv})
         original_registration = worker._registration
+        write(
+            tmp_path / "original.credit-owner.json",
+            {
+                "owner": process_identity(os.getpid()),
+                "instance_id": identity,
+                "evidence": json.loads(original_registration.ipc_credit_evidence),
+            },
+        )
+        original_counters = hold_counters(counters, tmp_path / "original.credit-owner.json")
         channel_server.record_runtime()
         worker._client = MagicMock(wraps=client)
         worker._client.prepare_save.side_effect = prepare
@@ -346,9 +361,19 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
             ):
                 assert name in after_restore and after_restore[name] > before_restore.get(name, 0)
         worker.unregister_context()
+        write(tmp_path / "original.credit-release.json", release_receipt(original_counters))
         assert worker._registration is None
         worker.register_kv_caches({"layer": kv})
         replacement = worker._registration
+        write(
+            tmp_path / "replacement.credit-owner.json",
+            {
+                "owner": process_identity(os.getpid()),
+                "instance_id": identity,
+                "evidence": json.loads(replacement.ipc_credit_evidence),
+            },
+        )
+        replacement_counters = hold_counters(counters, tmp_path / "replacement.credit-owner.json")
         assert replacement.generation != original_registration.generation
         from orbitkv import SaveNotSubmittedError
 
@@ -358,12 +383,14 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
             "pid": os.getpid(),
             "start_ticks": int(Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]),
             "release": "0.31.0",
+            "instance_id": identity,
             "prepared_ids": prepared_ids,
             "producer_reserved": True,
             "producer_pending_at_handoff": True,
             "prepared_submission_consumed": True,
             "full_destination_bytes": kv[:, 2].numel() * kv.element_size(),
             "full_buffer_bytes": kv.numel() * kv.element_size(),
+            "payload_sha256": hashlib.sha256(actual.numpy().tobytes()).hexdigest(),
             "full_byte_oracle": True,
             "mutation_rejected": True,
             "fence_enabled": fence,
@@ -374,6 +401,7 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
             "read_before": before_restore,
             "read_after": after_restore,
             "replacement_generation": replacement.generation.hex(),
+            "registration_generation": original_registration.generation.hex(),
             "stale_registration_rejected": True,
             "physical_fault_termination_claimed": False,
         }
@@ -381,10 +409,20 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
         producer.synchronize()
         unrelated.synchronize()
         worker.shutdown()
+        if "replacement_counters" in locals():
+            write(
+                tmp_path / "replacement.credit-release.json", release_receipt(replacement_counters)
+            )
         client.close()
+        counters.close()
     if worker._save_thread.is_alive() or worker._registration is not None:
         raise RuntimeError("vLLM worker or GPU registration survived normal shutdown")
-    receipt.update(workers_joined=True, registration_retired=True, client_closed=True)
+    receipt.update(
+        workers_joined=True,
+        registration_retired=True,
+        client_closed=True,
+        completed_mono_ns=time.monotonic_ns(),
+    )
     (tmp_path / "vllm-prepared-save.native-release.json").write_text(
         json.dumps(receipt, indent=2) + "\n"
     )

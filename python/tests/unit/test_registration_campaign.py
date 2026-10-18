@@ -1,8 +1,10 @@
 """CPU controls for launch admission and strict lifecycle evidence."""
 
 import fcntl
+import hashlib
 import json
 import os
+import struct
 import subprocess
 import sys
 import threading
@@ -23,6 +25,149 @@ def capture_save_metrics(monkeypatch, raw):
         "run",
         lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, stdout=raw, stderr=b""),
     )
+
+
+@pytest.mark.parametrize("engine", ["vllm-positive", "vllm-negative", "sglang-sole", "sglang-held"])
+@pytest.mark.parametrize(
+    "fault", [None, "bytes", "credit", "identity", "generation", "claim", "missing"]
+)
+def test_adapter_byte_evidence_rejects_corruption_and_false_completion(tmp_path, engine, fault):
+    from uuid import UUID
+
+    vllm = engine.startswith("vllm")
+    fence = engine == "vllm-positive"
+    hold = engine == "sglang-held"
+    owner = {"pid": 1, "start_ticks": 2}
+    cell = {
+        "kind": "vllm-prepared" if vllm else "sglang-prepared",
+        "tier": "dram",
+        "fence": fence,
+        "independent_hold": hold,
+    }
+    row = {
+        "pid": 1,
+        "start_ticks": 2,
+        "instance_id": "instance",
+        "release": "0.31.0" if vllm else "0.5.21",
+        "tier": "dram",
+        "workers_joined": True,
+        "registration_retired": True,
+        "client_closed": True,
+        "prepared_submission_consumed": True,
+        "full_byte_oracle": True,
+        "mutation_rejected": True,
+        "physical_fault_termination_claimed": False,
+        "completed_mono_ns": 100,
+        "registration_generation": UUID(int=1).hex,
+    }
+    if vllm:
+        row.update(
+            fence_enabled=fence,
+            qualification_passed=fence,
+            positive_byte_oracle_passed=fence,
+            producer_ready_at_submit=[fence],
+            producer_pending_at_handoff=True,
+            producer_reserved=True,
+            stale_registration_rejected=True,
+            full_destination_bytes=4096,
+            prepared_ids=[1],
+            replacement_generation=UUID(int=2).hex,
+        )
+        raw = b"".join(
+            struct.pack("=f", plane * 512 + offset if block == 1 or block == 2 and fence else -167)
+            for plane in range(2)
+            for block in range(8)
+            for offset in range(512)
+        )
+    else:
+        row.update(
+            linker_load_consumed=True,
+            offload_completed=True,
+            independent_hold=hold,
+            exporters_after_close=4 if hold else 0,
+            exporters_after_last_hold=0,
+        )
+        raw = b"".join(
+            struct.pack(
+                "=f", ((slot % 64) * 1024 + offset) % 127 + layer * 16 if 64 <= slot < 192 else -167
+            )[2:]
+            for layer in range(4)
+            for slot in range(320)
+            for offset in range(1024)
+        )
+    row.update(full_buffer_bytes=len(raw), payload_sha256=hashlib.sha256(raw).hexdigest())
+    basename = "vllm-prepared-save" if vllm else "sglang-registration"
+    payload = tmp_path / (
+        ("vllm-prepared-save" if vllm else "sglang-prepared-save") + ".payload.bin"
+    )
+    payload.write_bytes(raw)
+    for index, role in enumerate(("original", "replacement") if vllm else ("original",)):
+        credits = [
+            {
+                "counter_name": "counter",
+                "counter_offset": slot,
+                "exclusive_value_at_export": 1,
+                "observation": {
+                    "device": 1,
+                    "inode": 2,
+                    "observed_value": 1,
+                    "same_object": True,
+                    "path_error": None,
+                    "read_error": None,
+                },
+            }
+            for slot in range(1 if vllm else 4)
+        ]
+        evidence = {
+            "schema": "orbitkv.cuda-credit-observation.v1",
+            "registration_generation": str(UUID(int=index + 1)),
+            "export_owner_generation": str(UUID(int=index + 10)),
+            "credits": credits,
+        }
+        handoff = tmp_path / (role + ".credit-owner.json")
+        handoff.write_text(
+            json.dumps({"owner": owner, "instance_id": "instance", "evidence": evidence})
+        )
+        final = {
+            "schema": "orbitkv.cuda-credit-release.v1",
+            "owner": owner,
+            "instance_id": "instance",
+            "handoff_sha256": campaign.digest(handoff),
+            "registration_generation": evidence["registration_generation"],
+            "export_owner_generation": evidence["export_owner_generation"],
+            "physical_termination_claimed": False,
+            "observed_mono_ns": 99,
+            "counters": [
+                {
+                    "counter_name": "counter",
+                    "counter_offset": slot,
+                    "device": 1,
+                    "inode": 2,
+                    "before": 1,
+                    "after": 0,
+                }
+                for slot in range(len(credits))
+            ],
+        }
+        if fault == "credit":
+            final["counters"][0]["after"] = 1
+        if fault == "generation":
+            final["registration_generation"] = str(UUID(int=99))
+        (tmp_path / (role + ".credit-release.json")).write_text(json.dumps(final))
+    if fault == "identity":
+        row["instance_id"] = "foreign"
+    if fault == "claim":
+        row["physical_fault_termination_claimed"] = True
+    if fault == "bytes":
+        payload.write_bytes(bytes([raw[0] ^ 1]) + raw[1:])
+    receipt = tmp_path / (basename + ".native-release.json")
+    if fault != "missing":
+        receipt.write_text(json.dumps(row))
+    if fault is None:
+        campaign.validate_adapter_bytes(cell, tmp_path, owner, time.monotonic() + 5)
+    else:
+        with pytest.raises(RuntimeError):
+            campaign.validate_adapter_bytes(cell, tmp_path, owner, time.monotonic() + 5)
 
 
 @pytest.mark.parametrize(

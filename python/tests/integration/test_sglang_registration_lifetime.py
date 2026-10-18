@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import gc
+import hashlib
 import importlib.metadata
 import json
 import os
@@ -14,7 +16,9 @@ from unittest.mock import MagicMock
 import pytest
 import requests
 
+from tests.support.ipc_credit import hold_counters, release_receipt
 from tests.support.metrics import fetch_orbitkv_metrics
+from tests.support.registration_campaign import identity, write
 
 pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 
@@ -58,6 +62,7 @@ def test_sglang_close_retires_only_its_registration(
     previous = snapshot_context()
     linker = None
     close_attempted = False
+    counters = contextlib.ExitStack()
     try:
         args = ServerArgs(model_path=model, dtype="bfloat16", page_size=64, tp_size=1, pp_size=1)
         publish(args, role="scheduler", ranks=SpawnRanks(world_rank=0, dp_rank=0, gpu_id=0))
@@ -86,6 +91,15 @@ def test_sglang_close_retires_only_its_registration(
         exporters = [weakref.ref(tensor) for tensor in layout.pools[PoolName.KV].entry.kv_buffer]
         assert len(exporters) == 4
         generation = linker.registration.generation.hex()
+        write(
+            tmp_path / "original.credit-owner.json",
+            {
+                "owner": identity(os.getpid()),
+                "instance_id": linker.instance_id,
+                "evidence": json.loads(linker.registration.ipc_credit_evidence),
+            },
+        )
+        held_counters = hold_counters(counters, tmp_path / "original.credit-owner.json")
         geometry = [
             {"object_id": id(tensor), "shape": list(tensor.shape), "dtype": str(tensor.dtype)}
             for tensor in layout.pools[PoolName.KV].entry.kv_buffer
@@ -96,9 +110,9 @@ def test_sglang_close_retires_only_its_registration(
             tensor[64:128] = (
                 torch.arange(tensor[64:128].numel(), device="cuda").reshape(tensor[64:128].shape)
                 % 127
-                + index * 128
+                + index * 16
             ).to(tensor.dtype)
-            original = tensor.cpu()
+            original = tensor.cpu().clone()
             original[128:192] = original[64:128]
             expected.append(original)
         del tensor
@@ -180,6 +194,7 @@ def test_sglang_close_retires_only_its_registration(
         instance = linker.instance_id
         close_attempted = True
         linker.close()
+        write(tmp_path / "original.credit-release.json", release_receipt(held_counters))
         assert linker.registration is None
         assert not linker._load_thread.is_alive() and not linker._offload_thread.is_alive()
         assert linker._load_queue.unfinished_tasks == linker._offload_queue.unfinished_tasks == 0
@@ -216,6 +231,9 @@ def test_sglang_close_retires_only_its_registration(
                     "linker_load_consumed": True,
                     "full_byte_oracle": True,
                     "mutation_rejected": True,
+                    "full_buffer_bytes": sum(len(payload) for payload in payloads),
+                    "payload_sha256": hashlib.sha256(b"".join(payloads)).hexdigest(),
+                    "physical_fault_termination_claimed": False,
                     "tier": "ssd-uring" if channel_server.ssd_cache_path else "dram",
                     "read_before": before_restore,
                     "read_after": after_restore,
@@ -230,4 +248,5 @@ def test_sglang_close_retires_only_its_registration(
             if linker is not None and not close_attempted:
                 linker.close()
         finally:
+            counters.close()
             restore_context(previous)

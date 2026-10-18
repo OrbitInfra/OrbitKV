@@ -926,6 +926,15 @@ is pending before handoff, and includes a same-data no-fence byte control whose
 positive oracle must fail. SGLang now consumes its actual lookup/recovery/load,
 layer activation and completed-load paths. These are test candidates pending
 independent review and GPU execution, not engine page-generation implementation.
+Independent `AcceptedSourceCPU` at `01e82c4b`, tree `6849e98d`, accepts that
+test construction and six selected SGLang 0.5.21 CPU activation/recovery controls;
+review SHA256 is `b9443c8b1cb915bea427afdcc687804a2af3593c75f2982ae309d2a15705eee2`.
+The next controller extension consumes `prepared-adapter-lifetime-v1`: four
+vLLM fence/negative cells and four SGLang sole/independent-hold cells across
+DRAM and io_uring. It recomputes complete bytes and sentinels, separates expected
+negative qualification from positive results, binds generation/credit slots,
+and requires actual Manager mapping/exit evidence. This matrix requires its own
+independent source review, runtime freeze and launch acceptance before execution.
 
 ## S4 — Finish communication execution and demonstrate gains
 
