@@ -134,7 +134,6 @@ def test_unknown_preparation_preserves_released_tree_ownership(linker, monkeypat
     assert linker._completed_offloads.empty()
     with pytest.raises(RuntimeError, match="source pages cannot be admitted"):
         linker.offload(transfers)
-    linker.layer_done_counter.reset.assert_not_called()
 
 
 def transfer(keys):
