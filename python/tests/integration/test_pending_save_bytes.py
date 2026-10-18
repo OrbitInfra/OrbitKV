@@ -4,6 +4,7 @@ Run separately from CPU feedback after exact runtime and launch review. This
 normal-path gate does not establish failed CUDA/RDMA/SSD physical termination.
 """
 
+import contextlib
 import hashlib
 import json
 import os
@@ -13,6 +14,7 @@ import uuid
 import pytest
 import requests
 
+from tests.support.ipc_credit import hold_counters, release_receipt
 from tests.support.metrics import fetch_orbitkv_metrics
 from tests.support.registration_campaign import identity, write
 
@@ -83,6 +85,7 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
     target = torch.empty_like(source_tensor)
     source_indices, target_indices = [0, 2, 4, 6], [1, 3, 5, 7]
     records = []
+    counter_descriptors = contextlib.ExitStack()
     try:
         for round_id in range(3):
             payload = (
@@ -107,6 +110,9 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                 },
                 time.monotonic() + 30,
             )
+            source_counters = hold_counters(
+                counter_descriptors, tmp_path / f"round-{round_id}-source.credit-owner.json"
+            )
             if round_id == 0:
                 channel_server.record_runtime()
             writes_before = fetch_orbitkv_metrics(channel_server.http_port).get(
@@ -122,6 +128,11 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
             success, message = source.unregister_context(source_id)
             assert success, message
             source_registered = False
+            write(
+                tmp_path / f"round-{round_id}-source.credit-release.json",
+                release_receipt(source_counters),
+                time.monotonic() + 30,
+            )
             del handle, source_registration
             idle_names = [
                 "orbitkv_save_active_operations",
@@ -162,6 +173,9 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                     "evidence": json.loads(consumer_registration.ipc_credit_evidence),
                 },
                 time.monotonic() + 30,
+            )
+            consumer_counters = hold_counters(
+                counter_descriptors, tmp_path / f"round-{round_id}-consumer.credit-owner.json"
             )
             io_before = fetch_orbitkv_metrics(channel_server.http_port)
             read_before = {
@@ -214,6 +228,11 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
             success, message = consumer.unregister_context(consumer_id)
             assert success, message
             consumer_registered = False
+            write(
+                tmp_path / f"round-{round_id}-consumer.credit-release.json",
+                release_receipt(consumer_counters),
+                time.monotonic() + 30,
+            )
             del consumer_registration, restore
             wait_idle(channel_server.http_port, idle_names + ["orbitkv_query_reserved_bytes"])
             raw = bytes(actual.flatten().tolist())
@@ -258,6 +277,7 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
             assert success, message
         consumer.close()
         source.close()
+        counter_descriptors.close()
         write(
             tmp_path / "clients.native-close.json",
             {

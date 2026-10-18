@@ -1222,6 +1222,12 @@ def test_native_credit_oracle_refuses_malformed_types_and_aliased_slots(
         "missing-identity",
         "float-round",
         "credit-identity",
+        "credit-release-missing",
+        "credit-release-replay",
+        "credit-release-nonzero",
+        "credit-release-bool",
+        "credit-release-inode",
+        "credit-release-late",
         "chronology",
         "ssd-valid",
         "ssd-missing",
@@ -1263,7 +1269,32 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
             ordinal = 2 * index + int(role == "consumer") + 1
             snapshot["evidence"]["registration_generation"] = str(UUID(int=ordinal))
             snapshot["evidence"]["export_owner_generation"] = str(UUID(int=ordinal + 10))
-            (tmp_path / f"round-{index}-{role}.credit-owner.json").write_text(json.dumps(snapshot))
+            handoff = tmp_path / f"round-{index}-{role}.credit-owner.json"
+            handoff.write_text(json.dumps(snapshot))
+            values = snapshot["evidence"]
+            counters = [
+                {
+                    "counter_name": item["counter_name"],
+                    "counter_offset": item["counter_offset"],
+                    "device": item["observation"]["device"],
+                    "inode": item["observation"]["inode"],
+                    "before": 1,
+                    "after": 0,
+                }
+                for item in values["credits"]
+            ]
+            final = {
+                "schema": "orbitkv.cuda-credit-release.v1",
+                "owner": owner,
+                "instance_id": role,
+                "handoff_sha256": hashlib.sha256(handoff.read_bytes()).hexdigest(),
+                "registration_generation": values["registration_generation"],
+                "export_owner_generation": values["export_owner_generation"],
+                "counters": counters,
+                "observed_mono_ns": index + 1,
+                "physical_termination_claimed": False,
+            }
+            (tmp_path / f"round-{index}-{role}.credit-release.json").write_text(json.dumps(final))
         payload = bytearray([167] * 32768)
         for source, target in zip((0, 2, 4, 6), (1, 3, 5, 7), strict=True):
             payload[target * 4096 : (target + 1) * 4096] = bytes(
@@ -1342,6 +1373,23 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
         row = json.loads(path.read_text())
         row["instance_id"] = "foreign"
         path.write_text(json.dumps(row))
+    elif fault is not None and fault.startswith("credit-release-"):
+        path = tmp_path / "round-1-source.credit-release.json"
+        row = json.loads(path.read_text())
+        if fault == "credit-release-missing":
+            path.unlink()
+        else:
+            if fault == "credit-release-replay":
+                row = json.loads((tmp_path / "round-0-source.credit-release.json").read_text())
+            elif fault == "credit-release-nonzero":
+                row["counters"][0]["after"] = 1
+            elif fault == "credit-release-bool":
+                row["counters"][0]["after"] = False
+            elif fault == "credit-release-inode":
+                row["counters"][0]["inode"] += 1
+            elif fault == "credit-release-late":
+                row["observed_mono_ns"] = 1000
+            path.write_text(json.dumps(row))
     elif fault == "chronology":
         path = tmp_path / "round-2.native-release.json"
         row = json.loads(path.read_text())
