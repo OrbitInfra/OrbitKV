@@ -896,6 +896,11 @@ GPU or native transfer owner, and its forced timeout is not a drain receipt.
 The real HTTP trickle regression runs separately as an integration control;
 source feedback keeps deterministic parser controls. A new source/launch freeze
 must include this helper and its actual child wait/trace census.
+The `add6c84d` origin checkpoint remains rejected: urllib followed a redirect
+and sampled another endpoint. The capture helper now rejects redirects and
+requires the exact local `/metrics` URL with HTTP 200. Real redirect controls
+must show that the target is never contacted. Prior HTTP failures remain
+archived and no rejected source freeze gains launch authorization.
 
 ## S4 — Finish communication execution and demonstrate gains
 

@@ -88,16 +88,28 @@ def test_save_byte_snapshot_consumes_actual_exporter_labels(monkeypatch):
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("mode", ["normal", "oversized", "trickle", "slow-headers"])
+@pytest.mark.parametrize("mode", ["normal", "oversized", "trickle", "slow-headers", "redirect"])
 def test_save_byte_snapshot_actual_http_is_bounded(mode):
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     from tests.integration.test_pending_save_bytes import save_bytes_snapshot
 
     stopped = threading.Event()
+    foreign_requests = []
 
     class Trickle(BaseHTTPRequestHandler):
         def do_GET(self):
+            if self.path != "/metrics":
+                foreign_requests.append(self.path)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"orbitkv_save_bytes_total 16384\n")
+                return
+            if mode == "redirect":
+                self.send_response(302)
+                self.send_header("Location", "/other-metrics")
+                self.end_headers()
+                return
             if mode == "slow-headers":
                 self.connection.settimeout(1)
                 self.wfile.write(b"HTTP/1.1 200 ")
@@ -140,9 +152,10 @@ def test_save_byte_snapshot_actual_http_is_bounded(mode):
         if mode == "normal":
             assert save_bytes_snapshot(server.server_port) == 0
         else:
-            with pytest.raises(RuntimeError, match="time bound|byte bound"):
+            with pytest.raises(RuntimeError, match="time bound|byte bound|response failed"):
                 save_bytes_snapshot(server.server_port)
         assert time.monotonic() - started < 11
+        assert not foreign_requests
     finally:
         stopped.set()
         server.shutdown()
