@@ -12,7 +12,7 @@ from typing import Any, Literal
 import torch
 from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorTransferResults
 
-from orbitkv import RestoreHandle
+from orbitkv import RestoreHandle, SaveNotSubmittedError
 from orbitkv.logging_utils import TRANSFER_TRACING, get_connector_logger, trace_transfer
 from orbitkv.vllm.config import ConnectorContext, parse_env_int
 from orbitkv.vllm.layout import CacheGroupLayout
@@ -885,7 +885,12 @@ class WorkerAdapter:
             # allocation/iteration after launch may classify this as unsubmitted.
             for task in batch:
                 task.native_attempted = True
-            handle = self._client.start_save(registration, saves_list)
+            try:
+                handle = self._client.start_save(registration, saves_list)
+            except SaveNotSubmittedError:
+                for task in batch:
+                    task.native_attempted = False
+                raise
             for task in batch:
                 task.native_handle = handle
             status = self._client.wait_save(handle)

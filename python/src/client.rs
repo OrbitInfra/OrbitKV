@@ -23,7 +23,7 @@ use pyo3::{
 };
 
 use crate::local_restore::{LocalCompletions, LocalRestore, LocalRestoreWorker};
-use crate::{OrbitKVError, OrbitKVInternal, query_response};
+use crate::{OrbitKVError, OrbitKVInternal, SaveNotSubmittedError, query_response};
 
 type PyLeaseLoad = (Vec<u8>, Vec<Vec<Option<u32>>>);
 
@@ -1345,7 +1345,14 @@ impl PyCacheManagerClient {
         registration: &PyGpuRegistration,
         saves: Vec<(String, Vec<u32>, Vec<Vec<u8>>)>,
     ) -> PyResult<Py<PySaveHandle>> {
-        let worker = py.detach(|| self.registered_worker(registration))?;
+        let not_submitted = |error: PyErr| {
+            let rejected = SaveNotSubmittedError::new_err(error.to_string());
+            rejected.set_cause(py, Some(error));
+            rejected
+        };
+        let worker = py
+            .detach(|| self.registered_worker(registration))
+            .map_err(not_submitted)?;
         let request = publish_request(
             registration.instance_id.clone(),
             registration.tp_rank,
@@ -1354,7 +1361,7 @@ impl PyCacheManagerClient {
             registration.generation,
             saves,
         );
-        let bytes = save_request_bytes(&request)?;
+        let bytes = save_request_bytes(&request).map_err(not_submitted)?;
         let pending = Arc::new(PendingSave {
             instance: registration.instance_id.clone(),
             bytes,
@@ -1364,7 +1371,11 @@ impl PyCacheManagerClient {
         let operation_id = self
             .next_save
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |id| id.checked_add(1))
-            .map_err(|_| OrbitKVInternal::new_err("Save operation identity exhausted"))?;
+            .map_err(|_| {
+                not_submitted(OrbitKVInternal::new_err(
+                    "Save operation identity exhausted",
+                ))
+            })?;
         // Allocate the Python handoff before any native submission. The returned
         // Py object needs no fallible object allocation after spawning work.
         let handle = Py::new(
@@ -1375,7 +1386,8 @@ impl PyCacheManagerClient {
                 pending: Arc::clone(&pending),
             },
         )?;
-        py.detach(|| {
+        let mut worker_started = false;
+        let admission = py.detach(|| {
             let local = self
                 .local
                 .lock()
@@ -1445,9 +1457,17 @@ impl PyCacheManagerClient {
                 owned.remove(&operation_id);
                 return Err(OrbitKVInternal::new_err(error.to_string()));
             }
+            worker_started = true;
             drop(owned);
             drop(local);
             Ok(())
+        });
+        admission.map_err(|error| {
+            if worker_started {
+                error
+            } else {
+                not_submitted(error)
+            }
         })?;
         Ok(handle)
     }

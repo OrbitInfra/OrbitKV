@@ -21,6 +21,7 @@ mod registration;
 // Custom Python exceptions for error classification
 create_exception!(orbitkv, OrbitKVError, PyException);
 create_exception!(orbitkv, OrbitKVInternal, OrbitKVError);
+create_exception!(orbitkv, SaveNotSubmittedError, OrbitKVError);
 
 #[pyfunction]
 fn rekey_hashes(py: Python<'_>, hashes: Vec<Vec<u8>>, generation: &[u8]) -> PyResult<Py<PyTuple>> {
@@ -298,6 +299,10 @@ fn orbitkv(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register custom exceptions for error classification
     m.add("OrbitKVError", m.py().get_type::<OrbitKVError>())?;
     m.add("OrbitKVInternal", m.py().get_type::<OrbitKVInternal>())?;
+    m.add(
+        "SaveNotSubmittedError",
+        m.py().get_type::<SaveNotSubmittedError>(),
+    )?;
     m.add_class::<QueryLoading>()?;
     m.add_class::<QueryReady>()?;
     m.add_class::<ShardedQueryReady>()?;

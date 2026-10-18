@@ -682,6 +682,18 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   Native pending admission does not bound the Python queue, retained task list
   or user-held completed handles. Installed GPU/model, physical termination,
   allocation/page generations and adapter-fault qualification remain open.
+  A further Save correction addresses an independently reproduced SGLang FIFO
+  counterexample: an earlier unknown native result can be unpinned by a later
+  queued task's completion. The existing offload worker now retains subsequent
+  queued tasks without submitting them or advancing the completion FIFO. The
+  same candidate exposes `SaveNotSubmittedError` only for explicit native
+  prelaunch rejection; adapters consume it only around `start_save`, preserving
+  unknown attachment/wait holds. Real CPU channel and selected-release FIFO
+  controls, a fresh installed wheel and both official model/media gates remain
+  required before acceptance. Evidence and the original rejected design are at
+  `/root/orbitkv-artifacts/s3-save-no-submit-20261018/`. This does not reconcile
+  unknown admitted work or qualify page generations, physical faults or native
+  P/D; S3/S4/S5 remain Partial.
   The next installed gate exercises the accepted SaveHandle with deterministic
   per-round GPU payloads, normal unregister, fresh consumer registration and
   full Restore/sentinel checks over DRAM and actual io_uring SSD. It rejects

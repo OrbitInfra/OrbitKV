@@ -65,7 +65,7 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
 ):
     import torch
 
-    from orbitkv import BlockHashes, CacheManagerClient, QueryReady
+    from orbitkv import BlockHashes, CacheManagerClient, QueryReady, SaveNotSubmittedError
 
     if not torch.cuda.is_available():
         pytest.fail("Installed byte qualification requires a working CUDA GPU")
@@ -133,6 +133,9 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                 release_receipt(source_counters),
                 time.monotonic() + 30,
             )
+            with pytest.raises(SaveNotSubmittedError, match="no longer active") as rejected:
+                source.start_save(source_registration, [("bytes", source_indices, hashes)])
+            assert isinstance(rejected.value.__cause__, ValueError)
             del handle, source_registration
             idle_names = [
                 "orbitkv_save_active_operations",

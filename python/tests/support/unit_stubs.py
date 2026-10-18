@@ -269,6 +269,11 @@ def _install_native_extension_stub() -> None:
     module.OrbitKVInternal = getattr(
         module, "OrbitKVInternal", type("OrbitKVInternal", (Exception,), {})
     )
+    module.SaveNotSubmittedError = getattr(
+        module,
+        "SaveNotSubmittedError",
+        type("SaveNotSubmittedError", (module.OrbitKVError,), {}),
+    )
     module.QueryLoading = getattr(module, "QueryLoading", _QueryLoading)
     module.QueryReady = getattr(module, "QueryReady", _QueryReady)
     module.RecoveryContract = getattr(module, "RecoveryContract", MagicMock)

@@ -7,7 +7,7 @@ fn pending_save_retains_after_handle_drop_and_delayed_reply() {
     use orbitkv_channel::{
         BootstrapServer, CommandCode, RESPONSE_FLAG_REQUEST_CONSUMED, Response, TransportServer,
     };
-    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
     use std::time::Instant;
     Python::initialize();
     let directory = std::path::PathBuf::from(format!("/var/tmp/okv-save-{}", std::process::id()));
@@ -19,8 +19,10 @@ fn pending_save_retains_after_handle_drop_and_delayed_reply() {
     let transport = TransportServer::bind(&name).unwrap();
     let release = Arc::new(AtomicBool::new(false));
     let stop = Arc::new(AtomicBool::new(false));
+    let requests = Arc::new(AtomicUsize::new(0));
     let gate = Arc::clone(&release);
     let stopping = Arc::clone(&stop);
+    let received = Arc::clone(&requests);
     let peer = std::thread::spawn(move || {
         let mut sessions = HashMap::new();
         let mut pending = Vec::new();
@@ -42,6 +44,7 @@ fn pending_save_retains_after_handle_drop_and_delayed_reply() {
                         .unwrap();
                     PublishRequest::decode(&bootstrap.arena().read(command.descriptor).unwrap())
                         .unwrap();
+                    received.fetch_add(1, Ordering::Release);
                     pending.push((command, reply));
                     Ok(())
                 })
@@ -69,16 +72,36 @@ fn pending_save_retains_after_handle_drop_and_delayed_reply() {
     let registration = registration(&client, [37; 16]);
     let tensors = Arc::downgrade(&registration._tensors);
     let handle = Python::attach(|py| client.start_save(py, &registration, Vec::new())).unwrap();
-    {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while requests.load(Ordering::Acquire) != 1 {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_micros(100));
+    }
+    let assert_not_submitted = |error: PyErr| {
+        Python::attach(|py| {
+            assert!(error.is_instance_of::<SaveNotSubmittedError>(py), "{error}");
+            assert!(error.cause(py).is_some());
+        });
+        assert_eq!(requests.load(Ordering::Acquire), 1);
+        assert_eq!(client.saves.lock().unwrap().len(), 1);
+    };
+    for metadata_full in [false, true] {
         let mut usage = SAVE_USAGE.lock().unwrap();
         let saved = *usage;
-        usage.0 = MAX_PENDING_SAVES;
+        if metadata_full {
+            usage.1 = MAX_PENDING_SAVE_BYTES;
+        } else {
+            usage.0 = MAX_PENDING_SAVES;
+        }
         drop(usage);
-        assert!(Python::attach(|py| client.start_save(py, &registration, Vec::new())).is_err());
+        let rejected = Python::attach(|py| client.start_save(py, &registration, Vec::new()));
         *SAVE_USAGE.lock().unwrap() = saved;
-        assert_eq!(client.saves.lock().unwrap().len(), 1);
+        assert_not_submitted(rejected.unwrap_err());
     }
-    drop(registration);
+    let next = client.next_save.swap(u64::MAX, Ordering::AcqRel);
+    let rejected = Python::attach(|py| client.start_save(py, &registration, Vec::new()));
+    client.next_save.store(next, Ordering::Release);
+    assert_not_submitted(rejected.unwrap_err());
     let started = Instant::now();
     let response =
         Python::attach(|py| client.wait_save(py, &handle.borrow(py), Some(0.001))).unwrap();
@@ -89,6 +112,14 @@ fn pending_save_retains_after_handle_drop_and_delayed_reply() {
         [37; 16],
     );
     assert!(Python::attach(|py| foreign.poll_save(py, &handle.borrow(py))).is_err());
+    assert_not_submitted(
+        Python::attach(|py| foreign.start_save(py, &registration, Vec::new())).unwrap_err(),
+    );
+    client.local.lock().unwrap().clear();
+    assert_not_submitted(
+        Python::attach(|py| client.start_save(py, &registration, Vec::new())).unwrap_err(),
+    );
+    drop(registration);
     let observed = Python::attach(|py| Arc::clone(&handle.borrow(py).pending));
     drop(handle);
     assert!(
@@ -105,9 +136,10 @@ fn pending_save_retains_after_handle_drop_and_delayed_reply() {
     }
     stop.store(true, Ordering::Release);
     peer.join().unwrap();
+    assert_eq!(requests.load(Ordering::Acquire), 1);
     std::fs::remove_dir_all(directory).unwrap();
     println!(
-        "actual_channel_Save=1 bounded_pending=1 foreign_rejected=1 handle_drop_retained=1 late_receipt_release=1 no_DMA=true"
+        "actual_channel_Save=1 typed_no_submit=5 bounded_pending=1 foreign_rejected=1 handle_drop_retained=1 late_receipt_release=1 no_DMA=true"
     );
 }
 

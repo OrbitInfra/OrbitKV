@@ -23,6 +23,7 @@ from orbitkv import (
     QueryCandidates,
     QueryReady,
     RecoveryContract,
+    SaveNotSubmittedError,
 )
 from orbitkv.client.gpu import resolve_device_id
 from orbitkv.logging_utils import TRANSFER_TRACING, trace_transfer
@@ -550,6 +551,9 @@ class OrbitKVLinker(UnifiedCacheLinker):
             try:
                 if task is None:
                     return
+                if self._retained_offloads:
+                    self._retained_offloads.append((task, None))
+                    continue
                 registration, saves, ready = task
                 success = False
                 handle = None
@@ -558,7 +562,11 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 try:
                     ready.synchronize()
                     attempted = True
-                    handle = self.client.start_save(registration, saves)
+                    try:
+                        handle = self.client.start_save(registration, saves)
+                    except SaveNotSubmittedError:
+                        attempted = False
+                        raise
                     status = self.client.wait_save(handle)
                     if not status.done:
                         raise RuntimeError("native Save wait returned without completion")
