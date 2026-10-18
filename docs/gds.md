@@ -421,7 +421,7 @@ These are transfer-shape and correctness results, not native throughput claims.
 
 ## Bare-metal acceptance script
 
-[`benches.gds`](../benches/gds.py) runs the native qualification sequence. It
+[`benches.storage.gds`](../benches/storage/gds.py) runs the native qualification sequence. It
 rejects containers, verifies the selected ext4/XFS mount is NVMe-backed,
 disables CPU compatibility, and enables per-process cuFile statistics through
 a private config overlay. It does not change system configuration. A private
@@ -437,7 +437,7 @@ building the other variant. The script accepts these prebuilt artifacts and
 never invokes Cargo while services are running.
 
 ```bash
-.venv/vllm-release/bin/python -m benches.gds \
+.venv/vllm-release/bin/python -m benches.storage.gds \
   --ssd-dir /mnt/nvme/qualification --model /models/Qwen3-8B \
   --manager /opt/orbitkv/manager \
   --fault-manager /opt/orbitkv/manager-faults \
@@ -471,7 +471,7 @@ throughput, storage counters and whole-workload Manager CPU usage. Linux process
 I/O accounting is recorded separately from cuFile GPU I/O bytes. Raw logs remain
 in this private run directory.
 
-This script has source-level checks in `benches/tests/test_gds.py`. Its full
+This script has source-level checks in `benches/tests/storage/test_gds.py`. Its full
 native sequence is pending an accessible bare-metal GPU/NVMe host; container
 functional passes do not satisfy it.
 

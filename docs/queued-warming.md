@@ -188,7 +188,7 @@ emits `first_use` once per restored batch.
 Reproduce an experimental window from the repository root:
 
 ```bash
-.venv/vllm-release/bin/python -m benches.single_node \
+.venv/vllm-release/bin/python -m benches.serving.single_node \
   --engine vllm --backend orbitkv --model /workspace/models/qwen3-8b \
   --workload sustained --concurrencies 8 --duration-seconds 30 \
   --max-requests 1000 --working-set 12 --reuse-ratio 0.75 \

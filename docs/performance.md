@@ -185,7 +185,7 @@ Use the programs and workload definitions in
 Write output to an explicit directory outside the checkout:
 
 ```bash
-.venv/vllm-release/bin/python -m benches.single_node \
+.venv/vllm-release/bin/python -m benches.serving.single_node \
   --engine vllm --backend orbitkv --model /path/to/immutable-model \
   --output /var/tmp/orbitkv-bench/run-001
 ```

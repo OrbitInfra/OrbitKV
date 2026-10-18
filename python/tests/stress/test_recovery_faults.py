@@ -40,10 +40,10 @@ def until(predicate, timeout=30):
 def test_concurrent_model_recovery_faults(engine, request, tmp_path, monkeypatch):
     pytest.importorskip(engine)
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3]))
-    from benches.launch import configure
-    from benches.metrics import metrics
-    from benches.runtime import server
-    from benches.workload import evict_host_cache, generate
+    from benches.common.launch import configure
+    from benches.common.metrics import metrics
+    from benches.common.runtime import server
+    from benches.common.workload import evict_host_cache, generate
 
     model = Path(request.config.getoption("--model"))
     config = json.loads((model / "config.json").read_text())

@@ -558,5 +558,5 @@ impl LocalCopyTrace {
 mod tests;
 
 #[cfg(test)]
-#[path = "../../../../../benches/native_copy_trace.rs"]
+#[path = "../../../../../benches/transfer/native/native_copy_trace.rs"]
 mod profile;

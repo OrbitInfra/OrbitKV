@@ -54,7 +54,7 @@ reconstruction, fresh physical postflight and acceptance;
 Reviewer CPU preparation failures stay beside their successful replacements;
 no hardware cell or original evidence was replaced.
 
-The [methodology](../benches/README.md#actual-sglang-pool-byte-and-kernel-pair-checks)
+The [methodology](../benches/transfer/README.md#actual-sglang-pool-byte-and-kernel-pair-checks)
 defines full-byte controls and four-pair bootstrap guards; concise conclusions
 are in [performance](performance.md#independent-sglang-kernel-pairs).
 This is a private host archive. Scoped serial recovery acceptance does not select
@@ -121,23 +121,23 @@ not a public download or an independently complete Manager qualification.
 
 Choose a new directory outside the source checkout for each run. Python harnesses
 validate `--output` before starting services, including resolution of symlinks.
-`benches.sharegpt` requires `--output-dir`; `benches/serving.sh` requires
+`benches.serving.sharegpt` requires `--output-dir`; `benches/serving/serving.sh` requires
 `RESULT_DIR`. The GDS qualification uses a private directory on the explicitly
 selected external `--ssd-dir` mount. Criterion measurements require an external
 `CARGO_TARGET_DIR`. Build native libraries before starting any runtime gate.
 
 ```bash
-.venv/vllm-release/bin/python -m benches.single_node \
+.venv/vllm-release/bin/python -m benches.serving.single_node \
   --engine vllm --backend orbitkv --model /path/to/immutable-model \
   --installed-artifact --enforce-eager \
   --output /var/tmp/orbitkv-bench/vllm-dram-001
 
-python -m benches.report /var/tmp/orbitkv-bench/vllm-dram-001 \
+python -m benches.common.report /var/tmp/orbitkv-bench/vllm-dram-001 \
   --output /var/tmp/orbitkv-bench/vllm-report-001
 ```
 
 The [benchmark guide](../benches/README.md) defines workloads and matched controls.
-The [preparation reproduction script](../benches/reproduce_preparation.sh) accepts
+The [preparation reproduction script](../benches/serving/reproduce_preparation.sh) accepts
 an external output root as its first argument. Preserve source/engine/model
 revisions, binary hashes, hardware and transport, budgets, commands, correctness
 and drain evidence, uncertainty and all failed preparations with the result.
@@ -247,13 +247,13 @@ one/two/four NIC selections, NUMA placement and concurrent clients/GPU pairs.
 Registration or a transport's internal counter alone does not prove physical
 GPUDirect RDMA; retain NIC counters, payload checks and negative route controls.
 
-`benches.tent_stage` exposes a private CPU-mmap READ diagnostic through the
+`benches.distributed.tent_stage` exposes a private CPU-mmap READ diagnostic through the
 pinned C ABI. Its open/allocate/submit/terminal/free intervals separate the API
 boundaries; lazy metadata and QP initialization may still occur after submit.
 The one-millisecond polling backoff is part of the observation. SHA validation
 is outside native timing. Require fresh consumer processes for cold samples,
 exact payload checks, accepted batch free and source stop after all readers
-drain. See [the protocol](../benches/README.md#native-tent-first-read-diagnostic).
+drain. See [the protocol](../benches/distributed/README.md#native-tent-first-read-diagnostic).
 This cannot establish Manager or model latency, physical GPUDirect RDMA, or
 native requester-crash reclamation.
 
@@ -261,11 +261,11 @@ For the pinned native build, the benchmark-only `tent_native_trace.cpp` records
 metadata RPC, endpoint construction, connect and bootstrap RPC without changing
 their arguments, results or transport policy. Its exact C++ ABI, bounded event
 array and trace-off/on overhead pilot are part of the frozen input contract.
-`benches.tent_trace` validates process identity, event completeness and consumer
+`benches.distributed.tent_trace` validates process identity, event completeness and consumer
 READ boundaries offline. Overlapping calls do not form an additive latency
 breakdown; compare timestamps only within one host. Missing events, failed output
 or failed native drain invalidate the diagnosis. See the build and protocol in
-[the benchmark guide](../benches/README.md#native-tent-first-read-diagnostic).
+[the benchmark guide](../benches/distributed/README.md#native-tent-first-read-diagnostic).
 
 Separate experiments with existing RPC-thread and RDMA-lane configuration need
 fresh endpoints, one changed knob, matched ordering, full bytes and explicit
@@ -282,7 +282,7 @@ isolated comparison should rebuild both the release baseline and only that
 three-file repair with identical compiler/configuration/dependencies. Verify
 all other shared libraries are identical, test slot adjacency and wraparound,
 and retain release cleanup ownership when adapting source context. Use
-[`benches.tent_compare`](../benches/README.md#native-tent-library-comparison)
+[`benches.distributed.tent_compare`](../benches/distributed/README.md#native-tent-library-comparison)
 without tracing; source deltas, hashes, input readiness failures, valid smoke
 and formal results belong outside the checkout. Neither upstream's own
 measurements nor a private-buffer result qualifies OrbitKV's consumed path.
