@@ -837,6 +837,14 @@ stay owned. Python attachment, queue and wait errors are outside these catches;
 an unknown request preparation also preserves boundary jobs in the same handoff.
 New actual CPU budget, mixed batch and clone-failure controls are distinct from
 healthy GPU/fault qualification; the original wheel and rejection stay archived.
+Independent rereview also rejected `b2736458`: Python method/argument lookup
+inside the typed native-rejection catch could falsely complete a vLLM batch or
+reject SGLang tree ownership without calling native code. The correction binds
+the native method and constructs its arguments before that catch. Lookup errors
+retain the producer/batch and released-engine tree hold. The original vLLM and
+SGLang negative controls remain under `independent-b273-review-1/` in
+`/root/orbitkv-artifacts/s3-save-producer-admission-20261018/`; the corrected
+source, installed package and adapter qualification require their own review.
 
 ## S4 — Finish communication execution and demonstrate gains
 

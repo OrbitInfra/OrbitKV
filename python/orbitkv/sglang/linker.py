@@ -537,9 +537,12 @@ class OrbitKVLinker(UnifiedCacheLinker):
         ready = torch.cuda.Event()
         ready.record()
         try:
-            handle = self.client.prepare_save(self.registration, saves)
-        except SaveNotSubmittedError:
-            return False
+            prepare = self.client.prepare_save
+            registration = self.registration
+            try:
+                handle = prepare(registration, saves)
+            except SaveNotSubmittedError:
+                return False
         except BaseException:
             self._retained_offloads.append((transfers, None))
             # A returned acceptance keeps the released engine's tree lock.
@@ -570,8 +573,10 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 try:
                     ready.synchronize()
                     attempted = True
+                    submit = self.client.submit_saves
+                    handles = [handle]
                     try:
-                        self.client.submit_saves([handle])
+                        submit(handles)
                     except SaveNotSubmittedError:
                         attempted = False
                         completed = True

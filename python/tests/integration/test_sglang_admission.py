@@ -209,6 +209,76 @@ def test_proven_preparation_rejection_does_not_accept_tree_ownership(linker, mon
     assert linker._completed_offloads.empty()
 
 
+@pytest.mark.parametrize("where", ["prepare-method", "registration", "submit-method"])
+def test_python_lookup_rejection_preserves_offload_tree_hold(linker, monkeypatch, where):
+    import queue
+
+    from sglang.srt.mem_cache.hicache_storage import PoolName
+    from sglang.srt.mem_cache.unified_cache.unified_cache_linker import (
+        UnifiedCacheLinkerWrapper,
+        _PendingOffload,
+    )
+
+    from orbitkv import SaveNotSubmittedError
+
+    linker.registration = object()
+    linker._offload_queue = queue.Queue()
+    linker._completed_offloads = queue.Queue()
+    linker.layout.pools = {
+        PoolName.KV: SimpleNamespace(
+            kind="attention", layer_names=["kv:0"], block_ids=lambda *_: [2]
+        )
+    }
+    monkeypatch.setattr("orbitkv.sglang.linker.torch.cuda.Event", MagicMock)
+    transfers = [SimpleNamespace(name=PoolName.KV, keys=["key"], device_indices=[2])]
+    prepare, submit, cancel = (
+        linker.client.prepare_save,
+        linker.client.submit_saves,
+        linker.client.cancel_save,
+    )
+    if where == "registration":
+
+        class RejectRegistration(type(linker)):
+            def __getattribute__(self, name):
+                if name == "registration":
+                    raise SaveNotSubmittedError("Python argument before native call")
+                return super().__getattribute__(name)
+
+        linker.__class__ = RejectRegistration
+    else:
+        attribute = "prepare_save" if where == "prepare-method" else "submit_saves"
+        client = linker.client
+
+        class RejectMethod:
+            def __getattribute__(self, name):
+                if name == attribute:
+                    raise SaveNotSubmittedError("Python method lookup before native call")
+                return getattr(client, name)
+
+        linker.client = RejectMethod()
+
+    assert linker.offload(transfers) is True
+    if where == "submit-method":
+        linker._offload_queue.put(None)
+        linker._offload_worker()
+        prepare.assert_called_once()
+    else:
+        prepare.assert_not_called()
+        assert linker._offload_queue.empty()
+    submit.assert_not_called()
+    cancel.assert_not_called()
+    assert len(linker._retained_offloads) == 1
+
+    wrapper = object.__new__(UnifiedCacheLinkerWrapper)
+    wrapper.cache_linker = linker
+    wrapper.cache = MagicMock()
+    wrapper.pending_offloads = [_PendingOffload(2, object(), [2])]
+    count = wrapper.num_completed_offloads()
+    wrapper.commit_completed_offloads(wrapper.take_completed_offloads(count))
+    wrapper.cache.dec_lock_ref.assert_not_called()
+    assert len(wrapper.pending_offloads) == 1
+
+
 def transfer(keys):
     from sglang.srt.mem_cache.hicache_storage import PoolName
 

@@ -813,13 +813,16 @@ class WorkerAdapter:
         task.native_attempted = True
         task.blocks = sum(len(ids) for _name, ids, _hashes in saves)
         try:
-            handle = self._client.prepare_save(task.registration, saves)
-        except SaveNotSubmittedError:
-            task.native_completed = True
-            self._complete_save_requests(task.request_ids)
-            with self._save_completion_lock:
-                self._completed_boundary_jobs.extend(task.boundary_job_ids)
-            return
+            prepare = self._client.prepare_save
+            registration = task.registration
+            try:
+                handle = prepare(registration, saves)
+            except SaveNotSubmittedError:
+                task.native_completed = True
+                self._complete_save_requests(task.request_ids)
+                with self._save_completion_lock:
+                    self._completed_boundary_jobs.extend(task.boundary_job_ids)
+                return
         except BaseException:
             self._retained_save_tasks.append(task)
             raise
@@ -916,8 +919,10 @@ class WorkerAdapter:
                 raise RuntimeError("save batch spans different GPU registrations")
             if self._retained_save_tasks:
                 raise RuntimeError("previous native Save completion remains unknown")
+            submit = self._client.submit_saves
+            handles = [task.native_handle for task in batch]
             try:
-                self._client.submit_saves([task.native_handle for task in batch])
+                submit(handles)
             except SaveNotSubmittedError:
                 for task in batch:
                     task.native_completed = True

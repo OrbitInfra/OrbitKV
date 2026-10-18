@@ -320,6 +320,10 @@ The native Save contract distinguishes `SaveNotSubmittedError` from unknown
 handoffs: only that exception from `start_save` proves the current invocation
 launched no native Publish worker. Handle allocation, attachment and wait errors
 retain the page hold. SGLang also preserves its official completion FIFO: once an
+Native producer methods and their registration/handle arguments are resolved
+before the typed catch. Python method or argument lookup errors retain pages;
+the exception type alone cannot establish that native code ran and rolled back.
+SGLang also preserves its official completion FIFO: once an
 earlier result is unknown, the worker retains later queued tasks without starting
 them or reporting their completion against the earlier engine node. This does
 not reconcile unknown owners or prove physical drain; qualification is tracked

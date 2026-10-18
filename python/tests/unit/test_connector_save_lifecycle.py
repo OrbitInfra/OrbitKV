@@ -162,6 +162,53 @@ def test_typed_error_outside_prepare_retains_the_producer_owner(where):
     assert not worker._save_completion_events["r"].is_set()
 
 
+@pytest.mark.parametrize("where", ["prepare-method", "registration", "submit-method", "handle"])
+def test_python_lookup_rejection_never_proves_native_rollback(where):
+    worker = make_worker()
+    task = worker._make_save_task(
+        {"r": SaveIntent(block_ids_by_group=((1,),), block_hashes=(b"h",))}, MagicMock()
+    )
+    submit = worker._client.submit_saves
+    prepare = worker._client.prepare_save
+    if where.startswith("submit") or where == "handle":
+        worker._enqueue_save(task)
+        worker._save_queue.get_nowait()
+
+    if where.endswith("method"):
+        attribute = "prepare_save" if where == "prepare-method" else "submit_saves"
+
+        class RejectLookup:
+            def __getattribute__(self, name):
+                if name == attribute:
+                    raise SaveNotSubmittedError("Python method lookup before native call")
+                return getattr(worker_client, name)
+
+        worker_client = worker._client
+        worker._client = RejectLookup()
+    else:
+        attribute = "registration" if where == "registration" else "native_handle"
+
+        class RejectArgument(type(task)):
+            def __getattribute__(self, name):
+                if name == attribute:
+                    raise SaveNotSubmittedError("Python argument lookup before native call")
+                return super().__getattribute__(name)
+
+        task.__class__ = RejectArgument
+
+    if where.startswith("prepare") or where == "registration":
+        with pytest.raises(SaveNotSubmittedError):
+            worker._enqueue_save(task)
+        prepare.assert_not_called()
+    else:
+        with pytest.raises(RuntimeError, match="pages remain held"):
+            worker._process_save_batch([task])
+    submit.assert_not_called()
+    assert worker._retained_save_tasks == [task]
+    assert task.native_attempted and not task.native_completed
+    assert not worker._save_completion_events["r"].is_set()
+
+
 def test_unknown_request_preparation_also_preserves_boundary_jobs():
     worker = make_worker()
     worker._cache_groups = SimpleNamespace(group_count=2)
