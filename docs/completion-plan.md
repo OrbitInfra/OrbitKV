@@ -873,6 +873,13 @@ code and passes after initialization. These software readiness controls and
 the original rejection are archived under
 `/root/orbitkv-artifacts/s3-prepared-save-installed-20261019/`. The changed
 Manager bytes require a new matched wheel and independent review before launch.
+The `6e13325e` precision checkpoint also remains rejected: converting raw
+`2^53+1` to float rounded before its range check. The byte gate now parses
+raw Prometheus samples as exact decimal values and validates each integer and
+their aggregate before producing an integer receipt. Rounded large values and
+fractional samples cannot become valid counters. The original precision
+counterexample and rejected package stay archived; this correction needs its
+own source/package review and does not change transfer ownership.
 
 ## S4 — Finish communication execution and demonstrate gains
 

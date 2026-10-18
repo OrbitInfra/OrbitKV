@@ -7,10 +7,11 @@ normal-path gate does not establish failed CUDA/RDMA/SSD physical termination.
 import contextlib
 import hashlib
 import json
-import math
 import os
+import re
 import time
 import uuid
+from decimal import Decimal, InvalidOperation
 
 import pytest
 import requests
@@ -23,15 +24,25 @@ pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 
 
 def save_bytes_snapshot(http_port: int) -> int:
-    value = fetch_orbitkv_metrics(http_port).get("orbitkv_save_bytes_total")
-    if (
-        type(value) not in (int, float)
-        or not math.isfinite(value)
-        or not 0 <= value <= 2**53
-        or value != int(value)
-    ):
-        raise RuntimeError("Save byte counter is missing, nonintegral or outside exact range")
-    return int(value)
+    response = requests.get(f"http://localhost:{http_port}/metrics", timeout=5)
+    response.raise_for_status()
+    samples = []
+    for line in response.text.splitlines():
+        if not line.startswith("orbitkv_save_bytes_total"):
+            continue
+        match = re.fullmatch(r"orbitkv_save_bytes_total(?:\{[^}]*\})?\s+(\S+)", line)
+        if match is None or len(match[1]) > 128 or len(samples) >= 4096:
+            raise RuntimeError("Save byte counter is missing or malformed")
+        try:
+            value = Decimal(match[1])
+        except InvalidOperation as error:
+            raise RuntimeError("Save byte counter is missing or malformed") from error
+        if not value.is_finite() or not 0 <= value <= 2**53 or value != value.to_integral_value():
+            raise RuntimeError("Save byte counter is missing, nonintegral or outside exact range")
+        samples.append(int(value))
+    if not samples or sum(samples) > 2**53:
+        raise RuntimeError("Save byte counter is missing or outside exact range")
+    return sum(samples)
 
 
 def register(client, identity, namespace, tensor):

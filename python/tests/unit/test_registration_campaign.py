@@ -16,7 +16,10 @@ import requests
 from tests.support import registration_campaign as campaign
 
 
-@pytest.mark.parametrize("text", ["", "NaN", "inf", "-1", "0.5", "9007199254740994"])
+@pytest.mark.parametrize(
+    "text",
+    ["", "NaN", "inf", "-1", "0.5", "9007199254740994", "9007199254740993", "9007199254740991.5"],
+)
 def test_save_byte_snapshot_rejects_missing_or_inexact_counter(monkeypatch, text):
     from tests.integration.test_pending_save_bytes import save_bytes_snapshot
 
@@ -26,6 +29,20 @@ def test_save_byte_snapshot_rejects_missing_or_inexact_counter(monkeypatch, text
     monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
     with pytest.raises(RuntimeError, match="counter is missing"):
         save_bytes_snapshot(1)
+
+
+@pytest.mark.parametrize("text", ["0", "16384.0", "1.6384e4", "9007199254740992"])
+def test_save_byte_snapshot_preserves_exact_raw_integer(monkeypatch, text):
+    from decimal import Decimal
+
+    from tests.integration.test_pending_save_bytes import save_bytes_snapshot
+
+    response = requests.Response()
+    response.status_code = 200
+    response._content = f"orbitkv_save_bytes_total {text}\n".encode()
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
+    value = save_bytes_snapshot(1)
+    assert type(value) is int and value == int(Decimal(text))
 
 
 def cpu_ready_inputs(tmp_path):
