@@ -409,6 +409,18 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   to a permanently lost requester. Inspect the current pinned TENT and latest
   upstream main/issues before changing the ABI; reuse or submit a focused
   transport fix if needed. Keep OrbitKV metadata/control state in OrbitKV.
+  The reusable `crates/orbitkv-transfer/tests/native/run_unregister_error.py`
+  control calls the actual frozen TENT engine with a deterministic test transport
+  refusal. Its strict refusal exits one: unregister reports success while the
+  transport retains the address, a retry does not call removal again, and an
+  attempted same-address registration reports success after transport rejection.
+  The separate reproduction scene exits zero only when those defects are present;
+  it is defect evidence, not a qualification pass. Latest upstream inspection at
+  `5d0636f5` still shows removal errors logged without propagation and RDMA buffer
+  records erased after unchecked unregister results. Evidence and failed controls
+  are under `/root/orbitkv-artifacts/s3-native-unregister-20261018/`. This source/
+  CPU evidence candidate needs independent review; it submits no payload DMA
+  and grants no new registration, termination or reclamation support.
 - Bound and diagnose retained/quarantined source memory while proof is absent.
   Timeout, etcd expiry, cancellation, remote process disappearance and a control
   ACK are not interchangeable with native drain. An unavailable upstream primitive
