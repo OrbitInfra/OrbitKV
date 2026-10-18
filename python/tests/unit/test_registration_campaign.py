@@ -18,7 +18,17 @@ from tests.support import registration_campaign as campaign
 
 @pytest.mark.parametrize(
     "text",
-    ["", "NaN", "inf", "-1", "0.5", "9007199254740994", "9007199254740993", "9007199254740991.5"],
+    [
+        "",
+        "NaN",
+        "inf",
+        "-1",
+        "0.5",
+        "9007199254740994",
+        "9007199254740993",
+        "9007199254740991.5",
+        "1_6384",
+    ],
 )
 def test_save_byte_snapshot_rejects_missing_or_inexact_counter(monkeypatch, text):
     from tests.integration.test_pending_save_bytes import save_bytes_snapshot
@@ -26,6 +36,7 @@ def test_save_byte_snapshot_rejects_missing_or_inexact_counter(monkeypatch, text
     response = requests.Response()
     response.status_code = 200
     response._content = f"orbitkv_save_bytes_total {text}\n".encode()
+    response._content_consumed = True
     monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
     with pytest.raises(RuntimeError, match="counter is missing"):
         save_bytes_snapshot(1)
@@ -40,9 +51,60 @@ def test_save_byte_snapshot_preserves_exact_raw_integer(monkeypatch, text):
     response = requests.Response()
     response.status_code = 200
     response._content = f"orbitkv_save_bytes_total {text}\n".encode()
+    response._content_consumed = True
     monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
     value = save_bytes_snapshot(1)
     assert type(value) is int and value == int(Decimal(text))
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "orbitkv_save_bytes_total 0\n" * 2,
+        'orbitkv_save_bytes_total{label="' + "x" * 1024 + '"} 16384\n',
+        "# " + "x" * 4096 + "\norbitkv_save_bytes_total 0\n",
+        "# x\n" * (1024**2 // 4 + 1) + "orbitkv_save_bytes_total 0\n",
+    ],
+    ids=["duplicate", "oversized-label", "long-line", "large-body"],
+)
+def test_save_byte_snapshot_bounds_raw_response(monkeypatch, body):
+    from tests.integration.test_pending_save_bytes import save_bytes_snapshot
+
+    response = requests.Response()
+    response.status_code = 200
+    response._content = body.encode()
+    response._content_consumed = True
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
+    with pytest.raises(RuntimeError, match="counter"):
+        save_bytes_snapshot(1)
+
+
+def test_save_byte_snapshot_consumes_actual_exporter_labels(monkeypatch):
+    from tests.integration.test_pending_save_bytes import save_bytes_snapshot
+
+    response = requests.Response()
+    response.status_code = 200
+    response._content = (
+        b'orbitkv_save_bytes_total{otel_scope_name="orbitkv-core",otel_scope_schema_url=""} 8192\n'
+        b'orbitkv_save_bytes_total{otel_scope_name="other-core",otel_scope_schema_url=""} 8192.0\n'
+    )
+    response._content_consumed = True
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
+    assert save_bytes_snapshot(1) == 16384
+
+
+def test_save_byte_snapshot_deadline_stops_trickled_response(monkeypatch):
+    from tests.integration import test_pending_save_bytes as byte_gate
+
+    response = requests.Response()
+    response.status_code = 200
+    response._content = b"orbitkv_save_bytes_total 0\n"
+    response._content_consumed = True
+    ticks = iter((0.0, 11.0))
+    monkeypatch.setattr(byte_gate.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
+    with pytest.raises(RuntimeError, match="time bound"):
+        byte_gate.save_bytes_snapshot(1)
 
 
 def cpu_ready_inputs(tmp_path):
@@ -1316,6 +1378,7 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
         response = requests.Response()
         response.status_code = 200
         response._content = f"orbitkv_save_bytes_total {value}\n".encode()
+        response._content_consumed = True
         monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
         return save_bytes_snapshot(1)
 

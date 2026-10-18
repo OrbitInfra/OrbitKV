@@ -24,22 +24,51 @@ pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 
 
 def save_bytes_snapshot(http_port: int) -> int:
-    response = requests.get(f"http://localhost:{http_port}/metrics", timeout=5)
-    response.raise_for_status()
+    deadline = time.monotonic() + 10
+    raw = bytearray()
+    with requests.get(f"http://localhost:{http_port}/metrics", timeout=5, stream=True) as response:
+        response.raise_for_status()
+        # Read one buffered byte at a time so a trickling peer cannot hide a
+        # whole chunk behind requests' per-read timeout.
+        for chunk in response.iter_content(1):
+            if time.monotonic() >= deadline or len(raw) + len(chunk) > 1024**2:
+                raise RuntimeError("Save byte counter response exceeded its byte/time bound")
+            raw.extend(chunk)
+    if time.monotonic() >= deadline:
+        raise RuntimeError("Save byte counter response exceeded its time bound")
     samples = []
-    for line in response.text.splitlines():
+    label_sets = set()
+    for line in raw.decode("ascii", errors="strict").splitlines():
+        if len(line) > 4096:
+            raise RuntimeError("Save byte counter response exceeded its line bound")
         if not line.startswith("orbitkv_save_bytes_total"):
             continue
-        match = re.fullmatch(r"orbitkv_save_bytes_total(?:\{[^}]*\})?\s+(\S+)", line)
-        if match is None or len(match[1]) > 128 or len(samples) >= 4096:
+        match = re.fullmatch(
+            r"orbitkv_save_bytes_total(?:\{([^}]*)\})?\s+([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)",
+            line,
+        )
+        if match is None or len(match[2]) > 128 or len(samples) >= 4096:
             raise RuntimeError("Save byte counter is missing or malformed")
+        labels = match[1] or ""
+        label_pattern = r'[a-zA-Z_][a-zA-Z0-9_]*="(?:[^"\\]|\\[\\"n])*"'
+        if len(labels) > 1024 or (
+            labels and re.fullmatch(label_pattern + r"(?:," + label_pattern + r")*", labels) is None
+        ):
+            raise RuntimeError("Save byte counter labels are malformed or oversized")
+        pairs = re.findall(r'([a-zA-Z_][a-zA-Z0-9_]*)=("(?:[^"\\]|\\[\\"n])*")', labels)
+        label_set = tuple(sorted(pairs))
+        if len({key for key, _ in pairs}) != len(pairs) or label_set in label_sets:
+            raise RuntimeError("Save byte counter labels are duplicated")
+        label_sets.add(label_set)
         try:
-            value = Decimal(match[1])
+            value = Decimal(match[2])
         except InvalidOperation as error:
             raise RuntimeError("Save byte counter is missing or malformed") from error
         if not value.is_finite() or not 0 <= value <= 2**53 or value != value.to_integral_value():
             raise RuntimeError("Save byte counter is missing, nonintegral or outside exact range")
         samples.append(int(value))
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Save byte counter response exceeded its time bound")
     if not samples or sum(samples) > 2**53:
         raise RuntimeError("Save byte counter is missing or outside exact range")
     return sum(samples)

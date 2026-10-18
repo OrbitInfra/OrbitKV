@@ -880,6 +880,13 @@ their aggregate before producing an integer receipt. Rounded large values and
 fractional samples cannot become valid counters. The original precision
 counterexample and rejected package stay archived; this correction needs its
 own source/package review and does not change transfer ownership.
+The `568ffdf4` input checkpoint remains rejected for permissive numeric tokens
+and unbounded HTTP metrics text. The correction streams under a ten-second/
+1-MiB response budget, limits lines and labels, validates ASCII Prometheus numeric
+syntax before exact decimal conversion and rejects duplicate label sets. Real
+exporter scope labels are consumed. Malformed tokens, oversized text and a
+trickled response cannot receive a byte receipt. All rejected source/package
+checkpoints stay preserved; fresh runtime and launch review remain required.
 
 ## S4 — Finish communication execution and demonstrate gains
 
