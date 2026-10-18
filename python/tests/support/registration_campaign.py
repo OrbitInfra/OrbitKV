@@ -944,6 +944,8 @@ def process_trace_inventory(
             raise RuntimeError("Process trace is incomplete or has conflicting exits")
         tasks[pid] = {"pid": pid, "exit_code": terminals[0]}
         for stamp, event in events:
+            if event.startswith(("execve(", "execveat(")):
+                tasks[pid].setdefault("exec_events", []).append(event)
             created = re.fullmatch(r"(clone3?|fork|vfork)\((.*)\)\s+= (\d+)", event)
             if created and int(created[3]) > 0:
                 child = int(created[3])
@@ -1342,6 +1344,18 @@ def validate_cell(
         ):
             raise RuntimeError(f"Native/worker failure remains in log: {path}")
     if cell["kind"] == "cuda-readiness":
+        if evidence_paths(directory, "*.manager-start.json", deadline) or evidence_paths(
+            directory, "*.manager-runtime.json", deadline
+        ):
+            raise RuntimeError("Readiness-only diagnostic contains Manager evidence")
+        tasks = process_trace_inventory(directory, pytest_owner["pid"], deadline)
+        if any(
+            not task.get("thread") and task["pid"] != pytest_owner["pid"] for task in tasks.values()
+        ):
+            raise RuntimeError("Readiness-only diagnostic started an unexpected process")
+        executions = tasks[pytest_owner["pid"]].get("exec_events", [])
+        if len(executions) != 1:
+            raise RuntimeError("Readiness-only diagnostic executable census differs")
         summaries = evidence_paths(directory, "STREAM-READINESS.json", deadline)
         if len(summaries) != 1 or receipts:
             raise RuntimeError("CUDA readiness has missing evidence or unexpected services")
@@ -1350,6 +1364,7 @@ def validate_cell(
             summary.get("owner") != pytest_owner
             or summary.get("helper_sha256") != cell.get("cuda_gate_sha256")
             or summary.get("pending_before_release") != [True, True]
+            or any(type(value) is not bool for value in summary.get("pending_before_release", []))
             or summary.get("independent_release") is not True
             or type(summary.get("observed_bytes")) is not int
             or summary["observed_bytes"] != 4096

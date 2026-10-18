@@ -29,6 +29,61 @@ def capture_save_metrics(monkeypatch, raw):
     )
 
 
+@pytest.mark.parametrize(
+    "fault", [None, "extra-process", "manager-record", "boolean-pending", "payload"]
+)
+def test_readiness_only_diagnostic_rejects_service_and_false_byte_evidence(tmp_path, fault):
+    owner = {"pid": 1, "start_ticks": 2}
+    cell = {
+        "kind": "cuda-readiness",
+        "passed": 1,
+        "cleanup_receipts": 0,
+        "normal_exit_codes": [0],
+        "adopted_exit_codes": [0],
+        "process_trace_binary": "tracer",
+        "cuda_gate_sha256": "a" * 64,
+        "log_sets": [{"pattern": "pytest.log", "count": 1}],
+    }
+    (tmp_path / "junit.xml").write_text('<testsuite><testcase name="readiness"/></testsuite>')
+    (tmp_path / "pytest.log").write_text("CPU fixture, no GPU")
+    child = (
+        "1.0 clone(child_stack=NULL, flags=0) = 2\n1.1 wait4(2, [{WIFEXITED(s) && WEXITSTATUS(s) == 0}], 0, NULL) = 2\n"
+        if fault == "extra-process"
+        else ""
+    )
+    (tmp_path / "process.trace.1").write_text(
+        '0.0 execve("/python", ["/python"], 0x0) = 0\n' + child + "2.0 +++ exited with 0 +++\n"
+    )
+    if fault == "extra-process":
+        (tmp_path / "process.trace.2").write_text(
+            '1.0 execve("/orbitkv-cache-manager", [], 0x0) = 0\n2.0 +++ exited with 0 +++\n'
+        )
+    if fault == "manager-record":
+        (tmp_path / "bad.manager-start.json").write_text("{}")
+    raw = struct.pack("=1024i", *range(1024))
+    (tmp_path / "STREAM-READINESS.payload.bin").write_bytes(
+        bytes([raw[0] ^ 1]) + raw[1:] if fault == "payload" else raw
+    )
+    summary = {
+        "owner": owner,
+        "helper_sha256": "a" * 64,
+        "pending_before_release": [1, 1] if fault == "boolean-pending" else [True, True],
+        "independent_release": True,
+        "observed_bytes": 4096,
+        "payload_sha256": hashlib.sha256(raw).hexdigest(),
+        "mutation_rejected": True,
+        "streams_synchronized": True,
+        "Manager_created": False,
+        "physical_fault_qualification": False,
+    }
+    (tmp_path / "STREAM-READINESS.json").write_text(json.dumps(summary))
+    if fault is None:
+        campaign.validate_cell(cell, tmp_path, owner, [owner], time.monotonic() + 3)
+    else:
+        with pytest.raises(RuntimeError):
+            campaign.validate_cell(cell, tmp_path, owner, [owner], time.monotonic() + 3)
+
+
 @pytest.mark.parametrize("fault", ["producer", "shutdown", "credit", "client"])
 def test_vllm_gate_cleanup_closes_original_counter_fd_on_every_error(tmp_path, fault):
     path = Path(__file__).parents[1] / "integration/test_vllm_recovery.py"

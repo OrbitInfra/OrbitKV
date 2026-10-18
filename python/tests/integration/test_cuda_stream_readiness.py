@@ -54,6 +54,9 @@ def test_explicit_cuda_stream_gate_has_independent_release_and_exact_bytes(tmp_p
         producer_done.synchronize()
         if unrelated_done.query():
             raise RuntimeError("Producer release accidentally completed the other stream")
+        call("orbitkv_test_stream_release", release, 1)
+        release.synchronize()
+        unrelated_done.synchronize()
         actual = target.cpu()
         if not torch.equal(actual, torch.arange(1024, dtype=torch.int32)):
             raise RuntimeError("CUDA readiness full payload differs")
@@ -61,9 +64,6 @@ def test_explicit_cuda_stream_gate_has_independent_release_and_exact_bytes(tmp_p
         actual[0] ^= 1
         if torch.equal(actual, torch.arange(1024, dtype=torch.int32)):
             raise RuntimeError("CUDA readiness mutation escaped the byte oracle")
-        call("orbitkv_test_stream_release", release, 1)
-        release.synchronize()
-        unrelated_done.synchronize()
         if other.item() != 1:
             raise RuntimeError("Independent stream did not complete after its release")
         completed = True

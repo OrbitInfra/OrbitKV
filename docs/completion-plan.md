@@ -969,6 +969,12 @@ owners through stream synchronization, and requires frozen helper bytes plus
 complete child trace/waits. Source review, resource postflight and independent
 GPU launch acceptance precede execution. This diagnostic is distinct from a
 replacement of the rejected adapter cohort and cannot qualify physical faults.
+The first readiness-only checkpoint `5f2e0021` remains rejected for its no-service
+claim and possible implicit-sync ordering: the validator accepted an extra
+Manager process, and CPU payload readback preceded release of the other stream.
+The correction rejects extra non-thread process/Manager records and requires
+one executable census, validates typed pending flags, then releases both streams
+before the CPU byte oracle. Source and GPU diagnostic qualification stay separate.
 
 ## S4 — Finish communication execution and demonstrate gains
 
