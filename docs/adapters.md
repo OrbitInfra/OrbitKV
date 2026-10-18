@@ -319,7 +319,7 @@ physical failure drain still need their own proofs and hardware gates.
 The native Save contract distinguishes `SaveNotSubmittedError` from unknown
 handoffs: only that exception from `start_save` proves the current invocation
 launched no native Publish worker. Handle allocation, attachment and wait errors
-retain the page hold. SGLang also preserves its official completion FIFO: once an
+retain the page hold.
 Native producer methods and their registration/handle arguments are resolved
 before the typed catch. Python method or argument lookup errors retain pages;
 the exception type alone cannot establish that native code ran and rolled back.
