@@ -1,5 +1,7 @@
 """CPU controls for launch admission and strict lifecycle evidence."""
 
+import ast
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -27,9 +29,61 @@ def capture_save_metrics(monkeypatch, raw):
     )
 
 
+@pytest.mark.parametrize("fault", ["producer", "shutdown", "credit", "client"])
+def test_vllm_gate_cleanup_closes_original_counter_fd_on_every_error(tmp_path, fault):
+    path = Path(__file__).parents[1] / "integration/test_vllm_recovery.py"
+    module = ast.parse(path.read_text())
+    function = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work"
+    )
+    cleanup = next(node for node in function.body if isinstance(node, ast.Try)).finalbody
+    fd = os.open(tmp_path / "counter", os.O_CREAT | os.O_RDWR, 0o600)
+    counters = contextlib.ExitStack()
+    counters.callback(os.close, fd)
+
+    def raise_error():
+        raise RuntimeError("controlled cleanup failure")
+
+    def noop():
+        pass
+
+    scope = {
+        "producer": SimpleNamespace(synchronize=raise_error if fault == "producer" else noop),
+        "unrelated": SimpleNamespace(synchronize=noop),
+        "worker": SimpleNamespace(shutdown=raise_error if fault == "shutdown" else noop),
+        "client": SimpleNamespace(close=raise_error if fault == "client" else noop),
+        "counters": counters,
+        "replacement_counters": object(),
+        "tmp_path": tmp_path,
+        "release_receipt": lambda _: raise_error() if fault == "credit" else {},
+        "write": lambda *_: None,
+    }
+    with pytest.raises(RuntimeError, match="controlled cleanup"):
+        exec(compile(ast.Module(body=cleanup, type_ignores=[]), str(path), "exec"), scope)
+    with pytest.raises(OSError):
+        os.fstat(fd)
+
+
 @pytest.mark.parametrize("engine", ["vllm-positive", "vllm-negative", "sglang-sole", "sglang-held"])
 @pytest.mark.parametrize(
-    "fault", [None, "bytes", "credit", "identity", "generation", "claim", "missing"]
+    "fault",
+    [
+        None,
+        "bytes",
+        "credit",
+        "identity",
+        "generation",
+        "claim",
+        "missing",
+        "slot-alias",
+        "never-imported",
+        "observation-error",
+        "path-identity",
+        "export-replay",
+    ],
 )
 def test_adapter_byte_evidence_rejects_corruption_and_false_completion(tmp_path, engine, fault):
     from uuid import UUID
@@ -107,9 +161,13 @@ def test_adapter_byte_evidence_rejects_corruption_and_false_completion(tmp_path,
                 "counter_name": "counter",
                 "counter_offset": slot,
                 "exclusive_value_at_export": 1,
+                "disposition": "importer_owned",
+                "observation_error": None,
                 "observation": {
                     "device": 1,
                     "inode": 2,
+                    "path_device": 1,
+                    "path_inode": 2,
                     "observed_value": 1,
                     "same_object": True,
                     "path_error": None,
@@ -123,7 +181,21 @@ def test_adapter_byte_evidence_rejects_corruption_and_false_completion(tmp_path,
             "registration_generation": str(UUID(int=index + 1)),
             "export_owner_generation": str(UUID(int=index + 10)),
             "credits": credits,
+            "physical_termination_claimed": False,
+            "reclamation_authorized": False,
         }
+        if fault == "slot-alias" and not vllm:
+            for slot, credit in enumerate(credits):
+                credit["counter_offset"] = 0
+                credit["counter_name"] = f"alias{slot}"
+        if fault == "never-imported":
+            credits[0]["disposition"] = "never_imported"
+        if fault == "observation-error":
+            credits[0]["observation_error"] = "counterlost"
+        if fault == "path-identity":
+            credits[0]["observation"]["path_inode"] = 3
+        if fault == "export-replay" and vllm:
+            evidence["export_owner_generation"] = str(UUID(int=10))
         handoff = tmp_path / (role + ".credit-owner.json")
         handoff.write_text(
             json.dumps({"owner": owner, "instance_id": "instance", "evidence": evidence})
@@ -139,14 +211,14 @@ def test_adapter_byte_evidence_rejects_corruption_and_false_completion(tmp_path,
             "observed_mono_ns": 99,
             "counters": [
                 {
-                    "counter_name": "counter",
-                    "counter_offset": slot,
+                    "counter_name": credit["counter_name"],
+                    "counter_offset": credit["counter_offset"],
                     "device": 1,
                     "inode": 2,
                     "before": 1,
                     "after": 0,
                 }
-                for slot in range(len(credits))
+                for credit in credits
             ],
         }
         if fault == "credit":
@@ -163,7 +235,10 @@ def test_adapter_byte_evidence_rejects_corruption_and_false_completion(tmp_path,
     receipt = tmp_path / (basename + ".native-release.json")
     if fault != "missing":
         receipt.write_text(json.dumps(row))
-    if fault is None:
+    invalid = fault is not None and not (
+        fault == "slot-alias" and vllm or fault == "export-replay" and not vllm
+    )
+    if not invalid:
         campaign.validate_adapter_bytes(cell, tmp_path, owner, time.monotonic() + 5)
     else:
         with pytest.raises(RuntimeError):
@@ -348,7 +423,7 @@ def cpu_ready_inputs(tmp_path):
         "review_wait_seconds": 1,
         "campaign_seconds": 1,
         "cleanup_seconds": 1,
-        "cells": [{"kind": "native", "passed": 2}],
+        "cells": [{"kind": "native", "passed": 2, "seconds": 1}],
     }
     path = tmp_path / "CONTRACT.json"
     path.write_text(json.dumps(contract))
@@ -1095,7 +1170,7 @@ def test_last_startup_stat_crossing_deadline_cannot_acquire_resources(tmp_path, 
         campaign_seconds=10,
         cleanup_seconds=10,
         cpus=sorted(os.sched_getaffinity(0))[:1],
-        cells=[{"kind": "native", "passed": 2}],
+        cells=[{"kind": "native", "passed": 2, "seconds": 1}],
         locks=[{"path": str(lease), "device": lease.stat().st_dev, "inode": lease.stat().st_ino}],
     )
     path = tmp_path / "CONTRACT.json"

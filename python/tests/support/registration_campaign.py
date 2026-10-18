@@ -1102,6 +1102,7 @@ def validate_adapter_bytes(
     if raw != expected_raw:
         raise RuntimeError("Recomputed full adapter payload/sentinel failed")
     roles = ("original", "replacement") if vllm else ("original",)
+    export_generations = set()
     for role in roles:
         remaining(deadline)
         handoff = path.parent / (role + ".credit-owner.json")
@@ -1137,17 +1138,48 @@ def validate_adapter_bytes(
                 or final.get(field) != value
             ):
                 raise RuntimeError("Adapter credit generation changed")
+        if evidence["export_owner_generation"] in export_generations:
+            raise RuntimeError("Replayed adapter exporter generation")
+        export_generations.add(evidence["export_owner_generation"])
         registration = (
             row["registration_generation"] if role == "original" else row["replacement_generation"]
         )
         if UUID(evidence["registration_generation"]).hex != registration:
             raise RuntimeError("Adapter receipt and exporter registration differ")
         seen_credits = set()
+        physical_slots = set()
         for original, counter in zip(evidence["credits"], final["counters"], strict=True):
             observation = original.get("observation", {})
             marker = (original.get("counter_name"), original.get("counter_offset"))
+            slot = (
+                observation.get("device"),
+                observation.get("inode"),
+                original.get("counter_offset"),
+            )
+            name = original.get("counter_name")
+            normalized = name.removeprefix("/") if isinstance(name, str) else ""
             if (
                 marker in seen_credits
+                or slot in physical_slots
+                or not normalized
+                or normalized in (".", "..")
+                or "/" in normalized
+                or "\0" in normalized
+                or len(normalized.encode()) > 255
+                or type(original.get("counter_offset")) is not int
+                or not 0 <= original["counter_offset"] < 10_000
+                or original.get("disposition") != "importer_owned"
+                or original.get("observation_error") is not None
+                or evidence.get("physical_termination_claimed") is not False
+                or evidence.get("reclamation_authorized") is not False
+                or type(observation.get("device")) is not int
+                or observation["device"] < 0
+                or type(observation.get("inode")) is not int
+                or observation["inode"] <= 0
+                or type(observation.get("path_device")) is not int
+                or type(observation.get("path_inode")) is not int
+                or observation["path_device"] != observation["device"]
+                or observation["path_inode"] != observation["inode"]
                 or type(original.get("exclusive_value_at_export")) is not int
                 or original.get("exclusive_value_at_export") != 1
                 or type(observation.get("observed_value")) is not int
@@ -1158,6 +1190,7 @@ def validate_adapter_bytes(
             ):
                 raise RuntimeError("Adapter original credit observation is unproven")
             seen_credits.add(marker)
+            physical_slots.add(slot)
             expected_counter = {
                 "counter_name": original.get("counter_name"),
                 "counter_offset": original.get("counter_offset"),
@@ -2034,6 +2067,12 @@ def main() -> None:
             raise RuntimeError("Invalid bounded campaign/review/cleanup budget")
     if any(type(cell["passed"]) is not int for cell in contract["cells"]):
         raise RuntimeError("Invalid declared gate count")
+    if any(
+        type(cell.get("seconds")) is not int
+        or not 0 < cell["seconds"] <= contract["campaign_seconds"]
+        for cell in contract["cells"]
+    ):
+        raise RuntimeError("Invalid bounded cell budget")
     if identity(os.getpid())["pid"] != os.getpid():
         raise RuntimeError("Invalid controller process identity")
     locks = []

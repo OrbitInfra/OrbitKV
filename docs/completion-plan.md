@@ -935,6 +935,15 @@ DRAM and io_uring. It recomputes complete bytes and sentinels, separates expecte
 negative qualification from positive results, binds generation/credit slots,
 and requires actual Manager mapping/exit evidence. This matrix requires its own
 independent source review, runtime freeze and launch acceptance before execution.
+The first matrix checkpoint `43f05310` remains rejected: its adapter branch
+accepted aliased physical credit slots, unproven importer observations and
+replayed exporter generation; vLLM cleanup could skip original counter FD close
+after an exception. The correction preserves strict credit schema/physical
+slot identity and distinct replacement exporter owners, validates each cell's
+finite budget, and closes read-only evidence descriptors in an outer finally.
+Real CPU descriptor controls cover synchronization, shutdown, credit and client
+close errors. These changes grant no native completion proof; new matrix review
+and hardware launch remain required.
 
 ## S4 — Finish communication execution and demonstrate gains
 

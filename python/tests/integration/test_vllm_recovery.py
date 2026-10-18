@@ -406,15 +406,20 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
             "physical_fault_termination_claimed": False,
         }
     finally:
-        producer.synchronize()
-        unrelated.synchronize()
-        worker.shutdown()
-        if "replacement_counters" in locals():
-            write(
-                tmp_path / "replacement.credit-release.json", release_receipt(replacement_counters)
-            )
-        client.close()
-        counters.close()
+        try:
+            producer.synchronize()
+            unrelated.synchronize()
+            worker.shutdown()
+            try:
+                if "replacement_counters" in locals():
+                    write(
+                        tmp_path / "replacement.credit-release.json",
+                        release_receipt(replacement_counters),
+                    )
+            finally:
+                client.close()
+        finally:
+            counters.close()
     if worker._save_thread.is_alive() or worker._registration is not None:
         raise RuntimeError("vLLM worker or GPU registration survived normal shutdown")
     receipt.update(
