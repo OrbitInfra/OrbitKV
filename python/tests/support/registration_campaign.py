@@ -1005,14 +1005,14 @@ def validate_cell(
             for role in ("source", "consumer")
         }:
             raise RuntimeError("Save registration credit round/role identities differ")
-        if pending_bytes and {
-            path.name for path in evidence_paths(directory, "round-*.credit-release.json", deadline)
-        } != {
-            f"round-{index}-{role}.credit-release.json"
-            for index in range(3)
-            for role in ("source", "consumer")
-        }:
-            raise RuntimeError("Missing original Save credit release receipts")
+        if pending_bytes:
+            final_credits = evidence_paths(directory, "round-*.credit-release.json", deadline)
+            expected_final = {
+                path.with_name(path.name.replace(".credit-owner.json", ".credit-release.json"))
+                for path in credits
+            }
+            if len(final_credits) != 6 or set(final_credits) != expected_final:
+                raise RuntimeError("Missing, duplicate or misplaced Save credit release receipts")
         generations = set()
         for path in credits:
             row = read_json(path, deadline)
