@@ -254,6 +254,15 @@ class HostOwner:
             ] != expected:
                 raise RuntimeError(f"Frozen file changed: {path}")
         label = cell + "-" + name
+        if self.contract.get("observer_pilot") and name == "manager":
+            directory = self.output / (cell + "-native-trace")
+            enabled = planned["runtime"]["observer_enabled"]
+            path = directory / "manager.json"
+            if type(enabled) is not bool or planned["environment"].get(
+                "TENT_NATIVE_TRACE_PATH"
+            ) != (str(path) if enabled else None):
+                raise RuntimeError("Observer output differs from the owned cell directory")
+            directory.mkdir(exist_ok=False)
         stdout = (self.output / (label + ".stdout.log")).open("x")
         stderr = (self.output / (label + ".stderr.log")).open("x")
         environment = dict(planned["environment"])
@@ -562,6 +571,65 @@ class HostOwner:
             }
         )
 
+    def native_trace(self, message: dict) -> dict:
+        cell = message["cell"]
+        if not self.contract.get("observer_pilot") or any(
+            item["cell"] == cell for item in self.children.values()
+        ):
+            raise RuntimeError("Native trace requires a stopped pilot cell")
+        stops = [
+            row
+            for row in self.history
+            if row.get("event") == "stopped"
+            and row.get("cell") == cell
+            and row.get("name") == "manager"
+        ]
+        if (
+            len(stops) != 1
+            or stops[0].get("actual_wait_reap") is not True
+            or stops[0].get("was_running") is not True
+            or stops[0].get("forced_cleanup") is not False
+            or type(stops[0].get("exit_code")) is not int
+            or stops[0]["exit_code"] != 0
+        ):
+            raise RuntimeError("Native trace requires its own normal actual Manager wait")
+        stopped = {key: value for key, value in stops[0].items() if key != "wall_ns"}
+        planned = self.contract["launches"][self.host][cell]["manager"]
+        enabled = planned["runtime"]["observer_enabled"]
+        directory = self.output / (cell + "-native-trace")
+        path = directory / "manager.json"
+        if (
+            type(enabled) is not bool
+            or planned["environment"].get("TENT_NATIVE_TRACE_PATH")
+            != (str(path) if enabled else None)
+            or directory.resolve(strict=True) != directory
+            or not directory.is_dir()
+            or {item.name for item in directory.iterdir()} != ({path.name} if enabled else set())
+        ):
+            raise RuntimeError("Native trace inventory differs from the owned observer mode")
+        receipt = {
+            "host": self.host,
+            "cell": cell,
+            "observer_enabled": enabled,
+            "stop": stopped,
+            "path": str(path),
+            "content": None,
+            "sha256": None,
+        }
+        if enabled:
+            checks, _ = self.runtime_checks()
+            before = path.lstat()
+            content = checks["read_bytes"](path, 1024 * 1024, time.monotonic() + 10)
+            after = path.lstat()
+            fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+            if any(getattr(before, field) != getattr(after, field) for field in fields):
+                raise RuntimeError("Native trace changed during its stopped-owner read")
+            native = json.loads(content)
+            if any(native.get(key) != stopped[key] for key in ("pid", "boot_id", "start_ticks")):
+                raise RuntimeError("Native trace identity differs from the waited Manager")
+            receipt.update(content=content.decode(), sha256=hashlib.sha256(content).hexdigest())
+        return receipt
+
     def finish(self) -> dict:
         if self.children or self.uncertain:
             raise RuntimeError("Unknown/live ownership blocks lease release")
@@ -681,6 +749,8 @@ def main() -> None:
                     result = owner.process_status(request)
                 elif operation == "admit-runtime":
                     result = owner.admit_runtime(request)
+                elif operation == "native-trace":
+                    result = owner.native_trace(request)
                 elif operation == "finish":
                     result = owner.finish()
                     finished = True

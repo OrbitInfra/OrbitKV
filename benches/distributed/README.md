@@ -50,6 +50,35 @@ loaded observer in off mode and verifies each actual process's working directory
 before inspection and before issuing the receipt. These startup checks are outside transfer timing;
 the descriptive driver's PASS does not imply an observation-overhead PASS.
 
+The `observer_pilot: "manager-native-observer.v1"` contract selects the bounded
+Manager pilot: eight fresh cells, h0→h1 then h1→h0, each direction off/on then
+on/off, 8 MiB payloads with 64 KiB segments, one cold, five warmup and fifty
+measured restores per cell. Both Managers load the observer only in on cells;
+fixtures never load it. The launch review must verify matched commands, budgets,
+payloads and environments except the declared observer and fresh cell identities.
+Do not use the legacy native probe with the production source-epoch request ABI.
+
+The existing host owner creates `<owner-output>/<cell>-native-trace/` before
+Manager launch. On mode must set `TENT_NATIVE_TRACE_PATH` to its `manager.json`;
+off mode omits it. After both local processes have stopped, `native-trace` reads
+only that directory, requires the Manager's actual normal wait and rejects
+extra files, symlinks, oversized output and foreign process identities. A trace
+error preserves actual exit receipts and stops the next cell. Source traces use
+source-role validation; only consumer-local clocks select query windows.
+
+After each completed pair, the driver recomputes the measured Manager-fetch and
+query-plus-restore median ratios and nearest-rank p99 differences. Every on/off
+ratio must be ≤1.05 and every tail difference ≤0.25 ms. Each direction also reports
+the geometric mean and 95% bootstrap interval over its two independent pairs,
+with seed 42 and 10,000 draws; its mean and upper bound must be ≤1.05. Two pairs
+provide very limited uncertainty information: the upper bound reduces to the
+worst pair, and fifty-request p99 equals max. Neither is population or stable
+tail qualification. Cold samples remain descriptive. Any failed guard stops
+dependent cells; there is no retry or replacement. `MEASUREMENT_GUARDS_PASS`
+still requires successful owner postflight before `PASS_OBSERVER_PILOT`.
+`VALID_OBSERVER_OVERHEAD_FAIL` is a valid failed measurement with normal cleanup,
+not permission to run deeper instrumentation or change production defaults.
+
 For GPU-pointer cells, compile the byte oracle on each test host before freezing
 its resulting hash. A Manager-only contract uses the existing tensor byte and
 sentinel checks in `shared_cache_bytes`; it does not need this oracle library:
