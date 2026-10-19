@@ -487,8 +487,14 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   and shares provenance checks between its CPU probe and pytest execution.
   It rejects optimized Python so installed RECORD assertions cannot be removed.
   Installed probe, source-shadow rejection and actual collection pass; loader
-  controls freeze their real wrapped entry. Fresh GPU bytes and both official
-  engine/shared-cache gates remain required. See [PR #283](https://github.com/feichai0017/orbitkv/pull/283).
+  controls freeze their real wrapped entry. A fresh, explicitly nonoptimized H20
+  cohort at `ce344496` passes installed DRAM and actual NVMe/io_uring bytes:
+  three full 32 KiB payload/sentinel comparisons per medium, retired-registration
+  rejection without extra I/O, original IPC-credit release and actual
+  Manager/controller/SSH zero exits, with no forced cleanup. It uses the frozen
+  matching wheel and does not run the later optimization guard on the GPU or
+  qualify physical-fault termination. Official-engine and shared-cache gates
+  remain required. See [PR #283](https://github.com/feichai0017/orbitkv/pull/283).
 - Bound and diagnose retained/quarantined source memory while proof is absent.
   Timeout, etcd expiry, cancellation, remote process disappearance and a control
   ACK are not interchangeable with native drain. An unavailable upstream primitive
