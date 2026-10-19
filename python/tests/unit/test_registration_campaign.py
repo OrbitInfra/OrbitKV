@@ -39,6 +39,7 @@ def capture_save_metrics(monkeypatch, raw):
         "payload",
         "loader-query",
         "loader-wrong-argv",
+        "loader-extra-exec",
     ],
 )
 def test_readiness_only_diagnostic_rejects_service_and_false_byte_evidence(tmp_path, fault):
@@ -57,7 +58,7 @@ def test_readiness_only_diagnostic_rejects_service_and_false_byte_evidence(tmp_p
     (tmp_path / "pytest.log").write_text("CPU fixture, no GPU")
     child = (
         "1.0 clone(child_stack=NULL, flags=0) = 2\n1.1 wait4(2, [{WIFEXITED(s) && WEXITSTATUS(s) == 0}], 0, NULL) = 2\n"
-        if fault in ("extra-process", "loader-query", "loader-wrong-argv")
+        if fault in ("extra-process", "loader-query", "loader-wrong-argv", "loader-extra-exec")
         else ""
     )
     (tmp_path / "process.trace.1").write_text(
@@ -67,11 +68,18 @@ def test_readiness_only_diagnostic_rejects_service_and_false_byte_evidence(tmp_p
         (tmp_path / "process.trace.2").write_text(
             '1.0 execve("/orbitkv-cache-manager", [], 0x0) = 0\n2.0 +++ exited with 0 +++\n'
         )
-    if fault in ("loader-query", "loader-wrong-argv"):
+    if fault in ("loader-query", "loader-wrong-argv", "loader-extra-exec"):
         cell["loader_queries"] = [{"argv": ["/sbin/ldconfig", "-p"], "sha256": "b" * 64}]
-        argument = "-p" if fault == "loader-query" else "-v"
+        argument = "-v" if fault == "loader-wrong-argv" else "-p"
+        extra = (
+            '1.1 execveat(AT_FDCWD, "/orbitkv-cache-manager", [], 0x0, 0) = 0\n'
+            if fault == "loader-extra-exec"
+            else ""
+        )
         (tmp_path / "process.trace.2").write_text(
-            f'1.0 execve("/sbin/ldconfig", ["/sbin/ldconfig", "{argument}"], 0x0) = 0\n2.0 +++ exited with 0 +++\n'
+            f'1.0 execve("/sbin/ldconfig", ["/sbin/ldconfig", "{argument}"], 0x0) = 0\n'
+            + extra
+            + "2.0 +++ exited with 0 +++\n"
         )
     if fault == "manager-record":
         (tmp_path / "bad.manager-start.json").write_text("{}")

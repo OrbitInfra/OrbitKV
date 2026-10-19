@@ -1373,6 +1373,7 @@ def validate_cell(
         ):
             if (
                 process.get("parent") != pytest_owner["pid"]
+                or len(process.get("exec_events", [])) != 1
                 or process.get("waited_by") != pytest_owner["pid"]
                 or process.get("exit_code") != 0
                 or process.get("executions") != [{"path": query["argv"][0], "argv": query["argv"]}]
@@ -2124,6 +2125,11 @@ def main() -> None:
                 or not isinstance(query.get("sha256"), str)
                 or not re.fullmatch("[0-9a-f]{64}", query["sha256"])
                 or contract["input_sha256"].get("/sbin/ldconfig") != query["sha256"]
+                or not any(
+                    executable.get("path") == "/sbin/ldconfig"
+                    and executable.get("sha256") == query["sha256"]
+                    for executable in contract.get("executable_inputs", [])
+                )
             ):
                 raise RuntimeError("Unfrozen readiness loader query")
     if adapter_profile:

@@ -982,6 +982,12 @@ executable and allows one exact command with its actual pytest parent/wait;
 other processes and Manager records remain refused. This is a new diagnostic
 contract, not a qualification upgrade of the failed run. Its original quarantine
 and all raw evidence remain under the adapter-lifetime artifact root.
+The first loader-query checkpoint `080b2a51` remains rejected: a successful
+allowed exec followed by `execveat` could escape its parsed-argv comparison.
+The correction requires exactly one complete child exec event matching the
+declared successful command and a canonical frozen executable input. All extra
+or unparsed exec events are refused. Source acceptance and the new diagnostic
+freeze/launch remain separate from the previous rejected run.
 
 ## S4 — Finish communication execution and demonstrate gains
 
