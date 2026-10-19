@@ -32,6 +32,9 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   prevent reset/unregister. This code is not a page-slot generation or physical
   fault receipt; installed engine/fault acceptance is still required.
   Consume `SaveNotSubmittedError` only around the current `start_save` call.
+  The producer path applies this rule to `prepare_save` and `submit_saves`:
+  bind methods and collect registration/handles before the typed catch. Python
+  lookup failures retain the vLLM task and SGLang tree ownership.
   SGLang bool completions must remain a contiguous submitted-order prefix: once
   an offload is retained with unknown completion, its worker must retain already
   queued later tasks without starting them or emitting a completion bool. A
@@ -104,6 +107,12 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   Earlier fork passes remain upstream contribution evidence, not release support.
 
 ## Replace internal coupling safely
+
+The producer-admission candidate reserves native Save handles before adapter
+queues. vLLM keeps completion markers; SGLang returns ownership acceptance on
+unknown preparation so its released wrapper cannot drop tree locks. Rust owns
+batch merge and submission; only never-submitted cancellation may release a
+prepared owner. Preserve the same installed CPU/GPU/engine qualification gates.
 
 Audit every remaining Hook against `docs/engine-release-audit.md`. SGLang 0.5.21
 captures graphs before the tree-cache factory; preserve pre-capture events until

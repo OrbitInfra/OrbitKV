@@ -831,6 +831,63 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   reclamation eventually happens when its proof exists. Both adapter lifecycles
   consume the new generation checks. No TTL-based reclamation substitute.
 
+**Bounded producer Save admission (2026-10-19): scoped healthy acceptance.**
+The existing native Save owner now covers producer handoff:
+`prepare_save` holds the immutable Publish request and registration before the
+adapter queues work, `submit_saves` merges same-registration requests in Rust,
+and `cancel_save` only completes a prepared request whose native worker never
+started. Queued, submitted and caller-held completed handles remain charged
+against the process 1,024-operation/32-MiB metadata cap; merged request scratch
+is conservatively reserved within that charge. The vLLM callback keeps only
+handles and completion metadata after handoff; SGLang retains FIFO tree ownership
+when preparation/submission is unknown. This does not implement allocation/page
+generations or physical-failure reclamation.
+The first producer-admission candidate `96c06d4e` remains rejected for omission
+of PR #268's typed rejection and incomplete batch rollback. The correction
+integrates the current main contract: explicit prepare failures prove no worker,
+and submission returns that proof only after every input was prepared and the
+whole batch has been canceled. Duplicate, foreign or mixed submitted handles
+stay owned. Python attachment, queue and wait errors are outside these catches;
+an unknown request preparation also preserves boundary jobs in the same handoff.
+New actual CPU budget, mixed batch and clone-failure controls are distinct from
+healthy GPU/fault qualification; the original wheel and rejection stay archived.
+Independent rereview also rejected `b2736458`: Python method/argument lookup
+inside the typed native-rejection catch could falsely complete a vLLM batch or
+reject SGLang tree ownership without calling native code. The correction binds
+the native method and constructs its arguments before that catch. Lookup errors
+retain the producer/batch and released-engine tree hold. The original vLLM and
+SGLang negative controls remain under `independent-b273-review-1/` in
+`/root/orbitkv-artifacts/s3-save-producer-admission-20261018/`.
+Independent review accepts `2d38489a` for source/CPU and installed SGLang 0.5.21
+method controls. The matching `d59c8ca0` wheel and `febe9ef6` harness pass fresh
+installed native DRAM and actual NVMe/io_uring full-byte/sentinel gates, with
+twelve original-descriptor credit transitions from one to zero. Official dense
+Qwen3-8B TP1/PP1 model gates pass: vLLM 0.31.0 V1/direct DRAM with Graph NONE
+(six passed, one unsupported-hybrid skip), and SGLang 0.5.21 direct DRAM and
+logical io_uring SSD (two passed). The latter model SSD path is an overlay-backed
+file; actual NVMe evidence belongs to the separate native byte gate.
+
+Both official environments also pass a new same-host TCP shared-cache case from
+that exact wheel: eager TP1/PP1, two replicas and two DRAM Managers on GPU3. Each
+case checks three positive recoveries totalling 301,989,888 READ bytes and the
+same H2D bytes, consumer restart recovery, an empty-source restart miss, matching
+generated output and all eight service-leader actual waits at zero. The current
+vLLM logs pass strict native shutdown. SGLang's actual native child SIGKILL exits
+and IPC warnings remain recorded; zero leader waits do not qualify their physical
+lifetime. Both original foreground/SSH owners and independent result reviews
+complete, and the current GPU/channel/lease ownership is released.
+
+The result reviews are `independent-febe9-vllm-generation3-shared-result-review-1/`
+and `independent-febe9-sglang-generation3-shared-result-review-1/` under the archive
+above; they seal selected regular evidence and explicitly enumerate excluded
+compiler/backing files. Model text equality was checked during execution; raw
+response text was not archived for an independent offline comparison. Earlier
+mixed-package INVALID and expired pre-grant NOT_LAUNCHED cohorts keep their
+original verdicts. CUDA source-close status 2 still retains native engines,
+registrations and pools until process exit. These healthy controls add no RDMA,
+HA, P/D, page-generation, physical-fault or performance qualification; S3/S4/S5
+remain Partial. See [PR #269](https://github.com/feichai0017/orbitkv/pull/269).
+
 ## S4 — Finish communication execution and demonstrate gains
 
 **Partial. Depends on S3 for new reuse/early consumption.** Existing transfer,
@@ -1381,6 +1438,14 @@ is replaced or reclassified.
 Managers' `closeSource status 2` records are the documented unsupported CUDA
 physical receipt, retaining source engines, registrations and pools until
 process exit; they are not physical drain proof or a new upstream defect.
+
+**Producer Save admission wheel (2026-10-19):** the matching `d59c8ca0` artifact
+now passes the native byte, ordinary model and both official same-host shared
+regressions after native preparation moves before the adapter queue. The exact
+profiles, storage-media distinction, output provenance and preserved lifetime
+limits are recorded under [S3](#s3--transfer-lifetime-and-generation-safe-ownership).
+This accepts the current healthy cache path; broader S5 lifecycle, hybrid, P/D,
+Graph and topology gates remain open.
 
 ### S5.3 — Public lifecycle and hybrid-state contracts
 
