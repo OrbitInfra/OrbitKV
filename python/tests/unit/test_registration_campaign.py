@@ -276,6 +276,7 @@ def test_cuda_gate_cleanup_attempts_both_releases_and_keeps_unknown(tmp_path, fa
         "stage-missing",
         "stage-order",
         "stage-claim",
+        "stage-after-completion",
     ],
 )
 def test_adapter_byte_evidence_rejects_corruption_and_false_completion(tmp_path, engine, fault):
@@ -465,10 +466,21 @@ def test_adapter_byte_evidence_rejects_corruption_and_false_completion(tmp_path,
         value = json.loads(stage.read_text())
         value["physical_termination_claimed"] = True
         stage.write_text(json.dumps(value))
+    if vllm and fault == "stage-after-completion":
+        stage = tmp_path / "vllm-stage-08.json"
+        value = json.loads(stage.read_text())
+        value["monotonic_ns"] = row["completed_mono_ns"] + 1
+        stage.write_text(json.dumps(value))
     receipt = tmp_path / (basename + ".native-release.json")
     if fault != "missing":
         receipt.write_text(json.dumps(row))
-    vllm_only_faults = {"prewarm", "stage-missing", "stage-order", "stage-claim"}
+    vllm_only_faults = {
+        "prewarm",
+        "stage-missing",
+        "stage-order",
+        "stage-claim",
+        "stage-after-completion",
+    }
     invalid = fault is not None and not (
         fault == "slot-alias"
         and vllm
@@ -734,7 +746,8 @@ def test_adapter_pair_admission_preserves_complete_controls(
 
 
 @pytest.mark.parametrize(
-    "fault", [None, "old-profile", "extra-cell", "wrong-kind", "missing-helper", "cleanup"]
+    "fault",
+    [None, "formal", "old-profile", "extra-cell", "wrong-kind", "missing-helper", "cleanup"],
 )
 def test_strided_readiness_profile_has_exact_single_cell_admission(tmp_path, monkeypatch, fault):
     path, _environment, _lease = cpu_ready_inputs(tmp_path)
@@ -753,7 +766,9 @@ def test_strided_readiness_profile_has_exact_single_cell_admission(tmp_path, mon
             "environment": {"ORBITKV_TEST_CUDA_GATE_LIB": helper},
         }
     ]
-    if fault == "old-profile":
+    if fault == "formal":
+        contract["phase"] = "formal"
+    elif fault == "old-profile":
         contract["qualification"] = "cuda-stream-readiness-v1"
     elif fault == "extra-cell":
         contract["cells"] *= 2

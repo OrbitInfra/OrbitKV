@@ -1103,6 +1103,7 @@ def validate_adapter_bytes(
                 left["monotonic_ns"] >= right["monotonic_ns"]
                 for left, right in zip(stages, stages[1:], strict=False)
             )
+            or stages[-1]["monotonic_ns"] >= row["completed_mono_ns"]
         ):
             raise RuntimeError("Producer fence positive/negative receipt differs")
         for field in ("registration_generation", "replacement_generation"):
@@ -2167,6 +2168,8 @@ def main() -> None:
         "cuda-stream-readiness-v1",
         "cuda-strided-copy-readiness-v1",
     )
+    if readiness_profile and contract["phase"] != "precheck":
+        raise RuntimeError("CUDA readiness diagnostics cannot be formal cells")
     readiness_kind = (
         "cuda-strided-readiness"
         if contract.get("qualification") == "cuda-strided-copy-readiness-v1"
