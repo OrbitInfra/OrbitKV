@@ -88,3 +88,36 @@ Permission, merge-accounting and notification-interval changes from that PR
 are not imported by this subset. Use `run_tcp_worker_owner.py` for the real CPU
 worker/callback control and old-library negative. This does not establish
 RDMA/CUDA quiescence or delayed-notification/page reuse safety.
+
+
+## Unregister errors and retry ownership
+
+`unregister-retry-ownership.patch` adapts the unregister retry and same-base
+coordination contract in [upstream #4573](https://github.com/kvcache-ai/Mooncake/pull/4573)
+(head `c3ed2fc6365bf71d48ab5de57b3fd55bc6acc54b`) and the failed-MR retention
+contract in [#4249](https://github.com/kvcache-ai/Mooncake/pull/4249)
+(head `5945e258daea7b9ef7bea172454ef082ac13cfa2`) to the fixed pin. Both PRs
+were open at inspection; this is a local candidate subset, not a merged upstream
+fix or a pin upgrade. Existing upstream work is reused without duplicate issues
+or PRs.
+
+The engine reserves all base addresses for registration/unregistration. Before
+withdrawing the last reference from its local snapshot, it establishes a retry
+owner containing the original descriptor and pending transports. Removal errors
+reach the existing C ABI and Rust registration token. Successful transports are
+removed from the pending set exactly once. A failed metadata publication keeps
+a tombstone even when physical removal succeeded. A registration at that base
+is rejected until the old unregister and publication finish. Normal batch removal
+still publishes once; failure reports the index whose suffix must be retried.
+
+At the RDMA owner, a refused `ibv_dereg_mr` retains the MR in its context. A
+partially successful buffer removal retains only unfinished MRs and reports an
+error. The retry uses original keys and does not deregister successful rails again.
+
+This subset does not repair partial registration rollback, arbitrary overlapping
+ranges, concurrent engine destruction, failed final destructors or hardware
+termination. Callers must keep the engine, registration token and physical backing
+alive after an error; an error is not permission to release or reuse memory.
+Registration failure/rollback visibility remains separate work in the completion
+plan. No GPU, RNIC-loss, GDS or physical reclamation support follows from CPU
+fault injection.

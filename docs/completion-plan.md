@@ -423,6 +423,21 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   scene exits zero/one/zero. Production error propagation remains unfixed; no
   payload DMA ran and no new registration, termination or reclamation support
   is qualified.
+  The following unregister-retry candidate reuses the normal-removal contracts
+  in existing upstream PRs #4573 and #4249, rather than opening duplicate work.
+  A same-base reservation spans registration and removal. Before withdrawing
+  the last reference, the existing native engine establishes a retirement owner
+  with the original descriptor and pending transports. It returns removal
+  failures through the C ABI, retries only unfinished transports and retains a
+  publication tombstone until metadata synchronization succeeds. New
+  registration at that base is rejected while retirement is incomplete.
+  The RDMA context and local buffer manager preserve refused MRs and successful
+  partial cleanup. Complete matching-header CPU builds, native/C ABI controls
+  and the actual Rust `try_unregister` owner are the acceptance boundary;
+  independent implementation review remains pending. Registration-failure
+  rollback visibility, consuming `unregister`/`Drop`, terminal destruction and
+  physical CUDA/RDMA/GDS reclamation remain open. This substage does not close
+  S3, S4 or S5 or authorize new buffer reuse after an unresolved error.
 - Bound and diagnose retained/quarantined source memory while proof is absent.
   Timeout, etcd expiry, cancellation, remote process disappearance and a control
   ACK are not interchangeable with native drain. An unavailable upstream primitive

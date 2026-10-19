@@ -4,6 +4,86 @@ use crate::P2P_METADATA;
 use crate::types::{STATUS_CANCELED, STATUS_FAILED, STATUS_INVALID};
 
 #[test]
+#[cfg(not(any(feature = "cuda-12", feature = "cuda-13")))]
+#[ignore = "requires a frozen CPU TENT build and its matching native unregister control library"]
+fn failed_native_unregister_preserves_the_rust_registration_until_retry() {
+    struct Library(NonNull<c_void>);
+    impl Drop for Library {
+        fn drop(&mut self) {
+            unsafe { libc::dlclose(self.0.as_ptr()) };
+        }
+    }
+    let path = CString::new(
+        std::env::var("ORBITKV_UNREGISTER_CONTROL_LIBRARY")
+            .expect("set the matching native control library path"),
+    )
+    .unwrap();
+    let library = Library(
+        NonNull::new(unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) })
+            .expect("load the matching native control library"),
+    );
+    let symbol = |name: &std::ffi::CStr| {
+        let pointer = unsafe { libc::dlsym(library.0.as_ptr(), name.as_ptr()) };
+        assert!(!pointer.is_null(), "missing native test symbol {name:?}");
+        pointer
+    };
+    let install: unsafe extern "C" fn(native::NativeEngine) =
+        unsafe { std::mem::transmute(symbol(c"orbitkv_test_install_unregister_control")) };
+    let refuse: unsafe extern "C" fn(native::NativeEngine, libc::c_int) =
+        unsafe { std::mem::transmute(symbol(c"orbitkv_test_set_unregister_refusal")) };
+    let state: unsafe extern "C" fn(native::NativeEngine, *mut u32, *mut u32) -> libc::c_int =
+        unsafe { std::mem::transmute(symbol(c"orbitkv_test_unregister_state")) };
+    let mut backing = vec![0xa5; 4096];
+    let engine =
+        Arc::new(TransferEngine::new(P2P_METADATA, "127.0.0.1:0", "127.0.0.1", 0, &[]).unwrap());
+    let native = engine.native;
+    unsafe { install(native) };
+    let mut registration = unsafe {
+        engine
+            .register_memory_owned(
+                NonNull::new(backing.as_mut_ptr()).unwrap(),
+                backing.len(),
+                "cpu:0",
+            )
+            .unwrap()
+    };
+    let retained_engine = Arc::downgrade(&engine);
+    unsafe { refuse(native, 1) };
+    assert!(registration.try_unregister().is_err());
+    assert!(registration.active);
+    let (mut registrations, mut removals) = (0, 0);
+    assert_eq!(
+        unsafe { state(native, &mut registrations, &mut removals) },
+        1
+    );
+    assert_eq!((registrations, removals), (1, 1));
+    drop(engine);
+    assert_eq!(
+        retained_engine.strong_count(),
+        1,
+        "token must retain its native engine"
+    );
+    unsafe { refuse(native, 0) };
+    registration.try_unregister().unwrap();
+    assert!(!registration.active);
+    assert_eq!(
+        unsafe { state(native, &mut registrations, &mut removals) },
+        0
+    );
+    assert_eq!((registrations, removals), (1, 2));
+    registration.try_unregister().unwrap();
+    assert_eq!(
+        unsafe { state(native, &mut registrations, &mut removals) },
+        0
+    );
+    assert_eq!(removals, 2, "completed token must not unregister again");
+    assert!(backing.iter().all(|&byte| byte == 0xa5));
+    drop(registration);
+    assert!(retained_engine.upgrade().is_none());
+    drop(library);
+}
+
+#[test]
 fn fixed_tent_strings_are_bounded_even_without_a_terminator() {
     assert_eq!(fixed_c_string(&[b'a' as c_char, 0, b'b' as c_char]), "a");
     assert_eq!(fixed_c_string(&[b'a' as c_char, b'b' as c_char]), "ab");
