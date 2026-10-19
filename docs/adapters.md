@@ -319,8 +319,9 @@ These checks bind registration lifetime; same-allocation page-slot reuse and
 physical failure drain still need their own proofs and hardware gates.
 
 The native Save contract distinguishes `SaveNotSubmittedError` from unknown
-handoffs: only that exception from `start_save` proves the current invocation
-launched no native Publish worker. Handle allocation, attachment and wait errors
+handoffs. From `start_save` or `prepare_save`, it proves the current invocation
+launched no native Publish worker; from `submit_saves`, it proves the entire batch
+was rolled back without submission. Handle allocation, attachment and wait errors
 retain the page hold.
 Native producer methods and their registration/handle arguments are resolved
 before the typed catch. Python method or argument lookup errors retain pages;

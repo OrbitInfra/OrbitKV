@@ -431,9 +431,11 @@ its completion FIFO. Code/CPU and package review, installed normal DRAM/io_uring
 byte gates, both official-release model gates and same-host TCP shared-cache
 restart gates pass for the frozen `cb19ce82` wheel. See the
 [qualification scope](completion-plan.md#s5--released-engine-integration-and-upstream-contributions).
-The native pending cap excludes Python queues, retained adapter tasks and
-user-held completed handles. Unknown-owner reconciliation, GPU/model fault
-gates, page generations and physical termination remain separate requirements.
+Prepared Save handles remain charged while held in Python queues, retained
+adapter tasks or user-held completed handles, until their last native owner is
+dropped. This metadata cap is separate from physical payload budgets.
+Unknown-owner reconciliation, GPU/model fault gates, page generations and
+physical termination remain separate requirements.
 This Publish partitioning does not yet partition oversized raw Restore plans.
 
 Rust `CacheClient`, exposed directly by PyO3 as `CacheManagerClient`, owns query
