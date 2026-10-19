@@ -708,3 +708,25 @@ publication, then avoids task access after the state becomes visible. A staging
 exception is converted to FAILED and remains subject to OrbitKV's permanent
 failure retention. CPU callback/exception controls are separate from delayed
 batch notification, address reuse and physical transport termination gates.
+
+### Native registration error control
+
+Run `crates/orbitkv-transfer/tests/native/run_unregister_error.py` with
+`--native-build` pointing to the matching native CMake build, `--runtime` to
+its frozen libraries and `--output` to a new external evidence directory.
+The runner uses the build's exact include paths and definitions, hashes the
+compiler inputs and actual mapped libraries, and records actual child waits.
+It does not rebuild or overwrite the runtime libraries. Compilation is bounded
+to 60 seconds and each CPU scene to 20 seconds; any forced timeout cleanup is
+recorded separately and cannot establish drain.
+
+The actual engine receives a deterministic test-only `removeMemoryBuffer`
+failure through its existing transport test hook. Stable host backing remains
+alive; no payload transfer or device registration is submitted. The strict
+normal scene must exit zero; the strict refusal scene must exit one on the
+historical runtime. A separate reproduction scene exits zero only when engine
+unregister loses its transport owner, retry skips removal, and re-registration
+also swallows a transport error. Its final direct test-owner reconciliation
+is not a production unregister or physical-termination receipt. This control
+is distinct from the earlier real TCP admitted-READ/unregister counterexample
+and does not qualify RNIC failure, device drain or allocation/page reuse.
