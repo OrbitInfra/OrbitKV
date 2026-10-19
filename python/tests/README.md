@@ -21,6 +21,14 @@
   Every cell includes exact payload, original-credit repayment,
   registered generation and complete Manager/native process evidence. A passing
   no-fence test records rejected positive bytes and qualification false.
+  Before installing the deliberate producer wait, the vLLM gate prewarms the
+  exact strided copy and records ordered stage receipts. The separate
+  `cuda-strided-copy-readiness-v1` diagnostic proves that test primitive without
+  starting a Manager; neither test prewarm nor readiness is a production fence.
+  Before installing the deliberate producer wait, the vLLM gate prewarms the
+  exact strided copy and records ordered stage receipts. The separate
+  `cuda-strided-copy-readiness-v1` diagnostic proves that test primitive without
+  starting a Manager; neither test prewarm nor readiness is a production fence.
 - `conftest.py`: shared options and the Cache Manager fixture used by both engine
   E2E and channel integration tests; `integration/conftest.py` owns GPU fixtures.
 

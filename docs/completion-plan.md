@@ -1010,6 +1010,18 @@ credit, mapping, process-wait and cumulative cleanup requirements. The old
 eight-cell contract cannot launch. Each new pair needs its own runtime/resource
 freeze and independent launch and result review; completed pairs do not qualify
 missing media, the other engine, model/Graph, page generation or fault recovery.
+Its first vLLM DRAM pair fail-stopped in the fenced cell before any prepared
+Save or payload receipt. The process remained inside a running CUDA call until
+the 600-second cell deadline, while Manager registration had completed; the
+controller retained all selected resources without claiming termination. The
+negative cell was not launched. Preserve the exact freeze, live quarantine and
+raw result under `/root/orbitkv-artifacts/s3-adapter-pair-budget-20261019/`.
+Two bounded `/proc` samples show the Python main thread consuming one CPU while
+native workers waited, which is consistent with, but does not by itself prove,
+CUDA lazy initialization behind the deliberately blocked producer stream. The
+next test-only correction prewarms the exact strided copy before installing the
+stream wait and emits ordered stage receipts. It needs source review and a new
+readiness diagnostic; the failed pair is never retried or reclassified.
 
 ## S4 — Finish communication execution and demonstrate gains
 

@@ -50,6 +50,14 @@ two-cell cohort. Both producer fence controls or both exporter hold controls
 remain mandatory, along with complete bytes, original IPC credit observations
 and actual normal process waits. Each medium and engine requires independent
 launch and result acceptance; the test organization does not expand support.
+Its test-only vLLM stream gate prewarms the exact strided copy before blocking
+the producer stream, so CUDA module initialization is outside the intended
+counterfactual. Ordered receipts make a pre-enqueue stall distinct from native
+Save/Publish waiting. This changes qualification instrumentation only.
+Its test-only vLLM stream gate prewarms the exact strided copy before blocking
+the producer stream, so CUDA module initialization is outside the intended
+counterfactual. Ordered receipts make a pre-enqueue stall distinct from native
+Save/Publish waiting. This changes qualification instrumentation only.
 
 | Responsibility | Owner |
 | --- | --- |

@@ -335,6 +335,7 @@ def check_inputs(
         "prepared-adapter-lifetime-v1",
         "prepared-adapter-lifetime-v2",
         "cuda-stream-readiness-v1",
+        "cuda-strided-copy-readiness-v1",
     ):
         for cell in contract["cells"]:
             tracer = cell.get("process_trace_binary")
@@ -1056,6 +1057,21 @@ def validate_adapter_bytes(
         raise RuntimeError("Adapter payload archive differs")
     if vllm:
         fence = cell.get("fence")
+        stages = [
+            read_json(path, deadline)
+            for path in evidence_paths(path.parent, "vllm-stage-*.json", deadline)
+        ]
+        expected_stages = [
+            "registered",
+            "copy_kernel_prewarm_started",
+            "copy_kernel_prewarmed",
+            "producer_wait_enqueued",
+            "producer_copy_enqueued",
+            "producer_event_recorded",
+            "unrelated_wait_enqueued",
+            "handoff_started",
+            "handoff_returned",
+        ]
         if (
             type(fence) is not bool
             or row.get("fence_enabled") is not fence
@@ -1063,6 +1079,7 @@ def validate_adapter_bytes(
             or row.get("positive_byte_oracle_passed") is not fence
             or row.get("producer_ready_at_submit") != [fence]
             or row.get("producer_pending_at_handoff") is not True
+            or row.get("copy_kernel_prewarmed") is not True
             or row.get("producer_reserved") is not True
             or row.get("explicit_stream_gate") is not True
             or row.get("cuda_gate_sha256") != cell.get("cuda_gate_sha256")
@@ -1074,6 +1091,18 @@ def validate_adapter_bytes(
             or len(row["prepared_ids"]) != 1
             or type(row["prepared_ids"][0]) is not int
             or row["prepared_ids"][0] <= 0
+            or [stage.get("stage") for stage in stages] != expected_stages
+            or any(
+                stage.get("owner") != owner
+                or type(stage.get("monotonic_ns")) is not int
+                or stage["monotonic_ns"] <= 0
+                or stage.get("physical_termination_claimed") is not False
+                for stage in stages
+            )
+            or any(
+                left["monotonic_ns"] >= right["monotonic_ns"]
+                for left, right in zip(stages, stages[1:], strict=False)
+            )
         ):
             raise RuntimeError("Producer fence positive/negative receipt differs")
         for field in ("registration_generation", "replacement_generation"):
@@ -1355,7 +1384,7 @@ def validate_cell(
             or "panicked at" in text
         ):
             raise RuntimeError(f"Native/worker failure remains in log: {path}")
-    if cell["kind"] == "cuda-readiness":
+    if cell["kind"] in ("cuda-readiness", "cuda-strided-readiness"):
         if evidence_paths(directory, "*.manager-start.json", deadline) or evidence_paths(
             directory, "*.manager-runtime.json", deadline
         ):
@@ -1383,28 +1412,78 @@ def validate_cell(
         executions = tasks[pytest_owner["pid"]].get("exec_events", [])
         if len(executions) != 1:
             raise RuntimeError("Readiness-only diagnostic executable census differs")
-        summaries = evidence_paths(directory, "STREAM-READINESS.json", deadline)
+        strided = cell["kind"] == "cuda-strided-readiness"
+        summary_name = "STRIDED-READINESS.json" if strided else "STREAM-READINESS.json"
+        payload_name = (
+            "STRIDED-READINESS.payload.bin" if strided else "STREAM-READINESS.payload.bin"
+        )
+        summaries = evidence_paths(directory, summary_name, deadline)
         if len(summaries) != 1 or receipts:
             raise RuntimeError("CUDA readiness has missing evidence or unexpected services")
         summary = read_json(summaries[0], deadline)
         if (
             summary.get("owner") != pytest_owner
             or summary.get("helper_sha256") != cell.get("cuda_gate_sha256")
-            or summary.get("pending_before_release") != [True, True]
-            or any(type(value) is not bool for value in summary.get("pending_before_release", []))
-            or summary.get("independent_release") is not True
-            or type(summary.get("observed_bytes")) is not int
-            or summary["observed_bytes"] != 4096
             or summary.get("mutation_rejected") is not True
             or summary.get("streams_synchronized") is not True
             or summary.get("Manager_created") is not False
             or summary.get("physical_fault_qualification") is not False
         ):
             raise RuntimeError("Explicit CUDA readiness evidence differs")
-        raw = read_bytes(summaries[0].parent / "STREAM-READINESS.payload.bin", 4096, deadline)
-        if raw != struct.pack("=1024i", *range(1024)) or hashlib.sha256(
-            raw
-        ).hexdigest() != summary.get("payload_sha256"):
+        raw = read_bytes(summaries[0].parent / payload_name, 32768 if strided else 4096, deadline)
+        if strided:
+            stages = [
+                read_json(path, deadline)
+                for path in evidence_paths(directory, "strided-stage-*.json", deadline)
+            ]
+            expected_stages = [
+                "copy_kernel_prewarm_started",
+                "copy_kernel_prewarmed",
+                "producer_wait_enqueued",
+                "producer_copy_enqueued",
+                "producer_event_recorded",
+                "pending_observed",
+                "producer_released",
+                "producer_synchronized",
+            ]
+            expected_raw = b"".join(
+                struct.pack("=f", plane * 512 + offset if block == 1 else -167)
+                for plane in range(2)
+                for block in range(8)
+                for offset in range(512)
+            )
+            invalid = (
+                summary.get("copy_kernel_prewarmed") is not True
+                or summary.get("pending_before_release") is not True
+                or summary.get("observed_bytes") != 32768
+                or [stage.get("stage") for stage in stages] != expected_stages
+                or any(
+                    stage.get("owner") != pytest_owner
+                    or type(stage.get("monotonic_ns")) is not int
+                    or stage["monotonic_ns"] <= 0
+                    or stage.get("physical_termination_claimed") is not False
+                    for stage in stages
+                )
+                or any(
+                    left["monotonic_ns"] >= right["monotonic_ns"]
+                    for left, right in zip(stages, stages[1:], strict=False)
+                )
+            )
+        else:
+            expected_raw = struct.pack("=1024i", *range(1024))
+            invalid = (
+                summary.get("pending_before_release") != [True, True]
+                or any(
+                    type(value) is not bool for value in summary.get("pending_before_release", [])
+                )
+                or summary.get("independent_release") is not True
+                or summary.get("observed_bytes") != 4096
+            )
+        if (
+            invalid
+            or raw != expected_raw
+            or hashlib.sha256(raw).hexdigest() != summary.get("payload_sha256")
+        ):
             raise RuntimeError("Recomputed CUDA readiness bytes differ")
         remaining(deadline)
         return
@@ -2074,6 +2153,7 @@ def main() -> None:
         "pending-save-bytes-v2",
         "prepared-adapter-lifetime-v2",
         "cuda-stream-readiness-v1",
+        "cuda-strided-copy-readiness-v1",
     ):
         raise RuntimeError("Unsupported qualification contract; historical freezes stay immutable")
     remaining(startup_deadline)
@@ -2083,9 +2163,17 @@ def main() -> None:
     if contract["schema"] != "orbitkv.explicit-registration-campaign.v1":
         raise RuntimeError("Unknown campaign schema")
     adapter_profile = contract.get("qualification") == "prepared-adapter-lifetime-v2"
-    readiness_profile = contract.get("qualification") == "cuda-stream-readiness-v1"
+    readiness_profile = contract.get("qualification") in (
+        "cuda-stream-readiness-v1",
+        "cuda-strided-copy-readiness-v1",
+    )
+    readiness_kind = (
+        "cuda-strided-readiness"
+        if contract.get("qualification") == "cuda-strided-copy-readiness-v1"
+        else "cuda-readiness"
+    )
     expected = (
-        [("cuda-readiness", 1)]
+        [(readiness_kind, 1)]
         if readiness_profile
         else (
             [(contract.get("adapter_kind"), 1)] * 2

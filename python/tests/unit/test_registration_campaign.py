@@ -107,6 +107,83 @@ def test_readiness_only_diagnostic_rejects_service_and_false_byte_evidence(tmp_p
             campaign.validate_cell(cell, tmp_path, owner, [owner], time.monotonic() + 3)
 
 
+@pytest.mark.parametrize(
+    "fault", [None, "payload", "prewarm", "pending", "stage-missing", "stage-order", "stage-claim"]
+)
+def test_strided_copy_readiness_recomputes_stages_and_full_bytes(tmp_path, fault):
+    owner = {"pid": 1, "start_ticks": 2}
+    cell = {
+        "kind": "cuda-strided-readiness",
+        "passed": 1,
+        "cleanup_receipts": 0,
+        "normal_exit_codes": [0],
+        "adopted_exit_codes": [0],
+        "process_trace_binary": "tracer",
+        "cuda_gate_sha256": "a" * 64,
+        "log_sets": [{"pattern": "pytest.log", "count": 1}],
+    }
+    (tmp_path / "junit.xml").write_text('<testsuite><testcase name="readiness"/></testsuite>')
+    (tmp_path / "pytest.log").write_text("CPU fixture, no GPU")
+    (tmp_path / "process.trace.1").write_text(
+        '0.0 execve("/python", ["/python"], 0x0) = 0\n2.0 +++ exited with 0 +++\n'
+    )
+    stages = [
+        "copy_kernel_prewarm_started",
+        "copy_kernel_prewarmed",
+        "producer_wait_enqueued",
+        "producer_copy_enqueued",
+        "producer_event_recorded",
+        "pending_observed",
+        "producer_released",
+        "producer_synchronized",
+    ]
+    for index, stage in enumerate(stages):
+        (tmp_path / f"strided-stage-{index:02d}.json").write_text(
+            json.dumps(
+                {
+                    "owner": owner,
+                    "stage": stage,
+                    "monotonic_ns": index + 1,
+                    "physical_termination_claimed": fault == "stage-claim" and index == 2,
+                }
+            )
+        )
+    if fault == "stage-missing":
+        (tmp_path / "strided-stage-07.json").unlink()
+    if fault == "stage-order":
+        path = tmp_path / "strided-stage-04.json"
+        value = json.loads(path.read_text())
+        value["stage"] = "producer_synchronized"
+        path.write_text(json.dumps(value))
+    raw = b"".join(
+        struct.pack("=f", plane * 512 + offset if block == 1 else -167)
+        for plane in range(2)
+        for block in range(8)
+        for offset in range(512)
+    )
+    (tmp_path / "STRIDED-READINESS.payload.bin").write_bytes(
+        bytes([raw[0] ^ 1]) + raw[1:] if fault == "payload" else raw
+    )
+    summary = {
+        "owner": owner,
+        "helper_sha256": "a" * 64,
+        "copy_kernel_prewarmed": fault != "prewarm",
+        "pending_before_release": fault != "pending",
+        "observed_bytes": 32768,
+        "payload_sha256": hashlib.sha256(raw).hexdigest(),
+        "mutation_rejected": True,
+        "streams_synchronized": True,
+        "Manager_created": False,
+        "physical_fault_qualification": False,
+    }
+    (tmp_path / "STRIDED-READINESS.json").write_text(json.dumps(summary))
+    if fault is None:
+        campaign.validate_cell(cell, tmp_path, owner, [owner], time.monotonic() + 3)
+    else:
+        with pytest.raises(RuntimeError):
+            campaign.validate_cell(cell, tmp_path, owner, [owner], time.monotonic() + 3)
+
+
 @pytest.mark.parametrize("fault", ["producer", "shutdown", "credit", "client"])
 def test_vllm_gate_cleanup_closes_original_counter_fd_on_every_error(tmp_path, fault):
     path = Path(__file__).parents[1] / "integration/test_vllm_recovery.py"
@@ -195,6 +272,10 @@ def test_cuda_gate_cleanup_attempts_both_releases_and_keeps_unknown(tmp_path, fa
         "observation-error",
         "path-identity",
         "export-replay",
+        "prewarm",
+        "stage-missing",
+        "stage-order",
+        "stage-claim",
     ],
 )
 def test_adapter_byte_evidence_rejects_corruption_and_false_completion(tmp_path, engine, fault):
@@ -234,6 +315,7 @@ def test_adapter_byte_evidence_rejects_corruption_and_false_completion(tmp_path,
             positive_byte_oracle_passed=fence,
             producer_ready_at_submit=[fence],
             producer_pending_at_handoff=True,
+            copy_kernel_prewarmed=True,
             explicit_stream_gate=True,
             cuda_gate_sha256="a" * 64,
             producer_reserved=True,
@@ -248,6 +330,28 @@ def test_adapter_byte_evidence_rejects_corruption_and_false_completion(tmp_path,
             for block in range(8)
             for offset in range(512)
         )
+        stages = [
+            "registered",
+            "copy_kernel_prewarm_started",
+            "copy_kernel_prewarmed",
+            "producer_wait_enqueued",
+            "producer_copy_enqueued",
+            "producer_event_recorded",
+            "unrelated_wait_enqueued",
+            "handoff_started",
+            "handoff_returned",
+        ]
+        for index, stage in enumerate(stages):
+            (tmp_path / f"vllm-stage-{index:02d}.json").write_text(
+                json.dumps(
+                    {
+                        "owner": owner,
+                        "stage": stage,
+                        "monotonic_ns": index + 1,
+                        "physical_termination_claimed": False,
+                    }
+                )
+            )
     else:
         row.update(
             linker_load_consumed=True,
@@ -347,11 +451,31 @@ def test_adapter_byte_evidence_rejects_corruption_and_false_completion(tmp_path,
         row["physical_fault_termination_claimed"] = True
     if fault == "bytes":
         payload.write_bytes(bytes([raw[0] ^ 1]) + raw[1:])
+    if vllm and fault == "prewarm":
+        row["copy_kernel_prewarmed"] = False
+    if vllm and fault == "stage-missing":
+        (tmp_path / "vllm-stage-08.json").unlink()
+    if vllm and fault == "stage-order":
+        stage = tmp_path / "vllm-stage-04.json"
+        value = json.loads(stage.read_text())
+        value["stage"] = "producer_event_recorded"
+        stage.write_text(json.dumps(value))
+    if vllm and fault == "stage-claim":
+        stage = tmp_path / "vllm-stage-02.json"
+        value = json.loads(stage.read_text())
+        value["physical_termination_claimed"] = True
+        stage.write_text(json.dumps(value))
     receipt = tmp_path / (basename + ".native-release.json")
     if fault != "missing":
         receipt.write_text(json.dumps(row))
+    vllm_only_faults = {"prewarm", "stage-missing", "stage-order", "stage-claim"}
     invalid = fault is not None and not (
-        fault == "slot-alias" and vllm or fault == "export-replay" and not vllm
+        fault == "slot-alias"
+        and vllm
+        or fault == "export-replay"
+        and not vllm
+        or fault in vllm_only_faults
+        and not vllm
     )
     if not invalid:
         campaign.validate_adapter_bytes(cell, tmp_path, owner, time.monotonic() + 5)
@@ -603,6 +727,51 @@ def test_adapter_pair_admission_preserves_complete_controls(
     monkeypatch.setattr(campaign.ctypes, "CDLL", before_resources)
     if fault is None:
         with pytest.raises(AdmittedPair):
+            campaign.main()
+    else:
+        with pytest.raises(RuntimeError):
+            campaign.main()
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "old-profile", "extra-cell", "wrong-kind", "missing-helper", "cleanup"]
+)
+def test_strided_readiness_profile_has_exact_single_cell_admission(tmp_path, monkeypatch, fault):
+    path, _environment, _lease = cpu_ready_inputs(tmp_path)
+    contract = json.loads(path.read_text())
+    helper = str(tmp_path / "gate.so")
+    contract.update(qualification="cuda-strided-copy-readiness-v1")
+    contract["input_sha256"][helper] = "a" * 64
+    contract["cells"] = [
+        {
+            "kind": "cuda-strided-readiness",
+            "passed": 1,
+            "cleanup_receipts": 0,
+            "seconds": 1,
+            "process_trace_binary": "/frozen/tracer",
+            "cuda_gate_sha256": "a" * 64,
+            "environment": {"ORBITKV_TEST_CUDA_GATE_LIB": helper},
+        }
+    ]
+    if fault == "old-profile":
+        contract["qualification"] = "cuda-stream-readiness-v1"
+    elif fault == "extra-cell":
+        contract["cells"] *= 2
+    elif fault == "wrong-kind":
+        contract["cells"][0]["kind"] = "cuda-readiness"
+    elif fault == "missing-helper":
+        contract["cells"][0]["environment"] = {}
+    elif fault == "cleanup":
+        contract["cells"][0]["cleanup_receipts"] = 1
+    path.write_text(json.dumps(contract))
+    monkeypatch.setattr(sys, "argv", [campaign.__file__, str(path)])
+
+    class ValidatedProfile(BaseException):
+        pass
+
+    monkeypatch.setattr(campaign.ctypes, "CDLL", lambda *_: (_ for _ in ()).throw(ValidatedProfile))
+    if fault is None:
+        with pytest.raises(ValidatedProfile):
             campaign.main()
     else:
         with pytest.raises(RuntimeError):

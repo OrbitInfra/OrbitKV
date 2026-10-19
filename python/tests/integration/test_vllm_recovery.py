@@ -251,6 +251,20 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
     producer_ready_at_submit = []
     hashes = BlockHashes([b"h" * 32])
     counters = contextlib.ExitStack()
+    stage_index = 0
+
+    def record_stage(stage):
+        nonlocal stage_index
+        write(
+            tmp_path / f"vllm-stage-{stage_index:02d}.json",
+            {
+                "owner": process_identity(os.getpid()),
+                "stage": stage,
+                "monotonic_ns": time.monotonic_ns(),
+                "physical_termination_claimed": False,
+            },
+        )
+        stage_index += 1
 
     def prepare(*args):
         handle = client.prepare_save(*args)
@@ -292,21 +306,36 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
             },
         )
         original_counters = hold_counters(counters, tmp_path / "original.credit-owner.json")
+        record_stage("registered")
         channel_server.record_runtime()
         worker._client = MagicMock(wraps=client)
         worker._client.prepare_save.side_effect = prepare
         worker._client.submit_saves.side_effect = submit
+        # Prewarm the first strided CUDA copy before either stream waits on a
+        # test gate. Lazy CUDA module setup may synchronize the context and
+        # would otherwise deadlock behind the deliberately blocked producer.
+        record_stage("copy_kernel_prewarm_started")
+        warmup = torch.full_like(kv, -167)
+        warmup[:, 1].copy_(producer_payload)
+        torch.cuda.synchronize()
+        assert torch.equal(warmup[:, 1].cpu(), payload)
+        del warmup
+        record_stage("copy_kernel_prewarmed")
         kv.fill_(-167)
         torch.cuda.synchronize()
         # A delayed producer verifies that the background thread cannot read
         # the initial zeros. Independent work must not extend its save fence.
         with torch.cuda.stream(producer):
             stream_gate("orbitkv_test_stream_wait", producer, 0)
+            record_stage("producer_wait_enqueued")
             kv[:, 1].copy_(producer_payload)
+            record_stage("producer_copy_enqueued")
             producer_done.record()
+            record_stage("producer_event_recorded")
         with torch.cuda.stream(unrelated):
             stream_gate("orbitkv_test_stream_wait", unrelated, 1)
             unrelated_done.record()
+            record_stage("unrelated_wait_enqueued")
         with torch.cuda.stream(producer):
             assert not producer_done.query(), "producer completed before handoff fence test"
             worker._current_metadata = OrbitKVConnectorMetadata(
@@ -314,7 +343,9 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
                     "save": SaveIntent(block_ids_by_group=((1,),), block_hashes=(b"h" * 32,))
                 }
             )
+            record_stage("handoff_started")
             worker.wait_for_save()
+            record_stage("handoff_returned")
 
         assert len(prepared_ids) == 1, "producer did not reserve native ownership before return"
         if fence:
@@ -412,6 +443,7 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
             "prepared_ids": prepared_ids,
             "producer_reserved": True,
             "producer_pending_at_handoff": True,
+            "copy_kernel_prewarmed": True,
             "explicit_stream_gate": True,
             "cuda_gate_sha256": hashlib.sha256(gate_path.read_bytes()).hexdigest(),
             "prepared_submission_consumed": True,
