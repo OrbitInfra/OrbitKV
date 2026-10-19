@@ -946,6 +946,17 @@ def process_trace_inventory(
         for stamp, event in events:
             if event.startswith(("execve(", "execveat(")):
                 tasks[pid].setdefault("exec_events", []).append(event)
+                executed = re.fullmatch(r'execve\(("(?:[^"\\]|\\.)*"), \[(.*?)\], .*\) = 0', event)
+                if executed:
+                    try:
+                        executable = json.loads(executed[1])
+                        arguments = json.loads("[" + executed[2] + "]")
+                    except ValueError:
+                        pass
+                    else:
+                        tasks[pid].setdefault("executions", []).append(
+                            {"path": executable, "argv": arguments}
+                        )
             created = re.fullmatch(r"(clone3?|fork|vfork)\((.*)\)\s+= (\d+)", event)
             if created and int(created[3]) > 0:
                 child = int(created[3])
@@ -1349,10 +1360,24 @@ def validate_cell(
         ):
             raise RuntimeError("Readiness-only diagnostic contains Manager evidence")
         tasks = process_trace_inventory(directory, pytest_owner["pid"], deadline)
-        if any(
-            not task.get("thread") and task["pid"] != pytest_owner["pid"] for task in tasks.values()
-        ):
+        queries = cell.get("loader_queries", [])
+        processes = [
+            task
+            for task in tasks.values()
+            if not task.get("thread") and task["pid"] != pytest_owner["pid"]
+        ]
+        if len(processes) != len(queries):
             raise RuntimeError("Readiness-only diagnostic started an unexpected process")
+        for process, query in zip(
+            sorted(processes, key=lambda task: task["pid"]), queries, strict=True
+        ):
+            if (
+                process.get("parent") != pytest_owner["pid"]
+                or process.get("waited_by") != pytest_owner["pid"]
+                or process.get("exit_code") != 0
+                or process.get("executions") != [{"path": query["argv"][0], "argv": query["argv"]}]
+            ):
+                raise RuntimeError("Readiness loader query command/parent wait differs")
         executions = tasks[pytest_owner["pid"]].get("exec_events", [])
         if len(executions) != 1:
             raise RuntimeError("Readiness-only diagnostic executable census differs")
@@ -2090,6 +2115,17 @@ def main() -> None:
             or cell.get("cleanup_receipts") != 0
         ):
             raise RuntimeError("Invalid frozen CUDA readiness inputs")
+        queries = cell.get("loader_queries", [])
+        if not isinstance(queries, list) or len(queries) > 1:
+            raise RuntimeError("Invalid readiness loader query count")
+        for query in queries:
+            if (
+                query.get("argv") != ["/sbin/ldconfig", "-p"]
+                or not isinstance(query.get("sha256"), str)
+                or not re.fullmatch("[0-9a-f]{64}", query["sha256"])
+                or contract["input_sha256"].get("/sbin/ldconfig") != query["sha256"]
+            ):
+                raise RuntimeError("Unfrozen readiness loader query")
     if adapter_profile:
         declarations = [
             ("vllm-prepared", "dram", True),

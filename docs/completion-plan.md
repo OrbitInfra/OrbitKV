@@ -975,6 +975,13 @@ Manager process, and CPU payload readback preceded release of the other stream.
 The correction rejects extra non-thread process/Manager records and requires
 one executable census, validates typed pending flags, then releases both streams
 before the CPU byte oracle. Source and GPU diagnostic qualification stay separate.
+The actual d2b5 readiness diagnostic preserves correct bytes/stream observations,
+but remains rejected because library discovery spawned an unfrozen
+`/sbin/ldconfig -p` child. The next profile explicitly freezes that read-only
+executable and allows one exact command with its actual pytest parent/wait;
+other processes and Manager records remain refused. This is a new diagnostic
+contract, not a qualification upgrade of the failed run. Its original quarantine
+and all raw evidence remain under the adapter-lifetime artifact root.
 
 ## S4 — Finish communication execution and demonstrate gains
 
