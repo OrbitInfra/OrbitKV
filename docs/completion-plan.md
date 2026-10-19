@@ -448,10 +448,53 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   ordering control fail. The accepted review is sealed under
   `independent-9ad82f-source-cpu-review-1/` in the artifact root above; review
   SHA256 is `a5a03b0e69405e0aaa12953b3cef8422bacad46de40350c4dd055b5233fdd7bc`.
-  Registration-failure
-  rollback visibility, consuming `unregister`/`Drop`, terminal destruction and
-  physical CUDA/RDMA/GDS reclamation remain open. This substage does not close
+  That unregister-only acceptance excludes registration-failure rollback
+  visibility, consuming `unregister`/`Drop`, terminal destruction and
+  physical CUDA/RDMA/GDS reclamation. This substage does not close
   S3, S4 or S5 or authorize new buffer reuse after an unresolved error.
+  The registration-error repair requires a usable completed
+  provider for every range, preserves per-range optional fallback and rejects
+  incompatible duplicate options. Its existing retirement owners roll back
+  only the failed call's references and retain pending providers/publication.
+  The real RDMA local buffer owner reserves its entry before MR registration,
+  joins all launched work and exposes unpublished partial registrations for
+  selective cleanup. Independent `ACCEPTED_CODE_CPU_SCOPE` at `d128c2a7`
+  covers nine registration controls, four MR-owner controls, eleven existing
+  unregister expectations, fourteen default Rust tests, one explicit Rust-token
+  control and six actual Core-owner scenarios. The new native refusal returns
+  no token while the existing Rust owner retains the identical pool, engine,
+  native pending registration and 1 MiB budget. The other five Core scenarios
+  include result-withholding shims, not five real provider faults. Disabling
+  only the per-range success guard makes the empty-success and all-refusal
+  controls fail. Fresh matching native builds, source/runtime correspondence,
+  actual waits and unchanged frozen inputs were independently checked; no
+  forced cleanup occurred. Evidence is under
+  `/root/orbitkv-artifacts/s3-native-registration-repair-20261019/`.
+  The review in `independent-d128-source-cpu-review-1/` has SHA256
+  `add2b31160d563432b77010c5ba44688d9d61d77cb4157c8dba19972ea938a04`.
+  The earlier Rust exit 101 is preserved as an invalid test expectation: its
+  fixture retained legitimate optional TCP fallback. Only the fixture changed.
+  Existing upstream PRs #4573/#4249 remain the contribution references.
+  Warm-up MR faults, CUDA IPC aliases, hotplug, consuming unregister/Drop and
+  physical fault reclamation remain open; this repair adds no hardware or
+  S3/S4/S5 completion claim.
+  The matching CUDA 13 wheel passes installed host checks. Its first H20 byte
+  campaign is `INVALID_BEFORE_PYTEST`: a private runner selected the source
+  package before the installed wheel; neither Manager/GPU payload nor SSD cell
+  started. The idle guardian for this unstarted payload required one forced
+  termination, with actual controller/SSH waits `-9`/`1`; original failures remain archived.
+  The maintained `tests/support/installed_pytest.py` now selects explicit roots
+  and shares provenance checks between its CPU probe and pytest execution.
+  It rejects optimized Python so installed RECORD assertions cannot be removed.
+  Installed probe, source-shadow rejection and actual collection pass; loader
+  controls freeze their real wrapped entry. A fresh, explicitly nonoptimized H20
+  cohort at `ce344496` passes installed DRAM and actual NVMe/io_uring bytes:
+  three full 32 KiB payload/sentinel comparisons per medium, retired-registration
+  rejection without extra I/O, original IPC-credit release and actual
+  Manager/controller/SSH zero exits, with no forced cleanup. It uses the frozen
+  matching wheel and does not run the later optimization guard on the GPU or
+  qualify physical-fault termination. Official-engine and shared-cache gates
+  remain required. See [PR #283](https://github.com/feichai0017/orbitkv/pull/283).
 - Bound and diagnose retained/quarantined source memory while proof is absent.
   Timeout, etcd expiry, cancellation, remote process disappearance and a control
   ACK are not interchangeable with native drain. An unavailable upstream primitive

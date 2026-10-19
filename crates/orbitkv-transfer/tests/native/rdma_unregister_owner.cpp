@@ -29,9 +29,75 @@ int deregister(ibv_mr* region) {
 }
 }  // namespace
 
+namespace {
+std::array<ibv_pd, 2> protection_domains{};
+
+ibv_mr* registerMemory(ibv_pd* domain, void*, size_t, int) {
+    if (domain != &protection_domains[0]) return nullptr;
+    if (owned[0]) return nullptr;
+    owned[0] = true;
+    return regions[0];
+}
+
+int registrationControl(const char* maps) {
+    RdmaTransport transport;
+    RdmaContext first(transport), second(transport);
+    auto& symbols = const_cast<IbvSymbols&>(first.verbs_);
+    const auto original_register = symbols.ibv_reg_mr_default;
+    const auto original_remove = symbols.ibv_dereg_mr;
+    symbols.ibv_reg_mr_default = registerMemory;
+    symbols.ibv_dereg_mr = deregister;
+    std::array<unsigned char,4096> bytes{};
+    ibv_mr region{};
+    region.addr = bytes.data(); region.length = bytes.size();
+    region.lkey = 11; region.rkey = 21; regions[0] = &region;
+    first.status_ = second.status_ = RdmaContext::DEVICE_ENABLED;
+    first.native_pd_ = &protection_domains[0];
+    second.native_pd_ = &protection_domains[1];
+    first.device_name_ = "cpu-register-0"; second.device_name_ = "cpu-refuse-1";
+    transport.local_buffer_manager_.context_list_ = {&first,&second};
+    BufferDesc descriptor{};
+    descriptor.addr = reinterpret_cast<uint64_t>(bytes.data());
+    descriptor.length = bytes.size();
+    MemoryOptions options;
+    auto added = transport.addMemoryBuffer(descriptor,options);
+    const auto key = AddressRange(bytes.data(),bytes.size());
+    const bool retained = transport.tracksLocalBuffer(descriptor) && owned[0] &&
+        first.mr_set_.count(&region) == 1 &&
+        transport.local_buffer_manager_.buffer_list_.at(key).mem_reg_map.size() == 1;
+    refused = &region;
+    auto removal = transport.removeMemoryBuffer(descriptor);
+    const bool failed_retained = transport.tracksLocalBuffer(descriptor) &&
+        owned[0] && first.mr_set_.count(&region) == 1 &&
+        descriptor.lkey == std::vector<uint32_t>{11,0} &&
+        descriptor.rkey == std::vector<uint32_t>{21,0};
+    refused = nullptr;
+    auto retry = transport.removeMemoryBuffer(descriptor);
+    const bool passed = !added.ok() && descriptor.transports.empty() && retained &&
+        !removal.ok() && failed_retained && retry.ok() && calls[0] == 2 &&
+        !owned[0] && first.mr_set_.empty() && second.mr_set_.empty() &&
+        !transport.tracksLocalBuffer(descriptor);
+    std::ifstream mappings("/proc/self/maps");
+    std::ofstream archived(maps); archived << mappings.rdbuf(); archived.close();
+    first.mr_set_.clear(); second.mr_set_.clear();
+    transport.local_buffer_manager_.buffer_list_.clear();
+    first.status_ = second.status_ = RdmaContext::DEVICE_UNINIT;
+    first.native_pd_ = second.native_pd_ = nullptr;
+    symbols.ibv_reg_mr_default = original_register;
+    symbols.ibv_dereg_mr = original_remove;
+    std::cout << "scene=register-partial added_ok=" << added.ok()
+              << " unpublished_owner_retained=" << retained
+              << " failed_cleanup_retained=" << failed_retained
+              << " retry_ok=" << retry.ok() << " strict_contract_passed=" << passed
+              << " test_provider=true payload_DMA=false" << std::endl;
+    return passed && bool(archived) ? 0 : 1;
+}
+}  // namespace
+
 int main(int argc, char** argv) {
     if (argc != 3) return 2;
     const std::string scene = argv[1];
+    if (scene == "register-partial") return registrationControl(argv[2]);
     if (scene != "normal" && scene != "context-refusal" &&
         scene != "buffer-refusal")
         return 2;

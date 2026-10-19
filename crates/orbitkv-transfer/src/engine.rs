@@ -346,6 +346,9 @@ impl TransferEngine {
     /// The allocation must outlive the returned token and every submitted
     /// transfer using it. `location` must describe the actual memory domain,
     /// for example `cpu:0` or `cuda:0`.
+    /// A native registration error may retain partial registrations without
+    /// returning a token. Keep both this engine and the pinned allocation alive
+    /// while cleanup remains unproven.
     pub unsafe fn register_memory_owned(
         self: &Arc<Self>,
         address: NonNull<u8>,
