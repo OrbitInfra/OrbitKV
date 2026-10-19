@@ -197,6 +197,8 @@ native extension and complete wheel RECORD before pytest can start. Formal cells
 use the same entry point and directory arguments, followed by `--` and the pytest
 arguments. A separate `python -c` import does not exercise the entry point's path
 selection and cannot substitute for this probe.
+Python optimization (`-O`/`-OO` or `PYTHONOPTIMIZE`) is rejected so the installed
+file integrity assertions remain active.
 Independent runtime roots use at most two file readers, share the
 original deadline, and join all readers before returning or propagating an error;
 per-file hashes, targets and the complete census remain mandatory. Runtime outputs and contracts belong outside this checkout.

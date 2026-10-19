@@ -17,6 +17,8 @@ def main() -> None:
     parser.add_argument("--probe", action="store_true")
     parser.add_argument("pytest_args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    if sys.flags.optimize:
+        parser.error("installed-wheel qualification requires Python without -O or -OO")
     pytest_args = args.pytest_args
     if pytest_args[:1] == ["--"]:
         pytest_args = pytest_args[1:]

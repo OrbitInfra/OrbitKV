@@ -485,6 +485,7 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   termination, with actual controller/SSH waits `-9`/`1`; original failures remain archived.
   The maintained `tests/support/installed_pytest.py` now selects explicit roots
   and shares provenance checks between its CPU probe and pytest execution.
+  It rejects optimized Python so installed RECORD assertions cannot be removed.
   Installed probe, source-shadow rejection and actual collection pass; loader
   controls freeze their real wrapped entry. Fresh GPU bytes and both official
   engine/shared-cache gates remain required. See [PR #283](https://github.com/feichai0017/orbitkv/pull/283).
