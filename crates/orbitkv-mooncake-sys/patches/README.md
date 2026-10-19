@@ -124,7 +124,7 @@ ranges, concurrent engine destruction, failed final destructors or hardware
 termination. Callers must keep the engine, registration token and physical backing
 alive after an error; an error is not permission to release or reuse memory.
 Registration failure/rollback visibility is handled by the separately scoped
-candidate below. No GPU, RNIC-loss, GDS or physical reclamation support follows from CPU
+repair below. No GPU, RNIC-loss, GDS or physical reclamation support follows from CPU
 fault injection.
 
 ## Registration errors and rollback ownership
@@ -150,7 +150,17 @@ retries only surviving MRs. Rust's existing source owner retains the complete
 pool and its admission budget when native cleanup is unproven, including a
 constructor error with no returned registration token.
 
-This is a source/CPU candidate pending independent acceptance. The native
-fault controls use test providers, not real RNIC registrations. Warm-up MR
+Independent code/CPU review accepts production commit `d128c2a7`: nine
+registration controls, four MR-owner controls, the existing unregister
+expectations, Rust token propagation and six actual Core-owner scenarios
+match their declared outcomes. In the no-token case, real native refusal
+leaves the complete source pool, engine and charged budget retained. The
+matching native build and frozen Rust executables were independently rerun;
+the review SHA256 is
+`add2b31160d563432b77010c5ba44688d9d61d77cb4157c8dba19972ea938a04`.
+Evidence is under
+`/root/orbitkv-artifacts/s3-native-registration-repair-20261019/independent-d128-source-cpu-review-1/`.
+
+The native fault controls use test providers, not real RNIC registrations. Warm-up MR
 faults, CUDA IPC allocation aliases, device hotplug, consuming unregister/Drop,
 terminal destruction and physical termination/reclamation remain unqualified.

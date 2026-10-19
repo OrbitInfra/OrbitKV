@@ -448,22 +448,35 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   ordering control fail. The accepted review is sealed under
   `independent-9ad82f-source-cpu-review-1/` in the artifact root above; review
   SHA256 is `a5a03b0e69405e0aaa12953b3cef8422bacad46de40350c4dd055b5233fdd7bc`.
-  Registration-failure
-  rollback visibility, consuming `unregister`/`Drop`, terminal destruction and
-  physical CUDA/RDMA/GDS reclamation remain open. This substage does not close
+  That unregister-only acceptance excludes registration-failure rollback
+  visibility, consuming `unregister`/`Drop`, terminal destruction and
+  physical CUDA/RDMA/GDS reclamation. This substage does not close
   S3, S4 or S5 or authorize new buffer reuse after an unresolved error.
-  The next implemented registration-error candidate requires a usable completed
+  The registration-error repair requires a usable completed
   provider for every range, preserves per-range optional fallback and rejects
   incompatible duplicate options. Its existing retirement owners roll back
   only the failed call's references and retain pending providers/publication.
   The real RDMA local buffer owner reserves its entry before MR registration,
   joins all launched work and exposes unpublished partial registrations for
-  selective cleanup. Initial CPU fault controls pass; independent review and
-  final source/Rust-owner gates remain pending. Evidence is under
+  selective cleanup. Independent `ACCEPTED_CODE_CPU_SCOPE` at `d128c2a7`
+  covers nine registration controls, four MR-owner controls, eleven existing
+  unregister expectations, fourteen default Rust tests, one explicit Rust-token
+  control and six actual Core-owner scenarios. The new native refusal returns
+  no token while the existing Rust owner retains the identical pool, engine,
+  native pending registration and 1 MiB budget. The other five Core scenarios
+  include result-withholding shims, not five real provider faults. Disabling
+  only the per-range success guard makes the empty-success and all-refusal
+  controls fail. Fresh matching native builds, source/runtime correspondence,
+  actual waits and unchanged frozen inputs were independently checked; no
+  forced cleanup occurred. Evidence is under
   `/root/orbitkv-artifacts/s3-native-registration-repair-20261019/`.
+  The review in `independent-d128-source-cpu-review-1/` has SHA256
+  `add2b31160d563432b77010c5ba44688d9d61d77cb4157c8dba19972ea938a04`.
+  The earlier Rust exit 101 is preserved as an invalid test expectation: its
+  fixture retained legitimate optional TCP fallback. Only the fixture changed.
   Existing upstream PRs #4573/#4249 remain the contribution references.
   Warm-up MR faults, CUDA IPC aliases, hotplug, consuming unregister/Drop and
-  physical fault reclamation remain open; this candidate adds no hardware or
+  physical fault reclamation remain open; this repair adds no hardware or
   S3/S4/S5 completion claim.
 - Bound and diagnose retained/quarantined source memory while proof is absent.
   Timeout, etcd expiry, cancellation, remote process disappearance and a control
