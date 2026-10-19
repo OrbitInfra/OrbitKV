@@ -24,6 +24,7 @@ def main() -> None:
     parser.add_argument("--runtime", required=True, type=Path)
     parser.add_argument("--cuda-include", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--registration-control", type=Path)
     args = parser.parse_args()
     binary = args.unit_binary.resolve(strict=True)
     source = args.source.resolve(strict=True)
@@ -84,23 +85,33 @@ def main() -> None:
         build_exits.append(result.returncode)
         if result.returncode:
             break
+    scenarios = ["normal", "unsupported", "still-owned", "unregister-error", "partial"]
+    registration_control = (
+        args.registration_control.resolve(strict=True)
+        if args.registration_control is not None
+        else None
+    )
+    if registration_control is not None:
+        scenarios.append("native-register-partial")
     record = {
         "commands": commands,
         "build_exits": build_exits,
         "unit_binary_sha256": digest(binary),
         "production_cpu_native_sha256": digest(runtime / "libtent_shared.so"),
-        "scope": "Rust owner/memfd plus CPU host-registration and withheld-CABI-result controls; no GPU/drain hardware qualification",
+        "fixture_sha256": {
+            name: digest(fixture / name)
+            for name in ("source_owner_host_shim.cu", "source_owner_tent_shim.cpp")
+        },
+        "runner_sha256": digest(Path(__file__)),
+        "registration_control_sha256": (
+            digest(registration_control) if registration_control is not None else None
+        ),
+        "scope": "Rust owner/memfd CPU controls; separate withheld-CABI cases and actual native partial-provider refusal; no GPU/physical termination qualification",
         "cells": [],
     }
     if build_exits == [0, 0]:
         record["test_bundle"] = {p.name: digest(p) for p in sorted(bundle.iterdir())}
-        for scenario in (
-            "normal",
-            "unsupported",
-            "still-owned",
-            "unregister-error",
-            "partial",
-        ):
+        for scenario in scenarios:
             environment = os.environ.copy()
             environment.update(
                 {
@@ -112,6 +123,10 @@ def main() -> None:
                     "ORBITKV_TEST_OWNER_MAPS": str(output / f"{scenario}-maps.txt"),
                 }
             )
+            if registration_control is not None:
+                environment["ORBITKV_REGISTER_CONTROL_LIBRARY"] = str(
+                    registration_control
+                )
             command = [
                 str(binary),
                 "peer::transport::tests::actual_source_owner_preserves_partial_and_unproven_resources",
@@ -150,6 +165,8 @@ def main() -> None:
                 bundle / name
                 for name in ("libcudart.so", "libtent_shared.so", "libtent_actual.so")
             ]
+            if scenario == "native-register-partial":
+                expected.append(registration_control)
             mapping = all(str(p) in maps for p in expected) and "libcuda.so" not in maps
             record["cells"].append(
                 {
@@ -162,10 +179,15 @@ def main() -> None:
                     "mapping_verified": mapping,
                 }
             )
+    if (
+        registration_control is not None
+        and digest(registration_control) != record["registration_control_sha256"]
+    ):
+        raise RuntimeError("Native registration control changed during the gate")
     (output / "RESULT.json").write_text(json.dumps(record, indent=2) + "\n")
     if (
         build_exits != [0, 0]
-        or len(record["cells"]) != 5
+        or len(record["cells"]) != len(scenarios)
         or any(
             cell["exit_code"] != 0
             or cell["forced_cpu_cleanup"]

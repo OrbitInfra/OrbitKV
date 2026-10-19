@@ -123,6 +123,34 @@ This subset does not repair partial registration rollback, arbitrary overlapping
 ranges, concurrent engine destruction, failed final destructors or hardware
 termination. Callers must keep the engine, registration token and physical backing
 alive after an error; an error is not permission to release or reuse memory.
-Registration failure/rollback visibility remains separate work in the completion
-plan. No GPU, RNIC-loss, GDS or physical reclamation support follows from CPU
+Registration failure/rollback visibility is handled by the separately scoped
+candidate below. No GPU, RNIC-loss, GDS or physical reclamation support follows from CPU
 fault injection.
+
+## Registration errors and rollback ownership
+
+`register-error-ownership.patch` extends the same pinned PR #4573/#4249
+contracts. A register call succeeds only when every requested range has a usable
+completed transport. Identical new ranges share one physical registration and
+retain one reference per occurrence. Existing registrations require identical
+memory options; a duplicate cannot silently satisfy a different required
+transport.
+
+The existing retirement map reserves new ranges before entering registration
+providers. A failed call rolls back its own references and new providers; it
+preserves prior owners. Failed publication retains the matched withdrawal
+revision. Failed cleanup keeps the original descriptor and unfinished providers
+for an explicit retry. Optional fallback remains available only when every range
+is usable and incomplete provider cleanup succeeds.
+
+RDMA registration reserves its local buffer entry before registering MRs and
+waits for every launched task. Successfully registered rails remain discoverable
+even when another rail fails before an RDMA transport is advertised. Removal
+retries only surviving MRs. Rust's existing source owner retains the complete
+pool and its admission budget when native cleanup is unproven, including a
+constructor error with no returned registration token.
+
+This is a source/CPU candidate pending independent acceptance. The native
+fault controls use test providers, not real RNIC registrations. Warm-up MR
+faults, CUDA IPC allocation aliases, device hotplug, consuming unregister/Drop,
+terminal destruction and physical termination/reclamation remain unqualified.

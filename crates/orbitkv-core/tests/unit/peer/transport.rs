@@ -25,7 +25,12 @@ fn actual_source_owner_preserves_partial_and_unproven_resources() {
         std::env::var("ORBITKV_TEST_SOURCE_OWNER_CASE").expect("explicit CPU control case");
     assert!(matches!(
         scenario.as_str(),
-        "normal" | "unsupported" | "still-owned" | "unregister-error" | "partial"
+        "normal"
+            | "unsupported"
+            | "still-owned"
+            | "unregister-error"
+            | "partial"
+            | "native-register-partial"
     ));
     let host_library =
         std::env::var("ORBITKV_TEST_HOST_SHIM").expect("explicit host-registration shim");
@@ -54,8 +59,11 @@ fn actual_source_owner_preserves_partial_and_unproven_resources() {
     .unwrap();
     drop(pool);
     assert!(memory.upgrade().is_some());
-    if scenario == "partial" {
-        assert!(result.is_err(), "second actual register must fail");
+    if scenario == "partial" || scenario == "native-register-partial" {
+        assert!(
+            result.is_err(),
+            "actual register failure must reach the constructor"
+        );
     } else {
         assert!(result.is_ok());
     }
@@ -68,6 +76,26 @@ fn actual_source_owner_preserves_partial_and_unproven_resources() {
     let held = RETAINED_SOURCES.lock().unwrap();
     let budget = REGISTERED_POOLS.lock().unwrap();
     assert_eq!(held.len(), usize::from(retained));
+    if scenario == "native-register-partial" {
+        assert!(
+            held[0]._registrations.is_empty(),
+            "failed call must not create a token"
+        );
+        assert!(held[0]._engine.local_segment_name().is_ok());
+        assert!(Arc::ptr_eq(&held[0]._pool, &memory.upgrade().unwrap()));
+        let pending = unsafe {
+            native
+                .get::<unsafe extern "C" fn() -> libc::c_int>(
+                    b"orbitkv_test_pending_registration\0",
+                )
+                .unwrap()
+        };
+        assert_eq!(
+            unsafe { pending() },
+            1,
+            "real native rollback owner must remain discoverable"
+        );
+    }
     assert_eq!(budget.0, usize::from(retained));
     assert_eq!(budget.1 != 0, retained);
     assert_eq!(

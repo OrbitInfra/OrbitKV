@@ -452,6 +452,19 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   rollback visibility, consuming `unregister`/`Drop`, terminal destruction and
   physical CUDA/RDMA/GDS reclamation remain open. This substage does not close
   S3, S4 or S5 or authorize new buffer reuse after an unresolved error.
+  The next implemented registration-error candidate requires a usable completed
+  provider for every range, preserves per-range optional fallback and rejects
+  incompatible duplicate options. Its existing retirement owners roll back
+  only the failed call's references and retain pending providers/publication.
+  The real RDMA local buffer owner reserves its entry before MR registration,
+  joins all launched work and exposes unpublished partial registrations for
+  selective cleanup. Initial CPU fault controls pass; independent review and
+  final source/Rust-owner gates remain pending. Evidence is under
+  `/root/orbitkv-artifacts/s3-native-registration-repair-20261019/`.
+  Existing upstream PRs #4573/#4249 remain the contribution references.
+  Warm-up MR faults, CUDA IPC aliases, hotplug, consuming unregister/Drop and
+  physical fault reclamation remain open; this candidate adds no hardware or
+  S3/S4/S5 completion claim.
 - Bound and diagnose retained/quarantined source memory while proof is absent.
   Timeout, etcd expiry, cancellation, remote process disappearance and a control
   ACK are not interchangeable with native drain. An unavailable upstream primitive
