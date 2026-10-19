@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import random
 import re
 import statistics
 import threading
@@ -31,6 +32,16 @@ DRAIN_GAUGES = (
     "orbitkv_ssd_cufile_inflight_batches",
     "orbitkv_storage_codec_reserved_bytes",
 )
+
+
+def geometric_mean(values: list[float]) -> float:
+    return math.exp(statistics.mean(math.log(value) for value in values))
+
+
+def geometric_mean_interval(values: list[float], seed: int, draws: int) -> list[float]:
+    rng = random.Random(seed)
+    ordered = sorted(geometric_mean(rng.choices(values, k=len(values))) for _ in range(draws))
+    return [ordered[math.ceil(draws * 0.025) - 1], ordered[math.ceil(draws * 0.975) - 1]]
 
 
 def delta(before: dict, after: dict) -> dict:

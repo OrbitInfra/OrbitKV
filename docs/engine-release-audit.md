@@ -149,6 +149,41 @@ required before consuming the interface. Static LoRA admission validation needs
 its own replacement even after pending-query admission becomes public. No
 performance, kernel/default or broader lifecycle support is claimed.
 
+## 2026-10-19 official release source recheck
+
+The latest official non-prerelease tags are vLLM
+[0.32.0 / 5df63a72](https://github.com/vllm-project/vllm/releases/tag/v0.32.0)
+and SGLang
+[0.5.22 / baa9befa](https://github.com/sgl-project/sglang/releases/tag/v0.5.22).
+This is source research under S5.1. Selected runtime pins remain 0.31.0 and
+0.5.21; these new tags have no OrbitKV installed-wheel qualification.
+
+- vLLM 0.32.0 still preprocesses recurrent state before its V2 connector
+  `pre_forward` call. The V1/one-attention-group restriction remains necessary;
+  [#59410](https://github.com/vllm-project/vllm/pull/59410) is still unmerged.
+- SGLang 0.5.22 adds the public
+  [`finish_layer_wise_loading(index) -> bool`](https://github.com/sgl-project/sglang/blob/baa9befa381511cd4d56f83980951e5a45fffc6d/python/sglang/srt/mem_cache/unified_cache/unified_cache_linker.py#L163)
+  completion contract. Its wrapper consumes failures after forward and before
+  inserting or freeing destinations. OrbitKV's current linker does not implement
+  this required method. Its recovery wrapper also uses the removed load-polling
+  methods and `_update_load` keyword arguments. Upgrading requires a consumed
+  lifecycle migration; changing the dependency pin alone is insufficient.
+- Public worker preparation and pending lookup remain unmerged in
+  [#44856](https://github.com/sgl-project/sglang/pull/44856) and
+  [#44873](https://github.com/sgl-project/sglang/pull/44873). The released registry
+  still accepts only the backend name and factory, and lookup still returns ready
+  boundaries. Keep the pre-capture and pending-admission Hooks.
+- SGLang 0.5.22 still releases device P/D destinations after a timeout without a
+  complete drain ACK. Its host-staging protection does not qualify that device
+  fault path.
+
+Any future migration must preserve native writer ownership through completion;
+unknown or timed-out work cannot become a completed failed load. Reuse the
+existing installed engine/media/restart and fault gates before replacing consumed
+interfaces. Current frozen producer-Save qualification keeps its original pins
+and wheel. Source snapshots and API records are preserved outside Git at
+`/root/orbitkv-artifacts/s5-release-recheck-20261019-1/`.
+
 ## Released integration boundaries
 
 | Engine | Consumed interface | Ownership |

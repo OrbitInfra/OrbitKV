@@ -415,12 +415,14 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   transport retains the address, a retry does not call removal again, and an
   attempted same-address registration reports success after transport rejection.
   The separate reproduction scene exits zero only when those defects are present;
-  it is defect evidence, not a qualification pass. Latest upstream inspection at
+  it is defect evidence, not a qualification pass. The upstream inspection at
   `5d0636f5` still shows removal errors logged without propagation and RDMA buffer
   records erased after unchecked unregister results. Evidence and failed controls
-  are under `/root/orbitkv-artifacts/s3-native-unregister-20261018/`. This source/
-  CPU evidence candidate needs independent review; it submits no payload DMA
-  and grants no new registration, termination or reclamation support.
+  are under `/root/orbitkv-artifacts/s3-native-unregister-20261018/`. Independent
+  code/CPU review accepts the exact `c69e42bd` reproduction controls, with actual
+  scene exits zero/one/zero. Production error propagation remains unfixed; no
+  payload DMA ran and no new registration, termination or reclamation support
+  is qualified.
 - Bound and diagnose retained/quarantined source memory while proof is absent.
   Timeout, etcd expiry, cancellation, remote process disappearance and a control
   ACK are not interchangeable with native drain. An unavailable upstream primitive
@@ -838,6 +840,9 @@ in [transport](transport.md) and [engine-local Restore](engine-local-restore.md)
 The checkboxes below record bounded deliveries, not completion of S4. The
 records in this section retain each artifact, measured profile and failed gate.
 
+- [x] Classify benchmarks and their tests by behavior, consolidate shared
+  fixtures, and retire the obsolete upstream-ABI READ probe/comparison entry
+  points. Historical reproduction stays bound to immutable source and evidence.
 - [x] Implement reviewed KDA copy work, bounded SSD host batching, separated
   read/write submission and GPU/NUMA identity. Keep CUDA sources separate.
 - [x] Accept the explicit SGLang kernel profile: Qwen3-32B, raw BF16,
@@ -847,8 +852,17 @@ records in this section retain each artifact, measured profile and failed gate.
 - [x] Merge the Manager native observer and offline identity/window reader in
   [PR #270](https://github.com/feichai0017/orbitkv/pull/270), with independent
   source/CPU acceptance and final-head CI. Hardware observation is still open.
-- [ ] Admit the current two-host runtime and pass the matched native-observer
-  overhead pilot before diagnosing first peer recovery and warm steady state.
+- [x] Connect stopped-Manager trace validation and matched-pair overhead checks
+  to the existing RDMA runner. Invalid traces and failed completed pairs stop
+  dependent cells while retaining actual normal waits; this is implementation,
+  not a hardware-pilot result.
+- [x] Validate the frozen current two-host Manager/fixture runtime after real
+  GPU registration, including consumed Python origins and native mappings.
+  The runtime guard binds the consumed channel configuration to its checked
+  private root and prefix, launches children from a frozen neutral directory,
+  and verifies their actual working directories before payload admission.
+- [ ] Pass the matched native-observer overhead pilot before diagnosing first
+  peer recovery and warm steady state. The current pilot failed its tail guard.
 - [ ] Reduce engine-local H2D observation cost until the complete matched
   overhead guard passes; earlier valid failed cohorts remain failed.
 - [ ] Pass inference-contention and repeatable end-to-end performance gates
@@ -1144,11 +1158,40 @@ remain outside Git at `/root/orbitkv-artifacts/s4-rle-trace-20261016/`.
   are verified separately from the legacy upstream 48-byte probe. Source/CPU
   review, frozen-runtime admission and a matched observation-overhead pilot must
   precede hardware diagnosis. This does not change S4/S5 qualification or defaults.
+  The existing RDMA host owner now consumes full input/directory checks under its
+  inherited resource leases, validates every private cell domain, and launches
+  children with exact frozen environments. A post-registration checkpoint checks
+  the actual Manager Python origins and both live processes' native mappings
+  before payload publication, reusing the installed-gate inode/device and
+  executable-byte inspection. Final input validation precedes lease release.
+  Current-runtime admission is recorded below; the matched observation-overhead
+  pilot remains unqualified.
+  The runner now consumes bounded same-cell trace receipts only after normal
+  Manager and fixture exit, checks each host's own Manager identity, and validates
+  consumer-local query windows. The original eight-cell overhead pilot checks
+  independent off/on pairs before admitting later cells and requires full
+  postflight for a pilot PASS. Two pairs per direction and fifty samples per
+  cell do not establish population confidence or stable tail latency; the
+  predeclared guards and all failed cells remain in force.
+
 - Retain bounded multipart plans and whole-operation ownership. Earlier layer,
   multipart, codec or SSD readiness requires consumer dependencies and final
   physical drain, not only a readiness notification.
 - Run matched native/OrbitKV/LMCache serving comparisons after model recovery
   qualifies. Larger-model native output controls do not close this gate.
+
+**Current-runtime Manager observer pilot (2026-10-19): valid overhead FAIL.**
+Harness `8864879a` consumed the unchanged installed `d49f6deb` runtime on two
+H20 hosts. The first four cells completed 224 exact-byte/sentinel restores
+(200 measured); the second pair exceeded the frozen query-plus-restore tail
+guard: 13.192735 versus 11.466028 ms, a 1.726707 ms difference above 0.25 ms.
+All completed-pair median guards passed. The remaining four cells, including
+the reverse direction, were not started. Independent review accepts the failed prefix,
+normal Manager/fixture and owner waits, unchanged inputs and empty owned-resource
+postflight. The original eight-cell contract, slow sample, driver exit 1 and
+failed result remain at
+`/root/orbitkv-artifacts/s4-recovery-path-profile-20261018/manager-observer-cohort-886-1/`.
+This does not admit deeper instrumentation, transport promotion or a new default.
 
 **Acceptance:** correct GPU bytes and outputs, unchanged resource/lifetime
 contracts, repeatable matched gains with uncertainty and frozen cold/small-path
@@ -1194,6 +1237,14 @@ align with official vLLM 0.31.0 / SGLang 0.5.21. Released callbacks, installed-w
 ordinary cache/restart and bounded model controls have scoped acceptance.
 Upstream V2/recurrent restore ordering, SGLang pre-factory graph capture, missing
 public pending tickets and native P/D timeout drain remain interface limits.
+
+The 2026-10-19 source recheck finds official vLLM 0.32.0 and SGLang 0.5.22.
+It is research only: runtime pins and frozen producer-Save gates stay unchanged.
+SGLang's new completed-load contract requires linker/recovery lifecycle changes;
+public worker preparation and pending lookup are still unreleased. The V2 and
+device P/D drain limits also remain. See the
+[release source audit](engine-release-audit.md#2026-10-19-official-release-source-recheck)
+before selecting or implementing a later upgrade; no new profile is qualified.
 
 At every upgrade, record callback ownership, public/private dependencies, selected
 release and exact gates. No fork-only callback, factory, default or CI runtime
