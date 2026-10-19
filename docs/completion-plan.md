@@ -946,6 +946,38 @@ and records ordered stages from registration through handoff. A separate
 reviews before any new adapter pair can be frozen. It adds no production fence,
 page generation or physical-fault reclamation.
 
+**Scoped vLLM DRAM prepared-adapter acceptance (2026-10-19).** The corrected
+`549f4a00` harness first passes the independent exact-strided-readiness source
+and GPU reviews. Its new immutable two-cell freeze includes the consumed vLLM
+`pyvenv.cfg`; an earlier packet that omitted that file remains unlaunched and
+`ChangesRequired`. After Primus History identified the same frozen host through
+a changed SSH address, an independent rereview bound the new host key, unchanged
+boot/GPU/runtime identities and controller incarnation before atomically granting
+one precheck invocation. No task configuration or frozen runtime changed.
+
+The serial vLLM 0.31.0 DRAM fenced/no-fence pair then completes once without
+retry or forced cleanup. The fenced cell submits only after producer readiness
+and restores the complete deterministic payload; the no-fence counterfactual
+submits while the producer is pending and leaves the destination sentinel
+unchanged. Their complete 32,768-byte hashes are respectively `5025d2d1` and
+`9bd907d6`. Both cells retain nine ordered stage receipts, distinct original and
+replacement registration generations, stale-registration rejection, four exact
+IPC-credit transitions from one to zero, normal Manager SIGTERM/reap, pytest and
+native-child actual waits with exit status zero, and empty selected postflight
+ownership.
+
+Independent result review accepts only
+`AcceptedVllmDramPreparedAdapterPair`; `REVIEW.json` SHA256 is
+`e70594a07a7265de3139f1305d9016d11b5a27fcfbeb36529ed2abc61474d225`
+under `/root/orbitkv-artifacts/s3-adapter-copy-prewarm-20261019/`. The negative
+cell's `qualification_passed=false` is its required healthy counterfactual, not
+a failed campaign. The local SSH wrapper lacked a sealed exit receipt; the
+review accepts the pair from the sealed remote supervisor/controller and complete
+native waits, while retaining that wrapper limit. The original c6 timeout,
+quarantine, six locks and GPU1 ownership remain unchanged. This acceptance is
+not a model, SSD, SGLang, formal, fault, page-generation, physical-termination or
+reclamation gate; S3 remains Partial.
+
 ## S4 — Finish communication execution and demonstrate gains
 
 **Partial. Depends on S3 for new reuse/early consumption.** Existing transfer,
