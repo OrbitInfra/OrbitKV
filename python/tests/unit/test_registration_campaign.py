@@ -1,5 +1,6 @@
 """CPU controls for launch admission and strict lifecycle evidence."""
 
+import errno
 import fcntl
 import json
 import os
@@ -13,6 +14,87 @@ from types import SimpleNamespace
 import pytest
 
 from tests.support import registration_campaign as campaign
+
+
+@pytest.mark.parametrize("fault", [None, "owner-start", "write"])
+def test_service_runtime_records_live_renamed_worker_and_retains_cleanup_owner(
+    tmp_path, monkeypatch, fault
+):
+    child_source = """
+import sys,time
+from pathlib import Path
+root=Path(sys.argv[1])
+(root/'child-ready').touch()
+deadline=time.monotonic()+45
+while not(root/'child-stop').exists() and time.monotonic()<deadline:
+    time.sleep(.01)
+"""
+    parent_source = """
+import json,subprocess,sys,time
+from pathlib import Path
+root=Path(sys.argv[1])
+child=subprocess.Popen(['VLLM::EngineCore','-I','-S','-B','-c',sys.argv[2],str(root)],executable=sys.executable)
+try:
+    deadline=time.monotonic()+45
+    while not(root/'child-ready').exists() and time.monotonic()<deadline:
+        if child.poll() is not None:raise RuntimeError('worker exited before ready')
+        time.sleep(.01)
+    (root/'ready.json').write_text(json.dumps({'worker':child.pid}))
+    while not(root/'stop').exists() and time.monotonic()<deadline:
+        time.sleep(.01)
+finally:
+    (root/'child-stop').touch()
+    code=child.wait(timeout=10)
+raise SystemExit(code)
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-I", "-S", "-B", "-c", parent_source, str(tmp_path), child_source],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.monotonic() + 20
+        while not (tmp_path / "ready.json").exists():
+            assert process.poll() is None
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        owner = campaign.identity(process.pid)
+        worker = json.loads((tmp_path / "ready.json").read_text())["worker"]
+        start = owner["start_ticks"] + (fault == "owner-start")
+        if fault == "write":
+
+            def fail_write(*_args, **_kwargs):
+                raise OSError(errno.ENOSPC, "runtime evidence full")
+
+            monkeypatch.setattr(campaign, "write", fail_write)
+        if fault is None:
+            campaign.record_process_group_runtime(
+                process, start, tmp_path / "service.log", time.monotonic() + 20
+            )
+            path = next(tmp_path.glob("service.log.*.process-runtime.json"))
+            recorded = json.loads(path.read_text())
+            assert recorded["owner"] == owner
+            assert {row["owner"]["pid"] for row in recorded["processes"]} == {process.pid, worker}
+            observed_worker = next(
+                row for row in recorded["processes"] if row["owner"]["pid"] == worker
+            )
+            assert observed_worker["argv"][0] == "VLLM::EngineCore"
+            assert all(row["files"] and row["maps"] for row in recorded["processes"])
+        else:
+            error = RuntimeError if fault == "owner-start" else OSError
+            with pytest.raises(error, match="owner identity changed|runtime evidence full"):
+                campaign.record_process_group_runtime(
+                    process, start, tmp_path / "service.log", time.monotonic() + 20
+                )
+            assert not list(tmp_path.glob("*.process-runtime.json"))
+        assert process.poll() is None
+    finally:
+        (tmp_path / "stop").touch()
+        code = process.wait(timeout=15)
+        errors = process.stderr.read().decode()
+        process.stderr.close()
+        assert code == 0, errors
 
 
 def cpu_ready_inputs(tmp_path):

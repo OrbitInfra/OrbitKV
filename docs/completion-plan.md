@@ -495,6 +495,15 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   matching wheel and does not run the later optimization guard on the GPU or
   qualify physical-fault termination. Official-engine and shared-cache gates
   remain required. See [PR #283](https://github.com/feichai0017/orbitkv/pull/283).
+  The first ordinary vLLM 0.31.0 dense restart run passes six functional cases
+  with one expected hybrid-model skip and normal zero exits for all four
+  services. Current-artifact qualification remains open: the external observer
+  missed the save/load workers' live native mappings. No artifact mixing was
+  observed, but declared paths cannot replace that evidence. The next test-only
+  change records live service groups inside the maintained engine fixtures,
+  reusing the existing runtime reader before their normal teardown. Its fresh
+  installed-engine and shared-cache qualification remains required; the earlier
+  functional run and unsuccessful observers are retained.
 - Bound and diagnose retained/quarantined source memory while proof is absent.
   Timeout, etcd expiry, cancellation, remote process disappearance and a control
   ACK are not interchangeable with native drain. An unavailable upstream primitive

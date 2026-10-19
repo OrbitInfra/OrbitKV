@@ -294,6 +294,11 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                 time.sleep(1)
             else:
                 pytest.fail(f"SGLang startup timed out:\n{log_path.read_text()[-8000:]}")
+            from tests.support.registration_campaign import record_process_group_runtime
+
+            record_process_group_runtime(
+                process, process._orbitkv_start_ticks, log_path, time.monotonic() + 180
+            )
             return process, base_url
         except BaseException:
             _stop_server(process, tmp_path)
@@ -335,6 +340,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             fetch_orbitkv_metrics(channel_server.http_port),
             channel_server.read_logs()[-8000:],
         )
+        channel_server.record_runtime()
     finally:
         _stop_server(process, tmp_path)
 

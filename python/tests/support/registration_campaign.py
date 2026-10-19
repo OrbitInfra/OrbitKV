@@ -895,6 +895,78 @@ def capture_process_runtime(pid: int, start_ticks: int, deadline: float) -> dict
     return {"owner": owner, "maps": raw, "files": files, "physical_termination_claimed": False}
 
 
+def record_process_group_runtime(
+    process: subprocess.Popen,
+    start_ticks: int,
+    log_path: Path,
+    deadline: float,
+) -> None:
+    """Record a live service and its workers before the owner requests shutdown."""
+    if process.poll() is not None:
+        raise RuntimeError("Service exited before its runtime capture")
+    owner = identity(process.pid, deadline)
+    if owner["start_ticks"] != start_ticks or owner["group"] != process.pid:
+        raise RuntimeError("Service runtime owner identity changed")
+
+    def members():
+        found = []
+        for path in Path("/proc").glob("[0-9]*/stat"):
+            remaining(deadline)
+            try:
+                fields = path.read_text().rsplit(")", 1)[1].split()
+                if int(fields[2]) == owner["group"]:
+                    found.append(identity(int(path.parent.name), deadline))
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+        if not found or len(found) > 64:
+            raise RuntimeError("Service runtime process group is empty or exceeds its bound")
+        return sorted(found, key=lambda item: item["pid"])
+
+    before = members()
+    if owner not in before or any(item["session"] != owner["session"] for item in before):
+        raise RuntimeError("Service runtime process group ownership differs")
+    records = []
+    for member in before:
+        pid = member["pid"]
+        root = Path(f"/proc/{pid}")
+        argv = read_bytes(root / "cmdline", MAX_JSON_BYTES, deadline).split(b"\0")[:-1]
+        environment = dict(
+            item.split(b"=", 1)
+            for item in read_bytes(root / "environ", MAX_JSON_BYTES, deadline).split(b"\0")
+            if b"=" in item
+        )
+        runtime = capture_process_runtime(pid, member["start_ticks"], deadline)
+        if runtime["owner"] != member:
+            raise RuntimeError("Service worker identity changed during runtime capture")
+        records.append(
+            {
+                "argv": [value.decode() for value in argv],
+                "environment": {
+                    key: environment.get(key.encode(), b"").decode()
+                    for key in (
+                        "PYTHONPATH",
+                        "LD_LIBRARY_PATH",
+                        "CUDA_VISIBLE_DEVICES",
+                        "ORBITKV_CHANNEL_CONFIG",
+                        "VLLM_USE_V2_MODEL_RUNNER",
+                    )
+                },
+                **runtime,
+            }
+        )
+    if (
+        process.poll() is not None
+        or identity(process.pid, deadline) != owner
+        or members() != before
+    ):
+        raise RuntimeError("Service runtime process group changed during capture")
+    write(
+        Path(f"{log_path}.{owner['pid']}-{start_ticks}.process-runtime.json"),
+        {"owner": owner, "processes": records, "physical_termination_claimed": False},
+        deadline,
+    )
+
+
 def process_trace_inventory(
     directory: Path, root_pid: int, deadline: float | None = None
 ) -> dict[int, dict]:

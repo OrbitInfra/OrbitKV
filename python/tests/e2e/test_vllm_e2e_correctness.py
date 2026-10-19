@@ -363,7 +363,7 @@ class TestE2ECorrectness:
             max_model_len=max_model_len,
             extra_args=vllm_engine_args,
             transfer_backend=orbitkv_transfer_backend,
-        ):
+        ) as server:
             for label, prompt, expectation in EXECUTION_PLAN:
                 if expectation not in {"cold", "warm-same-process"}:
                     continue
@@ -377,6 +377,8 @@ class TestE2ECorrectness:
                 print(f"  [{label}] ({expectation}) {len(result['text'])} chars")
 
             metrics_same_process = fetch_orbitkv_metrics(metrics_port)
+            server.record_runtime()
+            orbitkv_server.record_runtime()
 
         if request.config.getoption("--vllm-cache-tier") == "ssd":
             evict_dram_after_ssd_writes(metrics_port)
@@ -395,7 +397,7 @@ class TestE2ECorrectness:
             extra_args=vllm_engine_args,
             transfer_backend=orbitkv_transfer_backend,
             server_label="OrbitKV load",
-        ):
+        ) as server:
             for label, prompt, expectation in EXECUTION_PLAN:
                 if expectation in {"cold", "warm-same-process"}:
                     continue
@@ -416,6 +418,7 @@ class TestE2ECorrectness:
                     ) - before_long_warm.get("orbitkv_load_bytes_total", 0)
 
             metrics_end = fetch_orbitkv_metrics(metrics_port)
+            server.record_runtime()
 
         if request.config.getoption("--vllm-cache-tier") == "ssd":
             read_path = request.config.getoption("--ssd-read-path") or request.config.getoption(
