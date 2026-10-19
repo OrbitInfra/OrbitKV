@@ -431,6 +431,13 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   failures through the C ABI, retries only unfinished transports and retains a
   publication tombstone until metadata synchronization succeeds. New
   registration at that base is rejected while retirement is incomplete.
+  Independent review rejected the first `d8e831d9` candidate: a failed final
+  batch publication retained only its last tombstone, allowing an earlier base
+  to register again. The correction retains completed prefixes until a matching
+  snapshot revision is successfully published, resolves wildcard references
+  before removal, and excludes older in-flight publications from that receipt.
+  Preserve the rejected candidate and its reproduced counterexample under
+  `/root/orbitkv-artifacts/s3-native-unregister-repair-20261019/`.
   The RDMA context and local buffer manager preserve refused MRs and successful
   partial cleanup. Complete matching-header CPU builds, native/C ABI controls
   and the actual Rust `try_unregister` owner are the acceptance boundary;

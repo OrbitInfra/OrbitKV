@@ -109,6 +109,11 @@ removed from the pending set exactly once. A failed metadata publication keeps
 a tombstone even when physical removal succeeded. A registration at that base
 is rejected until the old unregister and publication finish. Normal batch removal
 still publishes once; failure reports the index whose suffix must be retried.
+Completed prefixes retain their tombstones until a successful publication covers
+their withdrawal revision. The metadata owner captures each snapshot and revision
+together before publishing; an older in-flight publication cannot acknowledge a
+newer withdrawal. Wildcard batch entries resolve their logical references before
+removal, so publication-only tombstones cannot shadow later references.
 
 At the RDMA owner, a refused `ibv_dereg_mr` retains the MR in its context. A
 partially successful buffer removal retains only unfinished MRs and reports an

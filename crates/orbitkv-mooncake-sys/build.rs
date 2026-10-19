@@ -270,6 +270,14 @@ fn verify_backport_source(source: &Path) {
             "mooncake-transfer-engine/tent/src/transport/rdma/buffers.cpp",
             "72fe68d9a2f6548e1fa066df16bf6330c429112d",
         ),
+        (
+            "mooncake-transfer-engine/tent/include/tent/runtime/segment_manager.h",
+            "26fccd234bfe47aa3034b96f179ccd8be1392a75",
+        ),
+        (
+            "mooncake-transfer-engine/tent/src/runtime/segment_manager.cpp",
+            "618117190015fbd89916688cc4fda23dd2e3bc9d",
+        ),
     ] {
         let output = Command::new("git")
             .arg("hash-object")

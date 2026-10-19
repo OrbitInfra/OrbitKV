@@ -735,6 +735,10 @@ alive; no payload transfer or device registration is submitted. The default
 fixed-runtime gate requires successful strict refusal/retry, partial-transport,
 reference-count, wildcard, publication-tombstone and batch controls. The
 historical-defect reproduction scene must fail against the fixed library.
+Batch controls include failed publication after multiple final removals,
+same-base wildcard suffix retry, and an older publication completing after
+newer withdrawals. Completed prefixes remain protected until a successful
+publication covers their actual withdrawal revision.
 Use `--expect-defect` for an archived historical runtime: its strict refusal
 must fail, and its explicit defect reproduction must succeed. Neither negative
 control is a qualification pass.
@@ -765,4 +769,4 @@ the C ABI to Rust `try_unregister`. Partial registration rollback, consuming
 `unregister`/`Drop`, terminal destruction and physical-failure reclamation
 remain unqualified. Test-only owner reconciliation is not a production drain
 receipt. These controls are distinct from the earlier real TCP admitted-READ/unregister counterexample
-and does not qualify RNIC failure, device drain or allocation/page reuse.
+and do not qualify RNIC failure, device drain or allocation/page reuse.

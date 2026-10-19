@@ -127,51 +127,48 @@
 +#endif  // TENT_REGISTRATION_GUARD_H
 --- a/mooncake-transfer-engine/tent/include/tent/runtime/transfer_engine_impl.h
 +++ b/mooncake-transfer-engine/tent/include/tent/runtime/transfer_engine_impl.h
-@@ -20,6 +20,7 @@
- #include <chrono>
- #include <cstddef>
- #include <cstdint>
+@@ -22,0 +23 @@
 +#include <map>
- #include <memory>
- #include <mutex>
- #include <string>
-@@ -31,6 +32,7 @@
- #include "tent/common/status.h"
- #include "tent/common/types.h"
- #include "tent/runtime/admission_queue.h"
+@@ -33,0 +35 @@
 +#include "tent/runtime/registration_guard.h"
- #include "tent/runtime/transport.h"
- #include "tent/runtime/transport_selector.h"
- 
-@@ -495,6 +497,17 @@
-     std::array<std::shared_ptr<Transport>, kSupportedTransportTypes>
-         transport_list_;
-     std::unique_ptr<SegmentTracker> local_segment_tracker_;
+@@ -497,0 +500,15 @@
 +    struct RetiredRegistration {
 +        BufferDesc desc;
 +        std::vector<TransportType> pending;
 +        bool withdrawn{false};
++        uint64_t withdrawal_revision{0};
++        bool completed_prefix{false};
 +    };
++    void releasePublishedPrefixes(const std::vector<void*>& addresses,
++                                  size_t count);
 +    Status unregisterLocalMemoryLocked(void* addr, size_t size,
 +                                      bool synchronize = true);
 +    RegistrationCoordinator registration_coordinator_;
 +    std::mutex retired_registration_mutex_;
 +    std::map<std::pair<uint64_t, uint64_t>, RetiredRegistration>
 +        retired_registrations_;
- 
-     BatchSet batch_set_;
- 
+--- a/mooncake-transfer-engine/tent/include/tent/runtime/segment_manager.h
++++ b/mooncake-transfer-engine/tent/include/tent/runtime/segment_manager.h
+@@ -196,0 +197,8 @@
++    uint64_t localRevision() const {
++        return local_desc_version_.load(std::memory_order_acquire);
++    }
++
++    uint64_t publishedRevision() const {
++        return published_local_version_.load(std::memory_order_acquire);
++    }
++
+@@ -239,0 +248 @@
++    std::atomic<uint64_t> published_local_version_{0};
 --- a/mooncake-transfer-engine/tent/src/runtime/transfer_engine_impl.cpp
 +++ b/mooncake-transfer-engine/tent/src/runtime/transfer_engine_impl.cpp
-@@ -800,6 +800,24 @@
- 
-     if (metadata_->sourceClosed())
-         return Status::InvalidArgument("Source admission permanently closed");
+@@ -802,0 +803,19 @@
 +    std::vector<uint64_t> addresses;
 +    addresses.reserve(addr_list.size());
 +    for (auto addr : addr_list)
 +        addresses.push_back(reinterpret_cast<uint64_t>(addr));
 +    auto registration_guard = registration_coordinator_.acquire(addresses);
++    releasePublishedPrefixes(addr_list, addr_list.size());
 +    {
 +        std::lock_guard<std::mutex> lock(retired_registration_mutex_);
 +        for (const auto& entry : retired_registrations_) {
@@ -185,13 +182,7 @@
 +        }
 +    }
 +
-     // Build BufferDescs: warm-up → NUMA probe → fill location
-     std::vector<BufferDesc> desc_list;
-     desc_list.reserve(addr_list.size());
-@@ -895,19 +913,9 @@
- }
- 
- Status TransferEngineImpl::unregisterLocalMemory(void* addr, size_t size) {
+@@ -898,13 +917,3 @@
 -    bool removed = false;
 -    auto status = local_segment_tracker_->remove(
 -        (uint64_t)addr, size, [&](BufferDesc& desc) -> Status {
@@ -208,13 +199,7 @@
 +    auto guard =
 +        registration_coordinator_.acquire({reinterpret_cast<uint64_t>(addr)});
 +    return unregisterLocalMemoryLocked(addr, size);
- }
- 
- Status TransferEngineImpl::unregisterLocalMemory(
-@@ -916,24 +924,136 @@
-         return Status::InvalidArgument(
-             "Mismatched addresses and sizes in unregisterLocalMemory" LOC_MARK);
-     }
+@@ -919 +928,27 @@
 -    bool removed_any = false;
 +    std::vector<uint64_t> addresses;
 +    for (auto addr : addr_list)
@@ -234,13 +219,16 @@
 +    {
 +        std::lock_guard<std::mutex> lock(retired_registration_mutex_);
 +        for (const auto& entry : retired_registrations_) {
-+            if (std::binary_search(addresses.begin(), addresses.end(),
++            if (!entry.second.completed_prefix &&
++                std::binary_search(addresses.begin(), addresses.end(),
 +                                   entry.first.first))
 +                references[entry.first] = 1;
 +        }
 +    }
 +    size_t sync_index = addr_list.size();
-     for (size_t i = 0; i < addr_list.size(); ++i) {
++    std::vector<std::pair<uint64_t, uint64_t>> resolved;
++    resolved.reserve(addr_list.size());
+@@ -921,9 +956,116 @@
 -        bool removed = false;
 -        auto status = local_segment_tracker_->remove(
 -            (uint64_t)addr_list[i], size_list.empty() ? 0 : size_list[i],
@@ -252,6 +240,7 @@
 -                }
 +        const auto base = reinterpret_cast<uint64_t>(addr_list[i]);
 +        const auto size = size_list.empty() ? 0 : size_list[i];
++        resolved.emplace_back(base, size);
 +        auto it = references.end();
 +        if (size) {
 +            it = references.find({base, size});
@@ -262,15 +251,19 @@
 +            --it;
 +            if (it->first.first != base) continue;
 +        }
-+        if (it != references.end() && --it->second == 0) {
-+            sync_index = i;
-+            references.erase(it);
++        if (it != references.end()) {
++            resolved.back() = it->first;
++            if (--it->second == 0) {
++                sync_index = i;
++                references.erase(it);
++            }
 +        }
 +    }
 +    for (size_t i = 0; i < addr_list.size(); ++i) {
 +        auto status = unregisterLocalMemoryLocked(
-+            addr_list[i], size_list.empty() ? 0 : size_list[i],
-+            i == sync_index);
++            addr_list[i], resolved[i].second, i == sync_index);
++        if (i == sync_index || !status.ok())
++            releasePublishedPrefixes(addr_list, i + 1);
 +        if (!status.ok()) {
 +            return Status(status.code(),
 +                          "Batch unregistration failed at index " +
@@ -280,6 +273,26 @@
 +        }
 +    }
 +    return Status::OK();
++}
++
++void TransferEngineImpl::releasePublishedPrefixes(
++    const std::vector<void*>& addresses, size_t count) {
++    const auto published = metadata_->segmentManager().publishedRevision();
++    std::lock_guard<std::mutex> lock(retired_registration_mutex_);
++    for (auto it = retired_registrations_.begin();
++         it != retired_registrations_.end();) {
++        const auto& retired = it->second;
++        const bool guarded = std::any_of(
++            addresses.begin(), addresses.begin() + count, [&](void* address) {
++                return reinterpret_cast<uint64_t>(address) == it->first.first;
++            });
++        if (guarded && retired.completed_prefix && retired.withdrawn &&
++            retired.pending.empty() && published >= retired.withdrawal_revision) {
++            it = retired_registrations_.erase(it);
++        } else {
++            ++it;
++        }
++    }
 +}
 +
 +Status TransferEngineImpl::unregisterLocalMemoryLocked(void* addr, size_t size,
@@ -295,8 +308,16 @@
 +        }
 +        std::lock_guard<std::mutex> lock(retired_registration_mutex_);
 +        for (const auto& entry : retired_registrations_) {
-+            if (entry.first.first == base)
++            if (entry.first.first == base && !entry.second.completed_prefix)
 +                size = std::max<uint64_t>(size, entry.first.second);
++        }
++        // With no remaining logical reference, an explicit wildcard retry can
++        // still finish the publication obligation of a completed prefix.
++        if (!size) {
++            for (const auto& entry : retired_registrations_) {
++                if (entry.first.first == base)
++                    size = std::max<uint64_t>(size, entry.first.second);
++            }
 +        }
 +    }
 +    const auto key = std::make_pair(base, static_cast<uint64_t>(size));
@@ -304,7 +325,10 @@
 +    {
 +        std::lock_guard<std::mutex> lock(retired_registration_mutex_);
 +        auto found = retired_registrations_.find(key);
-+        if (found != retired_registrations_.end()) retired = &found->second;
++        if (found != retired_registrations_.end()) {
++            retired = &found->second;
++            retired->completed_prefix = false;
++        }
 +    }
 +    if (!retired) {
 +        const auto found = std::find_if(
@@ -328,7 +352,9 @@
 +        CHECK_STATUS(local_segment_tracker_->remove(
 +            base, size, [&](BufferDesc&) {
 +                retired->withdrawn = true;
-                 return Status::OK();
++                retired->withdrawal_revision =
++                    metadata_->segmentManager().localRevision();
+@@ -931,6 +1073,29 @@
 -            });
 -        if (!status.ok()) return status;
 -        if (removed) removed_any = true;
@@ -353,23 +379,33 @@
 +            it = retired->pending.erase(it);
 +        }
 +    }
-+    auto sync = (synchronize || !first_error.ok())
-+                    ? metadata_->segmentManager().synchronizeLocal()
-+                    : Status::OK();
++    if (!synchronize && first_error.ok()) {
++        std::lock_guard<std::mutex> lock(retired_registration_mutex_);
++        retired->completed_prefix = true;
++        return Status::OK();
++    }
++    auto sync = metadata_->segmentManager().synchronizeLocal();
 +    if (!first_error.ok()) return first_error;
 +    if (!sync.ok()) return sync;
 +    std::lock_guard<std::mutex> lock(retired_registration_mutex_);
 +    retired_registrations_.erase(key);
 +    return Status::OK();
- }
- 
- BatchID TransferEngineImpl::allocateBatch(size_t batch_size) {
+--- a/mooncake-transfer-engine/tent/src/runtime/segment_manager.cpp
++++ b/mooncake-transfer-engine/tent/src/runtime/segment_manager.cpp
+@@ -254 +254,7 @@
+-        auto snapshot = getLocal();
++        SegmentDescRef snapshot;
++        uint64_t revision;
++        {
++            std::lock_guard<std::mutex> update(local_update_mu_);
++            snapshot = getLocal();
++            revision = local_desc_version_.load(std::memory_order_acquire);
++        }
+@@ -255,0 +262 @@
++        published_local_version_.store(revision, std::memory_order_release);
 --- a/mooncake-transfer-engine/tent/src/transport/rdma/context.cpp
 +++ b/mooncake-transfer-engine/tent/src/transport/rdma/context.cpp
-@@ -620,16 +620,16 @@
-         return -1;
-     }
-     auto entry = (ibv_mr*)id;
+@@ -623 +623,9 @@
 -    mr_set_mutex_.lock();
 +    void* region_addr = entry->addr;
 +    size_t region_length = entry->length;
@@ -380,7 +416,7 @@
 +                   << " to " << end << " in RDMA device " << device_name_;
 +        return -1;
 +    }
-     mr_set_.erase(entry);
+@@ -625,8 +632,0 @@
 -    mr_set_mutex_.unlock();
 -
 -    if (verbs_.ibv_dereg_mr(entry)) {
@@ -389,15 +425,9 @@
 -                   << " to " << end << " in RDMA device " << device_name_;
 -    }
 -
-     return 0;
- }
- 
 --- a/mooncake-transfer-engine/tent/src/transport/rdma/buffers.cpp
 +++ b/mooncake-transfer-engine/tent/src/transport/rdma/buffers.cpp
-@@ -189,12 +189,24 @@
- Status LocalBufferManager::removeBuffer(BufferDesc& desc) {
-     RWSpinlock::WriteGuard guard(lock_);
-     AddressRange range((void*)desc.addr, desc.length);
+@@ -192,4 +192,16 @@
 -    auto& item = buffer_list_[range];
 -    for (auto& elem : item.mem_reg_map) {
 -        elem.first->unregisterMemReg(elem.second);
@@ -418,9 +448,6 @@
 +        return Status::RdmaError("Unable to unregister buffer" LOC_MARK);
 +    }
 +    desc.lkey.clear();
-     desc.rkey.clear();
+@@ -197 +209 @@
 -    buffer_list_.erase(range);
 +    buffer_list_.erase(found);
-     return Status::OK();
- }
- 

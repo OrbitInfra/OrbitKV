@@ -1,12 +1,17 @@
 // Actual TENT engine bookkeeping with a test-only transport refusal. No payload
 // transfer or device registration occurs; these stable host bytes stay alive.
 #include <array>
+#include <chrono>
+#include <condition_variable>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
+#include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
-#include <unordered_set>
+#include <thread>
 
 #include "tent/platform/cpu.h"
 #include "tent/runtime/control_plane.h"
@@ -29,11 +34,12 @@ class RefusingTransport final : public Transport {
     bool owns = false;
     unsigned registrations = 0;
     unsigned removals = 0;
-    std::unordered_set<uint64_t> addresses;
+    std::set<std::pair<uint64_t, uint64_t>> addresses;
+    std::function<void()> after_remove;
 
     Status addMemoryBuffer(BufferDesc& desc, const MemoryOptions&) override {
         ++registrations;
-        if (!addresses.insert(desc.addr).second)
+        if (!addresses.emplace(desc.addr, desc.length).second)
             return Status::RdmaError("test transport still owns this address");
         owns = true;
         desc.transports.push_back(RDMA);
@@ -43,10 +49,13 @@ class RefusingTransport final : public Transport {
     Status removeMemoryBuffer(BufferDesc& desc) override {
         ++removals;
         if (refuse) return Status::RdmaError("controlled unregister refusal");
-        if (!addresses.erase(desc.addr))
+        if (!addresses.erase({desc.addr, desc.length}))
             return Status::RdmaError(
                 "test transport already removed this address");
         owns = !addresses.empty();
+        desc.lkey.clear();
+        desc.rkey.clear();
+        if (after_remove) after_remove();
         return Status::OK();
     }
 
@@ -131,6 +140,7 @@ int historicalControl(int argc, char** argv) {
         if (transport->owns) {
             BufferDesc descriptor{};
             descriptor.addr = reinterpret_cast<uint64_t>(bytes.data());
+            descriptor.length = bytes.size();
             auto status = transport->removeMemoryBuffer(descriptor);
             if (!status.ok() || transport->owns)
                 throw std::runtime_error("test owner could not be reconciled");
@@ -152,12 +162,14 @@ class PublicationRegistry final : public SegmentRegistry {
    public:
     bool refuse = false;
     unsigned puts = 0;
+    std::function<Status()> before_put;
     Status getSegmentDesc(SegmentDescRef&, const std::string&) override {
         return Status::NotImplemented(
             "control does not resolve remote segments");
     }
     Status putSegmentDesc(SegmentDescRef&) override {
         ++puts;
+        if (before_put) return before_put();
         return refuse ? Status::InternalError("controlled publication refusal")
                       : Status::OK();
     }
@@ -318,6 +330,136 @@ int retryControl(const std::string& scene, const char* maps) {
         require(publication->puts == puts + 1 && first->removals == 2 &&
                     !first->owns,
                 "normal batch did not keep one publication");
+    } else if (scene == "retry-batch-prefix") {
+        require(tent_register_memory(handle, address, 4096) == 0,
+                "register failed");
+        require(tent_register_memory(handle, other, 4096) == 0,
+                "register other failed");
+        void* addresses[] = {address, other};
+        size_t sizes[] = {4096, 4096};
+        publication->refuse = true;
+        require(tent_unregister_memory_batch(handle, addresses, sizes, 2) != 0,
+                "batch publication failure was swallowed");
+        require(tent_register_memory(handle, address, 4096) != 0 &&
+                    first->registrations == 2,
+                "unpublished batch prefix re-entered its provider");
+        publication->refuse = false;
+        require(tent_unregister_memory(handle, other, 4096) == 0,
+                "suffix publication retry failed");
+        require(tent_register_memory(handle, address, 4096) == 0,
+                "published prefix could not be registered again");
+        require(tent_unregister_memory(handle, address, 4096) == 0,
+                "new generation cleanup failed");
+        require(first->removals == 3 && !first->owns,
+                "batch suffix retry repeated physical removal");
+    } else if (scene == "retry-batch-wildcard") {
+        for (bool refuse : {false, true}) {
+            require(tent_register_memory(handle, address, 4096) == 0,
+                    "small range registration failed");
+            require(tent_register_memory(handle, address, 8192) == 0,
+                    "large range registration failed");
+            void* addresses[] = {address, address};
+            const auto puts = publication->puts;
+            const auto removals = first->removals;
+            publication->refuse = refuse;
+            const auto status =
+                tent_unregister_memory_batch(handle, addresses, nullptr, 2);
+            require((status != 0) == refuse &&
+                        first->removals == removals + 2 && !first->owns &&
+                        publication->puts == puts + 1,
+                    "completed prefix shadowed the next wildcard range");
+            if (refuse) {
+                publication->refuse = false;
+                require(tent_unregister_memory(handle, address, 0) == 0,
+                        "wildcard suffix selected the completed prefix");
+                require(tent_register_memory(handle, address, 8192) == 0,
+                        "wildcard suffix left an unfinished tombstone");
+                require(tent_unregister_memory(handle, address, 8192) == 0,
+                        "wildcard new generation cleanup failed");
+                require(first->removals == removals + 3 && !first->owns,
+                        "wildcard suffix repeated physical removal");
+            }
+        }
+#ifdef ORBITKV_UNREGISTER_PUBLICATION_REVISION
+    } else if (scene == "retry-publication-revision") {
+        require(tent_register_memory(handle, address, 4096) == 0,
+                "register failed");
+        require(tent_register_memory(handle, other, 4096) == 0,
+                "register other failed");
+        const auto before = manager.localRevision();
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool entered = false, release = false, removed = false;
+        unsigned calls = 0;
+        publication->before_put = [&] {
+            std::unique_lock<std::mutex> lock(mutex);
+            if (calls++ == 0) {
+                entered = true;
+                changed.notify_all();
+                if (!changed.wait_for(lock, std::chrono::seconds(4),
+                                      [&] { return release; }))
+                    return Status::InternalError("old put release timed out");
+                return Status::OK();
+            }
+            return Status::InternalError("new publication refused");
+        };
+        first->after_remove = [&] {
+            if (first->removals == 2) {
+                std::lock_guard<std::mutex> lock(mutex);
+                removed = true;
+                changed.notify_all();
+            }
+        };
+        Status old_status;
+        std::thread old_put([&] { old_status = manager.synchronizeLocal(); });
+        bool old_ready;
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            old_ready = changed.wait_for(lock, std::chrono::seconds(4),
+                                         [&] { return entered; });
+            if (!old_ready) {
+                release = true;
+                changed.notify_all();
+            }
+        }
+        if (!old_ready) {
+            old_put.join();
+            require(false, "old snapshot did not reach the registry");
+        }
+        int batch_status = 0;
+        std::thread batch([&] {
+            void* addresses[] = {address, other};
+            size_t sizes[] = {4096, 4096};
+            batch_status =
+                tent_unregister_memory_batch(handle, addresses, sizes, 2);
+        });
+        bool withdrew;
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            withdrew = changed.wait_for(lock, std::chrono::seconds(4),
+                                        [&] { return removed; });
+            release = true;
+            changed.notify_all();
+        }
+        old_put.join();
+        batch.join();
+        publication->before_put = {};
+        first->after_remove = {};
+        require(withdrew && old_status.ok() && batch_status != 0,
+                "controlled old/new publication ordering was not reached");
+        require(manager.localRevision() > before &&
+                    manager.publishedRevision() == before,
+                "old put incorrectly acknowledged a later withdrawal");
+        require(tent_register_memory(handle, address, 4096) != 0 &&
+                    first->registrations == 2,
+                "old publication released a newer batch prefix");
+        require(tent_unregister_memory(handle, other, 4096) == 0,
+                "new publication retry failed");
+        require(tent_register_memory(handle, address, 4096) == 0,
+                "new publication did not release its completed prefix");
+        require(tent_unregister_memory(handle, address, 4096) == 0,
+                "new generation cleanup failed");
+#endif
     } else {
         throw std::runtime_error("unknown retry scene");
     }

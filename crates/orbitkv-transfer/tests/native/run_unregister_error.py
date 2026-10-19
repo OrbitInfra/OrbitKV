@@ -100,6 +100,8 @@ def main() -> None:
         "-o",
         str(binary),
     ]
+    if not args.expect_defect:
+        command.insert(1, "-DORBITKV_UNREGISTER_PUBLICATION_REVISION")
     result = {
         "compile_argv": command,
         "compiler_sha256": sha(Path(compiler)),
@@ -227,6 +229,9 @@ def main() -> None:
                     "retry-references",
                     "retry-batch-publication",
                     "retry-batch-normal",
+                    "retry-batch-prefix",
+                    "retry-batch-wildcard",
+                    "retry-publication-revision",
                 )
             )
     for scene, expectation, expected_exit in scenes:
