@@ -1224,6 +1224,14 @@ ordinary cache/restart and bounded model controls have scoped acceptance.
 Upstream V2/recurrent restore ordering, SGLang pre-factory graph capture, missing
 public pending tickets and native P/D timeout drain remain interface limits.
 
+The 2026-10-19 source recheck finds official vLLM 0.32.0 and SGLang 0.5.22.
+It is research only: runtime pins and frozen producer-Save gates stay unchanged.
+SGLang's new completed-load contract requires linker/recovery lifecycle changes;
+public worker preparation and pending lookup are still unreleased. The V2 and
+device P/D drain limits also remain. See the
+[release source audit](engine-release-audit.md#2026-10-19-official-release-source-recheck)
+before selecting or implementing a later upgrade; no new profile is qualified.
+
 At every upgrade, record callback ownership, public/private dependencies, selected
 release and exact gates. No fork-only callback, factory, default or CI runtime
 may be required. A submitted or merged upstream fix is not a released contract.
