@@ -14,9 +14,11 @@
   never-submitted cancellation completes as failure, and Rust submits two
   prepared handles before normal payload/release checks. Old v1 freezes are
   historical evidence; a new reviewed freeze is required for this controller.
-  `prepared-adapter-lifetime-v1` separately freezes four vLLM producer fence/
-  no-fence controls and four SGLang sole/independent exporter holds across DRAM
-  and io_uring. Every cell includes exact payload, original-credit repayment,
+  `prepared-adapter-lifetime-v2` freezes one engine and one medium per two-cell
+  cohort: vLLM producer fence/no-fence controls or SGLang sole/independent
+  exporter holds. DRAM and io_uring require separate reviewed cohorts. The old
+  eight-cell v1 freeze remains unlaunched after its cumulative-budget rejection.
+  Every cell includes exact payload, original-credit repayment,
   registered generation and complete Manager/native process evidence. A passing
   no-fence test records rejected positive bytes and qualification false.
 - `conftest.py`: shared options and the Cache Manager fixture used by both engine

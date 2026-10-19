@@ -547,6 +547,68 @@ def cpu_ready_inputs(tmp_path):
     return path, env, lease
 
 
+@pytest.mark.parametrize("kind", ["vllm-prepared", "sglang-prepared"])
+@pytest.mark.parametrize("tier", ["dram", "ssd-uring"])
+@pytest.mark.parametrize(
+    "fault",
+    [None, "historical-matrix", "eight-cells", "mixed-tier", "mixed-kind", "reversed-flags"],
+)
+def test_adapter_pair_admission_preserves_complete_controls(
+    tmp_path, monkeypatch, kind, tier, fault
+):
+    path, _environment, _lease = cpu_ready_inputs(tmp_path)
+    contract = json.loads(path.read_text())
+    library = str(tmp_path / "gate.so")
+    flags = [True, False] if kind == "vllm-prepared" else [False, True]
+    field = "fence" if kind == "vllm-prepared" else "independent_hold"
+    contract.update(
+        qualification="prepared-adapter-lifetime-v2", adapter_kind=kind, adapter_tier=tier
+    )
+    contract["input_sha256"][library] = "a" * 64
+    contract["cells"] = [
+        {
+            "kind": kind,
+            "tier": tier,
+            field: flag,
+            "passed": 1,
+            "seconds": 1,
+            "process_trace_binary": "/frozen/tracer",
+            "cuda_gate_sha256": "a" * 64,
+            "environment": {"ORBITKV_TEST_CUDA_GATE_LIB": library},
+            "argv": ["/python", "--ssd-backend", "uring", "--ssd-read-path", "uring"],
+        }
+        for flag in flags
+    ]
+    if fault == "historical-matrix":
+        contract["qualification"] = "prepared-adapter-lifetime-v1"
+    elif fault == "eight-cells":
+        contract["cells"] *= 4
+    elif fault == "mixed-tier":
+        contract["cells"][1]["tier"] = "ssd-uring" if tier == "dram" else "dram"
+    elif fault == "mixed-kind":
+        contract["cells"][1]["kind"] = (
+            "sglang-prepared" if kind == "vllm-prepared" else "vllm-prepared"
+        )
+    elif fault == "reversed-flags":
+        contract["cells"].reverse()
+    path.write_text(json.dumps(contract))
+    monkeypatch.setattr(sys, "argv", [campaign.__file__, str(path)])
+
+    class AdmittedPair(BaseException):
+        pass
+
+    def before_resources(*_arguments):
+        raise AdmittedPair
+
+    monkeypatch.setattr(campaign.ctypes, "CDLL", before_resources)
+    if fault is None:
+        with pytest.raises(AdmittedPair):
+            campaign.main()
+    else:
+        with pytest.raises(RuntimeError):
+            campaign.main()
+
+
 @pytest.mark.parametrize("fault", [None, "missing", "relative", "undeclared", "unhashed", "digest"])
 def test_installed_save_requires_frozen_process_tracer_before_admission(tmp_path, fault):
     path, _env, _lease = cpu_ready_inputs(tmp_path)

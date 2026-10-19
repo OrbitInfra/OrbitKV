@@ -988,6 +988,28 @@ The correction requires exactly one complete child exec event matching the
 declared successful command and a canonical frozen executable input. All extra
 or unparsed exec events are refused. Source acceptance and the new diagnostic
 freeze/launch remain separate from the previous rejected run.
+Independent `AcceptedInstalledCUDAStreamReadinessWithFrozenLoaderQuery` accepts
+the exact `6f91e52b` readiness-only diagnostic: two independently released CUDA
+streams, complete 4-KiB payload and mutation control, one frozen loader query,
+and actual normal process waits. Review SHA256 is
+`31d64d7381406d46c7608b885db5fa394b218c140073a4328817b435f12ab4b5`;
+raw archive SHA256 is
+`ac8ee67ab55de71703df39ed9d73ef5dfdb57e2fbd8526b8a9beb3a2b7068e58`,
+under `/root/orbitkv-artifacts/s3-adapter-prepared-lifetime-20261019/`.
+This is readiness evidence, not adapter, credit-repayment or physical-fault
+qualification. Prior failed cohorts and their quarantines remain unchanged.
+The next merged `bf86cfae` eight-cell adapter freeze is not launched: measured
+immutable input validation alone costs 18.25 seconds per vLLM cell and 35.00
+seconds per SGLang cell, exceeding its cumulative 180-second cleanup budget.
+Preserve that freeze and CPU cost evidence under
+`/root/orbitkv-artifacts/s3-adapter-stream-consumption-20261019/`.
+The replacement `prepared-adapter-lifetime-v2` contract admits one engine and
+one medium per two-cell cohort. It requires both vLLM fenced/no-fence controls
+or both SGLang sole/independent-hold controls, with unchanged byte, original
+credit, mapping, process-wait and cumulative cleanup requirements. The old
+eight-cell contract cannot launch. Each new pair needs its own runtime/resource
+freeze and independent launch and result review; completed pairs do not qualify
+missing media, the other engine, model/Graph, page generation or fault recovery.
 
 ## S4 — Finish communication execution and demonstrate gains
 

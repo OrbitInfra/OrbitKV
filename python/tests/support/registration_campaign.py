@@ -333,6 +333,7 @@ def check_inputs(
     if contract.get("qualification") in (
         "pending-save-bytes-v2",
         "prepared-adapter-lifetime-v1",
+        "prepared-adapter-lifetime-v2",
         "cuda-stream-readiness-v1",
     ):
         for cell in contract["cells"]:
@@ -2071,7 +2072,7 @@ def main() -> None:
     if contract.get("qualification") not in (
         None,
         "pending-save-bytes-v2",
-        "prepared-adapter-lifetime-v1",
+        "prepared-adapter-lifetime-v2",
         "cuda-stream-readiness-v1",
     ):
         raise RuntimeError("Unsupported qualification contract; historical freezes stay immutable")
@@ -2081,13 +2082,13 @@ def main() -> None:
         raise RuntimeError("Unknown registration gate phase")
     if contract["schema"] != "orbitkv.explicit-registration-campaign.v1":
         raise RuntimeError("Unknown campaign schema")
-    adapter_profile = contract.get("qualification") == "prepared-adapter-lifetime-v1"
+    adapter_profile = contract.get("qualification") == "prepared-adapter-lifetime-v2"
     readiness_profile = contract.get("qualification") == "cuda-stream-readiness-v1"
     expected = (
         [("cuda-readiness", 1)]
         if readiness_profile
         else (
-            [("vllm-prepared", 1)] * 4 + [("sglang-prepared", 1)] * 4
+            [(contract.get("adapter_kind"), 1)] * 2
             if adapter_profile
             else (
                 [("pending-save-bytes", 1), ("pending-save-bytes", 1)]
@@ -2133,16 +2134,14 @@ def main() -> None:
             ):
                 raise RuntimeError("Unfrozen readiness loader query")
     if adapter_profile:
-        declarations = [
-            ("vllm-prepared", "dram", True),
-            ("vllm-prepared", "dram", False),
-            ("vllm-prepared", "ssd-uring", True),
-            ("vllm-prepared", "ssd-uring", False),
-            ("sglang-prepared", "dram", False),
-            ("sglang-prepared", "dram", True),
-            ("sglang-prepared", "ssd-uring", False),
-            ("sglang-prepared", "ssd-uring", True),
-        ]
+        kind, tier = contract.get("adapter_kind"), contract.get("adapter_tier")
+        if kind not in ("vllm-prepared", "sglang-prepared") or tier not in (
+            "dram",
+            "ssd-uring",
+        ):
+            raise RuntimeError("Unknown frozen adapter pair")
+        flags = (True, False) if kind == "vllm-prepared" else (False, True)
+        declarations = [(kind, tier, flag) for flag in flags]
         for cell, (kind, tier, flag) in zip(contract["cells"], declarations, strict=True):
             field = "fence" if kind == "vllm-prepared" else "independent_hold"
             if (

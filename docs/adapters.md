@@ -45,6 +45,11 @@ batches `submit_saves`, and keeps registration/exporter owners until completion.
 engine completion pending; SGLang also preserves its FIFO tree locks. This code
 requires matching package and engine gates and adds no page-generation or
 physical-failure qualification.
+The installed prepared-lifetime gate now freezes one engine and one medium per
+two-cell cohort. Both producer fence controls or both exporter hold controls
+remain mandatory, along with complete bytes, original IPC credit observations
+and actual normal process waits. Each medium and engine requires independent
+launch and result acceptance; the test organization does not expand support.
 
 | Responsibility | Owner |
 | --- | --- |
