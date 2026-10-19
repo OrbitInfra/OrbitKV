@@ -1,6 +1,7 @@
 """Reject incomplete native evidence and preserve concurrent stage timing."""
 
 import copy
+import hashlib
 import json
 
 import pytest
@@ -280,3 +281,243 @@ def test_manager_trace_cannot_reuse_a_pid_from_another_boot_or_process(field, va
     native[field] = value
     with pytest.raises(ValueError, match="boot and process start"):
         tent_trace.summarize_manager(native, manager_cell())
+
+
+def observer_pilot():
+    contract = {
+        "observer_pilot": "manager-native-observer.v1",
+        "warmup": 5,
+        "samples": 50,
+        "hosts": {"h0": {}, "h1": {}},
+        "required_idle_metrics": ["cpu_control_idle"],
+        "launches": {"h0": {}, "h1": {}},
+        "cells": [],
+    }
+    results = []
+    for index in range(8):
+        source, target = ("h0", "h1") if index < 4 else ("h1", "h0")
+        mode = ("off", "on", "on", "off")[index % 4]
+        cell = {
+            "id": f"c{index + 1}-{mode}",
+            "ordinal": index,
+            "kind": "manager",
+            "source_host": source,
+            "target_host": target,
+            "pair_id": f"{source}-{target}-p{1 + index % 4 // 2}",
+            "observer": mode,
+            "payload": 8 << 20,
+            "segment_bytes": 65536,
+        }
+        contract["cells"].append(cell)
+        result = manager_cell()
+        result.update(cell=cell, readiness=[], exits=[], native_traces={}, runtime_admission={})
+        boot = trace()["boot_id"]
+        for host_index, host in enumerate((source, target)):
+            contract["launches"][host][cell["id"]] = {}
+            for name, offset in (("manager", 0), ("fixture", 1)):
+                enabled = mode == "on" and name == "manager"
+                planned = {
+                    "kind": name,
+                    "runtime": {"observer_enabled": enabled},
+                    "environment": {"TENT_NATIVE_TRACE_PATH": "/cpu-control/manager.json"}
+                    if enabled
+                    else {},
+                }
+                contract["launches"][host][cell["id"]][name] = planned
+                ready = {
+                    "host": host,
+                    "cell": cell["id"],
+                    "name": name,
+                    "pid": 42 + index * 10 + host_index * 2 + offset,
+                    "start_ticks": 111 + index * 10 + host_index * 2 + offset,
+                    "boot_id": boot,
+                    "exit_code": None,
+                    "actual_wait_reap": False,
+                }
+                result["readiness"].append(ready)
+                stopped = {
+                    **ready,
+                    "exit_code": 0 if name == "manager" else 143,
+                    "actual_wait_reap": True,
+                    "was_running": True,
+                    "forced_cleanup": False,
+                }
+                result["exits"].append(stopped)
+                if name == "manager":
+                    native = trace()
+                    native.update({key: ready[key] for key in ("pid", "boot_id", "start_ticks")})
+                    content = json.dumps(native) if enabled else None
+                    result["native_traces"][host] = {
+                        "host": host,
+                        "cell": cell["id"],
+                        "observer_enabled": enabled,
+                        "stop": stopped,
+                        "content": content,
+                        "sha256": hashlib.sha256(content.encode()).hexdigest() if enabled else None,
+                    }
+            result["before"][host] = result["after"][host] = {"boot_id": boot}
+            result["runtime_admission"][host] = {
+                "cell": cell["id"],
+                "host": host,
+                "owners": {
+                    row["name"]: {key: row[key] for key in ("pid", "start_ticks")}
+                    for row in result["readiness"]
+                    if row["host"] == host
+                },
+            }
+        actor = result["readiness"][-1]
+        result["evidence"].update(payload_bytes=cell["payload"], samples=[])
+        for iteration in range(56):
+            begin = 150 + iteration * 10_000_000
+            result["evidence"]["samples"].append(
+                {
+                    "iteration": iteration,
+                    "phase": "cold"
+                    if iteration == 0
+                    else "warmup"
+                    if iteration <= 5
+                    else "measured",
+                    "query_id": f"q-{iteration}",
+                    "sha256": ["a" * 64] * 4,
+                    "remote_bytes": cell["payload"],
+                    "h2d_bytes": cell["payload"],
+                    "manager_fetch_ms": 1.0,
+                    "timing": {"query_ms": 1.0, "query_restore_ms": 2.0},
+                    "query_window": {
+                        "clock": "CLOCK_MONOTONIC",
+                        "boot_id": boot,
+                        "pid": actor["pid"],
+                        "start_ticks": actor["start_ticks"],
+                        "instance": "consumer",
+                        "namespace": "profile",
+                        "begin_mono_ns": begin,
+                        "ready_mono_ns": begin + 1_000_000,
+                    },
+                }
+            )
+        result["pre_stop_idle"] = result["cleanup_idle"] = [{"cpu_control_idle": 0}] * 2
+        results.append(result)
+    return contract, results
+
+
+def test_observer_overhead_uses_restarted_pairs_and_excludes_cold_and_warmup():
+    contract, results = observer_pilot()
+    for result in results:
+        for sample in result["evidence"]["samples"][:6]:
+            sample["manager_fetch_ms"] = 9000
+            sample["timing"]["query_restore_ms"] = 10000
+    report = tent_trace.observer_overhead(contract, results)
+    assert report["status"] == "MEASUREMENT_GUARDS_PASS"
+    assert len(report["pairs"]) == 4
+    for direction in report["directions"].values():
+        assert all(metric["pair_bootstrap_95_ci"] == [1.0, 1.0] for metric in direction.values())
+    # A within-cell outlier affects the separate max guard, not the pair median.
+    results[1]["evidence"]["samples"][-1]["manager_fetch_ms"] = 1.26
+    report = tent_trace.observer_overhead(contract, results[:2])
+    assert report["status"] == "OVERHEAD_FAIL"
+    assert report["pairs"][0]["metrics"]["manager_fetch_ms"]["median_ratio"] == 1
+    assert report["pairs"][0]["metrics"]["manager_fetch_ms"]["tail_difference_ms"] == pytest.approx(
+        0.26
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["reordered", "short", "foreign_trace", "off_trace", "local_hit", "nonfinite", "wrong_mode"],
+)
+def test_observer_pilot_rejects_invalid_prefix_instead_of_dropping_cells(mutation):
+    contract, results = observer_pilot()
+    if mutation == "reordered":
+        results[0], results[1] = results[1], results[0]
+    elif mutation == "short":
+        results[0]["evidence"]["samples"].pop()
+    elif mutation == "foreign_trace":
+        receipt = results[1]["native_traces"]["h0"]
+        native = json.loads(receipt["content"])
+        native["start_ticks"] += 1
+        receipt.update(
+            content=json.dumps(native),
+            sha256=hashlib.sha256(json.dumps(native).encode()).hexdigest(),
+        )
+    elif mutation == "off_trace":
+        results[0]["native_traces"]["h0"]["content"] = "{}"
+    elif mutation == "local_hit":
+        results[0]["evidence"]["samples"][0]["remote_bytes"] = 0
+    elif mutation == "nonfinite":
+        results[0]["evidence"]["samples"][-1]["manager_fetch_ms"] = float("nan")
+    else:
+        contract["launches"]["h0"][contract["cells"][0]["id"]]["manager"]["runtime"][
+            "observer_enabled"
+        ] = True
+    with pytest.raises(ValueError):
+        tent_trace.observer_overhead(contract, results)
+
+
+@pytest.mark.parametrize("failure", ["trace", "overhead"])
+def test_campaign_fail_stop_blocks_next_cell_and_finishes_known_owners(
+    tmp_path, monkeypatch, failure
+):
+    from types import SimpleNamespace
+
+    from benches.distributed import rdma_profile
+
+    contract, results = observer_pilot()
+    contract.update(
+        source_hashes={},
+        owner_commands={"h0": ["cpu-only"], "h1": ["cpu-only"]},
+        etcd_url="http://cpu-control",
+    )
+    contract["launches"]["h0"]["campaign"] = {"etcd": {"argv": [], "environment": {}}}
+    for sample in results[1]["evidence"]["samples"][6:]:
+        sample["manager_fetch_ms"] = 1.2
+    path = tmp_path / "CONTRACT.json"
+    raw = json.dumps(contract).encode()
+    path.write_bytes(raw)
+    inputs = json.dumps({path.name: hashlib.sha256(raw).hexdigest()}).encode()
+    (tmp_path / "INPUTS.json").write_bytes(inputs)
+    (tmp_path / "LAUNCH-ACCEPTED.json").write_text(
+        json.dumps({"accepted": True, "inputs_sha256": hashlib.sha256(inputs).hexdigest()})
+    )
+    launched, closed = [], []
+
+    class CPUProtocolControl:
+        uncertain = finished = False
+        process = None
+
+        def __init__(self, command, host, output):
+            self.host, self.command = host, command
+
+        def start(self):
+            pass
+
+        def rpc(self, operation, **fields):
+            assert operation in ("launch", "stop")
+            return {"exit_code": -15}
+
+        def finish(self):
+            closed.append(self.host)
+            self.finished = True
+            return {"cpu_only_control": True}
+
+    def cell(self, cell, output):
+        launched.append(cell["id"])
+        if failure == "trace":
+            raise ValueError("controlled invalid trace after cell cleanup")
+        return results[cell["ordinal"]]
+
+    monkeypatch.setattr(rdma_profile, "HostConnection", CPUProtocolControl)
+    monkeypatch.setattr(rdma_profile.Campaign, "manager_cell", cell)
+    monkeypatch.setattr(rdma_profile.requests, "get", lambda *a, **kw: SimpleNamespace(ok=True))
+    output = tmp_path / "campaign"
+    monkeypatch.setattr(
+        "sys.argv", ["rdma_profile", "--contract", str(path), "--output", str(output)]
+    )
+    with pytest.raises((RuntimeError, ValueError)):
+        rdma_profile.main()
+    status = json.loads((output / "STATUS.json").read_text())
+    assert len(launched) == (1 if failure == "trace" else 2)
+    assert closed == ["h0", "h1"]
+    assert status["cleanup_etcd_exit"]["exit_code"] == -15
+    assert status["status"] == (
+        "INVALID_OR_FAILED_FAIL_STOP" if failure == "trace" else "VALID_OBSERVER_OVERHEAD_FAIL"
+    )

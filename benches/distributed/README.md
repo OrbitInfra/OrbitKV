@@ -50,6 +50,35 @@ loaded observer in off mode and verifies each actual process's working directory
 before inspection and before issuing the receipt. These startup checks are outside transfer timing;
 the descriptive driver's PASS does not imply an observation-overhead PASS.
 
+The `observer_pilot: "manager-native-observer.v1"` contract selects the bounded
+Manager pilot: eight fresh cells, h0→h1 then h1→h0, each direction off/on then
+on/off, 8 MiB payloads with 64 KiB segments, one cold, five warmup and fifty
+measured restores per cell. Both Managers load the observer only in on cells;
+fixtures never load it. The launch review must verify matched commands, budgets,
+payloads and environments except the declared observer and fresh cell identities.
+Do not use the legacy native probe with the production source-epoch request ABI.
+
+The existing host owner creates `<owner-output>/<cell>-native-trace/` before
+Manager launch. On mode must set `TENT_NATIVE_TRACE_PATH` to its `manager.json`;
+off mode omits it. After both local processes have stopped, `native-trace` reads
+only that directory, requires the Manager's actual normal wait and rejects
+extra files, symlinks, oversized output and foreign process identities. A trace
+error preserves actual exit receipts and stops the next cell. Source traces use
+source-role validation; only consumer-local clocks select query windows.
+
+After each completed pair, the driver recomputes the measured Manager-fetch and
+query-plus-restore median ratios and nearest-rank p99 differences. Every on/off
+ratio must be ≤1.05 and every tail difference ≤0.25 ms. Each direction also reports
+the geometric mean and 95% bootstrap interval over its two independent pairs,
+with seed 42 and 10,000 draws; its mean and upper bound must be ≤1.05. Two pairs
+provide very limited uncertainty information: the upper bound reduces to the
+worst pair, and fifty-request p99 equals max. Neither is population or stable
+tail qualification. Cold samples remain descriptive. Any failed guard stops
+dependent cells; there is no retry or replacement. `MEASUREMENT_GUARDS_PASS`
+still requires successful owner postflight before `PASS_OBSERVER_PILOT`.
+`VALID_OBSERVER_OVERHEAD_FAIL` is a valid failed measurement with normal cleanup,
+not permission to run deeper instrumentation or change production defaults.
+
 For GPU-pointer cells, compile the byte oracle on each test host before freezing
 its resulting hash. A Manager-only contract uses the existing tensor byte and
 sentinel checks in `shared_cache_bytes`; it does not need this oracle library:
@@ -137,31 +166,17 @@ latency. Use its stage breakdown to choose the next consumed production change.
 
 ### Native TENT first READ diagnostic
 
-Run `python -m benches.distributed.tent_stage --bind HOST_ADDRESS --native-lib /frozen/native-lib
---role source` on the source and the same command with `--role consumer` on a
-different host. Freeze libraries, the RDMA-only TENT configuration, NIC allowlist,
-program and workload before launch; capture each endpoint's stdout/stderr in an
-external artifact directory. A controller must keep both stdin pipes open and
-parse the JSON `ready` record containing the registered CPU address and endpoint.
-Send the consumer a JSON line with `operation: "read"`, a unique `id`, the source
-`endpoint` and `address`, and `iterations` between 1 and 1000. Every READ clears
-the destination and verifies the entire deterministic payload SHA-256.
+Use the Manager cells in `benches.distributed.rdma_profile` and the installed
+Rust client in `benches.distributed.shared_cache_profile` for the current
+source-epoch ABI. Freeze the complete runtime and use the matched observer
+pilot above before consuming native trace timings.
 
-The returned stages cover open, batch allocation, submit, terminal-status wait
-and accepted free. Buffer clearing and SHA validation are outside `native_read_ms`.
-Polling spins for the first millisecond and then waits one millisecond between
-polls; these observations include that polling delay. Metadata, QP bootstrap and
-worker scheduling can occur lazily after submit and are not separately identified
-by this C ABI boundary. Use a fresh consumer process for each first-READ sample.
-
-Send `operation: "stop"` to the consumer after `read_complete`, require `stopped`
-and a reaped zero exit, then stop the source after every reader has drained.
-Timeout/cancellation never releases an uncompleted batch. Control-pipe loss
-retains registered buffers; source protocol errors await explicit source stop.
-Do not force-kill an isolated owner and infer DMA completion from that signal.
-Check recorded PIDs, RPC listeners, NIC counters and native-library hashes before
-accepting cleanup. This benchmark excludes Manager grants/indexes, pinned pools,
-GPU destination writes, serving, GDS and S3 crash-reclamation qualification.
+The retired CPU-mmap diagnostic used an unpatched upstream 48-byte request;
+OrbitKV's current request is 88 bytes on Linux x86-64. Historical campaigns use
+[the frozen probe](https://github.com/feichai0017/orbitkv/blob/800a755fe88e119cd10b19c28c27e02d78d40d09/benches/distributed/tent_stage.py)
+and their original contract, libraries and actual cleanup receipts. The offline
+reader retains support for these archived traces. Do not load production
+libraries with that old probe.
 
 For finer diagnosis, `tent_native_trace.cpp` interposes four exported C++ symbols
 from Mooncake `719735896c86b56fabec6cf3e825fb2ea640597a` on Linux x86-64 with
@@ -201,35 +216,15 @@ with fresh endpoints and the same frozen payload, order, configuration and nativ
 libraries. Preserve failed controls; do not use instrumented timing as a new
 production performance qualification.
 
-After both endpoints have drained and exited zero, reconstruct one consumer:
-
-```bash
-python -m benches.distributed.tent_trace \
-  --trace /external/native-trace/consumer.trace.json \
-  --endpoint-stdout /external/native-trace/consumer.stdout \
-  --endpoint-exit-code 0 --role consumer \
-  --output /external/native-trace/consumer-summary.json
-```
-
-Pass the actual exit code returned by the controller's `wait`, not a value
-inferred from the stop record. Use `--role source` with the source's own files to summarize its construction
-calls. The analyzer checks the process identity, retained event count, statuses,
-clock boundaries and required stages. Its consumer window comes from that
-endpoint's first READ. Stage calls overlap: the analyzer reports their interval
-union rather than adding durations. Source and consumer monotonic epochs cannot
-be compared across hosts. The controller must separately prove reaped zero exits
-and absent PIDs; a parsed stop record alone cannot establish that cleanup.
+For archived CPU-probe traces, the offline reader still accepts
+`--endpoint-stdout`, `--endpoint-exit-code` and `--role`. Supply the actual exit
+from the original controller's wait, and retain the original owner/cleanup
+evidence. These old private-buffer results do not qualify the Manager path.
 
 Existing `rpc_server_threads` and `transports.rdma.num_lanes` settings are
 previously evaluated experimental candidates, not OrbitKV defaults. Preserve
 their rejected results; do not restart those candidates without new evidence.
 A private-buffer improvement alone cannot establish model latency.
-
-For the current epoch-checked production runtime, use `benches.distributed.rdma_profile`'s
-Manager cells and `benches.distributed.shared_cache_profile`, which consume the installed
-Rust client. The older `tent_stage` ctypes probe describes an unpatched upstream
-48-byte request; the production request includes source epoch evidence and is
-88 bytes on Linux x86-64. Do not give the old probe a production library.
 
 The GPU worker records a `query_window` beside its duration statistics. After
 actual normal fixture and Manager waits, link the consumer trace to that cell:
@@ -273,49 +268,15 @@ do not measure transport performance.
 
 ### Native TENT library comparison
 
-`benches.distributed.tent_compare` consumes an external frozen JSON contract. It records two
-hosts and their addresses, an SSH config path, RDMA NICs/GID, remote probe/config
-paths, the baseline/candidate/original library directories and SHA256 sets,
-controller/probe/config hashes, payload and sample counts, pair ordering,
-bootstrap seed/draw count and explicit performance guards. Copy the probe and
-configuration to **both** hosts, verify their hashes and ELF dependencies, then
-freeze the contract before launching endpoints. Keep libraries in separate
-directories; never rebuild or replace a mapped runtime.
-
-```bash
-python -m benches.distributed.tent_compare \
-  --contract /external/native-comparison/FORMAL-CONTRACT.json \
-  --output /external/native-comparison/formal
-```
-
-Each cell creates a fresh source and consumer, performs one first READ, separate
-warmups and measured READs, and clears/checks the entire destination each time.
-Timing covers open, allocation, submit, terminal observation and accepted batch
-free; clearing and SHA256 are outside that timer. Notifications run **after**
-the READ samples. Send 512 unique names and deterministic 2,048-byte payloads to
-wrap the pinned 256-slot ring; receive the complete exact set, reject duplicates
-or corrupt messages, free every native result allocation, and poll for 25 ms
-after the set is complete. This bounded quiet window is a diagnostic check, not
-a proof against arbitrarily delayed duplicates.
-
-The consumer must normally drain and exit zero before source stop. Record actual
-native mappings, CPU ticks, physical port data/packet counters (data counters
-use four-byte units), zero exits and absent PIDs. Bootstrap matched independent
-endpoint pairs, never individual requests within a process. Report first READ,
-warm median and descriptive p99 separately, including absolute times and
-uncertainty. A readiness smoke is not performance qualification. An invalid
-prelaunch input starts no endpoint; preserve its evidence and repair/verify
-inputs before a separately frozen launch. The first invalid native cell stops
-the cohort without retry or replacement. A completed cohort that misses any
-frozen performance guard stays failed.
-
-The probe deliberately holds an exported source on control loss or uncertain
-native drain, has no reconnect channel, and ignores SIGTERM/SIGINT. A controller
-timeout is not normal cleanup or an authorization to reuse its memory. Private
-CPU-buffer results do not qualify Manager grants, registered engine pages,
-GPUDirect RDMA, serving latency or requester-crash reclamation. Applying an
-already merged upstream repair in this isolated comparison does not change the
-production dependency pin or create a supported patched runtime.
+The standalone upstream-ABI comparison controller and its dedicated tests are
+retired. Its [frozen source](https://github.com/feichai0017/orbitkv/blob/800a755fe88e119cd10b19c28c27e02d78d40d09/benches/distributed/tent_compare.py)
+remains available for historical reproduction with the matching 48-byte probe.
+Keep original contracts, failed controls and external evidence unchanged.
+Private CPU-buffer results do not qualify OrbitKV's consumed Manager path.
+Current comparisons use the owned Manager RDMA runner above; native-library
+changes still require independent runtime admission and matched correctness,
+cleanup and performance guards. The shared metrics module owns the retained
+independent-pair geometric mean and bootstrap calculation.
 
 
 ## Shared-cache qualification
