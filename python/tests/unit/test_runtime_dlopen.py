@@ -123,6 +123,26 @@ def test_probe_has_bounded_output_and_actual_child_wait(tmp_path, dlopen_contrac
     helper = tmp_path / "helper.py"
     original = contract["runtime_dlopen"]["helper"]
     prefix = "import os,sys,time,runpy,json,io,contextlib\n"
+    baseline_helper = tmp_path / "baseline-helper.py"
+    baseline_helper.write_text(prefix + f"runpy.run_path({original!r},run_name='__main__')\n")
+    baseline = subprocess.run(
+        [
+            contract["runtime_dlopen"]["python"],
+            "-I",
+            "-S",
+            "-B",
+            str(baseline_helper),
+            contract["runtime_dlopen"]["library"],
+        ],
+        env=contract["cells"][0]["environment"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert baseline.returncode == 0, baseline.stderr
+    for path, digest in json.loads(baseline.stdout)["files"].items():
+        assert contract["input_sha256"].get(path, digest) == digest
+        contract["input_sha256"][path] = digest
     if control.startswith("fork-"):
         prefix += "ready_read,ready_write=os.pipe()\nif os.fork() == 0:\n os.close(ready_read)\n"
         if control == "fork-session":

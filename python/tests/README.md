@@ -190,6 +190,13 @@ execution. Publish a grant only after writing and fsyncing a complete temporary
 file in the destination directory, then atomically linking it to the grant path
 without overwriting an existing grant. The controller reads that path once;
 partial or invalid JSON is a fail-stop error, not a retried publication.
+Use `tests/support/installed_pytest.py` with explicit canonical `--installation`
+and `--harness` directories for installed pytest cells. Run that same frozen
+entry point with `--probe` during CPU readiness: it verifies the selected package,
+native extension and complete wheel RECORD before pytest can start. Formal cells
+use the same entry point and directory arguments, followed by `--` and the pytest
+arguments. A separate `python -c` import does not exercise the entry point's path
+selection and cannot substitute for this probe.
 Independent runtime roots use at most two file readers, share the
 original deadline, and join all readers before returning or propagating an error;
 per-file hashes, targets and the complete census remain mandatory. Runtime outputs and contracts belong outside this checkout.

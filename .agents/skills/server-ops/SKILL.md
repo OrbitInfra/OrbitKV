@@ -28,6 +28,10 @@ as well as present files. The embedded Manager's explicit Python environment
 must disable user-site and cover consumed system-site `.pth` files. Require its
 actual registry Torch/helper origin records and `sys.path`, plus mapped native
 library provenance; an independent venv import does not prove Manager loading.
+For installed pytest children, use `python/tests/support/installed_pytest.py` with
+explicit canonical installation and harness roots. CPU readiness must exercise
+that exact frozen entry with both `--probe` and pytest `--collect-only`; a separate
+`python -c` import does not validate its path selection or collection boundary.
 When an old channel domain is quarantined, unique service names do not isolate
 iceoryx2's global counter or stale-node cleanup. Use the same frozen absolute
 `ORBITKV_CHANNEL_CONFIG` for client and Manager with a separate private prefix
