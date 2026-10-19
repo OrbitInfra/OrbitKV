@@ -294,17 +294,14 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                 time.sleep(1)
             else:
                 pytest.fail(f"SGLang startup timed out:\n{log_path.read_text()[-8000:]}")
-            from tests.support.registration_campaign import record_process_group_runtime
-
-            record_process_group_runtime(
-                process, process._orbitkv_start_ticks, log_path, time.monotonic() + 180
-            )
             return process, base_url
         except BaseException:
             _stop_server(process, tmp_path)
             raise
 
     from transformers import AutoTokenizer
+
+    from tests.support.registration_campaign import record_process_group_runtime
 
     tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True, trust_remote_code=True)
     fragment = tokenizer.encode("A CUDA IPC cache correctness test for a long context. ")
@@ -341,6 +338,9 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             channel_server.read_logs()[-8000:],
         )
         channel_server.record_runtime()
+        record_process_group_runtime(
+            process, process._orbitkv_start_ticks, log_path, time.monotonic() + 180
+        )
     finally:
         _stop_server(process, tmp_path)
 
@@ -416,6 +416,9 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             assert (
                 sum(recovered.get(key, 0) - before_restart.get(key, 0) for key in read_metrics) > 0
             )
+        record_process_group_runtime(
+            process, process._orbitkv_start_ticks, log_path, time.monotonic() + 180
+        )
     finally:
         _stop_server(process, tmp_path)
 
@@ -448,6 +451,9 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
         assert len(registrations) >= 3
         assert all(
             f"transfer backend {env['ORBITKV_TRANSFER_BACKEND']}" in line for line in registrations
+        )
+        record_process_group_runtime(
+            process, process._orbitkv_start_ticks, log_path, time.monotonic() + 180
         )
     finally:
         _stop_server(process, tmp_path)

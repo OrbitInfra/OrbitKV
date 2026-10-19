@@ -93,15 +93,6 @@ worker or physical CUDA IPC lifetime qualification.
 
 The vLLM service helper selects the official release's `--shutdown-timeout 30`
 so normal SIGTERM requests native drain instead of the default immediate abort.
-
-The ordinary vLLM and SGLang correctness gates also record the live cache
-Manager and inference process groups before normal teardown. The existing
-runtime reader captures PID/start identities, actual library mappings and file
-hashes; process names do not select workers. Records sit beside the service logs
-in the external test output directory. Capture failures fail the gate while the
-existing context manager or `finally` block still performs normal cleanup.
-These records prove runtime participation within their observed scope, not
-physical CUDA/RDMA termination or execution of every Python source file.
 Its 90-second process wait remains a separate bound; the grace period is not a
 DMA fence. Installed-wheel runs must set `ORBITKV_CACHE_MANAGER_BINARY` to the
 wheel's frozen Manager executable. Preserve actual service exits, complete
@@ -114,6 +105,16 @@ The subsequent independently accepted `c5681616`/`eefcf8f6` healthy installed
 cohort passes the strict native log/wait checks for six dense vLLM cases. Keep
 that nominal result separate from the original rejected run and fault/reuse
 qualification; see [PR #246](https://github.com/feichai0017/orbitkv/pull/246).
+
+The ordinary vLLM and SGLang correctness gates also record the live cache
+Manager and inference process groups after each workload, before normal
+teardown. The existing runtime reader captures PID/start identities, actual
+library mappings and file hashes; process names do not select workers. Records
+sit beside the service logs in the external test output directory. Capture
+failures fail the gate while the existing context manager or `finally` block
+still performs normal cleanup. These records prove runtime participation within
+their observed scope, not physical CUDA/RDMA termination or execution of every
+Python source file.
 
 Shared client ownership is tested in Rust under
 `crates/orbitkv-channel/tests/unit/cache_client.rs`: query revisions, immutable
