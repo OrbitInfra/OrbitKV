@@ -71,6 +71,7 @@ fn main() {
         "tcp-source-admission-drain.patch",
         "source-grant-epoch.patch",
         "unregister-retry-ownership.patch",
+        "register-error-ownership.patch",
     ] {
         let patch = manifest_dir.join("patches").join(name);
         println!("cargo:rerun-if-changed={}", patch.display());
@@ -234,6 +235,30 @@ fn copy_mooncake_source(source: &Path, destination: &Path) {
 
 fn verify_backport_source(source: &Path) {
     for (path, expected) in [
+        (
+            "mooncake-transfer-engine/tent/include/tent/runtime/segment.h",
+            "e913abe9d235106f906f2b565b8b816aaeb7c003",
+        ),
+        (
+            "mooncake-transfer-engine/tent/src/runtime/segment_tracker.cpp",
+            "0faf27ba25face54efe9ba98502cc1ae490f987c",
+        ),
+        (
+            "mooncake-transfer-engine/tent/include/tent/runtime/transport.h",
+            "93bf585a9ccc928d241714aac48768a92f0e93ef",
+        ),
+        (
+            "mooncake-transfer-engine/tent/include/tent/transport/rdma/buffers.h",
+            "07f3bc505d22c2171017506d8b9044e0b0325182",
+        ),
+        (
+            "mooncake-transfer-engine/tent/include/tent/transport/rdma/rdma_transport.h",
+            "6ff05db7b8a5ffafd225a73f923519bbe3f757e9",
+        ),
+        (
+            "mooncake-transfer-engine/tent/src/transport/rdma/rdma_transport.cpp",
+            "7bdb5bd1c3c17727cd67f15d190738b9cca1960a",
+        ),
         (
             "mooncake-transfer-engine/tent/include/tent/platform/cuda.h",
             "a808a2b6f0729c25512e5e3d44ebbd9b18383357",

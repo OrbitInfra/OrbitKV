@@ -31,13 +31,31 @@ fn failed_native_unregister_preserves_the_rust_registration_until_retry() {
         unsafe { std::mem::transmute(symbol(c"orbitkv_test_install_unregister_control")) };
     let refuse: unsafe extern "C" fn(native::NativeEngine, libc::c_int) =
         unsafe { std::mem::transmute(symbol(c"orbitkv_test_set_unregister_refusal")) };
+    let refuse_registration: unsafe extern "C" fn(native::NativeEngine, libc::c_int) =
+        unsafe { std::mem::transmute(symbol(c"orbitkv_test_set_registration_refusal")) };
     let state: unsafe extern "C" fn(native::NativeEngine, *mut u32, *mut u32) -> libc::c_int =
         unsafe { std::mem::transmute(symbol(c"orbitkv_test_unregister_state")) };
     let mut backing = vec![0xa5; 4096];
     let engine =
         Arc::new(TransferEngine::new(P2P_METADATA, "127.0.0.1:0", "127.0.0.1", 0, &[]).unwrap());
     let native = engine.native;
-    unsafe { install(native) };
+    unsafe {
+        install(native);
+        refuse_registration(native, 1);
+    }
+    let address = NonNull::new(backing.as_mut_ptr()).unwrap();
+    assert!(
+        unsafe { engine.register_memory_owned(address, backing.len(), "cpu:0") }.is_err(),
+        "actual C ABI provider refusal must not return a Rust registration token"
+    );
+    let (mut registrations, mut removals) = (0, 0);
+    assert_eq!(
+        unsafe { state(native, &mut registrations, &mut removals) },
+        0
+    );
+    assert_eq!(registrations, 1);
+    unsafe { refuse_registration(native, 0) };
+    let removals_before_success = removals;
     let mut registration = unsafe {
         engine
             .register_memory_owned(
@@ -51,12 +69,11 @@ fn failed_native_unregister_preserves_the_rust_registration_until_retry() {
     unsafe { refuse(native, 1) };
     assert!(registration.try_unregister().is_err());
     assert!(registration.active);
-    let (mut registrations, mut removals) = (0, 0);
     assert_eq!(
         unsafe { state(native, &mut registrations, &mut removals) },
         1
     );
-    assert_eq!((registrations, removals), (1, 1));
+    assert_eq!((registrations, removals), (2, removals_before_success + 1));
     drop(engine);
     assert_eq!(
         retained_engine.strong_count(),
@@ -70,13 +87,17 @@ fn failed_native_unregister_preserves_the_rust_registration_until_retry() {
         unsafe { state(native, &mut registrations, &mut removals) },
         0
     );
-    assert_eq!((registrations, removals), (1, 2));
+    assert_eq!((registrations, removals), (2, removals_before_success + 2));
     registration.try_unregister().unwrap();
     assert_eq!(
         unsafe { state(native, &mut registrations, &mut removals) },
         0
     );
-    assert_eq!(removals, 2, "completed token must not unregister again");
+    assert_eq!(
+        removals,
+        removals_before_success + 2,
+        "completed token must not unregister again"
+    );
     assert!(backing.iter().all(|&byte| byte == 0xa5));
     drop(registration);
     assert!(retained_engine.upgrade().is_none());

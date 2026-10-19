@@ -123,6 +123,45 @@ This subset does not repair partial registration rollback, arbitrary overlapping
 ranges, concurrent engine destruction, failed final destructors or hardware
 termination. Callers must keep the engine, registration token and physical backing
 alive after an error; an error is not permission to release or reuse memory.
-Registration failure/rollback visibility remains separate work in the completion
-plan. No GPU, RNIC-loss, GDS or physical reclamation support follows from CPU
+Registration failure/rollback visibility is handled by the separately scoped
+repair below. No GPU, RNIC-loss, GDS or physical reclamation support follows from CPU
 fault injection.
+
+## Registration errors and rollback ownership
+
+`register-error-ownership.patch` extends the same pinned PR #4573/#4249
+contracts. A register call succeeds only when every requested range has a usable
+completed transport. Identical new ranges share one physical registration and
+retain one reference per occurrence. Existing registrations require identical
+memory options; a duplicate cannot silently satisfy a different required
+transport.
+
+The existing retirement map reserves new ranges before entering registration
+providers. A failed call rolls back its own references and new providers; it
+preserves prior owners. Failed publication retains the matched withdrawal
+revision. Failed cleanup keeps the original descriptor and unfinished providers
+for an explicit retry. Optional fallback remains available only when every range
+is usable and incomplete provider cleanup succeeds.
+
+RDMA registration reserves its local buffer entry before registering MRs and
+waits for every launched task. Successfully registered rails remain discoverable
+even when another rail fails before an RDMA transport is advertised. Removal
+retries only surviving MRs. Rust's existing source owner retains the complete
+pool and its admission budget when native cleanup is unproven, including a
+constructor error with no returned registration token.
+
+Independent code/CPU review accepts production commit `d128c2a7`: nine
+registration controls, four MR-owner controls, the existing unregister
+expectations, Rust token propagation and six actual Core-owner scenarios
+match their declared outcomes. In the no-token case, real native refusal
+leaves the complete source pool, engine and charged budget retained. The
+matching native build was independently checked; matching native controls
+and frozen Rust executables were independently rerun;
+the review SHA256 is
+`add2b31160d563432b77010c5ba44688d9d61d77cb4157c8dba19972ea938a04`.
+Evidence is under
+`/root/orbitkv-artifacts/s3-native-registration-repair-20261019/independent-d128-source-cpu-review-1/`.
+
+The native fault controls use test providers, not real RNIC registrations. Warm-up MR
+faults, CUDA IPC allocation aliases, device hotplug, consuming unregister/Drop,
+terminal destruction and physical termination/reclamation remain unqualified.

@@ -1,4 +1,4 @@
-"""Actual engine unregister failure/retry control with an injected CPU transport.
+"""Actual engine registration/unregister controls with injected CPU providers.
 
 Run against a complete native build with matching headers. Fixed-runtime strict
 controls must pass. --expect-defect preserves historical failures as explicit
@@ -25,11 +25,13 @@ def main() -> None:
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--compiler", default="c++")
-    parser.add_argument("--control", choices=("engine", "rdma"), default="engine")
+    parser.add_argument(
+        "--control", choices=("engine", "rdma", "registration"), default="engine"
+    )
     parser.add_argument("--expect-defect", action="store_true")
     parser.add_argument("--build-rust-control", action="store_true")
     args = parser.parse_args()
-    if args.build_rust_control and args.control != "engine":
+    if args.build_rust_control and args.control not in {"engine", "registration"}:
         parser.error("--build-rust-control requires --control engine")
     build, runtime = (
         args.native_build.resolve(strict=True),
@@ -57,13 +59,13 @@ def main() -> None:
         Path(__file__)
         .with_name(
             "unregister_error_owner.cpp"
-            if args.control == "engine"
+            if args.control in {"engine", "registration"}
             else "rdma_unregister_owner.cpp"
         )
         .resolve(strict=True)
     )
     sources = [helper]
-    if args.control == "engine":
+    if args.control in {"engine", "registration"}:
         sources.extend(
             native_source / name for name in ("cpu_allocator.cpp", "cpu_probe.cpp")
         )
@@ -209,11 +211,32 @@ def main() -> None:
             raise RuntimeError("Rust native-control library compilation failed")
         result["rust_control"]["library"] = str(library)
         result["rust_control"]["sha256"] = sha(library)
-    if args.control == "rdma":
+    if args.control == "registration":
+        if args.expect_defect:
+            parser.error(
+                "historical register diagnosis uses its preserved original helper"
+            )
+        scenes = [
+            ("register-" + name, "strict", 0)
+            for name in (
+                "refusal",
+                "empty-success",
+                "partial",
+                "batch-rollback",
+                "new-duplicates",
+                "options",
+                "publication",
+                "per-range-fallback",
+                "all-refusal",
+            )
+        ]
+    elif args.control == "rdma":
         scenes = [
             (scene, "strict", int(args.expect_defect and scene != "normal"))
             for scene in ("normal", "context-refusal", "buffer-refusal")
         ]
+        if not args.expect_defect:
+            scenes.append(("register-partial", "strict", 0))
     else:
         scenes = [
             ("normal", "strict", 0),
@@ -237,7 +260,7 @@ def main() -> None:
     for scene, expectation, expected_exit in scenes:
         mappings = output / f"{scene}-{expectation}.maps"
         argv = [str(binary), scene]
-        if args.control == "engine":
+        if args.control in {"engine", "registration"}:
             argv.append(expectation)
         argv.append(str(mappings))
         evidence = {
@@ -297,7 +320,11 @@ def main() -> None:
         raise RuntimeError(
             "Native unregister control differs from its declared expectation"
         )
-    result["unregister_retry_control_passed"] = not args.expect_defect
+    result[
+        "registration_error_control_passed"
+        if args.control == "registration"
+        else "unregister_retry_control_passed"
+    ] = not args.expect_defect
     (output / "RESULT.json").write_text(json.dumps(result, indent=2) + "\n")
     print(
         json.dumps(
