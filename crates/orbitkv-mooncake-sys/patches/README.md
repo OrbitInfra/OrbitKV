@@ -155,7 +155,8 @@ registration controls, four MR-owner controls, the existing unregister
 expectations, Rust token propagation and six actual Core-owner scenarios
 match their declared outcomes. In the no-token case, real native refusal
 leaves the complete source pool, engine and charged budget retained. The
-matching native build and frozen Rust executables were independently rerun;
+matching native build was independently checked; matching native controls
+and frozen Rust executables were independently rerun;
 the review SHA256 is
 `add2b31160d563432b77010c5ba44688d9d61d77cb4157c8dba19972ea938a04`.
 Evidence is under
