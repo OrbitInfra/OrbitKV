@@ -1,0 +1,453 @@
+--- /dev/null
++++ b/mooncake-transfer-engine/tent/include/tent/runtime/registration_guard.h
+@@ -0,0 +1,124 @@
++// Copyright 2024 KVCache.AI
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++#ifndef TENT_REGISTRATION_GUARD_H
++#define TENT_REGISTRATION_GUARD_H
++
++#include <algorithm>
++#include <condition_variable>
++#include <cstdint>
++#include <mutex>
++#include <set>
++#include <utility>
++#include <vector>
++
++namespace mooncake {
++namespace tent {
++
++// Serializes registration lifecycle operations sharing a base address. A batch
++// reserves all of its addresses together, so waiting never holds a partial
++// batch. Operations on disjoint addresses can run concurrently without holding
++// the coordinator mutex. The coordinator must outlive all guards and waiters;
++// acquiring an address already held by the same thread is not reentrant.
++class RegistrationCoordinator {
++   public:
++    class Guard {
++       public:
++        Guard() = default;
++        Guard(const Guard&) = delete;
++        Guard& operator=(const Guard&) = delete;
++
++        Guard(Guard&& other) noexcept
++            : owner_(std::exchange(other.owner_, nullptr)),
++              addresses_(std::move(other.addresses_)) {}
++
++        Guard& operator=(Guard&& other) noexcept {
++            if (this != &other) {
++                reset();
++                owner_ = std::exchange(other.owner_, nullptr);
++                addresses_ = std::move(other.addresses_);
++            }
++            return *this;
++        }
++
++        ~Guard() { reset(); }
++
++        void reset() noexcept {
++            if (owner_) {
++                owner_->release(addresses_);
++                owner_ = nullptr;
++                addresses_.clear();
++            }
++        }
++
++       private:
++        friend class RegistrationCoordinator;
++        Guard(RegistrationCoordinator& owner,
++              std::vector<uint64_t> addresses) noexcept
++            : owner_(&owner), addresses_(std::move(addresses)) {}
++
++        RegistrationCoordinator* owner_{nullptr};
++        std::vector<uint64_t> addresses_;
++    };
++
++    RegistrationCoordinator() = default;
++    RegistrationCoordinator(const RegistrationCoordinator&) = delete;
++    RegistrationCoordinator& operator=(const RegistrationCoordinator&) = delete;
++
++    Guard acquire(std::vector<uint64_t> addresses) {
++        std::sort(addresses.begin(), addresses.end());
++        addresses.erase(std::unique(addresses.begin(), addresses.end()),
++                        addresses.end());
++        if (addresses.empty()) return {};
++
++        std::unique_lock<std::mutex> lock(mutex_);
++        changed_.wait(lock, [&] {
++            return std::none_of(
++                addresses.begin(), addresses.end(),
++                [&](uint64_t address) { return active_.count(address) != 0; });
++        });
++        size_t inserted = 0;
++        try {
++            for (auto address : addresses) {
++                active_.insert(address);
++                ++inserted;
++            }
++        } catch (...) {
++            // No waiter can observe this partial reservation while mutex_ is
++            // held. Restore the prior state if allocating a set node fails.
++            for (size_t i = 0; i < inserted; ++i) active_.erase(addresses[i]);
++            throw;
++        }
++        return Guard(*this, std::move(addresses));
++    }
++
++   private:
++    void release(const std::vector<uint64_t>& addresses) noexcept {
++        {
++            std::lock_guard<std::mutex> lock(mutex_);
++            for (auto address : addresses) active_.erase(address);
++        }
++        changed_.notify_all();
++    }
++
++    std::mutex mutex_;
++    std::condition_variable changed_;
++    // Only active reservations are retained; completed addresses are erased.
++    std::set<uint64_t> active_;
++};
++
++}  // namespace tent
++}  // namespace mooncake
++
++#endif  // TENT_REGISTRATION_GUARD_H
+--- a/mooncake-transfer-engine/tent/include/tent/runtime/transfer_engine_impl.h
++++ b/mooncake-transfer-engine/tent/include/tent/runtime/transfer_engine_impl.h
+@@ -22,0 +23 @@
++#include <map>
+@@ -33,0 +35 @@
++#include "tent/runtime/registration_guard.h"
+@@ -497,0 +500,15 @@
++    struct RetiredRegistration {
++        BufferDesc desc;
++        std::vector<TransportType> pending;
++        bool withdrawn{false};
++        uint64_t withdrawal_revision{0};
++        bool completed_prefix{false};
++    };
++    void releasePublishedPrefixes(const std::vector<void*>& addresses,
++                                  size_t count);
++    Status unregisterLocalMemoryLocked(void* addr, size_t size,
++                                      bool synchronize = true);
++    RegistrationCoordinator registration_coordinator_;
++    std::mutex retired_registration_mutex_;
++    std::map<std::pair<uint64_t, uint64_t>, RetiredRegistration>
++        retired_registrations_;
+--- a/mooncake-transfer-engine/tent/include/tent/runtime/segment_manager.h
++++ b/mooncake-transfer-engine/tent/include/tent/runtime/segment_manager.h
+@@ -196,0 +197,8 @@
++    uint64_t localRevision() const {
++        return local_desc_version_.load(std::memory_order_acquire);
++    }
++
++    uint64_t publishedRevision() const {
++        return published_local_version_.load(std::memory_order_acquire);
++    }
++
+@@ -239,0 +248 @@
++    std::atomic<uint64_t> published_local_version_{0};
+--- a/mooncake-transfer-engine/tent/src/runtime/transfer_engine_impl.cpp
++++ b/mooncake-transfer-engine/tent/src/runtime/transfer_engine_impl.cpp
+@@ -802,0 +803,19 @@
++    std::vector<uint64_t> addresses;
++    addresses.reserve(addr_list.size());
++    for (auto addr : addr_list)
++        addresses.push_back(reinterpret_cast<uint64_t>(addr));
++    auto registration_guard = registration_coordinator_.acquire(addresses);
++    releasePublishedPrefixes(addr_list, addr_list.size());
++    {
++        std::lock_guard<std::mutex> lock(retired_registration_mutex_);
++        for (const auto& entry : retired_registrations_) {
++            if (std::find(addresses.begin(), addresses.end(),
++                          entry.first.first) != addresses.end()) {
++                return Status::TooManyRequests(
++                    "Previous unregistration is incomplete; retain the buffer "
++                    "and retry unregisterLocalMemory before registering again"
++                    LOC_MARK);
++            }
++        }
++    }
++
+@@ -898,13 +917,3 @@
+-    bool removed = false;
+-    auto status = local_segment_tracker_->remove(
+-        (uint64_t)addr, size, [&](BufferDesc& desc) -> Status {
+-            removed = true;
+-            for (auto type : desc.transports) {
+-                auto status = transport_list_[type]->removeMemoryBuffer(desc);
+-                if (!status.ok()) LOG(WARNING) << status.ToString();
+-            }
+-            return Status::OK();
+-        });
+-    if (!status.ok()) return status;
+-    if (!removed) return Status::OK();
+-    return metadata_->segmentManager().synchronizeLocal();
++    auto guard =
++        registration_coordinator_.acquire({reinterpret_cast<uint64_t>(addr)});
++    return unregisterLocalMemoryLocked(addr, size);
+@@ -919 +928,27 @@
+-    bool removed_any = false;
++    std::vector<uint64_t> addresses;
++    for (auto addr : addr_list)
++        addresses.push_back(reinterpret_cast<uint64_t>(addr));
++    std::sort(addresses.begin(), addresses.end());
++    auto guard = registration_coordinator_.acquire(addresses);
++    // Publish once at the last physical removal, before any later non-final
++    // references are consumed. A failed publish keeps that range as a retry
++    // marker, so retry cannot decrement a new generation or a live reference.
++    std::map<std::pair<uint64_t, uint64_t>, int> references;
++    auto snapshot = metadata_->segmentManager().getLocal();
++    for (const auto& buffer :
++         std::get<MemorySegmentDesc>(snapshot->detail).buffers) {
++        if (std::binary_search(addresses.begin(), addresses.end(), buffer.addr))
++            references[{buffer.addr, buffer.length}] = buffer.ref_count;
++    }
++    {
++        std::lock_guard<std::mutex> lock(retired_registration_mutex_);
++        for (const auto& entry : retired_registrations_) {
++            if (!entry.second.completed_prefix &&
++                std::binary_search(addresses.begin(), addresses.end(),
++                                   entry.first.first))
++                references[entry.first] = 1;
++        }
++    }
++    size_t sync_index = addr_list.size();
++    std::vector<std::pair<uint64_t, uint64_t>> resolved;
++    resolved.reserve(addr_list.size());
+@@ -921,9 +956,116 @@
+-        bool removed = false;
+-        auto status = local_segment_tracker_->remove(
+-            (uint64_t)addr_list[i], size_list.empty() ? 0 : size_list[i],
+-            [&](BufferDesc& desc) -> Status {
+-                removed = true;
+-                for (auto type : desc.transports) {
+-                    auto s = transport_list_[type]->removeMemoryBuffer(desc);
+-                    if (!s.ok()) LOG(WARNING) << s.ToString();
+-                }
++        const auto base = reinterpret_cast<uint64_t>(addr_list[i]);
++        const auto size = size_list.empty() ? 0 : size_list[i];
++        resolved.emplace_back(base, size);
++        auto it = references.end();
++        if (size) {
++            it = references.find({base, size});
++        } else {
++            it = references.upper_bound(
++                {base, std::numeric_limits<uint64_t>::max()});
++            if (it == references.begin()) continue;
++            --it;
++            if (it->first.first != base) continue;
++        }
++        if (it != references.end()) {
++            resolved.back() = it->first;
++            if (--it->second == 0) {
++                sync_index = i;
++                references.erase(it);
++            }
++        }
++    }
++    for (size_t i = 0; i < addr_list.size(); ++i) {
++        auto status = unregisterLocalMemoryLocked(
++            addr_list[i], resolved[i].second, i == sync_index);
++        if (i == sync_index || !status.ok())
++            releasePublishedPrefixes(addr_list, i + 1);
++        if (!status.ok()) {
++            return Status(status.code(),
++                          "Batch unregistration failed at index " +
++                              std::to_string(i) +
++                              "; preceding entries completed; retry only "
++                              "this entry and the suffix: " + status.ToString());
++        }
++    }
++    return Status::OK();
++}
++
++void TransferEngineImpl::releasePublishedPrefixes(
++    const std::vector<void*>& addresses, size_t count) {
++    const auto published = metadata_->segmentManager().publishedRevision();
++    std::lock_guard<std::mutex> lock(retired_registration_mutex_);
++    for (auto it = retired_registrations_.begin();
++         it != retired_registrations_.end();) {
++        const auto& retired = it->second;
++        const bool guarded = std::any_of(
++            addresses.begin(), addresses.begin() + count, [&](void* address) {
++                return reinterpret_cast<uint64_t>(address) == it->first.first;
++            });
++        if (guarded && retired.completed_prefix && retired.withdrawn &&
++            retired.pending.empty() && published >= retired.withdrawal_revision) {
++            it = retired_registrations_.erase(it);
++        } else {
++            ++it;
++        }
++    }
++}
++
++Status TransferEngineImpl::unregisterLocalMemoryLocked(void* addr, size_t size,
++                                                     bool synchronize) {
++    const auto base = reinterpret_cast<uint64_t>(addr);
++    auto snapshot = metadata_->segmentManager().getLocal();
++    const auto& buffers =
++        std::get<MemorySegmentDesc>(snapshot->detail).buffers;
++    if (!size) {
++        for (const auto& buffer : buffers) {
++            if (buffer.addr == base)
++                size = std::max<uint64_t>(size, buffer.length);
++        }
++        std::lock_guard<std::mutex> lock(retired_registration_mutex_);
++        for (const auto& entry : retired_registrations_) {
++            if (entry.first.first == base && !entry.second.completed_prefix)
++                size = std::max<uint64_t>(size, entry.first.second);
++        }
++        // With no remaining logical reference, an explicit wildcard retry can
++        // still finish the publication obligation of a completed prefix.
++        if (!size) {
++            for (const auto& entry : retired_registrations_) {
++                if (entry.first.first == base)
++                    size = std::max<uint64_t>(size, entry.first.second);
++            }
++        }
++    }
++    const auto key = std::make_pair(base, static_cast<uint64_t>(size));
++    RetiredRegistration* retired = nullptr;
++    {
++        std::lock_guard<std::mutex> lock(retired_registration_mutex_);
++        auto found = retired_registrations_.find(key);
++        if (found != retired_registrations_.end()) {
++            retired = &found->second;
++            retired->completed_prefix = false;
++        }
++    }
++    if (!retired) {
++        const auto found = std::find_if(
++            buffers.begin(), buffers.end(), [&](const BufferDesc& desc) {
++                return desc.addr == base && desc.length == size;
++            });
++        if (found == buffers.end()) return Status::OK();
++        if (found->ref_count > 1) {
++            return local_segment_tracker_->remove(
++                base, size, [](BufferDesc&) { return Status::OK(); });
++        }
++        // Allocate the retry owner before withdrawing its metadata. A map node
++        // remains stable across other addresses' inserts; this address guard
++        // excludes every operation that could erase or mutate this node.
++        RetiredRegistration owner{*found, found->transports, false};
++        std::lock_guard<std::mutex> lock(retired_registration_mutex_);
++        retired = &retired_registrations_.emplace(key, std::move(owner))
++                       .first->second;
++    }
++    if (!retired->withdrawn) {
++        CHECK_STATUS(local_segment_tracker_->remove(
++            base, size, [&](BufferDesc&) {
++                retired->withdrawn = true;
++                retired->withdrawal_revision =
++                    metadata_->segmentManager().localRevision();
+@@ -931,6 +1073,29 @@
+-            });
+-        if (!status.ok()) return status;
+-        if (removed) removed_any = true;
+-    }
+-    if (!removed_any) return Status::OK();
+-    return metadata_->segmentManager().synchronizeLocal();
++            }));
++        if (!retired->withdrawn) {
++            return Status::InternalError(
++                "Registration withdrawal did not complete; retain the buffer"
++                LOC_MARK);
++        }
++    }
++    Status first_error;
++    for (auto it = retired->pending.begin(); it != retired->pending.end();) {
++        BufferDesc transport_desc = retired->desc;
++        auto status = transport_list_[*it]->removeMemoryBuffer(transport_desc);
++        if (!status.ok()) {
++            if (first_error.ok()) first_error = status;
++            ++it;
++        } else {
++            it = retired->pending.erase(it);
++        }
++    }
++    if (!synchronize && first_error.ok()) {
++        std::lock_guard<std::mutex> lock(retired_registration_mutex_);
++        retired->completed_prefix = true;
++        return Status::OK();
++    }
++    auto sync = metadata_->segmentManager().synchronizeLocal();
++    if (!first_error.ok()) return first_error;
++    if (!sync.ok()) return sync;
++    std::lock_guard<std::mutex> lock(retired_registration_mutex_);
++    retired_registrations_.erase(key);
++    return Status::OK();
+--- a/mooncake-transfer-engine/tent/src/runtime/segment_manager.cpp
++++ b/mooncake-transfer-engine/tent/src/runtime/segment_manager.cpp
+@@ -254 +254,7 @@
+-        auto snapshot = getLocal();
++        SegmentDescRef snapshot;
++        uint64_t revision;
++        {
++            std::lock_guard<std::mutex> update(local_update_mu_);
++            snapshot = getLocal();
++            revision = local_desc_version_.load(std::memory_order_acquire);
++        }
+@@ -255,0 +262 @@
++        published_local_version_.store(revision, std::memory_order_release);
+--- a/mooncake-transfer-engine/tent/src/transport/rdma/context.cpp
++++ b/mooncake-transfer-engine/tent/src/transport/rdma/context.cpp
+@@ -623 +623,9 @@
+-    mr_set_mutex_.lock();
++    void* region_addr = entry->addr;
++    size_t region_length = entry->length;
++    std::lock_guard<std::mutex> lock(mr_set_mutex_);
++    if (verbs_.ibv_dereg_mr(entry)) {
++        const void* end = static_cast<const char*>(region_addr) + region_length;
++        LOG(ERROR) << "Failed to unregister memory from " << region_addr
++                   << " to " << end << " in RDMA device " << device_name_;
++        return -1;
++    }
+@@ -625,8 +632,0 @@
+-    mr_set_mutex_.unlock();
+-
+-    if (verbs_.ibv_dereg_mr(entry)) {
+-        const void* end = static_cast<const char*>(entry->addr) + entry->length;
+-        LOG(ERROR) << "Failed to unregister memory from " << entry->addr
+-                   << " to " << end << " in RDMA device " << device_name_;
+-    }
+-
+--- a/mooncake-transfer-engine/tent/src/transport/rdma/buffers.cpp
++++ b/mooncake-transfer-engine/tent/src/transport/rdma/buffers.cpp
+@@ -192,4 +192,16 @@
+-    auto& item = buffer_list_[range];
+-    for (auto& elem : item.mem_reg_map) {
+-        elem.first->unregisterMemReg(elem.second);
+-    }
++    auto found = buffer_list_.find(range);
++    if (found == buffer_list_.end()) return Status::OK();
++    bool failed = false;
++    auto& registrations = found->second.mem_reg_map;
++    for (auto it = registrations.begin(); it != registrations.end();) {
++        if (it->first->unregisterMemReg(it->second)) {
++            failed = true;
++            ++it;
++        } else {
++            it = registrations.erase(it);
++        }
++    }
++    if (failed) {
++        return Status::RdmaError("Unable to unregister buffer" LOC_MARK);
++    }
++    desc.lkey.clear();
+@@ -197 +209 @@
+-    buffer_list_.erase(range);
++    buffer_list_.erase(found);

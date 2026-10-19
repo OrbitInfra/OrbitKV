@@ -1,6 +1,6 @@
 # OrbitKV transport architecture
 
-Prepared Save requests in the producer-admission candidate share the existing
+Prepared Save requests share the existing
 native pending owner with submitted requests. Metadata stays charged until its
 last owner drops, including caller-held completed handles; registration tensors
 are retained through submission or proven never-submitted cancellation. The
@@ -431,9 +431,11 @@ its completion FIFO. Code/CPU and package review, installed normal DRAM/io_uring
 byte gates, both official-release model gates and same-host TCP shared-cache
 restart gates pass for the frozen `cb19ce82` wheel. See the
 [qualification scope](completion-plan.md#s5--released-engine-integration-and-upstream-contributions).
-The native pending cap excludes Python queues, retained adapter tasks and
-user-held completed handles. Unknown-owner reconciliation, GPU/model fault
-gates, page generations and physical termination remain separate requirements.
+Prepared Save handles remain charged while held in Python queues, retained
+adapter tasks or user-held completed handles, until their last native owner is
+dropped. This metadata cap is separate from physical payload budgets.
+Unknown-owner reconciliation, GPU/model fault gates, page generations and
+physical termination remain separate requirements.
 This Publish partitioning does not yet partition oversized raw Restore plans.
 
 Rust `CacheClient`, exposed directly by PyO3 as `CacheManagerClient`, owns query
@@ -715,3 +717,56 @@ publication, then avoids task access after the state becomes visible. A staging
 exception is converted to FAILED and remains subject to OrbitKV's permanent
 failure retention. CPU callback/exception controls are separate from delayed
 batch notification, address reuse and physical transport termination gates.
+
+### Native registration error control
+
+Run `crates/orbitkv-transfer/tests/native/run_unregister_error.py` with
+`--native-build` pointing to the matching native CMake build, `--runtime` to
+its frozen libraries and `--output` to a new external evidence directory.
+The runner uses the build's exact include paths and definitions, hashes the
+compiler inputs and actual mapped libraries, and records actual child waits.
+It does not rebuild or overwrite the runtime libraries. Compilation is bounded
+to 60 seconds and each CPU scene to 20 seconds; any forced timeout cleanup is
+recorded separately and cannot establish drain.
+
+The actual engine receives a deterministic test-only `removeMemoryBuffer`
+failure through its existing transport test hook. Stable host backing remains
+alive; no payload transfer or device registration is submitted. The default
+fixed-runtime gate requires successful strict refusal/retry, partial-transport,
+reference-count, wildcard, publication-tombstone and batch controls. The
+historical-defect reproduction scene must fail against the fixed library.
+Batch controls include failed publication after multiple final removals,
+same-base wildcard suffix retry, and an older publication completing after
+newer withdrawals. Completed prefixes remain protected until a successful
+publication covers their actual withdrawal revision.
+Use `--expect-defect` for an archived historical runtime: its strict refusal
+must fail, and its explicit defect reproduction must succeed. Neither negative
+control is a qualification pass.
+
+Use `--control rdma` to call the actual native MR and local buffer owners with
+an injected verbs refusal. These controls require retention of failed MRs and
+retry of unfinished rails only. `-fno-access-control` is limited to the test
+executable; it does not expose new production APIs or replace production
+method implementations. Use a complete build with matching headers, not a
+library combined with independently patched transport translation units.
+
+Add `--build-rust-control` to the engine gate to emit `unregister-control.so`.
+With that matching CPU runtime, run the ignored Rust owner boundary explicitly:
+
+```bash
+MC_FORCE_TCP=1 ORBITKV_MOONCAKE_LIB_DIR=/path/to/frozen/cpu/lib \
+ORBITKV_UNREGISTER_CONTROL_LIBRARY=/external/control/unregister-control.so \
+cargo test -p orbitkv-transfer --no-default-features --lib \
+  failed_native_unregister_preserves_the_rust_registration_until_retry \
+  -- --ignored --nocapture --test-threads=1
+```
+
+The production unregister subset adapts existing upstream #4573 and #4249;
+see the [pinned native patch notes](https://github.com/feichai0017/orbitkv/blob/main/crates/orbitkv-mooncake-sys/patches/README.md#unregister-errors-and-retry-ownership).
+It preserves unfinished transport cleanup and failed-publication tombstones,
+rejects same-base registration during retirement and returns failures through
+the C ABI to Rust `try_unregister`. Partial registration rollback, consuming
+`unregister`/`Drop`, terminal destruction and physical-failure reclamation
+remain unqualified. Test-only owner reconciliation is not a production drain
+receipt. These controls are distinct from the earlier real TCP admitted-READ/unregister counterexample
+and do not qualify RNIC failure, device drain or allocation/page reuse.

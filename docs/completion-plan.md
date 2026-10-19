@@ -409,6 +409,49 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   to a permanently lost requester. Inspect the current pinned TENT and latest
   upstream main/issues before changing the ABI; reuse or submit a focused
   transport fix if needed. Keep OrbitKV metadata/control state in OrbitKV.
+  The reusable `crates/orbitkv-transfer/tests/native/run_unregister_error.py`
+  control calls the actual frozen TENT engine with a deterministic test transport
+  refusal. Its strict refusal exits one: unregister reports success while the
+  transport retains the address, a retry does not call removal again, and an
+  attempted same-address registration reports success after transport rejection.
+  The separate reproduction scene exits zero only when those defects are present;
+  it is defect evidence, not a qualification pass. The upstream inspection at
+  `5d0636f5` still shows removal errors logged without propagation and RDMA buffer
+  records erased after unchecked unregister results. Evidence and failed controls
+  are under `/root/orbitkv-artifacts/s3-native-unregister-20261018/`. Independent
+  code/CPU review accepts the exact `c69e42bd` reproduction controls, with actual
+  scene exits zero/one/zero. That reproduction did not repair production; no
+  payload DMA ran and no new registration, termination or reclamation support
+  is qualified.
+  The unregister-retry repair reuses the normal-removal contracts
+  in existing upstream PRs #4573 and #4249, rather than opening duplicate work.
+  A same-base reservation spans registration and removal. Before withdrawing
+  the last reference, the existing native engine establishes a retirement owner
+  with the original descriptor and pending transports. It returns removal
+  failures through the C ABI, retries only unfinished transports and retains a
+  publication tombstone until metadata synchronization succeeds. New
+  registration at that base is rejected while retirement is incomplete.
+  Independent review rejected the first `d8e831d9` candidate: a failed final
+  batch publication retained only its last tombstone, allowing an earlier base
+  to register again. The correction retains completed prefixes until a matching
+  snapshot revision is successfully published, resolves wildcard references
+  before removal, and excludes older in-flight publications from that receipt.
+  Preserve the rejected candidate and its reproduced counterexample under
+  `/root/orbitkv-artifacts/s3-native-unregister-repair-20261019/`.
+  The RDMA context and local buffer manager preserve refused MRs and successful
+  partial cleanup. Complete matching-header CPU builds, native/C ABI controls
+  and the actual Rust `try_unregister` owner are the acceptance boundary.
+  Independent `ACCEPTED_CODE_CPU_SCOPE` at `9ad82f53` covers eleven engine/C ABI
+  expectations, three MR-owner controls, fourteen default Rust tests and the
+  explicit Rust token control. The original batch counterexample now rejects
+  reuse before provider entry; a captured-revision mutation makes the new
+  ordering control fail. The accepted review is sealed under
+  `independent-9ad82f-source-cpu-review-1/` in the artifact root above; review
+  SHA256 is `a5a03b0e69405e0aaa12953b3cef8422bacad46de40350c4dd055b5233fdd7bc`.
+  Registration-failure
+  rollback visibility, consuming `unregister`/`Drop`, terminal destruction and
+  physical CUDA/RDMA/GDS reclamation remain open. This substage does not close
+  S3, S4 or S5 or authorize new buffer reuse after an unresolved error.
 - Bound and diagnose retained/quarantined source memory while proof is absent.
   Timeout, etcd expiry, cancellation, remote process disappearance and a control
   ACK are not interchangeable with native drain. An unavailable upstream primitive
@@ -817,7 +860,8 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   reclamation eventually happens when its proof exists. Both adapter lifecycles
   consume the new generation checks. No TTL-based reclamation substitute.
 
-The next producer-admission candidate extends the existing native Save owner:
+**Bounded producer Save admission (2026-10-19): scoped healthy acceptance.**
+The existing native Save owner now covers producer handoff:
 `prepare_save` holds the immutable Publish request and registration before the
 adapter queues work, `submit_saves` merges same-registration requests in Rust,
 and `cancel_save` only completes a prepared request whose native worker never
@@ -825,9 +869,8 @@ started. Queued, submitted and caller-held completed handles remain charged
 against the process 1,024-operation/32-MiB metadata cap; merged request scratch
 is conservatively reserved within that charge. The vLLM callback keeps only
 handles and completion metadata after handoff; SGLang retains FIFO tree ownership
-when preparation/submission is unknown. This candidate still requires independent
-code/CPU/package and healthy-GPU adapter gates; it does not implement allocation/
-page generations or physical-failure reclamation.
+when preparation/submission is unknown. This does not implement allocation/page
+generations or physical-failure reclamation.
 The first producer-admission candidate `96c06d4e` remains rejected for omission
 of PR #268's typed rejection and incomplete batch rollback. The correction
 integrates the current main contract: explicit prepare failures prove no worker,
@@ -843,185 +886,65 @@ reject SGLang tree ownership without calling native code. The correction binds
 the native method and constructs its arguments before that catch. Lookup errors
 retain the producer/batch and released-engine tree hold. The original vLLM and
 SGLang negative controls remain under `independent-b273-review-1/` in
-`/root/orbitkv-artifacts/s3-save-producer-admission-20261018/`; the corrected
-source, installed package and adapter qualification require their own review.
-Independent `AcceptedSourceCPUInstalledMethodScope` at `2d38489a`, tree
-`b5248c88`, accepts the corrected catches, source-only 632/1 skip and installed
-SGLang 0.5.21 method controls 32/32. Review SHA256 is
-`fe55fb65c9c2253f5951f1bd4a17614eb745e3267c3203426b4b07a9eb9130d1`;
-wheel SHA256 is `d59c8ca0fa60d160d4bcd522089e541aa5771db8d744f19af21cb5f047e6fe66`.
-The local vLLM release environment is historical 0.29.0 and is not current
-0.31.0 evidence. Native code and ELF bytes are unchanged from the independently
-rerun b273 native controls; page generation and hardware lifetime remain open.
-The next installed-byte harness uses a new `pending-save-bytes-v2` contract:
-one prepared request cancels without copying; two prepared requests remain
-pending until Rust submission, refuse never-submitted cancellation afterwards,
-and complete exactly 16,384 copied bytes per round. The existing complete
-32,768-byte payload/sentinel, io_uring read, original-credit release and actual
-process-wait gates remain mandatory. Missing, replayed or malformed admission
-evidence is rejected. Old v1 freezes/results are preserved and cannot launch
-through the new controller. Source review, new runtime/resource freeze and
-independent launch acceptance precede any GPU campaign.
-The first harness checkpoint `f609a6d8` remains rejected: the actual metrics
-parser emits floats while the admission receipt requires integral byte fields,
-and a fresh Manager did not export the Save byte counter before its first copy.
-The correction validates finite, nonnegative integral observations within the
-exact numeric range before canonical integer conversion; missing values remain
-errors. The existing native Save counter now records zero at Core metrics
-initialization. A real fresh OpenTelemetry/Prometheus child fails on the old
-code and passes after initialization. These software readiness controls and
-the original rejection are archived under
-`/root/orbitkv-artifacts/s3-prepared-save-installed-20261019/`. The changed
-Manager bytes require a new matched wheel and independent review before launch.
-The `6e13325e` precision checkpoint also remains rejected: converting raw
-`2^53+1` to float rounded before its range check. The byte gate now parses
-raw Prometheus samples as exact decimal values and validates each integer and
-their aggregate before producing an integer receipt. Rounded large values and
-fractional samples cannot become valid counters. The original precision
-counterexample and rejected package stay archived; this correction needs its
-own source/package review and does not change transfer ownership.
-The `568ffdf4` input checkpoint remains rejected for permissive numeric tokens
-and unbounded HTTP metrics text. The correction streams under a ten-second/
-1-MiB response budget, limits lines and labels, validates ASCII Prometheus numeric
-syntax before exact decimal conversion and rejects duplicate label sets. Real
-exporter scope labels are consumed. Malformed tokens, oversized text and a
-trickled response cannot receive a byte receipt. All rejected source/package
-checkpoints stay preserved; fresh runtime and launch review remain required.
-The `a348dbcb` HTTP deadline checkpoint remains rejected: a real peer sending
-one byte every four seconds returned only after twelve seconds despite the
-ten-second claim. The metrics capture now runs in a stdlib-only test subprocess
-with direct local HTTP and a bounded body; the parent enforces its actual wait
-deadline and reaps that CPU-only child on timeout. This child holds no cache,
-GPU or native transfer owner, and its forced timeout is not a drain receipt.
-The real HTTP trickle regression runs separately as an integration control;
-source feedback keeps deterministic parser controls. A new source/launch freeze
-must include this helper and its actual child wait/trace census.
-The `add6c84d` origin checkpoint remains rejected: urllib followed a redirect
-and sampled another endpoint. The capture helper now rejects redirects and
-requires the exact local `/metrics` URL with HTTP 200. Real redirect controls
-must show that the target is never contacted. Prior HTTP failures remain
-archived and no rejected source freeze gains launch authorization.
-The single normal formal cohort at `b21b51c3`, tree `cf722138`, is independently
-accepted as `AcceptedInstalledNormalPreparedSaveDramUring`. It consumes wheel
-`1498332007c9a4dccb01308b4a5f205502a698e401efcf8282a514d37ceb40f0`:
-DRAM and NVMe/io_uring each complete three 32,768-byte payload/sentinel oracles,
-16,384 copied bytes per round, prepared cancellation, two-handle Rust submission,
-and original IPC credit 1-to-0 observations. Both Managers and every traced child
-have actual normal waits; frozen inputs and old quarantine owners remain intact.
-Review SHA256 is `cc767519af7508014247f25adab0ce82d9147d0cc4df4e32468496721d006405`;
-raw archive SHA256 is `bfc9d62b6f75dc3b7132d484774090e993b7eb1261cd1c9ad9b1ea10e7a2ee90`,
-under `/root/orbitkv-artifacts/s3-prepared-save-installed-20261019/`.
-This closes that final installed normal-path substage only. Physical faults,
-page generations, GPU-pointer/RDMA and adapter/model lifecycle remain open.
-The next adapter lifetime gate corrects the old vLLM `start_save` observer to
-consume the actual `prepare_save`/`submit_saves` path and registration retirement.
-Both released adapters check complete payload/sentinels and real io_uring reads
-with the matching installed wheel. The official engine releases, byte oracles,
-actual cleanup and negative controls require independent review before launch.
-The first adapter harness checkpoint `0d5430d7` remains rejected: a synchronous
-CPU-to-GPU source copy waited before handoff and could hide a missing producer
-fence, while SGLang Restore bypassed the linker consumer. The correction uses
-preallocated GPU payload with an asynchronous producer stream, proves its event
-is pending before handoff, and includes a same-data no-fence byte control whose
-positive oracle must fail. SGLang now consumes its actual lookup/recovery/load,
-layer activation and completed-load paths. These are test candidates pending
-independent review and GPU execution, not engine page-generation implementation.
-Independent `AcceptedSourceCPU` at `01e82c4b`, tree `6849e98d`, accepts that
-test construction and six selected SGLang 0.5.21 CPU activation/recovery controls;
-review SHA256 is `b9443c8b1cb915bea427afdcc687804a2af3593c75f2982ae309d2a15705eee2`.
-The next controller extension consumes `prepared-adapter-lifetime-v1`: four
-vLLM fence/negative cells and four SGLang sole/independent-hold cells across
-DRAM and io_uring. It recomputes complete bytes and sentinels, separates expected
-negative qualification from positive results, binds generation/credit slots,
-and requires actual Manager mapping/exit evidence. This matrix requires its own
-independent source review, runtime freeze and launch acceptance before execution.
-The first matrix checkpoint `43f05310` remains rejected: its adapter branch
-accepted aliased physical credit slots, unproven importer observations and
-replayed exporter generation; vLLM cleanup could skip original counter FD close
-after an exception. The correction preserves strict credit schema/physical
-slot identity and distinct replacement exporter owners, validates each cell's
-finite budget, and closes read-only evidence descriptors in an outer finally.
-Real CPU descriptor controls cover synchronization, shutdown, credit and client
-close errors. These changes grant no native completion proof; new matrix review
-and hardware launch remain required.
-The first real adapter precheck at `2aae5db7` fail-stopped at its initial vLLM
-cell: the producer event had already completed before handoff, so the delay did
-not provide a fence counterfactual. Seven cells remain unlaunched. The Manager
-has a normal exit receipt, but the failed client has no original credit-release
-receipt and emits a CUDA IPC warning; its controller keeps resource quarantine.
-Preserve this failed precheck under
-`/root/orbitkv-artifacts/s3-adapter-prepared-lifetime-20261019/`.
-The next test-only CUDA stream gate replaces the timing assumption with explicit
-wait/release values and freezes its `.cu` library as an input. The producer stays
-pending until the test releases it; no-fence observes stale bytes before release.
-This candidate requires independent source and fresh GPU launch review. It
-does not authorize release of the preceding quarantine or native error owners.
-The initial stream-gate checkpoint `327beaa5` remains rejected: missing or
-malformed equal hashes could pass admission, and the first failed release skipped
-the other stream's release. The correction requires a present 64-hex digest in
-the frozen inputs and independently attempts both releases, records errors,
-and leaves failed device completion unknown. Its CPU controls and source gates
-are software evidence only; a separate readiness-only GPU gate is required.
-The next `cuda-stream-readiness-v1` profile exercises only the test CUDA Driver
-wait/write-value helper, two independently released streams and a deterministic
-4-KiB payload/sentinel oracle. It starts no Manager, retains valid allocation
-owners through stream synchronization, and requires frozen helper bytes plus
-complete child trace/waits. Source review, resource postflight and independent
-GPU launch acceptance precede execution. This diagnostic is distinct from a
-replacement of the rejected adapter cohort and cannot qualify physical faults.
-The first readiness-only checkpoint `5f2e0021` remains rejected for its no-service
-claim and possible implicit-sync ordering: the validator accepted an extra
-Manager process, and CPU payload readback preceded release of the other stream.
-The correction rejects extra non-thread process/Manager records and requires
-one executable census, validates typed pending flags, then releases both streams
-before the CPU byte oracle. Source and GPU diagnostic qualification stay separate.
-The actual d2b5 readiness diagnostic preserves correct bytes/stream observations,
-but remains rejected because library discovery spawned an unfrozen
-`/sbin/ldconfig -p` child. The next profile explicitly freezes that read-only
-executable and allows one exact command with its actual pytest parent/wait;
-other processes and Manager records remain refused. This is a new diagnostic
-contract, not a qualification upgrade of the failed run. Its original quarantine
-and all raw evidence remain under the adapter-lifetime artifact root.
-The first loader-query checkpoint `080b2a51` remains rejected: a successful
-allowed exec followed by `execveat` could escape its parsed-argv comparison.
-The correction requires exactly one complete child exec event matching the
-declared successful command and a canonical frozen executable input. All extra
-or unparsed exec events are refused. Source acceptance and the new diagnostic
-freeze/launch remain separate from the previous rejected run.
-Independent `AcceptedInstalledCUDAStreamReadinessWithFrozenLoaderQuery` accepts
-the exact `6f91e52b` readiness-only diagnostic: two independently released CUDA
-streams, complete 4-KiB payload and mutation control, one frozen loader query,
-and actual normal process waits. Review SHA256 is
-`31d64d7381406d46c7608b885db5fa394b218c140073a4328817b435f12ab4b5`;
-raw archive SHA256 is
-`ac8ee67ab55de71703df39ed9d73ef5dfdb57e2fbd8526b8a9beb3a2b7068e58`,
-under `/root/orbitkv-artifacts/s3-adapter-prepared-lifetime-20261019/`.
-This is readiness evidence, not adapter, credit-repayment or physical-fault
-qualification. Prior failed cohorts and their quarantines remain unchanged.
-The next merged `bf86cfae` eight-cell adapter freeze is not launched: measured
-immutable input validation alone costs 18.25 seconds per vLLM cell and 35.00
-seconds per SGLang cell, exceeding its cumulative 180-second cleanup budget.
-Preserve that freeze and CPU cost evidence under
-`/root/orbitkv-artifacts/s3-adapter-stream-consumption-20261019/`.
-The replacement `prepared-adapter-lifetime-v2` contract admits one engine and
-one medium per two-cell cohort. It requires both vLLM fenced/no-fence controls
-or both SGLang sole/independent-hold controls, with unchanged byte, original
-credit, mapping, process-wait and cumulative cleanup requirements. The old
-eight-cell contract cannot launch. Each new pair needs its own runtime/resource
-freeze and independent launch and result review; completed pairs do not qualify
-missing media, the other engine, model/Graph, page generation or fault recovery.
-Its first vLLM DRAM pair fail-stopped in the fenced cell before any prepared
-Save or payload receipt. The process remained inside a running CUDA call until
-the 600-second cell deadline, while Manager registration had completed; the
-controller retained all selected resources without claiming termination. The
-negative cell was not launched. Preserve the exact freeze, live quarantine and
-raw result under `/root/orbitkv-artifacts/s3-adapter-pair-budget-20261019/`.
-Two bounded `/proc` samples show the Python main thread consuming one CPU while
-native workers waited, which is consistent with, but does not by itself prove,
-CUDA lazy initialization behind the deliberately blocked producer stream. The
-next test-only correction prewarms the exact strided copy before installing the
-stream wait and emits ordered stage receipts. It needs source review and a new
-readiness diagnostic; the failed pair is never retried or reclassified.
+`/root/orbitkv-artifacts/s3-save-producer-admission-20261018/`.
+Independent review accepts `2d38489a` for source/CPU and installed SGLang 0.5.21
+method controls. The matching `d59c8ca0` wheel and `febe9ef6` harness pass fresh
+installed native DRAM and actual NVMe/io_uring full-byte/sentinel gates, with
+twelve original-descriptor credit transitions from one to zero. Official dense
+Qwen3-8B TP1/PP1 model gates pass: vLLM 0.31.0 V1/direct DRAM with Graph NONE
+(six passed, one unsupported-hybrid skip), and SGLang 0.5.21 direct DRAM and
+logical io_uring SSD (two passed). The latter model SSD path is an overlay-backed
+file; actual NVMe evidence belongs to the separate native byte gate.
+
+Both official environments also pass a new same-host TCP shared-cache case from
+that exact wheel: eager TP1/PP1, two replicas and two DRAM Managers on GPU3. Each
+case checks three positive recoveries totalling 301,989,888 READ bytes and the
+same H2D bytes, consumer restart recovery, an empty-source restart miss, matching
+generated output and all eight service-leader actual waits at zero. The current
+vLLM logs pass strict native shutdown. SGLang's actual native child SIGKILL exits
+and IPC warnings remain recorded; zero leader waits do not qualify their physical
+lifetime. Both original foreground/SSH owners and independent result reviews
+complete, and the current GPU/channel/lease ownership is released.
+
+The result reviews are `independent-febe9-vllm-generation3-shared-result-review-1/`
+and `independent-febe9-sglang-generation3-shared-result-review-1/` under the archive
+above; they seal selected regular evidence and explicitly enumerate excluded
+compiler/backing files. Model text equality was checked during execution; raw
+response text was not archived for an independent offline comparison. Earlier
+mixed-package INVALID and expired pre-grant NOT_LAUNCHED cohorts keep their
+original verdicts. CUDA source-close status 2 still retains native engines,
+registrations and pools until process exit. These healthy controls add no RDMA,
+HA, P/D, page-generation, physical-fault or performance qualification; S3/S4/S5
+remain Partial. See [PR #269](https://github.com/feichai0017/orbitkv/pull/269).
+
+The independently accepted `6f91e52b` readiness-only diagnostic proves two
+independently released CUDA streams, complete 4-KiB bytes, a mutation control,
+one frozen loader query and actual normal process waits. It is not adapter,
+credit-repayment or physical-fault qualification. The subsequent eight-cell
+adapter freeze was not launched because its mandatory immutable-input checks
+alone exceeded the shared 180-second cleanup budget. `prepared-adapter-lifetime-v2`
+therefore admits one engine and one medium per complete two-cell pair without
+reducing byte, credit, mapping, wait or cleanup requirements.
+
+The first v2 vLLM DRAM pair is independently accepted as an exact launch but
+fail-stopped in its fenced cell at 600.013 seconds. Manager registration and
+runtime mapping completed, but there is no prepared Save, payload, native-release,
+credit-release, cleanup or physical-termination receipt. The negative cell was
+not launched. Independent result review is
+`FailedInvalidTimeoutRetainedOwnership`, SHA256
+`6ef39bf32dae2d8bce0c003eab57d66e9c5d422bb086914410b7f7df0dbbc114`,
+under `/root/orbitkv-artifacts/s3-adapter-pair-budget-20261019/`. The live
+controller retains all six selected resource locks and GPU ownership; this run
+cannot be retried, replaced or reclassified.
+
+Two bounded process observations show the Python main thread consuming one CPU
+while native workers waited. This is consistent with, but does not prove, CUDA
+lazy initialization after the deliberately blocked producer stream. The next
+test-only candidate prewarms the exact strided copy before installing that wait
+and records ordered stages from registration through handoff. A separate
+`cuda-strided-copy-readiness-v1` diagnostic must pass independent source and GPU
+reviews before any new adapter pair can be frozen. It adds no production fence,
+page generation or physical-fault reclamation.
 
 ## S4 — Finish communication execution and demonstrate gains
 
@@ -1430,6 +1353,14 @@ ordinary cache/restart and bounded model controls have scoped acceptance.
 Upstream V2/recurrent restore ordering, SGLang pre-factory graph capture, missing
 public pending tickets and native P/D timeout drain remain interface limits.
 
+The 2026-10-19 source recheck finds official vLLM 0.32.0 and SGLang 0.5.22.
+It is research only: runtime pins and frozen producer-Save gates stay unchanged.
+SGLang's new completed-load contract requires linker/recovery lifecycle changes;
+public worker preparation and pending lookup are still unreleased. The V2 and
+device P/D drain limits also remain. See the
+[release source audit](engine-release-audit.md#2026-10-19-official-release-source-recheck)
+before selecting or implementing a later upgrade; no new profile is qualified.
+
 At every upgrade, record callback ownership, public/private dependencies, selected
 release and exact gates. No fork-only callback, factory, default or CI runtime
 may be required. A submitted or merged upstream fix is not a released contract.
@@ -1565,6 +1496,14 @@ is replaced or reclassified.
 Managers' `closeSource status 2` records are the documented unsupported CUDA
 physical receipt, retaining source engines, registrations and pools until
 process exit; they are not physical drain proof or a new upstream defect.
+
+**Producer Save admission wheel (2026-10-19):** the matching `d59c8ca0` artifact
+now passes the native byte, ordinary model and both official same-host shared
+regressions after native preparation moves before the adapter queue. The exact
+profiles, storage-media distinction, output provenance and preserved lifetime
+limits are recorded under [S3](#s3--transfer-lifetime-and-generation-safe-ownership).
+This accepts the current healthy cache path; broader S5 lifecycle, hybrid, P/D,
+Graph and topology gates remain open.
 
 ### S5.3 — Public lifecycle and hybrid-state contracts
 

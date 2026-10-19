@@ -38,22 +38,20 @@ cross-host rank coordination, HA or the remaining CUDA IPC lifetime contracts.
 
 ## Ownership contract
 
-The producer-admission candidate calls native `prepare_save` from the producer
-handoff before queueing. Rust holds and budgets immutable source requests,
+Before queueing, adapters call native `prepare_save` at the producer handoff.
+Rust holds and budgets immutable source requests,
 batches `submit_saves`, and keeps registration/exporter owners until completion.
 `cancel_save` succeeds only before native submission. An unknown handoff keeps
-engine completion pending; SGLang also preserves its FIFO tree locks. This code
-requires matching package and engine gates and adds no page-generation or
-physical-failure qualification.
-The installed prepared-lifetime gate now freezes one engine and one medium per
-two-cell cohort. Both producer fence controls or both exporter hold controls
-remain mandatory, along with complete bytes, original IPC credit observations
-and actual normal process waits. Each medium and engine requires independent
-launch and result acceptance; the test organization does not expand support.
-Its test-only vLLM stream gate prewarms the exact strided copy before blocking
-the producer stream, so CUDA module initialization is outside the intended
-counterfactual. Ordered receipts make a pre-enqueue stall distinct from native
-Save/Publish waiting. This changes qualification instrumentation only.
+engine completion pending; SGLang also preserves its FIFO tree locks. The matching
+`d59c8ca0` installed wheel passes the scoped native byte, official dense model and
+same-host TCP shared-cache gates recorded in [S3](completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership).
+These healthy profiles add no page-generation, physical-failure or performance
+qualification.
+The installed prepared-lifetime harness freezes one engine and one medium per
+two-cell cohort. Both vLLM producer fence controls or both SGLang exporter-hold
+controls remain mandatory, along with complete bytes, original IPC credit
+observations and actual normal process waits. Each pair requires independent
+launch and result acceptance; this test organization does not expand support.
 Its test-only vLLM stream gate prewarms the exact strided copy before blocking
 the producer stream, so CUDA module initialization is outside the intended
 counterfactual. Ordered receipts make a pre-enqueue stall distinct from native
@@ -330,8 +328,9 @@ These checks bind registration lifetime; same-allocation page-slot reuse and
 physical failure drain still need their own proofs and hardware gates.
 
 The native Save contract distinguishes `SaveNotSubmittedError` from unknown
-handoffs: only that exception from `start_save` proves the current invocation
-launched no native Publish worker. Handle allocation, attachment and wait errors
+handoffs. From `start_save` or `prepare_save`, it proves the current invocation
+launched no native Publish worker; from `submit_saves`, it proves the entire batch
+was rolled back without submission. Handle allocation, attachment and wait errors
 retain the page hold.
 Native producer methods and their registration/handle arguments are resolved
 before the typed catch. Python method or argument lookup errors retain pages;
@@ -341,12 +340,6 @@ earlier result is unknown, the worker retains later queued tasks without startin
 them or reporting their completion against the earlier engine node. This does
 not reconcile unknown owners or prove physical drain; qualification is tracked
 in the [completion plan](completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership).
-The final installed prepared Save gate has scoped normal DRAM/io_uring acceptance
-at `b21b51c3`; it does not replace released vLLM/SGLang lifecycle gates. Those
-gates must observe `prepare_save` at producer handoff, `submit_saves` in the
-worker and the actual wait result, rather than an obsolete `start_save` callback.
-Registration retirement, complete bytes and physical fault termination remain
-separate evidence requirements.
 
 See [layer consumption](engine-local-restore.md#layer-readiness-and-framework-consumption)
 for recurrent, packed-buffer and multi-part limits. Repeated registration of the same binding is rejected, and unregister

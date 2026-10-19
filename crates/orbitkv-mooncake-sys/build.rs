@@ -70,6 +70,7 @@ fn main() {
         "tcp-worker-terminal-owner.patch",
         "tcp-source-admission-drain.patch",
         "source-grant-epoch.patch",
+        "unregister-retry-ownership.patch",
     ] {
         let patch = manifest_dir.join("patches").join(name);
         println!("cargo:rerun-if-changed={}", patch.display());
@@ -252,6 +253,30 @@ fn verify_backport_source(source: &Path) {
         (
             "mooncake-transfer-engine/tent/src/runtime/control_plane.cpp",
             "0378593de88cfc90b7407b8ca3bd4f1d14516fee",
+        ),
+        (
+            "mooncake-transfer-engine/tent/include/tent/runtime/transfer_engine_impl.h",
+            "3dceb048732b8574f8199dbf51fb0c8d03f5f904",
+        ),
+        (
+            "mooncake-transfer-engine/tent/src/runtime/transfer_engine_impl.cpp",
+            "adba998dbd2687b01a40e3da8cd098453527a70d",
+        ),
+        (
+            "mooncake-transfer-engine/tent/src/transport/rdma/context.cpp",
+            "ca4629eea8e653752780e7f91b5af97a4d1a9e83",
+        ),
+        (
+            "mooncake-transfer-engine/tent/src/transport/rdma/buffers.cpp",
+            "72fe68d9a2f6548e1fa066df16bf6330c429112d",
+        ),
+        (
+            "mooncake-transfer-engine/tent/include/tent/runtime/segment_manager.h",
+            "26fccd234bfe47aa3034b96f179ccd8be1392a75",
+        ),
+        (
+            "mooncake-transfer-engine/tent/src/runtime/segment_manager.cpp",
+            "618117190015fbd89916688cc4fda23dd2e3bc9d",
         ),
     ] {
         let output = Command::new("git")

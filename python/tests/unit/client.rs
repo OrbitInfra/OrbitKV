@@ -1,6 +1,8 @@
 use super::*;
 use crate::local_restore::tests::{ProcessOwner, idle_registration_worker};
 
+static SAVE_USAGE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 #[test]
 #[ignore = "real CPU bootstrap/channel native Save owner control; no CUDA allocations or DMA"]
 fn pending_save_retains_after_handle_drop_and_delayed_reply() {
@@ -9,6 +11,7 @@ fn pending_save_retains_after_handle_drop_and_delayed_reply() {
     };
     use std::sync::atomic::{AtomicBool, AtomicUsize};
     use std::time::Instant;
+    let _save_usage = SAVE_USAGE_TEST_LOCK.lock().unwrap();
     Python::initialize();
     let directory = std::path::PathBuf::from(format!("/var/tmp/okv-save-{}", std::process::id()));
     std::fs::create_dir(&directory).unwrap();
@@ -241,6 +244,7 @@ fn save_request_admission_accounts_for_spare_capacity() {
 #[test]
 #[ignore = "CPU native prepared Save admission gate; requires the channel fixture"]
 fn prepared_admission_limit_and_complete_batch_rollback() {
+    let _save_usage = SAVE_USAGE_TEST_LOCK.lock().unwrap();
     Python::initialize();
     Python::attach(|_| {});
     let mut process = ProcessOwner::start("pending-until-exit");
@@ -303,6 +307,7 @@ fn prepared_admission_limit_and_complete_batch_rollback() {
 #[test]
 #[ignore = "Isolated CPU native spawn-failure gate; seccomp applies only to this test thread"]
 fn prepared_spawn_failure_rolls_back_every_unsubmitted_handle() {
+    let _save_usage = SAVE_USAGE_TEST_LOCK.lock().unwrap();
     Python::initialize();
     let mut process = ProcessOwner::start("pending-until-exit");
     let client = native_client(Arc::clone(&process.client), [1; 16]);

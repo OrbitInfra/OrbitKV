@@ -210,7 +210,9 @@ class CacheManagerClient:
         """
         ...
     def poll_save(self, handle: SaveHandle) -> RestoreStatus: ...
-    def prepare_save(self, registration: GpuRegistration, saves: list[tuple[str, list[int], list[bytes]]]) -> SaveHandle:
+    def prepare_save(
+        self, registration: GpuRegistration, saves: list[tuple[str, list[int], list[bytes]]]
+    ) -> SaveHandle:
         """Own source metadata before queueing; explicit native rejection raises SaveNotSubmittedError."""
         ...
     def submit_saves(self, handles: list[SaveHandle]) -> None:
