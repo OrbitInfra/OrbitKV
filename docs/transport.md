@@ -731,11 +731,42 @@ recorded separately and cannot establish drain.
 
 The actual engine receives a deterministic test-only `removeMemoryBuffer`
 failure through its existing transport test hook. Stable host backing remains
-alive; no payload transfer or device registration is submitted. The strict
-normal scene must exit zero; the strict refusal scene must exit one on the
-historical runtime. A separate reproduction scene exits zero only when engine
-unregister loses its transport owner, retry skips removal, and re-registration
-also swallows a transport error. Its final direct test-owner reconciliation
-is not a production unregister or physical-termination receipt. This control
-is distinct from the earlier real TCP admitted-READ/unregister counterexample
-and does not qualify RNIC failure, device drain or allocation/page reuse.
+alive; no payload transfer or device registration is submitted. The default
+fixed-runtime gate requires successful strict refusal/retry, partial-transport,
+reference-count, wildcard, publication-tombstone and batch controls. The
+historical-defect reproduction scene must fail against the fixed library.
+Batch controls include failed publication after multiple final removals,
+same-base wildcard suffix retry, and an older publication completing after
+newer withdrawals. Completed prefixes remain protected until a successful
+publication covers their actual withdrawal revision.
+Use `--expect-defect` for an archived historical runtime: its strict refusal
+must fail, and its explicit defect reproduction must succeed. Neither negative
+control is a qualification pass.
+
+Use `--control rdma` to call the actual native MR and local buffer owners with
+an injected verbs refusal. These controls require retention of failed MRs and
+retry of unfinished rails only. `-fno-access-control` is limited to the test
+executable; it does not expose new production APIs or replace production
+method implementations. Use a complete build with matching headers, not a
+library combined with independently patched transport translation units.
+
+Add `--build-rust-control` to the engine gate to emit `unregister-control.so`.
+With that matching CPU runtime, run the ignored Rust owner boundary explicitly:
+
+```bash
+MC_FORCE_TCP=1 ORBITKV_MOONCAKE_LIB_DIR=/path/to/frozen/cpu/lib \
+ORBITKV_UNREGISTER_CONTROL_LIBRARY=/external/control/unregister-control.so \
+cargo test -p orbitkv-transfer --no-default-features --lib \
+  failed_native_unregister_preserves_the_rust_registration_until_retry \
+  -- --ignored --nocapture --test-threads=1
+```
+
+The production unregister subset adapts existing upstream #4573 and #4249;
+see the [pinned native patch notes](https://github.com/feichai0017/orbitkv/blob/main/crates/orbitkv-mooncake-sys/patches/README.md#unregister-errors-and-retry-ownership).
+It preserves unfinished transport cleanup and failed-publication tombstones,
+rejects same-base registration during retirement and returns failures through
+the C ABI to Rust `try_unregister`. Partial registration rollback, consuming
+`unregister`/`Drop`, terminal destruction and physical-failure reclamation
+remain unqualified. Test-only owner reconciliation is not a production drain
+receipt. These controls are distinct from the earlier real TCP admitted-READ/unregister counterexample
+and do not qualify RNIC failure, device drain or allocation/page reuse.

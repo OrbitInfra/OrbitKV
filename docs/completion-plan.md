@@ -420,9 +420,38 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   records erased after unchecked unregister results. Evidence and failed controls
   are under `/root/orbitkv-artifacts/s3-native-unregister-20261018/`. Independent
   code/CPU review accepts the exact `c69e42bd` reproduction controls, with actual
-  scene exits zero/one/zero. Production error propagation remains unfixed; no
+  scene exits zero/one/zero. That reproduction did not repair production; no
   payload DMA ran and no new registration, termination or reclamation support
   is qualified.
+  The unregister-retry repair reuses the normal-removal contracts
+  in existing upstream PRs #4573 and #4249, rather than opening duplicate work.
+  A same-base reservation spans registration and removal. Before withdrawing
+  the last reference, the existing native engine establishes a retirement owner
+  with the original descriptor and pending transports. It returns removal
+  failures through the C ABI, retries only unfinished transports and retains a
+  publication tombstone until metadata synchronization succeeds. New
+  registration at that base is rejected while retirement is incomplete.
+  Independent review rejected the first `d8e831d9` candidate: a failed final
+  batch publication retained only its last tombstone, allowing an earlier base
+  to register again. The correction retains completed prefixes until a matching
+  snapshot revision is successfully published, resolves wildcard references
+  before removal, and excludes older in-flight publications from that receipt.
+  Preserve the rejected candidate and its reproduced counterexample under
+  `/root/orbitkv-artifacts/s3-native-unregister-repair-20261019/`.
+  The RDMA context and local buffer manager preserve refused MRs and successful
+  partial cleanup. Complete matching-header CPU builds, native/C ABI controls
+  and the actual Rust `try_unregister` owner are the acceptance boundary.
+  Independent `ACCEPTED_CODE_CPU_SCOPE` at `9ad82f53` covers eleven engine/C ABI
+  expectations, three MR-owner controls, fourteen default Rust tests and the
+  explicit Rust token control. The original batch counterexample now rejects
+  reuse before provider entry; a captured-revision mutation makes the new
+  ordering control fail. The accepted review is sealed under
+  `independent-9ad82f-source-cpu-review-1/` in the artifact root above; review
+  SHA256 is `a5a03b0e69405e0aaa12953b3cef8422bacad46de40350c4dd055b5233fdd7bc`.
+  Registration-failure
+  rollback visibility, consuming `unregister`/`Drop`, terminal destruction and
+  physical CUDA/RDMA/GDS reclamation remain open. This substage does not close
+  S3, S4 or S5 or authorize new buffer reuse after an unresolved error.
 - Bound and diagnose retained/quarantined source memory while proof is absent.
   Timeout, etcd expiry, cancellation, remote process disappearance and a control
   ACK are not interchangeable with native drain. An unavailable upstream primitive

@@ -1,8 +1,8 @@
 """Actual engine unregister failure/retry control with an injected CPU transport.
 
-Run after the native runtime is frozen, independently of hardware qualification.
-The strict refused scene must fail on the historical runtime. The explicit
-reproduce scene confirms that failure without converting it into support.
+Run against a complete native build with matching headers. Fixed-runtime strict
+controls must pass. --expect-defect preserves historical failures as explicit
+negative controls, independently of hardware qualification.
 """
 
 import argparse
@@ -25,7 +25,12 @@ def main() -> None:
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--compiler", default="c++")
+    parser.add_argument("--control", choices=("engine", "rdma"), default="engine")
+    parser.add_argument("--expect-defect", action="store_true")
+    parser.add_argument("--build-rust-control", action="store_true")
     args = parser.parse_args()
+    if args.build_rust_control and args.control != "engine":
+        parser.error("--build-rust-control requires --control engine")
     build, runtime = (
         args.native_build.resolve(strict=True),
         args.runtime.resolve(strict=True),
@@ -48,7 +53,20 @@ def main() -> None:
     if not headers:
         raise RuntimeError("Matching native source headers are absent")
     native_source = headers[0].parents[3] / "src/platform"
-    helper = Path(__file__).with_name("unregister_error_owner.cpp").resolve(strict=True)
+    helper = (
+        Path(__file__)
+        .with_name(
+            "unregister_error_owner.cpp"
+            if args.control == "engine"
+            else "rdma_unregister_owner.cpp"
+        )
+        .resolve(strict=True)
+    )
+    sources = [helper]
+    if args.control == "engine":
+        sources.extend(
+            native_source / name for name in ("cpu_allocator.cpp", "cpu_probe.cpp")
+        )
     binary = output / "unregister-error-owner"
     libraries = [
         runtime / name
@@ -63,11 +81,10 @@ def main() -> None:
         compiler,
         "-std=c++20",
         "-O2",
+        "-fno-access-control",
         *shlex.split(flags["CXX_DEFINES"]),
         *includes,
-        str(helper),
-        str(native_source / "cpu_allocator.cpp"),
-        str(native_source / "cpu_probe.cpp"),
+        *(str(source) for source in sources),
         "-L",
         str(runtime),
         f"-Wl,-rpath,{runtime}",
@@ -83,6 +100,8 @@ def main() -> None:
         "-o",
         str(binary),
     ]
+    if not args.expect_defect:
+        command.insert(1, "-DORBITKV_UNREGISTER_PUBLICATION_REVISION")
     result = {
         "compile_argv": command,
         "compiler_sha256": sha(Path(compiler)),
@@ -98,6 +117,9 @@ def main() -> None:
         "physical_termination_qualified": False,
         "payload_DMA": False,
         "test_transport_injection": True,
+        "control": args.control,
+        "expect_defect": args.expect_defect,
+        "test_only_private_access_flag": "-fno-access-control",
         "scenes": [],
     }
     with (output / "compiler-version.log").open("x") as log:
@@ -128,9 +150,7 @@ def main() -> None:
     result["binary_sha256"] = sha(binary)
     dependencies = set()
     result["dependency_commands"] = []
-    for index, source in enumerate(
-        (helper, native_source / "cpu_allocator.cpp", native_source / "cpu_probe.cpp")
-    ):
+    for index, source in enumerate(sources):
         dependency = output / f"input-{index}.d"
         argv = [
             compiler,
@@ -161,13 +181,65 @@ def main() -> None:
     result["compiled_input_sha256"] = {
         str(path): sha(path) for path in sorted(dependencies)
     }
-    for scene, expectation, expected_exit in (
-        ("normal", "strict", 0),
-        ("refused", "strict", 1),
-        ("refused", "reproduce", 0),
-    ):
+    if args.build_rust_control:
+        library = output / "unregister-control.so"
+        rust_command = [
+            arg for arg in command if arg not in {str(source) for source in sources[1:]}
+        ]
+        rust_command[rust_command.index("-o") + 1] = str(library)
+        rust_command[1:1] = [
+            "-fPIC",
+            "-shared",
+            "-DORBITKV_UNREGISTER_RUST_CONTROL",
+        ]
+        with (output / "rust-control-compile.log").open("x") as log:
+            compiled = subprocess.run(
+                rust_command,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                timeout=60,
+                check=False,
+            )
+        result["rust_control"] = {
+            "compile_argv": rust_command,
+            "compile_exit": compiled.returncode,
+        }
+        (output / "RESULT.json").write_text(json.dumps(result, indent=2) + "\n")
+        if compiled.returncode:
+            raise RuntimeError("Rust native-control library compilation failed")
+        result["rust_control"]["library"] = str(library)
+        result["rust_control"]["sha256"] = sha(library)
+    if args.control == "rdma":
+        scenes = [
+            (scene, "strict", int(args.expect_defect and scene != "normal"))
+            for scene in ("normal", "context-refusal", "buffer-refusal")
+        ]
+    else:
+        scenes = [
+            ("normal", "strict", 0),
+            ("refused", "strict", int(args.expect_defect)),
+            ("refused", "reproduce", int(not args.expect_defect)),
+        ]
+        if not args.expect_defect:
+            scenes.extend(
+                (scene, "strict", 0)
+                for scene in (
+                    "retry-partial",
+                    "retry-publication",
+                    "retry-references",
+                    "retry-batch-publication",
+                    "retry-batch-normal",
+                    "retry-batch-prefix",
+                    "retry-batch-wildcard",
+                    "retry-publication-revision",
+                )
+            )
+    for scene, expectation, expected_exit in scenes:
         mappings = output / f"{scene}-{expectation}.maps"
-        argv = [str(binary), scene, expectation, str(mappings)]
+        argv = [str(binary), scene]
+        if args.control == "engine":
+            argv.append(expectation)
+        argv.append(str(mappings))
         evidence = {
             "argv": argv,
             "expected_exit": expected_exit,
@@ -222,7 +294,11 @@ def main() -> None:
         raise RuntimeError("Compiler inputs changed during control")
     (output / "RESULT.json").write_text(json.dumps(result, indent=2) + "\n")
     if any(scene["exit_code"] != scene["expected_exit"] for scene in result["scenes"]):
-        raise RuntimeError("Frozen historical unregister counterexample changed")
+        raise RuntimeError(
+            "Native unregister control differs from its declared expectation"
+        )
+    result["unregister_retry_control_passed"] = not args.expect_defect
+    (output / "RESULT.json").write_text(json.dumps(result, indent=2) + "\n")
     print(
         json.dumps(
             {
