@@ -41,6 +41,7 @@ def linker(monkeypatch):
     result._pending_queries = {}
     result._expired_queries = set()
     result._queued_loads = {}
+    result._retained_offloads = []
     return result
 
 
@@ -90,32 +91,33 @@ def test_native_save_wait_failure_does_not_complete_offload(
 
     linker._offload_queue = queue.Queue()
     linker._completed_offloads = queue.Queue()
+    linker._retained_offloads = []
     handles = {node: object() for node in (1, 2, 3)}
 
-    def start(node, saves):
-        if node == 2 and failure == "start":
-            raise MemoryError("unknown handoff")
-        if node == 3 and later == "not-submitted":
+    def submit(batch):
+        handle = batch[0]
+        if handle is handles[2] and failure == "start":
+            raise MemoryError("unknown submission")
+        if handle is handles[3] and later == "not-submitted":
             raise SaveNotSubmittedError("later native rejection")
-        return handles[node]
 
     def wait(handle):
         if handle is handles[2]:
             if failure == "pending":
                 return SimpleNamespace(done=False, success=False, message="pending")
             if failure == "typed-wait":
-                raise SaveNotSubmittedError("outside start")
+                raise SaveNotSubmittedError("outside submit")
             raise RuntimeError("wait failed")
         return SimpleNamespace(done=True, success=True, message="")
 
-    linker.client.start_save.side_effect = start
+    linker.client.submit_saves.side_effect = submit
     linker.client.wait_save.side_effect = wait
     nodes = [1, 2, 3] if completed_prefix else [2, 3]
     ready = {node: MagicMock() for node in nodes}
     if later == "producer-error":
         ready[3].synchronize.side_effect = RuntimeError("later producer failed")
     for node in nodes:
-        linker._offload_queue.put((node, [], ready[node]))
+        linker._offload_queue.put((handles[node], ready[node]))
     linker._offload_queue.put(None)
 
     worker = threading.Thread(target=linker._offload_worker, daemon=True)
@@ -133,11 +135,13 @@ def test_native_save_wait_failure_does_not_complete_offload(
     unpinned = [call.args[0] for call in wrapper.cache.dec_lock_ref.call_args_list]
     assert unpinned == ([1] if completed_prefix else []), "unknown offload was unpinned"
     assert [row.lock_node_id for row in wrapper.pending_offloads] == [2, 3]
-    assert [call.args[0] for call in linker.client.start_save.call_args_list] == nodes[:-1]
+    assert [call.args[0][0] for call in linker.client.submit_saves.call_args_list] == [
+        handles[node] for node in nodes[:-1]
+    ]
     ready[3].synchronize.assert_not_called()
     if failure != "start":
         assert linker._retained_offloads[0][1] is handles[2]
-    assert [task[0] for task, _ in linker._retained_offloads] == [2, 3]
+    assert [task[0] for task, _ in linker._retained_offloads] == [handles[2], handles[3]]
     assert linker._retained_offloads[1][1] is None
     with pytest.raises(RuntimeError, match="pages remain held"):
         linker.reset()
@@ -155,7 +159,124 @@ def test_reset_rechecks_retained_save_after_join(linker):
     )
     with pytest.raises(RuntimeError, match="pages remain held"):
         linker.reset()
-    linker.layer_done_counter.reset.assert_not_called()
+
+
+def test_unknown_preparation_preserves_released_tree_ownership(linker, monkeypatch):
+    import queue
+
+    from sglang.srt.mem_cache.hicache_storage import PoolName
+
+    linker.registration = object()
+    linker._offload_queue = queue.Queue()
+    linker._completed_offloads = queue.Queue()
+    linker.layout.pools = {
+        PoolName.KV: SimpleNamespace(
+            kind="attention", layer_names=["kv:0"], block_ids=lambda *_: [2]
+        )
+    }
+    monkeypatch.setattr("orbitkv.sglang.linker.torch.cuda.Event", MagicMock)
+    transfers = [SimpleNamespace(name=PoolName.KV, keys=["key"], device_indices=[2])]
+    linker.client.prepare_save.side_effect = MemoryError("unknown handoff")
+    assert linker.offload(transfers)
+    assert linker._offload_queue.empty()
+    assert len(linker._retained_offloads) == 1
+    assert linker._completed_offloads.empty()
+    with pytest.raises(RuntimeError, match="source pages cannot be admitted"):
+        linker.offload(transfers)
+
+
+def test_proven_preparation_rejection_does_not_accept_tree_ownership(linker, monkeypatch):
+    import queue
+
+    from sglang.srt.mem_cache.hicache_storage import PoolName
+
+    from orbitkv import SaveNotSubmittedError
+
+    linker.registration = object()
+    linker._offload_queue = queue.Queue()
+    linker._completed_offloads = queue.Queue()
+    linker.layout.pools = {
+        PoolName.KV: SimpleNamespace(
+            kind="attention", layer_names=["kv:0"], block_ids=lambda *_: [2]
+        )
+    }
+    monkeypatch.setattr("orbitkv.sglang.linker.torch.cuda.Event", MagicMock)
+    transfers = [SimpleNamespace(name=PoolName.KV, keys=["key"], device_indices=[2])]
+    linker.client.prepare_save.side_effect = SaveNotSubmittedError("native preflight rejection")
+    assert linker.offload(transfers) is False
+    assert linker._offload_queue.empty()
+    assert not linker._retained_offloads
+    assert linker._completed_offloads.empty()
+
+
+@pytest.mark.parametrize("where", ["prepare-method", "registration", "submit-method"])
+def test_python_lookup_rejection_preserves_offload_tree_hold(linker, monkeypatch, where):
+    import queue
+
+    from sglang.srt.mem_cache.hicache_storage import PoolName
+    from sglang.srt.mem_cache.unified_cache.unified_cache_linker import (
+        UnifiedCacheLinkerWrapper,
+        _PendingOffload,
+    )
+
+    from orbitkv import SaveNotSubmittedError
+
+    linker.registration = object()
+    linker._offload_queue = queue.Queue()
+    linker._completed_offloads = queue.Queue()
+    linker.layout.pools = {
+        PoolName.KV: SimpleNamespace(
+            kind="attention", layer_names=["kv:0"], block_ids=lambda *_: [2]
+        )
+    }
+    monkeypatch.setattr("orbitkv.sglang.linker.torch.cuda.Event", MagicMock)
+    transfers = [SimpleNamespace(name=PoolName.KV, keys=["key"], device_indices=[2])]
+    prepare, submit, cancel = (
+        linker.client.prepare_save,
+        linker.client.submit_saves,
+        linker.client.cancel_save,
+    )
+    if where == "registration":
+
+        class RejectRegistration(type(linker)):
+            def __getattribute__(self, name):
+                if name == "registration":
+                    raise SaveNotSubmittedError("Python argument before native call")
+                return super().__getattribute__(name)
+
+        linker.__class__ = RejectRegistration
+    else:
+        attribute = "prepare_save" if where == "prepare-method" else "submit_saves"
+        client = linker.client
+
+        class RejectMethod:
+            def __getattribute__(self, name):
+                if name == attribute:
+                    raise SaveNotSubmittedError("Python method lookup before native call")
+                return getattr(client, name)
+
+        linker.client = RejectMethod()
+
+    assert linker.offload(transfers) is True
+    if where == "submit-method":
+        linker._offload_queue.put(None)
+        linker._offload_worker()
+        prepare.assert_called_once()
+    else:
+        prepare.assert_not_called()
+        assert linker._offload_queue.empty()
+    submit.assert_not_called()
+    cancel.assert_not_called()
+    assert len(linker._retained_offloads) == 1
+
+    wrapper = object.__new__(UnifiedCacheLinkerWrapper)
+    wrapper.cache_linker = linker
+    wrapper.cache = MagicMock()
+    wrapper.pending_offloads = [_PendingOffload(2, object(), [2])]
+    count = wrapper.num_completed_offloads()
+    wrapper.commit_completed_offloads(wrapper.take_completed_offloads(count))
+    wrapper.cache.dec_lock_ref.assert_not_called()
+    assert len(wrapper.pending_offloads) == 1
 
 
 def transfer(keys):
@@ -758,8 +879,6 @@ def test_offload_keeps_producer_registration_and_reports_rejection(linker, monke
 
     from sglang.srt.mem_cache.hicache_storage import PoolName
 
-    from orbitkv import SaveNotSubmittedError
-
     original = object()
     linker.registration = original
     linker._offload_queue = queue.Queue()
@@ -773,17 +892,19 @@ def test_offload_keeps_producer_registration_and_reports_rejection(linker, monke
     monkeypatch.setattr("orbitkv.sglang.linker.torch.cuda.Event", lambda: ready)
     transfers = [SimpleNamespace(name=PoolName.KV, keys=["key"], device_indices=[2])]
     expected = [("kv:0", [2], linker._hashes(["key"]))]
+    from orbitkv import SaveNotSubmittedError
+
+    linker.client.wait_save.return_value = SimpleNamespace(done=True, success=True, message="")
     if rejected:
-        linker.client.start_save.side_effect = SaveNotSubmittedError(
-            "GPU registration is no longer active"
-        )
+        linker.client.submit_saves.side_effect = SaveNotSubmittedError("no worker started")
 
     assert linker.offload(transfers)
     linker.registration = object()
     linker._offload_queue.put(None)
     linker._offload_worker()
 
-    linker.client.start_save.assert_called_once_with(original, expected)
+    linker.client.prepare_save.assert_called_once_with(original, expected)
+    linker.client.submit_saves.assert_called_once_with([linker.client.prepare_save.return_value])
     ready.synchronize.assert_called_once()
     assert linker.pop_completed_offload() is not rejected
     assert linker._retained_offloads == []
@@ -791,7 +912,7 @@ def test_offload_keeps_producer_registration_and_reports_rejection(linker, monke
         linker.client.wait_save.assert_not_called()
     assert linker._offload_queue.unfinished_tasks == 0
 
-    linker.client.start_save.side_effect = None
+    linker.client.submit_saves.side_effect = None
     assert linker.offload(transfers)
     linker._offload_queue.put(None)
     linker._offload_worker()

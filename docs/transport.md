@@ -1,5 +1,12 @@
 # OrbitKV transport architecture
 
+Prepared Save requests share the existing
+native pending owner with submitted requests. Metadata stays charged until its
+last owner drops, including caller-held completed handles; registration tensors
+are retained through submission or proven never-submitted cancellation. The
+same 1,024-operation/32-MiB process cap includes conservative merge scratch.
+This metadata limit is separate from registered allocation and payload budgets.
+
 This document separates the inference-to-Cache-Manager channel, remote data
 movement, and replica discovery so none of them becomes an accidental second
 source of KV truth. "Same-host" describes where the client connects; the
