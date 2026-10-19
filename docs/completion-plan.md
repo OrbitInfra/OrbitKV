@@ -478,6 +478,23 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   Warm-up MR faults, CUDA IPC aliases, hotplug, consuming unregister/Drop and
   physical fault reclamation remain open; this repair adds no hardware or
   S3/S4/S5 completion claim.
+  The matching CUDA 13 wheel passes installed host checks. Its first H20 byte
+  campaign is `INVALID_BEFORE_PYTEST`: a private runner selected the source
+  package before the installed wheel; neither Manager/GPU payload nor SSD cell
+  started. The idle guardian for this unstarted payload required one forced
+  termination, with actual controller/SSH waits `-9`/`1`; original failures remain archived.
+  The maintained `tests/support/installed_pytest.py` now selects explicit roots
+  and shares provenance checks between its CPU probe and pytest execution.
+  It rejects optimized Python so installed RECORD assertions cannot be removed.
+  Installed probe, source-shadow rejection and actual collection pass; loader
+  controls freeze their real wrapped entry. A fresh, explicitly nonoptimized H20
+  cohort at `ce344496` passes installed DRAM and actual NVMe/io_uring bytes:
+  three full 32 KiB payload/sentinel comparisons per medium, retired-registration
+  rejection without extra I/O, original IPC-credit release and actual
+  Manager/controller/SSH zero exits, with no forced cleanup. It uses the frozen
+  matching wheel and does not run the later optimization guard on the GPU or
+  qualify physical-fault termination. Official-engine and shared-cache gates
+  remain required. See [PR #283](https://github.com/feichai0017/orbitkv/pull/283).
 - Bound and diagnose retained/quarantined source memory while proof is absent.
   Timeout, etcd expiry, cancellation, remote process disappearance and a control
   ACK are not interchangeable with native drain. An unavailable upstream primitive

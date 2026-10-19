@@ -32,7 +32,7 @@ def main() -> None:
     parser.add_argument("--build-rust-control", action="store_true")
     args = parser.parse_args()
     if args.build_rust_control and args.control not in {"engine", "registration"}:
-        parser.error("--build-rust-control requires --control engine")
+        parser.error("--build-rust-control requires --control engine or registration")
     build, runtime = (
         args.native_build.resolve(strict=True),
         args.runtime.resolve(strict=True),
