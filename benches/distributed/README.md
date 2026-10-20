@@ -14,8 +14,9 @@ hosts. Verify ELF closure, actual TENT loading and native import before launch;
 never overwrite a mapped library. Keep `harness/benches` separate from the Python
 package so source-only imports cannot shadow the installed extension.
 
-Each host supplies `runtime_inputs` naming the frozen registration-check helper
-and guard JSON; both files also belong in `runtime_hashes`. The existing owner
+Each host supplies `runtime_inputs` naming the frozen
+`python/tests/support/runtime_checks.py` helper and guard JSON; both files also
+belong in `runtime_hashes`. The existing owner
 consumes complete directory manifests, absent inputs, protected owners and the
 ordered inherited lease FDs after acquisition, before child launch and before
 final lease release. Declare every Manager cell's private channel domain in the

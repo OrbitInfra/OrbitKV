@@ -18,8 +18,8 @@ import requests
 
 from tests.support.ipc_credit import hold_counters, release_receipt
 from tests.support.metrics import fetch_orbitkv_metrics
-from tests.support.registration_campaign import identity as process_identity
-from tests.support.registration_campaign import write
+from tests.support.runtime_checks import identity as process_identity
+from tests.support.runtime_checks import write
 
 pytestmark = pytest.mark.integration
 

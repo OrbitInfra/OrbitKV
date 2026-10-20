@@ -538,7 +538,7 @@ class CacheManagerProcess:
             self._process_start_ticks = None
 
         if os.environ.get("ORBITKV_TEST_STRICT_SHUTDOWN") == "1":
-            from .registration_campaign import write
+            from .runtime_checks import write
 
             record = {
                 "pid": self.process.pid,
@@ -577,7 +577,7 @@ class CacheManagerProcess:
 
     def record_runtime(self) -> None:
         """Capture the live Manager's mapped file identities after registration."""
-        from .registration_campaign import capture_process_runtime, write
+        from .runtime_checks import capture_process_runtime, write
 
         deadline = time.monotonic() + 30
         process = self.process

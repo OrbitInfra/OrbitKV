@@ -278,7 +278,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
 
     from transformers import AutoTokenizer
 
-    from tests.support.registration_campaign import record_process_group_runtime
+    from tests.support.runtime_checks import record_process_group_runtime
 
     tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True, trust_remote_code=True)
     fragment = tokenizer.encode("A CUDA IPC cache correctness test for a long context. ")

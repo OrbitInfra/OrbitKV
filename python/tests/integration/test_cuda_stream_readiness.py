@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.support.registration_campaign import identity, write
+from tests.support.runtime_checks import identity, write
 
 pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 

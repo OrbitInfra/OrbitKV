@@ -30,44 +30,20 @@ Before queueing, adapters call native `prepare_save` at the producer handoff.
 Rust holds and budgets immutable source requests,
 batches `submit_saves`, and keeps registration/exporter owners until completion.
 `cancel_save` succeeds only before native submission. An unknown handoff keeps
-engine completion pending; SGLang also preserves its FIFO tree locks. The matching
-`d59c8ca0` installed wheel passes the scoped native byte, official dense model and
-same-host TCP shared-cache gates recorded in [S3](completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership).
-These healthy profiles add no page-generation, physical-failure or performance
-qualification.
-The installed prepared-lifetime harness freezes one engine and one medium per
-two-cell cohort. Both vLLM producer fence controls or both SGLang exporter-hold
-controls remain mandatory, along with complete bytes, original IPC credit
-observations and actual normal process waits. Each pair requires independent
-launch and result acceptance; this test organization does not expand support.
-Its test-only vLLM stream gate prewarms the exact strided copy before blocking
-the producer stream, so CUDA module initialization is outside the intended
-counterfactual. Ordered receipts make a pre-enqueue stall distinct from native
-Save/Publish waiting. This changes qualification instrumentation only.
-The exact vLLM 0.31.0 DRAM pair is independently accepted at `549f4a00`: the
-fenced cell consumes producer readiness and restores complete bytes, while the
-no-fence control submits before readiness and must preserve the destination
-sentinel with `qualification_passed=false`. Both cells prove normal
-registration retirement and original-credit repayment. This scoped healthy
-result does not qualify SGLang, model serving, page-slot generation, physical
-faults or reclamation; the earlier timed-out pair remains quarantined.
-The separate vLLM 0.31.0 io_uring pair is independently accepted on the final
-`3b05` freeze after a registration-consuming readiness froze the Manager's full
-78-file runtime mapping. It applies the same producer fence/no-fence byte oracle,
-and additionally clears DRAM, requires actual NVMe io_uring read counters and
-retains exact installed-wheel executable/RECORD evidence. Earlier executable-mode
-and incomplete-mapping cohorts remain invalid and quarantined; their descriptive
-pytest outcomes are not reused. This SSD acceptance is still a healthy adapter
-lifetime result, not cancellation, process-loss or physical-termination proof.
-The exact `022cf3b5` artifact separately accepts official SGLang 0.5.21
-sole-owner/independent-exporter-hold pairs in DRAM and physical NVMe0/io_uring.
-Both media preserve the full released pool bytes and sentinels, exporter holds,
-original IPC-credit repayment, prepared Save/Restore consumption and normal
-registration/Manager retirement. The SSD pair additionally proves DRAM eviction,
-application-level io_uring reads and data02/ext4 ownership. These results do not
-transfer to the selected SGLang 0.5.22 package; its matching prepared-lifetime
-and fault gates remain open. Neither 0.5.21 pair proves cancellation, process
-loss, page-slot generations or physical-fault reclamation.
+engine completion pending; SGLang also preserves its FIFO tree locks.
+
+The retained integration gates exercise native producer readiness, complete
+restored bytes and sentinels, original IPC-credit repayment and registration
+retirement on vLLM 0.31.0 and SGLang 0.5.22. The SGLang GPU-pool/linker fixture
+covers both sole ownership and an independent exporter hold;
+vLLM includes a no-fence counterfactual. SSD gates evict DRAM and require actual
+io_uring reads. These normal-path controls do not establish complete model
+shutdown, cancellation, page reuse/generations or physical-fault reclamation.
+
+Historical per-cohort details and failures remain in the
+[accepted lifetime record](https://github.com/feichai0017/orbitkv/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#ownership-contract).
+Use the [completion plan](completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
+for current-release acceptance; earlier 0.5.21 results retain their original scope.
 
 | Responsibility | Owner |
 | --- | --- |
@@ -272,15 +248,11 @@ and pending-query admission. Enqueue preparation adds one Hook only when
 `ORBITKV_PREPARE_REQUESTS=1` or `ORBITKV_QUEUE_WARMUP=1` is set before startup.
 P/D transport factories and fork observation callbacks are removed. Native P/D
 uses the official engine lifecycle and is qualified separately.
-The historical installed 0.5.21 ordinary-cache checks pass on A100 for dense eager
-DRAM/io_uring recovery. A calibrated normal-exit diagnosis observes all 72
-OrbitKV export credits return to zero after the released linker close and Manager
-unregister. The earlier nonzero reading came from the shared-memory file header,
-not a tensor counter, and is retained as an invalid measurement. The PyTorch exit
-warning remains in the evidence; it is not a per-counter leak oracle.
 The [S5.2 evidence](completion-plan.md#s52--minimal-official-cache-backends)
-qualifies neither crash reclamation nor cancellation during DMA; independent
-acceptance and S3 lifetime work remain open.
+accepts normal prepared-adapter retirement on the selected release. It does not
+qualify crash reclamation or cancellation during DMA. The earlier model-process
+shutdown warnings and calibrated 0.5.21 measurements remain in the
+[immutable shutdown record](https://github.com/feichai0017/orbitkv/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#sglang-linker-and-current-internal-dependencies).
 
 These remaining targets are version-coupled dependencies, not stable public APIs.
 Replace them with consumed factory/lifecycle/component contracts and then delete
