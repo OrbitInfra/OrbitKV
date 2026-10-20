@@ -133,6 +133,23 @@ cohort passes the strict native log/wait checks for six dense vLLM cases. Keep
 that nominal result separate from the original rejected run and fault/reuse
 qualification; see [PR #246](https://github.com/feichai0017/orbitkv/pull/246).
 
+The ordinary vLLM and SGLang correctness gates also record the live cache
+Manager and inference process groups after each workload, before normal
+teardown. The existing runtime reader captures PID/start identities, actual
+library mappings and file hashes; process names do not select workers. Records
+sit beside the service logs in the external test output directory. Capture
+failures fail the gate while the existing context manager or `finally` block
+still performs normal cleanup. These records prove runtime participation within
+their observed scope, not physical CUDA/RDMA termination or execution of every
+Python source file.
+
+The shared-cache E2E uses the same recorder before each consumer/source restart
+and final teardown. Its `service-runtime-history.json` binds all eight live
+engine/Manager groups to their original PID/start identity, log and observed
+member incarnation. The existing service contexts retain cleanup ownership if
+capture fails. Installed-entry probes alone do not qualify those live groups;
+the selected wheel still needs its own two-engine shared-cache runs.
+
 Shared client ownership is tested in Rust under
 `crates/orbitkv-channel/tests/unit/cache_client.rs`: query revisions, immutable
 hash snapshots and shared views, warming limits/expiry, separate publish traffic, lost restore

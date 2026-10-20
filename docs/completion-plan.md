@@ -495,6 +495,49 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   matching wheel and does not run the later optimization guard on the GPU or
   qualify physical-fault termination. Official-engine and shared-cache gates
   remain required. See [PR #283](https://github.com/feichai0017/orbitkv/pull/283).
+  The first ordinary vLLM 0.31.0 dense restart run passes six functional cases
+  with one expected hybrid-model skip and normal zero exits for all four
+  services. Its current-artifact qualification was withheld: the external
+  observer missed the save/load workers' live native mappings. No artifact
+  mixing was observed, but declared paths cannot replace that evidence. The
+  original functional run and unsuccessful observers retain their verdicts.
+  The follow-up [PR #284](https://github.com/feichai0017/orbitkv/pull/284)
+  records live groups in the ordinary fixtures. Independent acceptance of its
+  fresh `105eefbc` wheel controls covers vLLM 0.31.0 V1/direct DRAM with Graph
+  NONE (six passed, one unsupported-hybrid skip), and SGLang 0.5.21 direct
+  DRAM/logical file-backed io_uring SSD with default graph settings (two passed),
+  all Qwen3-8B dense TP1/PP1. Actual workers and Managers map the current native
+  artifacts; normal service-leader waits, unchanged inputs and empty selected
+  resource postflight pass. SGLang's internal SIGKILL exits and CUDA IPC warnings
+  remain recorded. This accepts healthy recovery, not physical NVMe/GDS, faults,
+  physical termination or performance. Reviews are under
+  `/root/orbitkv-artifacts/s3-engine-runtime-evidence-20261019/`.
+  [PR #285](https://github.com/feichai0017/orbitkv/pull/285) records every shared
+  engine/Manager incarnation and its observed membership before existing teardown.
+  The matching wheel passes independent healthy shared-cache acceptance on
+  vLLM 0.31.0 V1 and SGLang 0.5.21: Qwen3-8B dense, eager/direct DRAM,
+  TP1/PP1, two replicas and two Managers with 2 GiB of DRAM each on one H20
+  using same-host TCP. Across three positive recoveries per engine, READ and
+  H2D each total 288 MiB; consumer restart recovers, while an empty-source
+  restart reads and copies zero bytes. Maintained output equality assertions,
+  all eight current service origins, normal leader waits and selected resource
+  release pass. Raw response bodies are not archived for offline text replay.
+  SGLang acceptance covers its original closed cohort, including the final
+  frozen-input check and controller exit zero. A later audit found a missing
+  old default IPC node and changed directory timestamps. Fresh directory
+  preservation remains failed, its subsequent check suffix was not executed,
+  and the deletion actor is unknown. The forensic archive preserves both
+  checkpoints; it does not authorize another hardware run or establish
+  continuous preservation after the original result.
+  Native source-close status 2 retains backing until process exit; physical
+  drain, faults, RDMA/HA/P-D and performance qualification remain open.
+  The Rust token API now exposes only nonconsuming `try_unregister`: failure
+  leaves the retry handle with its caller instead of consuming it and silently
+  retrying through destruction. Maintained TCP controls explicitly drop inactive
+  tokens before replacing an engine at the same endpoint. This API cleanup
+  leaves best-effort token Drop, terminal destruction and the raw Python
+  partial-registration/backing owner boundary open; it does not establish
+  physical termination or change the Core pool-retention policy.
 - Bound and diagnose retained/quarantined source memory while proof is absent.
   Timeout, etcd expiry, cancellation, remote process disappearance and a control
   ACK are not interchangeable with native drain. An unavailable upstream primitive
@@ -1859,6 +1902,10 @@ physical NIC counters and actual GPU destinations for each claimed cell.
 Maintain upstream registration/docs/tests and upgrade gates. Record issue/PR,
 maintainer response, merge commit and first released version separately. Submit
 lifecycle and TENT fixes independently of the minimal cache backend.
+For a confirmed Mooncake/TENT, SGLang or vLLM defect, first isolate the upstream
+cause and search open and closed issues and PRs. Reuse matching work; otherwise
+submit a reproducible issue and a tested fix PR. Keep private evidence and
+credentials out of public contributions.
 
 **Acceptance:** executable scenarios with output, physical-transfer and drain
 receipts for every support claim. A minimal upstream cache contribution need not

@@ -23,6 +23,13 @@ machine or on two hosts. A deployment label records the operator's setup; it is
 not automatic proof of distinct physical hosts or an RDMA transport. Keep these
 three results separate: same-host TCP, two-host TCP and two-host RDMA.
 
+The current released-engine E2E records the actual live engine and Manager
+process groups before each restart and final teardown. Its runtime history
+binds mapped-library evidence to service PID/start and membership identities.
+Installed-package probes and historical results do not replace a fresh run;
+see the [completion plan](completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
+for current artifact qualification and remaining lifetime limits.
+
 ## Recorded result
 
 ### Historical etcd-block global-index cutover, 2026-09-29
