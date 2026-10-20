@@ -531,6 +531,13 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   continuous preservation after the original result.
   Native source-close status 2 retains backing until process exit; physical
   drain, faults, RDMA/HA/P-D and performance qualification remain open.
+  The Rust token API now exposes only nonconsuming `try_unregister`: failure
+  leaves the retry handle with its caller instead of consuming it and silently
+  retrying through destruction. Maintained TCP controls explicitly drop inactive
+  tokens before replacing an engine at the same endpoint. This API cleanup
+  leaves best-effort token Drop, terminal destruction and the raw Python
+  partial-registration/backing owner boundary open; it does not establish
+  physical termination or change the Core pool-retention policy.
 - Bound and diagnose retained/quarantined source memory while proof is absent.
   Timeout, etcd expiry, cancellation, remote process disappearance and a control
   ACK are not interchangeable with native drain. An unavailable upstream primitive

@@ -156,8 +156,10 @@ pub struct TransferEngine {
     admission: Mutex<BatchAdmission>,
 }
 
-/// Owns one Mooncake memory registration. The caller must retain the actual
-/// CPU/GPU allocation separately until this token is dropped or unregistered.
+/// Tracks one Mooncake memory registration, not its backing allocation.
+/// Retain the token and actual allocation after a failed explicit cleanup.
+/// Dropping the token is best effort and is not a native drain receipt.
+#[must_use = "retain the registration and its allocation until cleanup succeeds"]
 pub struct MemoryRegistration {
     engine: Arc<TransferEngine>,
     address: NonNull<u8>,
@@ -175,6 +177,8 @@ impl MemoryRegistration {
         self.address
     }
 
+    /// Unregister without consuming the retry handle on failure.
+    /// This logical cleanup does not establish physical transfer termination.
     pub fn try_unregister(&mut self) -> Result<()> {
         if !self.active {
             return Ok(());
@@ -184,10 +188,6 @@ impl MemoryRegistration {
             self.active = false;
         }
         result
-    }
-
-    pub fn unregister(mut self) -> Result<()> {
-        self.try_unregister()
     }
 }
 
@@ -343,8 +343,9 @@ impl TransferEngine {
     ///
     /// # Safety
     ///
-    /// The allocation must outlive the returned token and every submitted
-    /// transfer using it. `location` must describe the actual memory domain,
+    /// The allocation must remain valid through every transfer and successful
+    /// explicit cleanup. Dropping a token does not prove cleanup succeeded.
+    /// `location` must describe the actual memory domain,
     /// for example `cpu:0` or `cuda:0`.
     /// A native registration error may retain partial registrations without
     /// returning a token. Keep both this engine and the pinned allocation alive
