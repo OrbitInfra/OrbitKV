@@ -252,7 +252,7 @@ The [S5.2 evidence](completion-plan.md#s52--minimal-official-cache-backends)
 accepts normal prepared-adapter retirement on the selected release. It does not
 qualify crash reclamation or cancellation during DMA. The earlier model-process
 shutdown warnings and calibrated 0.5.21 measurements remain in the
-[immutable ownership record](https://github.com/feichai0017/orbitkv/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#ownership-contract).
+[immutable shutdown record](https://github.com/feichai0017/orbitkv/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#sglang-linker-and-current-internal-dependencies).
 
 These remaining targets are version-coupled dependencies, not stable public APIs.
 Replace them with consumed factory/lifecycle/component contracts and then delete
