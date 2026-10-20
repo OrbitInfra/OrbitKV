@@ -59,6 +59,15 @@ retains exact installed-wheel executable/RECORD evidence. Earlier executable-mod
 and incomplete-mapping cohorts remain invalid and quarantined; their descriptive
 pytest outcomes are not reused. This SSD acceptance is still a healthy adapter
 lifetime result, not cancellation, process-loss or physical-termination proof.
+The exact `022cf3b5` artifact separately accepts official SGLang 0.5.21
+sole-owner/independent-exporter-hold pairs in DRAM and physical NVMe0/io_uring.
+Both media preserve the full released pool bytes and sentinels, exporter holds,
+original IPC-credit repayment, prepared Save/Restore consumption and normal
+registration/Manager retirement. The SSD pair additionally proves DRAM eviction,
+application-level io_uring reads and data02/ext4 ownership. These results do not
+transfer to the selected SGLang 0.5.22 package; its matching prepared-lifetime
+and fault gates remain open. Neither 0.5.21 pair proves cancellation, process
+loss, page-slot generations or physical-fault reclamation.
 
 | Responsibility | Owner |
 | --- | --- |
