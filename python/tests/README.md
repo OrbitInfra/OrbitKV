@@ -30,7 +30,8 @@
   and report qualification false. The separate `3b05` io_uring pair also has
   independent result acceptance after mode-preserving wheel installation and a
   registration-consuming 78-mapping readiness. It additionally requires DRAM
-  eviction plus advancing physical io_uring counters on NVMe. Earlier SSD
+  eviction plus OrbitKV's advancing application-level io_uring read-operation
+  counter on the NVMe0/data02 path. Earlier SSD
   freezes with a non-executable Manager or incomplete mapping census remain
   invalid and quarantined. These acceptances cover only the two healthy vLLM
   media pairs; SGLang, model, fault, page-generation and physical-reclamation

@@ -1021,8 +1021,8 @@ quarantine, six locks and GPU1 ownership remain unchanged. This acceptance is
 not a model, SSD, SGLang, formal, fault, page-generation, physical-termination or
 reclamation gate; S3 remains Partial.
 
-**Scoped vLLM io_uring prepared-adapter acceptance (2026-10-20).** The first
-current-wheel SSD freeze remains `AcceptedInvalidFailStop`: Python ZIP extraction
+**Scoped vLLM io_uring prepared-adapter acceptance (2026-10-20).** The f198 SSD
+freeze remains `AcceptedInvalidFailStop`: Python ZIP extraction
 discarded the Manager executable mode, so the first cell failed before Manager
 exec and the second never launched. The next host1 cohort also remains
 `AcceptedInvalidFailStop`: its fenced pytest completed, but the health-only
@@ -1046,6 +1046,11 @@ one advancing io_uring read, two distinct registration generations and two
 original-credit transitions from one to zero. Both 78-file mapping censuses,
 Manager SIGTERM/reap, pytest/native child waits, controller/root waits and final
 GPU/port/lock postflight pass.
+
+The remote root-wait PID `78770` remains as a PID-1-owned, unreaped zombie after
+its successful wait record. It has no executable, cwd, file descriptors, lock,
+listener, mapping or GPU ownership. This platform reap limitation is retained as
+postflight evidence and is not a resource owner or a physical-fault receipt.
 
 Independent result review accepts exactly
 `AcceptedVllmSsdPreparedAdapterPair`; `REVIEW.md` SHA256 is
