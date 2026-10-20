@@ -100,4 +100,4 @@ mode in the support table only after the matching profile passes.
 
 Historical native controls, Qwen3.5/Qwen3.8 and MLA experiments, their failures
 and external artifact locations remain in the
-[immutable model report](https://github.com/feichai0017/orbitkv/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/models.md).
+[immutable model report](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/models.md).
