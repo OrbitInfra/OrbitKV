@@ -147,9 +147,11 @@ def test_installed_benchmark_rejects_incomplete_or_external_wheel(tmp_path, monk
 
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])
 @pytest.mark.parametrize("eager", [False, True])
-def test_matched_execution_mode_uses_released_engine_controls(tmp_path, engine, eager):
+@pytest.mark.parametrize("backend", ["native", "cpu"])
+def test_matched_execution_mode_uses_released_engine_controls(tmp_path, engine, eager, backend):
     args = launch_arguments(tmp_path, engine)
-    args.backend = "native"
+    args.backend = backend
+    args.host_gib = 16
     args.enforce_eager = eager
     launch = configure(args, 147456)
     assert launch.backend_configuration["execution_mode"] == (
@@ -161,6 +163,9 @@ def test_matched_execution_mode_uses_released_engine_controls(tmp_path, engine, 
         assert launch.command[launch.command.index("--shutdown-timeout") + 1] == "30"
     else:
         assert "--shutdown-timeout" not in launch.command
+        if backend == "cpu":
+            host_gb = float(launch.command[launch.command.index("--hicache-size") + 1])
+            assert host_gb * 1e9 == pytest.approx(16 * 1024**3, abs=1, rel=0)
         for flag in ("--cuda-graph-backend-decode", "--cuda-graph-backend-prefill"):
             assert (flag in launch.command) == eager
             if eager:

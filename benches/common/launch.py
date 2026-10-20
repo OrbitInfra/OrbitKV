@@ -365,7 +365,7 @@ def sglang_command(args: Namespace, port: int, cache_config: Path | None) -> lis
         command += [
             "--enable-hierarchical-cache",
             "--hicache-size",
-            str(args.host_gib),
+            str(args.host_gib * 1024**3 / 1e9),
             "--hicache-write-policy",
             "write_through",
         ]
