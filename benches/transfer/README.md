@@ -30,6 +30,11 @@ started pairs and profiler-off native output controls. Preserve source holds,
 events and exact installed artifacts through normal shutdown. Unknown native
 work must not release backing memory.
 
+The actual-layout oracle and copy-observer contracts currently freeze SGLang
+0.5.21. Reproduce those measurements with their archived matching wheel and
+harness. A new 0.5.22 performance comparison must qualify its actual pool and
+update the consumed contract; ordinary-cache upgrade checks do not do this.
+
 Profiler-off application measurements decide promotion. Isolated copy bandwidth,
 CUDA event duration and client TTFT have different boundaries. A new observer
 must pass its frozen matched-overhead guard before its timings support a causal

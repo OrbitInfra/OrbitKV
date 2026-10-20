@@ -8,7 +8,7 @@ the official engine adapter. Begin with the [quickstart](single-node.md).
 ## What you can use today
 
 The starting profile is dense TP=1/PP=1 inference on official vLLM 0.31.0 or
-SGLang 0.5.21. Engines own HBM and scheduling; OrbitKV owns external replicas,
+SGLang 0.5.22. Engines own HBM and scheduling; OrbitKV owns external replicas,
 query budgets and transfer completion. Raw DRAM Restore executes in the engine;
 Publish and SSD/codec work execute in the Manager.
 

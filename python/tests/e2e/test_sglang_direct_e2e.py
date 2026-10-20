@@ -224,29 +224,6 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
         "--enable-unified-cache-external-linker",
         "--enable-cache-report",
     ]
-    model_config = json.loads((Path(model) / "config.json").read_text())
-    text_config = model_config.get("text_config", model_config)
-    if (
-        "linear_attention" in (text_config.get("layer_types") or ())
-        or (text_config.get("linear_attn_config") or {}).get("kda_layers")
-        or text_config.get("use_sconv")
-    ):
-        cmd += [
-            "--max-mamba-cache-size",
-            "64",
-            "--cuda-graph-max-bs-decode",
-            "4",
-            "--cuda-graph-max-bs-prefill",
-            "512",
-        ]
-    if text_config.get("use_sconv"):
-        # The pinned deterministic Triton backend does not capture Inkling EXTEND.
-        cmd += [
-            "--cuda-graph-backend-prefill",
-            "disabled",
-            "--swa-full-tokens-ratio",
-            "1",
-        ]
     env = dict(os.environ)
     env["PATH"] = os.pathsep.join([str(Path(sys.executable).parent), env.get("PATH", "")])
     env["TORCH_EXTENSIONS_DIR"] = str(tmp_path / "torch-extensions")

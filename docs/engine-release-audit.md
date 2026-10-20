@@ -1,275 +1,86 @@
 # Released engine interface audit
 
-The runtime pins are official **vLLM 0.31.0** (`db9527a46873454610df6dbedf79a36d6bf1a7f6`)
-and **SGLang 0.5.21** (`e00930c5489053f26d86b179cee0d087f846acbb`). Package extras
-and source submodules agree. The [completion plan](completion-plan.md#s5--released-engine-integration-and-upstream-contributions)
-is the execution queue; this document records consumed contracts and restrictions.
-The earlier reviewed audit is preserved at
-[commit 9aee895e](https://github.com/feichai0017/orbitkv/blob/9aee895ebe0ae2fb97279a477f00452b32025480/docs/engine-release-audit.md).
+The selected source/package pins are official **vLLM 0.31.0**
+(`db9527a46873454610df6dbedf79a36d6bf1a7f6`) and **SGLang 0.5.22**
+(`baa9befa381511cd4d56f83980951e5a45fffc6d`). The SGLang migration passes
+official installed CPU and Qwen3-8B dense DRAM/io_uring byte/model/restart controls.
+Earlier accepted 0.5.21 workloads retain their original scope. The
+[completion plan](completion-plan.md#s5--released-engine-integration-and-upstream-contributions)
+is the execution queue; this page describes consumed contracts.
 
-## 2026-10-06 official release recheck
+## Official runtime boundaries
 
-The current upgrade freezes official vLLM
-[0.31.0 / db9527a4](https://github.com/vllm-project/vllm/tree/db9527a46873454610df6dbedf79a36d6bf1a7f6)
-and SGLang
-[0.5.21 / e00930c5](https://github.com/sgl-project/sglang/tree/e00930c5489053f26d86b179cee0d087f846acbb).
-The rebuilt complete wheel passes all four A100 dense eager installed-package
-DRAM/io_uring cells, 15 vLLM and 43 SGLang released callback/recovery tests,
-the standard vLLM model gate and two SGLang GPU restart gates. Independent
-acceptance remains open; historical P/D, hybrid and topology claims are not
-inherited. See S5.1 for the preserved compiler-cache failure and exact scope.
-
-The remaining interface gaps still exist in these exact release sources:
-
-- vLLM `v1/worker/gpu/model_runner.py` calls recurrent `preprocess_state` before
-  `kv_connector.pre_forward`; `gpu/kv_connector.py` performs load and preemption
-  handling in `pre_forward`. Keep V2/recurrent profiles rejected. V1 remains the
-  single-attention-group candidate; no runner patch is installed.
-- SGLang `mem_cache/registry.py` still selects only Mooncake/Mori external
-  factories, and constructs the cache after graph capture. Public radix backend
-  registration works, but does not replace OrbitKV's pre-capture event Hook.
-- SGLang's `UnifiedCacheLinker.lookup` still returns ready boundaries rather than
-  pending tickets. Preserve admission and native abort/drain ownership until an
-  engine callback actually consumes its replacement.
-- SGLang `disaggregation/decode.py:resolve_deferred_releases` retains host-staged
-  destinations without a drain ACK, but still releases device destinations after
-  timeout. That host fix does not qualify the current device P/D fault profile.
-- SGLang weight updates can skip `flush_cache`; a namespace change only in
-  `linker.reset` cannot safely invalidate every live update. Both adapters reject
-  dynamic LoRA. The later fixed local adapter profile fingerprints startup
-  artifacts; it does not intercept SDK/RPC mutations or qualify dynamic reuse.
-  Live-weight invalidation needs a consumed engine contract; do not add a silent
-  runtime patch.
-
-LMCache 0.5.5 remains the latest released reference checked on this date. The
-older interface inventory below records its 0.30.0/0.5.20 research inputs, not
-new-release qualification. The complete delivery status lives in S5 of the
-completion plan.
-
-## 2026-10-08 upstream recheck
-
-Official vLLM [0.31.0](https://github.com/vllm-project/vllm/releases/tag/v0.31.0)
-and SGLang [0.5.21](https://github.com/sgl-project/sglang/releases/tag/v0.5.21)
-remain the latest non-prerelease releases. The V2 ordering contribution
-[vLLM #59410](https://github.com/vllm-project/vllm/pull/59410), external-linker
-factory [SGLang #40595](https://github.com/sgl-project/sglang/pull/40595) and
-load-failure lifecycle [SGLang #40896](https://github.com/sgl-project/sglang/pull/40896)
-are open and unmerged. No dependent Hook removal or support expansion is
-authorized by this recheck. Primary API snapshots are preserved with
-`/root/orbitkv-artifacts/s5-budget-peaks-20261008/`.
-
-## 2026-10-14 upstream recheck
-
-The latest official non-prerelease versions remain vLLM 0.31.0 and SGLang 0.5.21.
-[SGLang #40896](https://github.com/sgl-project/sglang/pull/40896) merged on
-2026-10-12 as `f92199b5`; it is not part of the selected 0.5.21 release.
-[SGLang #40595](https://github.com/sgl-project/sglang/pull/40595) and
-[vLLM #59410](https://github.com/vllm-project/vllm/pull/59410) remain open.
-These facts do not authorize private-Hook removal, fork runtime dependencies or
-hybrid/P-D support expansion. SGLang pending admission now consumes the native
-authenticated peer observation; that observation preserves held ownership on
-failure and does not establish physical transfer termination.
-
-The final installed wheel from `f6d4bff2` passes the official SGLang 0.5.21
-Qwen3-8B dense TP=1/PP=1 DRAM/io_uring model gate. Independent review accepts
-flush/restart recovery, concurrent shared prefixes, identity isolation and exact
-text/token-count plus bounded finite-logprob controls against the same-engine
-cold profile. Eight service receipts and installed/model hashes are verified.
-The six official internal helper SIGKILL exits and CUDA IPC producer warnings
-remain S3 limits; software failed-peer controls do not qualify GPU peer-failure
-handling. Raw HTTP response/metric bodies were not separately archived, so no
-numeric counter or performance claim is derived from this assertion-based gate.
-Evidence is preserved outside the checkout with
-[PR #238](https://github.com/feichai0017/orbitkv/pull/238).
-
-The same-wheel vLLM model checks pass six assertions with one explicit hybrid
-skip, but their separate native shutdown contract is rejected. An official
-Noop baseline emits `EngineDeadError` after intentional teardown; the selected
-release closes the engine before cancelling its output handler. Existing
-[issue #48745](https://github.com/vllm-project/vllm/issues/48745) and unmerged
-[PR #49000](https://github.com/vllm-project/vllm/pull/49000) track this race.
-The frozen `--shutdown-timeout 30` gate retains its failure and quarantine;
-normal API exits do not qualify physical drain. No expected-error filter,
-upstream runtime patch or new support claim is applied.
-
-## 2026-10-17 public worker preparation contribution
-
-The selected runtime stays on official SGLang 0.5.21. An isolated contribution
-against main `4fc86f73` adds optional `prepare_worker(worker, capture_decode_cuda_graph)`
-to registered radix backends and invokes it before all runners in the existing
-worker graph initializer. Two-argument registration and factory identity remain
-unchanged; dispatch reads the published backend. Invalid callbacks are rejected
-before insertion and preparation errors propagate before runner initialization.
-[SGLang issue #44855](https://github.com/sgl-project/sglang/issues/44855) and
-[draft PR #44856](https://github.com/sgl-project/sglang/pull/44856) track the generic
-interface proposal; independent review accepts only contribution CPU scope.
-
-The 32 candidate-source CPU tests use actual registry/runtime-context code and
-the real worker method with recording collaborators. They cover selected-only
-preparation, raw/published configuration differences, repeated calls, multiple
-workers/runners, both capture flags and failure ordering. The existing local
-dependency environment has SGLang distribution metadata 0.5.20; the candidate
-checkout supplies tested SGLang modules. This is not installed 0.5.21 or GPU
-qualification. No installed engine, OrbitKV Hook, package pin or submodule is
-changed. Direct runner recapture and `ensure_decode_cuda_graphs` remain outside
-the proposed boundary. Consume a supported released callback and pass actual
-eager/graph restoration, cancellation and page-reuse gates before Hook removal.
-Pending-ticket admission remains a separate interface task. Evidence stays at
-`/root/orbitkv-artifacts/s5-sglang-worker-preparation-20261017/`.
-
-## 2026-10-17 public pending lookup contribution
-
-An isolated proposal against SGLang main `bce7b27a`, candidate `c950c381`, adds a
-pending result to the existing external-linker contract. `None` remains pending;
-`[]` is a terminal miss. `MatchResult` and the actual request adoption path carry
-current readiness to the first prefill-admission guard. The existing sparse MIN
-mask also carries readiness, so a local miss cannot bypass or restart a peer's
-pending query. Ready synchronous backends keep their existing result behavior.
-
-Lookup-only cancellation reaches actual abort and session/disabled/HBM/unusable
-match paths, retiring obsolete markers without detaching accepted loads. Its
-exception path preserves queued-load cancellation and started-load references.
-Only actually appended requests occupy the Scheduler LoRA batch set. Earlier
-capacity/preemption checks keep their existing order; the no-budget/lock/load
-mutation guarantee is local to `PrefillAdder`. Async backends retain terminal
-results and original finite deadlines across polls, validate changed inputs and
-fence retired callbacks; this is not a new physical cancellation or drain protocol.
-The eight affected CPU suites pass 165 tests plus 66 subtests; 16 CUDA fixtures
-skip. Candidate modules and genuine dependency identities are recorded, CUDA is
-uninitialized, and all 3,722 installed SGLang Python files stay unchanged. The
-borrowed environment's distribution metadata remains 0.5.20; this does not
-qualify installed 0.5.21. Independent review accepts contribution CPU scope:
-[SGLang issue #44872](https://github.com/sgl-project/sglang/issues/44872) and
-[draft PR #44873](https://github.com/sgl-project/sglang/pull/44873).
-Evidence stays at `/root/orbitkv-artifacts/s5-sglang-pending-admission-20261017/`.
-
-Official release pins and both private safety Hooks remain. Released adoption,
-actual GPU/model/rank behavior, timeout/cancellation and page-reuse gates are
-required before consuming the interface. Static LoRA admission validation needs
-its own replacement even after pending-query admission becomes public. No
-performance, kernel/default or broader lifecycle support is claimed.
-
-## 2026-10-19 official release source recheck
-
-The latest official non-prerelease tags are vLLM
-[0.32.0 / 5df63a72](https://github.com/vllm-project/vllm/releases/tag/v0.32.0)
-and SGLang
-[0.5.22 / baa9befa](https://github.com/sgl-project/sglang/releases/tag/v0.5.22).
-This is source research under S5.1. Selected runtime pins remain 0.31.0 and
-0.5.21; these new tags have no OrbitKV installed-wheel qualification.
-
-- vLLM 0.32.0 still preprocesses recurrent state before its V2 connector
-  `pre_forward` call. The V1/one-attention-group restriction remains necessary;
-  [#59410](https://github.com/vllm-project/vllm/pull/59410) is still unmerged.
-- SGLang 0.5.22 adds the public
-  [`finish_layer_wise_loading(index) -> bool`](https://github.com/sgl-project/sglang/blob/baa9befa381511cd4d56f83980951e5a45fffc6d/python/sglang/srt/mem_cache/unified_cache/unified_cache_linker.py#L163)
-  completion contract. Its wrapper consumes failures after forward and before
-  inserting or freeing destinations. OrbitKV's current linker does not implement
-  this required method. Its recovery wrapper also uses the removed load-polling
-  methods and `_update_load` keyword arguments. Upgrading requires a consumed
-  lifecycle migration; changing the dependency pin alone is insufficient.
-- Public worker preparation and pending lookup remain unmerged in
-  [#44856](https://github.com/sgl-project/sglang/pull/44856) and
-  [#44873](https://github.com/sgl-project/sglang/pull/44873). The released registry
-  still accepts only the backend name and factory, and lookup still returns ready
-  boundaries. Keep the pre-capture and pending-admission Hooks.
-- SGLang 0.5.22 still releases device P/D destinations after a timeout without a
-  complete drain ACK. Its host-staging protection does not qualify that device
-  fault path.
-
-Any future migration must preserve native writer ownership through completion;
-unknown or timed-out work cannot become a completed failed load. Reuse the
-existing installed engine/media/restart and fault gates before replacing consumed
-interfaces. Current frozen producer-Save qualification keeps its original pins
-and wheel. Source snapshots and API records are preserved outside Git at
-`/root/orbitkv-artifacts/s5-release-recheck-20261019-1/`.
-
-## Released integration boundaries
-
-| Engine | Consumed interface | Ownership |
+| Engine | Consumed interface | Ownership and current limit |
 | --- | --- | --- |
-| vLLM | KV Connector factory/module path; scheduler lookup/allocation/save metadata; worker registration/load/layer waits/preemption/transfer results | Engine owns GPU pages and scheduling; OrbitKV translates callbacks and retains its native cache operations until drain |
-| SGLang | Package plugin, `register_radix_cache_backend`, native `UnifiedRadixCache`, `UnifiedCacheLinker`, component override | Native tree owns slots/locks; OrbitKV linker supplies cache queries, loads/offloads, events and completion |
-| vLLM P/D candidate | Official `NixlConnector` + `MultiConnector`, upstream router | Native NIXL owns live handoff; independent cache stores completed state |
-| SGLang P/D candidate | Official disaggregation backend and router | Engine owns live handoff; external linker restores on P and only saves on D |
+| vLLM | KV Connector factory, scheduler allocation/lookup/save metadata, worker registration/layer waits/preemption/results | Engine owns GPU pages; V1 and one attention cache group required |
+| SGLang | Package plugin, public radix backend registration, UnifiedRadixCache and external linker | Native tree owns private load slots, locks, insertion and abort cleanup; Full/SWA only |
+| vLLM P/D | Official NixlConnector + MultiConnector and upstream router | NIXL owns live handoff; OrbitKV independently stores completed state |
+| SGLang P/D | Official disaggregation queues/backend and router | Native transport owns handoff; cache restores on P and saves on D |
 
-Ordinary cache is best effort (`requires_kv_delivery=False`). MultiConnector
-preserves reliable delivery if any child requires it. The 0.30.0 allocation
-fix from vLLM #46865 supplies actual blocks to non-loading children with zero
-external tokens, enabling cache saves of native P/D-produced state. Unselected
-OrbitKV queries release their leases. Terminal cache failures use the released
-`KVConnectorTransferResults`; no duplicate failure queue remains.
+No engine fork, installed-file patch, custom P/D connector, handshake or proxy is
+required. Different engines do not automatically share compatible KV bytes.
 
-The official V1 runner calls `handle_preemptions` before `_update_states`:
-[released ordering](https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/v1/worker/gpu_model_runner.py#L4215).
-The V2 runner's pre-forward call is later than page initialization and recurrent
-preprocessing. OrbitKV therefore requires `VLLM_USE_V2_MODEL_RUNNER=0` and rejects
-multi-group/recurrent models before opening a cache connection. Both the runner
-monkey patch and native-prefix method replacement are removed. The V2 ordering
-contribution [vLLM #59410](https://github.com/vllm-project/vllm/pull/59410) remains
-upstream material, not an installation requirement. Reopening rejected profiles
-requires released ordering and atomic state visibility plus model/fault gates.
+## SGLang 0.5.22 load completion
 
-## Remaining Hook contracts
+The released
+[`finish_layer_wise_loading(index) -> bool`](https://github.com/sgl-project/sglang/blob/baa9befa381511cd4d56f83980951e5a45fffc6d/python/sglang/srt/mem_cache/unified_cache/unified_cache_linker.py)
+callback runs after forward, before loaded destinations can be inserted or
+released. OrbitKV waits for the whole native Restore and returns success only
+when every group has landed. A never-admitted cancelled batch may return false;
+unknown submission, timeout or lost completion raises while owners remain held.
+Logical failure and process disappearance do not prove physical completion.
 
-SGLang's public Hook registry does not make its string targets stable APIs.
-These string targets are consumed in 0.5.21 and remain subject to GPU gates.
-The older 0.5.20 links below preserve the original interface research:
+The adapter delegates private destination allocation, tree insertion and native
+abort cleanup to the released wrapper. The old completed-load polling, custom
+`_update_load` implementation and recurrent component override are removed.
+Boundary/rank translation remains in `RecoveryLinkerWrapper`. Requests and match
+results use released `prefix_len` and `device_prefix_len`; request refresh uses
+`refresh_fill_ids()`. Source CPU controls are not installed model/GPU evidence.
 
-| Internal target or bridge | What it protects | Official replacement / disposition | Removal gate |
-| --- | --- | --- | --- |
-| `TpModelWorker.init_cuda_graphs` BEFORE | Installs stable external CUDA events before capture so replay waits for restored layers | Factory is too late: Scheduler captures graphs in `init_model_worker` before constructing tree cache. Keep the guarded Hook. | A released pre-capture worker preparation callback, consumed by the adapter; rerun actual eager/graph restore and page-reuse gates |
-| `PrefillAdder.add_one_req` AROUND | Defers pending SSD/peer queries without treating pending as miss; preserves rank agreement and cache admission | External-linker lookup returns ready boundaries, without an asynchronous pending ticket. Keep the guarded Hook. | Released pending-lookup/admission contract; cold/partial/full, timeout, cancellation and rank gates |
-| `Scheduler._add_request_to_queue` AROUND (opt-in) | Starts optional preparation/warming for waiting requests | No consumed public enqueue callback. Disabled unless `ORBITKV_PREPARE_REQUESTS=1` or `ORBITKV_QUEUE_WARMUP=1`. | Released enqueue callback or removal of the optional optimization with matched workload checks |
-| `RecoveryLinkerWrapper` / recurrent component override | Origin/boundary/rank translation, held destination locks and checkpoint release | Public component override is consumed; generic recurrent lifecycle remains incomplete upstream. Keep correctness ownership; broad model support remains unqualified. | Released component semantics and exact checkpoint/window bytes under abort/preemption |
-| Former Scheduler abort Hook | Cancels lookups and drains restores before tree release | Removed: official `BasePrefixCache.finish(ABORT)` reaches `UnifiedRadixCache.release_aborted_request` and linker release. | Covered by consumed native finish tests and GPU restore cancellation |
-| Former private P/D observers and fork `PDTransferEvent` callback | Observed P/D lifecycle; did not authorize release | Removed with the fork payload adapters. Native engine metrics/behavior are the evidence source. | No runtime replacement needed for optional telemetry; fault qualification remains open |
+Full and SWA are the released external-linker components. Recurrent/SSM,
+DSA/draft/auxiliary state and unsupported request rings are explicitly rejected
+until their complete recovery contract is consumed. Generic layout bytes do not
+qualify model output or page reuse.
 
-Unsupported DSA, speculative draft/auxiliary GPU state, hierarchical-cache mode
-and host-pool retraction fail explicitly. No second RadixCache, Python cache
-facade or alternative P/D lifecycle is added. Unselected plugins remain lazy
-and do not import CUDA/native runtime or connect to a Manager.
+## Remaining internal Hooks
 
-## Native P/D release limits
+The public Hook registry does not make string targets stable APIs. Keep each
+correctness protection until a released replacement is actually consumed.
 
-SGLang 0.5.20 defaults `SGLANG_DISAGGREGATION_DEFERRED_DECODE_KV_RELEASE`
-to false. The candidate explicitly enables it on both workers. However, the
-[released decode queue](https://github.com/sgl-project/sglang/blob/94602c9c2b7cbdb8efd5c52802dac6a1c180089e/python/sglang/srt/disaggregation/decode.py#L2492)
-still frees held pages when the timeout expires without a full drain ACK.
-This is a released lifecycle gap: a deadline alone cannot prove remote writes
-have stopped. Native P/D transfer cancellation, delayed ACK and peer-loss page
-reuse remain unqualified; ordinary linker restore cancellation is a separate
-cache-owned contract. The historical upstream patches remain contribution
-material; no local runtime patch hides this limitation.
+| Target | Purpose | Removal gate |
+| --- | --- | --- |
+| `TpModelWorker.init_cuda_graphs` BEFORE | Install stable restore events before Graph capture; cache factory runs later | Released worker preparation callback plus actual eager/Graph restore and page-reuse gates |
+| `PrefillAdder.add_one_req` AROUND | Defer pending SSD/peer lookup and preserve rank agreement | Released asynchronous lookup/admission contract plus miss/hit/cancel/rank gates |
+| `Scheduler._add_request_to_queue` AROUND, opt-in | Optional queued preparation/warming | Released enqueue callback or remove optimization with matched workloads |
 
-## Comparison with external caches
+The former Scheduler abort Hook, runner monkey patch and private P/D observers
+are removed. Plugin discovery stays lazy and opens no native/GPU resources for
+an unselected backend.
 
-- [LMCache 0.5.5 vLLM MP adapter](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/integration/vllm/lmcache_mp_connector.py)
-  implements the connector in its external package with separate scheduler and
-  worker ownership. OrbitKV follows that boundary, keeping storage and cache
-  state machines in Rust rather than copying LMCache policy or MP transport.
-- [LMCache's NIXL/MultiConnector recipe](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/docs/source/mp/disaggregated_prefill.rst)
-  separates live P/D from historical cache and recommends separate cache servers
-  for P and D. OrbitKV adopts this composition as a candidate; shared-Manager
-  contention and fault behavior need independent evidence.
-- [SGLang 0.5.20 LMCache](https://github.com/sgl-project/sglang/blob/94602c9c2b7cbdb8efd5c52802dac6a1c180089e/python/sglang/srt/mem_cache/storage/lmcache/lmc_radix_cache.py)
-  extends the older RadixCache. OrbitKV keeps the released Unified tree/linker.
-  Later main-only Unified integration is not a released replacement.
-- [vLLM FlexKV entry](https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/distributed/kv_transfer/kv_connector/v1/flexkv_connector.py)
-  loads its external implementation; [SGLang FlexKV registration](https://github.com/sgl-project/sglang/blob/94602c9c2b7cbdb8efd5c52802dac6a1c180089e/python/sglang/srt/mem_cache/storage/flexkv/__init__.py)
-  uses the backend factory. These are useful interface references, not evidence
-  that all integrations are free of internal coupling or share our qualification.
+## Upstream work and independent limits
 
-## Runtime and qualification policy
+- [vLLM #59410](https://github.com/vllm-project/vllm/pull/59410) tracks V2 recurrent
+  preparation ordering. Official 0.32.0 still needs this contract; the selected
+  runtime remains V1/one group. A contribution does not extend support.
+- SGLang worker preparation [#44856](https://github.com/sgl-project/sglang/pull/44856)
+  and pending admission [#44873](https://github.com/sgl-project/sglang/pull/44873)
+  are proposals, not consumed released APIs. Their contribution CPU evidence
+  does not authorize removal of either safety Hook.
+- SGLang's released device P/D timeout still lacks a full drain ACK. Host staging
+  protection and ordinary cache completion do not qualify device P/D faults.
+- vLLM teardown race [#48745](https://github.com/vllm-project/vllm/issues/48745)
+  and [#49000](https://github.com/vllm-project/vllm/pull/49000) retain their original
+  failure/quarantine. A normal API exit is not proof of physical drain.
 
-The wheel contains only cache adapters and the native cache runtime. It rejects
-retired custom P/D packages, TENT payload adapters and runner monkey patches
-through the packaging gate. CI does not install an engine fork. The official
-engine files and installed OrbitKV wheel are frozen for model tests; record
-hashes before and after. Raw results remain outside the checkout.
+Native P/D is a composition candidate. Qualify cancellation, peer loss, partial
+submission, delayed ACK, restart and page reuse separately. Dynamic LoRA/live
+weight mutation, hybrid recovery, additional ranks and Graph shapes also need
+their own consumed lifecycle and installed model gates.
 
-Cold/hot/restart and DRAM/SSD gates qualify ordinary cache separately from
-native P/D cancellation, preemption, partial submission, delayed ACK and page
-reuse. The [P/D guide](pd.md) records candidate configuration and preserved fork
-contribution material. Historical HMA, topology and fork passes do not transfer
-automatically to this official release profile.
+## Historical evidence
+
+The [pre-migration audit](https://github.com/feichai0017/orbitkv/blob/d9d500b9f45230662121387a2d2d6d7ad9ac9eb2/docs/engine-release-audit.md)
+retains prior release checks, contribution commits, accepted/failed controls and
+external artifact locations. No historic failure or qualification is overwritten
+by this interface migration. Current capability claims belong in
+[compatibility](compatibility.md) and [model recipes](models.md).

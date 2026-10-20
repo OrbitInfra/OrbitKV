@@ -36,6 +36,8 @@ def linker(monkeypatch):
     result.client.wait_save.return_value = SimpleNamespace(done=True, success=True, message="")
     result.client.publish_progress.return_value = SimpleNamespace(active=0)
     result._retained_offloads = []
+    result._load_error = None
+    result._load_completions = {}
     result._last_publish_warning = 0.0
     result._lookups = {}
     result._pending_queries = {}
@@ -50,7 +52,7 @@ def request(rid, token_count=256):
     from sglang.srt.sampling.sampling_params import SamplingParams
 
     req = Req(rid, "", array("q", [1] * token_count), SamplingParams())
-    req._refresh_fill_ids()
+    req.refresh_fill_ids()
     return req
 
 
@@ -293,7 +295,6 @@ def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(
 
     setting = "ORBITKV_PREPARE_REQUESTS" if preparation else "ORBITKV_QUEUE_WARMUP"
     monkeypatch.setenv(setting, "1")
-    import torch
     from sglang.srt.mem_cache.radix_cache import RadixKey
     from sglang.srt.mem_cache.unified_cache.unified_cache_linker import (
         UnifiedCacheLinkerWrapper,
@@ -314,7 +315,7 @@ def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(
     cache.linker = wrapper
     cache.match_prefix = MagicMock(
         return_value=SimpleNamespace(
-            device_indices=torch.arange(64),
+            device_prefix_len=64,
             last_device_node=object(),
         )
     )
@@ -370,6 +371,8 @@ def test_native_cache_finish_cancels_aborted_query_without_scheduler_hook(linker
     wrapper = object.__new__(RecoveryLinkerWrapper)
     wrapper.cache, wrapper.cache_linker = cache, linker
     wrapper.hit_markers = {"queued": object()}
+    wrapper.inflight_load_rids = []
+    wrapper.private_load_indices = {}
     cache.linker = wrapper
     cache.prefetch_loaded_tokens_by_reqid = {}
     cache.prefetch_loaded_storage_start_by_reqid = {}
@@ -643,7 +646,7 @@ def test_resident_prefix_retires_unused_external_query(
     from orbitkv.sglang.admission import admit_request
 
     req = request("shared", tokens)
-    req.prefix_indices = list(range(prefix))
+    req.prefix_len = prefix
     req.return_logprob = logprob_start >= 0
     req.logprob_start_len = logprob_start
     linker.client.query_prefetch.return_value = (
@@ -730,10 +733,13 @@ def test_decode_only_promises_resident_pages_and_never_prepares_external_loads(
     wrapper.restore_from_store = False
     wrapper.hit_markers = {}
     req = request("req")
-    resident = MatchResult(torch.arange(resident_tokens), 7, 7, 7)
+    resident = MatchResult(resident_tokens, 7, 7, 7)
     matched = wrapper.match(RadixKey(req.origin_input_ids), req, resident)
     assert matched is resident
-    prealloc = SimpleNamespace(scheduler=SimpleNamespace(enable_decode_hicache=False))
+    prealloc = SimpleNamespace(
+        scheduler=SimpleNamespace(enable_decode_hicache=False),
+        tree_cache=SimpleNamespace(prefix_device_indices=lambda _: torch.arange(resident_tokens)),
+    )
     promised = DecodeHiCachePreallocMixin._build_decode_prefix_match(prealloc, req, matched)
     assert promised.decode_prefix_len == resident_tokens
     assert promised.last_device_node == 7
@@ -848,7 +854,7 @@ def test_hybrid_match_requires_rank_common_materialized_state(
     from orbitkv.sglang.recovery import RecoveryLinkerWrapper
 
     req = request("req")
-    resident = SimpleNamespace(device_indices=torch.arange(64))
+    resident = SimpleNamespace(device_prefix_len=64)
     matched = object()
     wrapper = object.__new__(RecoveryLinkerWrapper)
     wrapper.cache_linker = linker

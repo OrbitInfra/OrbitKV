@@ -2,39 +2,27 @@
 
 OrbitKV integrates external cache recovery with engine-owned GPU pages and
 request lifecycles. Start with the [single-node quickstart](single-node.md).
-The [completion plan](completion-plan.md#s51--release-and-interface-audit)
-records release targets and upgrade gates. The package and source pins are
-vLLM **0.31.0** and SGLang **0.5.21**. Released callback contracts pass on A100;
-ordinary-cache/restart and shared-Manager pressure have scoped independent
-acceptance; broader model, lifecycle and deployment qualification remains open. Historical
-0.30.0 eager/graph evidence does not qualify 0.31.0. Historical 0.29.0 model/topology evidence is not
-automatically transferred to the new release.
+Source/package pins are official **vLLM 0.31.0** and **SGLang 0.5.22**. The
+SGLang public load-completion path passes installed Qwen3-8B dense TP1/PP1
+DRAM/io_uring byte and model/restart controls. See [compatibility](compatibility.md).
 
-The [installed-wheel gate](releases.md#validate-before-publishing) checks the
-selected official versions with cold/native-HBM/full/partial reuse and
-DRAM/io_uring SSD recovery. It rejects editable/source imports and changed
-installed files. Its default dense TP=1/PP=1 eager profile is independently
-qualified separately from P/D and failure lifetime. The explicit
-`--release-cuda-graph` profile also passes independent H20 qualification on both
-official engines with direct/kernel io_uring SSD: dense Qwen3-8B, serial batch=1,
-eight-token FULL decode, native HBM, full/partial restart recovery and vLLM idle
-reset. It requires native runtime Graph observations, not capture logs. This does
-not qualify adapters with Graph, capture batch sizes 2/4, prefill Graph, long
-decode, concurrency/preemption/cancellation, hybrid or other topology profiles.
-See [S5.3](completion-plan.md#s53--public-lifecycle-and-hybrid-state-contracts)
-for exact scope and immutable external evidence.
-The [shared-Manager gate](../python/tests/README.md#two-engines-sharing-one-manager)
-also passes locally for two simultaneous official engines and individual graceful
-restarts in DRAM/io_uring SSD. The final wheel also passes H20 direct/kernel
-900-second shared-Manager io_uring gates with exact native controls and bounded
-resource drain; S5.5 records its scoped independent acceptance and broader limits.
+The broader workloads below retain their recorded **vLLM 0.31.0 and SGLang
+0.5.21** versions. The new 0.5.22 ordinary-cache controls do not extend their
+Graph, shared-pressure or peer-cache scope.
 
-Both selected official releases also pass the
-[physical two-H20 ordinary-cache gate](shared-cache-qualification.md#official-engine-cross-host-serving-restores):
-dense Qwen3-8B TP=1/PP=1 eager source DRAM/io_uring SSD recovery over TENT RDMA,
-consumer restart and controlled empty-source restart. The consumer receives peer
-bytes in DRAM before its local GPU copy. This does not qualify native P/D faults,
-cross-host rank coordination, HA or the remaining CUDA IPC lifetime contracts.
+| Recorded workload | Accepted scope and limit |
+| --- | --- |
+| [Installed ordinary cache](releases.md#validate-before-publishing) | Dense TP1/PP1 eager cold/native-HBM/full/partial recovery, DRAM/io_uring and engine restart; P/D and faults separate |
+| Explicit `--release-cuda-graph` | Qwen3-8B serial batch-1/eight-token FULL decode, direct/kernel io_uring; arbitrary shapes, hybrid, concurrency and preemption open |
+| [Shared Manager](../python/tests/README.md#two-engines-sharing-one-manager) | Two local engines and 900-second H20 dense pressure with bounded progress/resources; fairness and tail isolation open |
+| [Two H20 hosts](shared-cache-qualification.md#official-engine-cross-host-serving-restores) | Qwen3-8B TP1/PP1 eager peer DRAM/io_uring restore over TENT RDMA, consumer restart and controlled empty-source restart; HA and physical ranks open |
+
+The installed-wheel gate rejects editable/source imports and changed installed
+files. Graph evidence requires actual native runtime observations, not capture
+logs. Peer bytes land in consumer DRAM before its local GPU copy. These healthy
+controls do not prove physical fault termination, eventual reclamation or page
+reuse after a cancelled/partially submitted transfer. Historical 0.29/0.30 fork
+and topology evidence retains its original version and limits.
 
 ## Ownership contract
 
@@ -250,8 +238,8 @@ released attention/TP groups have one participant. With multiple participants,
 the existing collective decision still waits for every required rank before
 admitting or exposing restored state. This removes redundant single-rank tensor
 allocation without changing cancellation, lease expiry or the internal Hooks.
-The installed 0.5.21 CPU interface gate passes; final GPU qualification of this
-cleanup remains open in S5.2.
+The 0.5.22 interface passes the affected CPU controls and the selected installed
+GPU byte/model gates. Physical multi-rank agreement remains unqualified.
 
 `events.py` owns the CUDA events and producer/consumer counters needed before
 graph capture. `linker.py` consumes those events and owns cache queries, loads,
@@ -259,19 +247,23 @@ offloads and registration. Plugin discovery imports neither the native extension
 nor GPU layout code; graph and admission hooks check the selected backend before
 loading OrbitKV resources. Native bindings load on first native API access.
 
-`RecoveryLinkerWrapper` and `RecurrentComponent` currently extend the released
-Full/SWA linker with checkpoint-specific behavior. Aborts use the released
-`BasePrefixCache.finish(ABORT)` → `UnifiedRadixCache.release_aborted_request` →
-`RecoveryLinkerWrapper.release_request` lifecycle. It cancels unconsumed queries
-and drains already-published destinations before releasing their tree locks;
-there is no additional Scheduler abort Hook.
+`RecoveryLinkerWrapper` now delegates private destination allocation, native
+cancellation and tree insertion to SGLang 0.5.22. It only translates absolute
+recovery boundaries and rank agreement. `finish_layer_wise_loading(index)` waits
+for native Restore before the engine inserts or frees destinations; unknown
+completion raises and retains ownership. The old load-polling queue, custom tree
+insertion and recurrent component override are removed. Full/SWA are the only
+released external-linker components, so recurrent/SSM startup is rejected.
+Aborts use `BasePrefixCache.finish(ABORT)` and the native linker release path;
+lookup-only cancellation also retires its unsubmitted cache query. There is no
+additional Scheduler abort Hook.
 
 The ordinary cache profile registers two internal Hooks: graph initialization
 and pending-query admission. Enqueue preparation adds one Hook only when
 `ORBITKV_PREPARE_REQUESTS=1` or `ORBITKV_QUEUE_WARMUP=1` is set before startup.
 P/D transport factories and fork observation callbacks are removed. Native P/D
 uses the official engine lifecycle and is qualified separately.
-The installed-package ordinary-cache checks pass on A100 for dense eager
+The historical installed 0.5.21 ordinary-cache checks pass on A100 for dense eager
 DRAM/io_uring recovery. A calibrated normal-exit diagnosis observes all 72
 OrbitKV export credits return to zero after the released linker close and Manager
 unregister. The earlier nonzero reading came from the shared-memory file header,

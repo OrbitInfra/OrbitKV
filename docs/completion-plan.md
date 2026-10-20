@@ -30,11 +30,12 @@ Missing hardware is unqualified, never passed.
 ## Current delivery sequence
 
 The immediate product is dense TP=1/PP=1 caching on vLLM 0.31.0 and SGLang
-0.5.21, using DRAM, io_uring SSD and already accepted scoped peer profiles.
+0.5.22, using DRAM, io_uring SSD and already accepted scoped peer profiles.
 Finish one useful delivery at a time; do not turn each failed experiment into
 another permanent controller or parallel roadmap.
 
-1. **Maintainable product surface.** Retire completed campaign-specific code and
+1. **Maintainable product surface — delivered in [PR #289](https://github.com/feichai0017/orbitkv/pull/289).**
+   Retire completed campaign-specific code and
    duplicate reports; keep reusable benchmarks and tests with a current consumer.
    Organize README, model recipes and website around installation, features,
    deployment, operations and performance. Preserve support limits and verify
@@ -170,8 +171,13 @@ handshake/proxy implementations or compatibility facades.
 
 ### S5.1 — Release and interface audit
 
-- [x] Selected official vLLM 0.31.0 and SGLang 0.5.21; runtime pins and optional
-  dependencies aligned. These are selected baselines, not a latest-release claim.
+- [x] Select official vLLM 0.31.0 and consume SGLang 0.5.22 public load completion;
+  runtime pins and source tags agree. Earlier SGLang acceptances use 0.5.21.
+- [x] Repeat the 0.5.22 Qwen3-8B dense TP1/PP1 profile with final installed
+  DRAM/io_uring byte and model/restart controls. Known-unsubmitted cancellation
+  and independent consumer leases pass; physical cancellation/page reuse remain
+  in S3/S5.2. Wider 0.5.21 profiles are not inherited.
+
 On an upgrade, check official tags and consume exact released interfaces before
 changing all pins together. Upstream main is not the user's runtime.
 
@@ -193,8 +199,12 @@ correctness protection until a consumed released replacement exists.
 
 - [x] Public SGLang preparation/pending-lookup contributions submitted and CPU
   controls accepted; submission is not released adoption.
-- [ ] Consume released public replacements and remove each superseded private
-  hook in the same delivery.
+- [x] Consume SGLang 0.5.22 private load destinations and public post-forward
+  completion; delete custom load polling/tree insertion and recurrent component
+  override. Official installed CPU and selected Qwen3-8B GPU controls pass;
+  complete hybrid and fault qualification remain open.
+- [ ] Consume released pre-capture and pending-admission replacements and remove
+  each superseded private hook in the same delivery.
 - [ ] Complete recovery for all required attention, window, recurrent,
   checkpoint and auxiliary state of each claimed hybrid model. Qwen3.8 native
   output controls and historical fork results are not external-cache support.

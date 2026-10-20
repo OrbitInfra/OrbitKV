@@ -7,6 +7,8 @@ import queue
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -40,7 +42,10 @@ def load_linker(monkeypatch):
     )
     linker._load_error = None
     linker._load_queue = queue.Queue()
-    linker._completed_loads = queue.Queue()
+    linker._queued_loads = {}
+    linker._load_completions = {}
+    linker._offload_queue = queue.Queue()
+    linker._retained_offloads = []
     linker.layer_done_counter = _LayerDoneCounter(linker.layout)
     linker.client = MagicMock()
     return linker
@@ -63,8 +68,9 @@ def test_linker_failure_never_acknowledges_gpu_destinations(load_linker, failure
         else ConnectionError("lost completion")
     )
     getattr(linker.client, method).side_effect = error
-    index = linker.layer_done_counter.update_producer()
-    linker._load_queue.put((index, [_Load(str(i), (("kv", bytes([i]), (i,)),)) for i in range(12)]))
+    pending = [_Load(str(i), (("kv", bytes([i]), (i,)),)) for i in range(12)]
+    linker._queued_loads = {load.rid: load for load in pending}
+    index = linker.start_layer_wise_loading()
     linker._load_queue.put(None)
     thread = threading.Thread(target=linker._load_worker, daemon=True)
     thread.start()
@@ -75,18 +81,17 @@ def test_linker_failure_never_acknowledges_gpu_destinations(load_linker, failure
         linker.layer_done_counter.set_consumer(index)
     thread.join(timeout=5)
     assert not thread.is_alive()
-    assert linker._completed_loads.empty()
     linker.client.release.assert_not_called()
-    for observe in (linker.num_completed_loads, linker.pop_completed_load):
+    for observe in (lambda: linker.finish_layer_wise_loading(index), linker.reset):
         with pytest.raises(RuntimeError, match="GPU pages remain held"):
             observe()
+    assert index in linker._load_completions
 
 
 def test_layer_publication_does_not_acknowledge_a_partially_drained_batch(load_linker):
     from orbitkv.sglang.linker import _Load
 
     linker = load_linker
-    index = linker.layer_done_counter.update_producer()
     draining, finish = threading.Event(), threading.Event()
 
     def complete(handle, **kwargs):
@@ -96,21 +101,36 @@ def test_layer_publication_does_not_acknowledge_a_partially_drained_batch(load_l
 
     linker.client.wait_restore.side_effect = complete
     pending = [_Load(str(i), (("kv", bytes([i]), (i,)),)) for i in range(12)]
-    linker._load_queue.put((index, pending))
+    linker._queued_loads = {load.rid: load for load in pending}
+    index = linker.start_layer_wise_loading()
     linker._load_queue.put(None)
     thread = threading.Thread(target=linker._load_worker, daemon=True)
     thread.start()
     try:
         linker.layer_done_counter.set_consumer(index)
         assert draining.wait(timeout=1)
-        assert linker._completed_loads.empty()
         linker.client.start_restore.assert_called_once()
         assert len(linker.client.start_restore.call_args.args[4]) == len(pending)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            entered = threading.Event()
+
+            def await_completion():
+                entered.set()
+                return linker.finish_layer_wise_loading(index)
+
+            completion = executor.submit(await_completion)
+            try:
+                assert entered.wait(timeout=1)
+                with pytest.raises(FutureTimeoutError):
+                    completion.result(timeout=0.05)
+            finally:
+                finish.set()
+            assert completion.result(timeout=5) is True
     finally:
         finish.set()
         thread.join(timeout=5)
     assert not thread.is_alive()
-    assert linker.pop_completed_load() == [load.rid for load in pending]
+    assert index not in linker._load_completions
     linker.client.release.assert_not_called()
 
 
@@ -118,14 +138,14 @@ def test_cancel_before_forward_releases_only_unsubmitted_leases(load_linker):
     from orbitkv.sglang.linker import _Load
 
     linker = load_linker
-    index = linker.layer_done_counter.update_producer()
-    linker._load_queue.put((index, [_Load("cancelled", (("kv", b"lease", (1,)),))]))
+    linker._queued_loads = {"cancelled": _Load("cancelled", (("kv", b"lease", (1,)),))}
+    index = linker.start_layer_wise_loading()
     linker._load_queue.put(None)
     linker.layer_done_counter.cancel_pending()
     linker._load_worker()
     linker.client.start_restore.assert_not_called()
     linker.client.release.assert_called_once_with(b"lease")
-    assert linker._completed_loads.empty()
+    assert linker.finish_layer_wise_loading(index) is False
 
 
 @pytest.mark.parametrize(
@@ -224,16 +244,21 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             assert cleanup["evicted_blocks"] == page_count
             assert cleanup["still_referenced_blocks"] == 0
 
-            # Lose interest while SSD work owns real source buffers. A late
-            # result must release its lease without a readiness poll or GC.
+            # Cancelling one consumer must preserve the other's source lease.
+            # Fast SSD reads can already be ready at the first observation.
             abandoned = CacheManagerClient(channel_server.bootstrap_socket)
             survivor = CacheManagerClient(channel_server.bootstrap_socket)
             try:
                 outcome = abandoned.query_prefetch(instance, BlockHashes(hashes), "abandoned")
-                assert isinstance(outcome, QueryLoading)
+                assert isinstance(outcome, (QueryLoading, QueryReady))
                 surviving_result = survivor.query_prefetch(
                     instance, BlockHashes(hashes), "abandoned"
                 )
+                print("Initial SSD prefetch state:", type(outcome).__name__)
+                if isinstance(outcome, QueryReady):
+                    assert outcome.num_hit_blocks == page_count
+                    assert outcome.lease
+                    abandoned.release(outcome.lease)
                 if page_first:
                     abandoned.close()
                 else:
@@ -346,7 +371,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
         linker.client = client
         linker._load_error = None
         linker._load_queue = queue.Queue()
-        linker._completed_loads = queue.Queue()
+        linker._load_completions = {}
         linker.layer_done_counter = _LayerDoneCounter(linker.layout)
         pending = []
         # One consuming forward combines independently pinned requests.
@@ -362,8 +387,8 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             assert isinstance(lookup, QueryReady)
             assert lookup.num_hit_blocks == end - start
             pending.append(_Load(rid, (("kv", lookup.lease, tuple(range(start + 3, end + 3))),)))
-        index = linker.layer_done_counter.update_producer()
-        linker._load_queue.put((index, pending))
+        linker._queued_loads = {load.rid: load for load in pending}
+        index = linker.start_layer_wise_loading()
         linker._load_queue.put(None)
         thread = threading.Thread(target=linker._load_worker, daemon=True)
         thread.start()
@@ -371,7 +396,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
         thread.join(timeout=30)
         assert not thread.is_alive()
         linker.layer_done_counter.wait_until(layer_count - 1)
-        assert linker.pop_completed_load() == [load.rid for load in pending]
+        assert linker.finish_layer_wise_loading(index) is True
         torch.cuda.synchronize()
         for tensor, original in zip(tensors, expected, strict=True):
             assert torch.equal(tensor[page_size * 3 : page_size * (page_count + 3)], original)
