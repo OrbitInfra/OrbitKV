@@ -253,6 +253,15 @@ class VLLMServer:
             raise
         return self
 
+    def record_runtime(self) -> None:
+        from tests.support.registration_campaign import record_process_group_runtime
+
+        if self.process is None or self.log_file is None or self._process_start_ticks is None:
+            raise RuntimeError("vLLM runtime capture requires a live logged service")
+        record_process_group_runtime(
+            self.process, self._process_start_ticks, self.log_file, time.monotonic() + 180
+        )
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Stop the API owner and require its engine workers to drain."""
 
@@ -488,6 +497,15 @@ class CacheManager:
             time.sleep(2)
 
         raise TimeoutError(f"Cache Manager did not become ready within {timeout}s")
+
+    def record_runtime(self) -> None:
+        from tests.support.registration_campaign import record_process_group_runtime
+
+        if self.process is None or self.log_file is None:
+            raise RuntimeError("Manager runtime capture requires a live logged service")
+        record_process_group_runtime(
+            self.process, self._process_start_ticks, self.log_file, time.monotonic() + 180
+        )
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.process:
