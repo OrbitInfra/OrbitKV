@@ -457,14 +457,20 @@ class CacheManagerProcess:
         runtime_python_paths = self.runtime_python_paths
         package = sys.modules.get("orbitkv")
         extension = sys.modules.get("orbitkv.orbitkv")
-        if runtime_python_paths is None and package is not None and extension is not None:
+        if runtime_python_paths is None and package is not None:
             package_file = getattr(package, "__file__", None)
-            extension_file = getattr(extension, "__file__", None)
-            if package_file and extension_file:
+            if package_file:
                 package_directory = Path(package_file).resolve().parent
                 if package_directory != (PYTHON_ROOT / "orbitkv").resolve():
-                    if Path(extension_file).resolve().parent != package_directory:
-                        raise RuntimeError("Selected native extension leaves its package directory")
+                    if extension is not None:
+                        extension_file = getattr(extension, "__file__", None)
+                        if (
+                            not extension_file
+                            or Path(extension_file).resolve().parent != package_directory
+                        ):
+                            raise RuntimeError(
+                                "Selected native extension leaves its package directory"
+                            )
                     runtime_python_paths = (str(package_directory.parent),)
         self.pythonpath = manager_pythonpath(
             configured_paths,

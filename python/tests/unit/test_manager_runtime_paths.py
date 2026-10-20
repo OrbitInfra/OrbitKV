@@ -133,7 +133,7 @@ def test_vllm_worker_keeps_installed_package_priority(monkeypatch):
 
 
 @pytest.mark.parametrize("write_failure", [False, True])
-@pytest.mark.parametrize("selected_package", ["source", "installed"])
+@pytest.mark.parametrize("selected_package", ["source", "installed", "installed-before-native"])
 def test_strict_manager_start_records_actual_command_and_keeps_failed_record_owner(
     tmp_path, monkeypatch, write_failure, selected_package
 ):
@@ -163,11 +163,14 @@ def test_strict_manager_start_records_actual_command_and_keeps_failed_record_own
     monkeypatch.setitem(
         sys.modules, "orbitkv", SimpleNamespace(__file__=str(package_directory / "__init__.py"))
     )
-    monkeypatch.setitem(
-        sys.modules,
-        "orbitkv.orbitkv",
-        SimpleNamespace(__file__=str(package_directory / "orbitkv.so")),
-    )
+    if selected_package == "installed-before-native":
+        monkeypatch.delitem(sys.modules, "orbitkv.orbitkv", raising=False)
+    else:
+        monkeypatch.setitem(
+            sys.modules,
+            "orbitkv.orbitkv",
+            SimpleNamespace(__file__=str(package_directory / "orbitkv.so")),
+        )
     server = CacheManagerProcess(
         port=12345,
         http_port=12346,
