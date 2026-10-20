@@ -314,8 +314,9 @@ impl TransferEngine {
     ///
     /// # Safety
     ///
-    /// The memory must remain valid and pinned until it is unregistered.
-    unsafe fn register_memory(
+    /// Keep the memory valid and pinned, and retain this engine until successful
+    /// cleanup. An error can leave a partial registration with no returned token.
+    pub unsafe fn register_memory(
         &self,
         address: NonNull<u8>,
         length: usize,
@@ -367,8 +368,10 @@ impl TransferEngine {
 
     /// # Safety
     ///
-    /// `address` must identify a currently registered region.
-    unsafe fn unregister_memory(&self, address: NonNull<u8>, length: usize) -> Result<()> {
+    /// The caller must retain the attempted region and its engine until cleanup
+    /// succeeds, including a partial registration which returned an error.
+    /// This is logical deregistration, not physical transfer termination.
+    pub unsafe fn unregister_memory(&self, address: NonNull<u8>, length: usize) -> Result<()> {
         check("unregisterLocalMemory", unsafe {
             native::unregister_memory(self.native, address.as_ptr().cast::<c_void>(), length)
         })
