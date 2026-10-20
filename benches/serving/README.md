@@ -52,7 +52,7 @@ reference for OrbitKV and LMCache. Report the HBM reference separately from
 external restore work. The [serving comparison method](../../docs/benchmark-evidence.md#serving-comparisons)
 defines correctness, capacity, repetitions and the separate distributed controls.
 FlexKV compatibility failures observed on these releases are documented in the
-[measurement report](../../docs/single-node-performance.md); accepting a backend
+[measurement report](../../docs/performance.md); accepting a backend
 option does not mean its current integration can start successfully.
 
 For either engine with `--backend orbitkv`, use
@@ -166,7 +166,7 @@ it cannot be combined with `--queue-warmup on`. The Manager read controls are
 default for ordinary demand. Prepared reads always use at most 32 MiB per
 batch, or one oversized page. Retained prepared pages remain budgeted.
 See [ownership and stopping](../../docs/request-preparation.md) and the
-[ordinary recovery profile](../../docs/recovery-performance.md).
+[ordinary recovery profile](../../docs/performance.md).
 The [paired reproduction script](reproduce_preparation.sh) takes an external
 output root as its first argument, for example
 `bash benches/serving/reproduce_preparation.sh /var/tmp/orbitkv-bench/preparation-001`.
@@ -229,7 +229,7 @@ Reports retain pool-allocation failures, SSD I/O failures and dropped write
 queue submissions. The total and speculative query counters are independent
 of phase diagnostics; sustained validation rejects observed budget overruns.
 
-The [sustained report](../../docs/sustained-performance.md) records fresh-service
+The [sustained report](../../docs/performance.md) records fresh-service
 native/DRAM/SSD controls for both engines and the vLLM admission-stall regression.
 
 
@@ -258,7 +258,7 @@ per output token, budget waits/bypasses, coalesced reads, and memory peaks sampl
 every 25 ms. These peaks are lower bounds on the true peak; lifecycle gates
 separately check hard accounting limits. The fixed number of bursts is not a
 steady-state load, natural memory-pressure experiment, or tail-latency SLO.
-The [recorded concurrent baseline](../../docs/concurrent-performance.md) includes
+The [recorded concurrent baseline](../../docs/performance.md) includes
 the discovered SGLang admission regression and native/deterministic controls
 for output differences; ordinary greedy output is not assumed batch invariant.
 

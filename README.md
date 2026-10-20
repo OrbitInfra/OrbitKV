@@ -31,12 +31,16 @@ Version 0.1.0 is not yet published; interfaces may change before 1.0.
 
 ## Features
 
-- **DRAM and SSD reuse:** keep the Manager alive across engine restarts.
-- **Native transfers:** engine-local raw DRAM Restore; Manager-owned Publish,
-  SSD and codec work, with ownership retained through completion.
-- **Bounded resources:** shared cache capacity and per-instance query budgets.
-- **Peer cache sharing:** local inventory indexes discover replicas; Mooncake
-  TENT transfers bytes through TCP or RDMA in qualified profiles.
+- **Reuse beyond HBM:** save prefixes in DRAM and optional SSD; restore after
+  GPU eviction or an engine restart while the Manager stays alive.
+- **Share cache capacity:** connect multiple local engines to one Manager or
+  fetch compatible peer replicas through Mooncake TENT TCP/RDMA.
+- **Rust ownership:** native cache and transfer owners manage byte budgets,
+  reservations and completion; Python connects engine callbacks and layouts.
+- **Local discovery:** bounded inventory streams maintain covered indexes;
+  ordinary queries avoid per-key etcd calls and validate source grants.
+
+See [features](docs/features.md) for available paths and their support limits.
 
 Optional [storage codecs](docs/storage-formats.md), [reuse policies](docs/cache-policies.md)
 and [CUDA copy kernels](docs/kernel-optimization.md) have separate qualification
@@ -73,7 +77,8 @@ hit its native GPU cache instead.
 
 | Task | Guide |
 | --- | --- |
-| Select a release, model and topology | [Compatibility](docs/compatibility.md), [models](docs/models.md) |
+| Choose features and a model | [Features](docs/features.md), [model recipes](docs/models.md) |
+| Select an engine release and topology | [Compatibility](docs/compatibility.md) |
 | Share capacity or add SSD/peers | [Deployment](docs/deployment.md), [Manager configuration](docs/server.md) |
 | Understand ownership and data paths | [Architecture](docs/architecture.md), [transport](docs/transport.md) |
 | Measure latency and throughput | [Performance](docs/performance.md), [benchmark methodology](docs/benchmark-evidence.md) |

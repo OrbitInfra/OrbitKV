@@ -1,101 +1,103 @@
-# Model qualification
+# Model recipes
 
-Qualify the checkpoint revision, engine release, cache representation and execution
-profile together. Loading weights or producing native output does not establish
-complete external state recovery. Current pins are vLLM 0.31.0 and SGLang 0.5.21;
-see [compatibility](compatibility.md) and [the interface audit](engine-release-audit.md).
+Select the model architecture as well as the engine release. OrbitKV restores
+cached state into engine-owned pages; every state family the model reads must
+have a supported layout and recovery boundary. A model loading successfully in
+vLLM or SGLang does not establish external-cache recovery.
 
-## Current official-release scope
+## Choose a model
 
-| Checkpoint | Immutable revision | Accepted scope | Remaining boundary |
+| Model/profile | vLLM 0.31.0 | SGLang 0.5.21 | How to use it |
 | --- | --- | --- | --- |
-| Qwen3-8B | `b968826d9c46dd6066d109eabc6255188de91218` | Scoped dense ordinary DRAM/io_uring recovery/restart on both official engines | Broader rank, fault, graph and performance profiles are separate |
-| Qwen3-32B | `9216db5781bf21249d130ec9da846c4624c16137` | BF16 TP=1/PP=1 H20 ordinary DRAM/io_uring recovery; vLLM Graph NONE, SGLang's recorded default graph setting | Physical lifetime, broader topology and matched serving performance |
-| Qwen3.8-27B BF16 | `1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0` | Native output controls only on both official engines | Complete hybrid external recovery and performance |
-| Qwen3.8-27B FP8 | `017b9c7af6b5689d5dd426a76e0bc077eb5ca20a` | Native output controls only, with BF16 KV, on both official engines | Complete hybrid external recovery, quality and performance |
-| DeepSeek-V4.1-Flash | `2cba9e42aa026125f3ed06c6d98c1db82f7ca027` | Official metadata/configuration checked | Native kernel/topology readiness and complete compressed/auxiliary-state recovery |
+| Qwen3-8B, dense attention | Scoped DRAM/io_uring recovery and engine restart accepted | Scoped DRAM/io_uring recovery and engine restart accepted | Start with the dense recipe below |
+| Qwen3-32B, BF16 dense attention | H20 TP=1/PP=1 ordinary recovery accepted | H20 TP=1/PP=1 ordinary recovery accepted | Size HBM and host cache for the workload; see measured limits below |
+| Other dense checkpoints | Not yet qualified | Not yet qualified | Validate their actual cache layout, identity and output before deployment |
+| Qwen3.8-27B, BF16/FP8 weights | Native output controls only; external hybrid profile rejected | Native output controls only; full external recovery unqualified | Hybrid recipe requirements below |
+| DeepSeek-V4.1-Flash | Metadata/configuration checked; recovery unqualified | Metadata/configuration checked; recovery unqualified | Requires complete compressed and auxiliary-state contracts |
+| Multimodal, dynamic LoRA or live weight updates | Unqualified | Unqualified | Do not reuse text-only or static-adapter qualification |
 
-Model revisions are recorded as measured inputs, not recommendations to substitute
-another checkpoint. Historical vLLM 0.29.0 / SGLang 0.5.20 recovery results below
-retain those versions and do not reopen current guards. Engine-native FP8 KV and
-FP8 weights are separate: see [storage formats](storage-formats.md).
+The selected checkpoint revisions are:
 
-## Native Qwen3.8 controls
+| Checkpoint | Revision |
+| --- | --- |
+| Qwen3-8B | `b968826d9c46dd6066d109eabc6255188de91218` |
+| Qwen3-32B | `9216db5781bf21249d130ec9da846c4624c16137` |
+| Qwen3.8-27B BF16 | `1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0` |
+| Qwen3.8-27B FP8 | `017b9c7af6b5689d5dd426a76e0bc077eb5ca20a` |
+| DeepSeek-V4.1-Flash | `2cba9e42aa026125f3ed06c6d98c1db82f7ca027` |
 
-Complete BF16 and FP8 input inventories have independent acceptance, including
-weights, tokenizer/template, configuration and license files. Four frozen official
-engine/model cells each complete six serial greedy requests at input lengths
-128, 1,024 and 4,096, with 16 output tokens and two repeats: 24 requests total.
-Repeated text/token IDs and finite selected-token log probabilities pass within
-each cell. Both weight variants use BF16 KV in text-only eager TP=1/PP=1 inference.
+See [compatibility](compatibility.md) for exact execution, topology and fault
+limits. These are measured checkpoints, not a claim that every family member
+or engine version is supported.
 
-This does not establish cross-engine or cross-precision equivalence, semantic
-quality, HBM hits, external recovery or performance. Qwen3.8 has 16 attention and
-48 GDN layers; the vLLM V2/multiple-group/recurrent external-cache guard stays on.
-Eight available GPUs do not qualify physical TP=8 cache recovery.
+## Dense attention: Qwen3-8B and Qwen3-32B
 
-All four API leaders exit zero and final owned resources are empty. Native vLLM
-EngineCore force-kill/semaphore diagnostics and SGLang adopted-child -9 exits
-remain lifetime limits; leader exit is not every-child drain proof. The original
-missing-ninja startup failure and separately reviewed PATH correction remain
-preserved. Use each engine's own frozen tool PATH rather than borrowing tools
-from another environment or modifying official installations.
+1. Keep a local immutable model directory containing weights, configuration,
+   tokenizer and chat template. Use the same artifacts when restarting.
+2. Install OrbitKV and the selected official engine in its own environment;
+   start the independent Manager from the [quickstart](single-node.md).
+3. For [vLLM](single-node.md#vllm), set `VLLM_USE_V2_MODEL_RUNNER=0` and enable
+   `OrbitKVConnector`. Start with eager TP=1/PP=1 and one attention cache group.
+4. For [SGLang](single-node.md#sglang), enable the OrbitKV plugin and external
+   linker. Start with ordinary contiguous GPU pools and dense TP=1/PP=1.
+5. Send a repeated multi-block prompt, keep the Manager alive, restart the
+   engine and repeat the request. Verify nonzero `orbitkv_load_bytes_total`
+   and output against a cold/native control. An in-process HBM hit alone does
+   not show that OrbitKV supplied the cache.
 
-Exact inventories, inputs, output controls and provenance are in the
-[immutable full model report](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/models.md),
-which retains external artifact/reviewer paths. Input acceptance, native output,
-external recovery and matched performance remain distinct gates.
+Add [SSD](deployment.md#configure-capacity-then-connect-engines) or
+[peer caching](p2p.md) after the local recipe works. The SSD file is recreated
+on Manager startup: engine restart reuse requires keeping the Manager alive.
+Keep model/computation/layout identities equal; different engine KV layouts are
+not automatically interchangeable.
 
-For an independently owned native service and frozen token-ID inputs:
+Qwen3-32B's ordinary H20 profile uses BF16/raw, TP=1/PP=1. Its original vLLM
+control disables Graph; SGLang retains its recorded graph setting. The separate
+explicit FULL decode Graph acceptance covers only the fixed batch-1/eight-token
+profile. Use [performance](performance.md) for the reviewed 4K/8K comparisons;
+large weights, more GPUs or a new graph shape do not extend those results.
 
-```bash
-uv run --isolated --no-project --with requests python -m benches.serving.native_model_readiness \
-  --engine vllm --url http://127.0.0.1:8000 --model /path/to/immutable-model \
-  --prompts /path/to/frozen-token-ids.json --output-tokens 16 --repeats 2 \
-  --output /var/tmp/orbitkv-native-readiness/vllm-001
-```
+## Hybrid attention and recurrent state
 
-Use `--engine sglang` with its native service. This program checks output; the
-deployment owner must separately verify installed artifacts, leases and cleanup.
+Hybrid recovery must restore attention pages, legal window/sink ranges and
+recurrent checkpoints together. Missing state cannot be replaced by a prefix
+hit count. Qwen3.8-27B has attention and GDN state; its accepted BF16/FP8 native
+controls use BF16 KV and do not establish external hybrid recovery or quality
+across precisions/engines.
 
-## Pretrained checkpoints
+vLLM's current adapter rejects V2, multiple cache groups and recurrent external
+profiles. SGLang's complete released-engine hybrid lifecycle remains open.
+Follow [hybrid recovery contracts](hybrid-recovery.md) and the
+[S5 implementation sequence](completion-plan.md#s53--public-lifecycle-and-hybrid-state-contracts)
+before enabling these models. Historical fork controls are evidence for their
+original revisions only.
 
-Dense external-cache recovery uses immutable artifacts, matching computation and
-registered byte layout. Qwen3-32B's scoped ordinary gate passes fourteen checks
-with two expected hybrid-only skips across both engines. Its full model/runtime
-freeze and shutdown limits remain in the immutable report. Distinct engine cache
-layouts are not automatically interchangeable.
+## MLA and auxiliary state
 
-Historical synthetic or fork hybrid controls validate declared ranges/checkpoints;
-they do not qualify complete recovery on the current official releases.
-See [hybrid recovery contracts](hybrid-recovery.md).
+DeepSeek-V4.1-Flash needs native kernel/topology readiness plus complete compressed,
+indexer and auxiliary-state recovery. An earlier MLA byte control does not qualify
+this model. Establish native output first, complete external recovery next, then
+performance with the actual topology and precision. Unknown draft/auxiliary state
+remains unsupported.
 
-### Qwen3.5 after bounded Restore partitioning
+## Static LoRA
 
-Historical bounded-partition recovery and its model/precision limits remain in
-[the frozen Qwen3.5 section](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/models.md#qwen35-after-bounded-restore-partitioning).
-Do not transfer its hybrid support to official vLLM's currently rejected profile.
+The accepted profile uses immutable local PEFT artifacts, startup content
+fingerprints and effective LoRA settings in the cache identity. Stop the engine
+before changing artifacts. Dynamic add/remove/reload, live weight replacement,
+resumable sessions and caller aliases that bypass matching are not supported.
+See [adapter identity](adapters.md) for effective SGLang LoRA configuration and
+[the installed test](../python/tests/README.md#model-and-feature-gates).
 
-### Qwen3.8 on H20
+## Adding a model
 
-Earlier hybrid/fork results remain in
-[the frozen H20 section](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/models.md#qwen38-on-h20).
-The official BF16/FP8 native controls above have separate inputs and acceptance;
-neither qualifies external hybrid recovery.
+Declare every required state family and byte layout in the existing adapter and
+Rust state contracts. Reject unknown state before connecting to the cache. Use
+existing correctness gates for cold/partial/full hits, native HBM, restart and
+output; add cancellation/page-reuse coverage when changing lifecycle behavior.
+Record model revision, engine, precision, representation, topology and execution
+mode in the support table only after the matching profile passes.
 
-### MLA controls on H20
-
-Historical MLA bytes/output controls and their engine/layout constraints remain in
-[the frozen MLA section](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/models.md#mla-controls-on-h20).
-DeepSeek-V4.1-Flash's indexer, compressed and auxiliary state requires its own
-complete released-engine contract; a preceding MLA control is not that gate.
-
-## Larger hybrid targets
-
-Qualify every required state family and legal boundary before external recovery.
-Unknown auxiliary/draft/indexer state remains unsupported. Run native controls
-first, complete recovery next, then matched native/OrbitKV/LMCache performance
-with actual tokens, budgets, precision, execution modes and uncertainty.
-The [completion plan](completion-plan.md#s53--public-lifecycle-and-hybrid-state-contracts)
-owns implementation order. Historical larger-target metadata and open gates are
-retained in the immutable full report; they are not deployment support claims.
+Historical native controls, Qwen3.5/Qwen3.8 and MLA experiments, their failures
+and external artifact locations remain in the
+[immutable model report](https://github.com/feichai0017/orbitkv/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/models.md).

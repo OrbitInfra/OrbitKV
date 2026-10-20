@@ -22,15 +22,15 @@ const capabilities = [
     title: "Extend capacity.",
     label: "Store",
     detail:
-      "Use pinned DRAM and optional SSD, with automatic GPU storage selection and experimental Rust FP8 storage quantization.",
+      "Offload reusable KV to pinned DRAM and optional SSD. Keep the Manager alive across engine restarts.",
     href: "/docs/cache-policies/",
   },
   {
-    title: "Restore complete state.",
-    label: "Model-aware",
+    title: "Choose your model.",
+    label: "Model recipes",
     detail:
-      "Select the required attention pages, windows and checkpoints for supported model layouts, and validate them before recovery.",
-    href: "/docs/hybrid-recovery/",
+      "Start with qualified dense Qwen3 profiles. Check engine, precision and state requirements before enabling a hybrid model.",
+    href: "/docs/models/",
   },
   {
     title: "Connect both engines.",
@@ -47,11 +47,11 @@ const capabilities = [
     href: "/docs/p2p/",
   },
   {
-    title: "Measure the path.",
-    label: "Observe",
+    title: "Own resources in Rust.",
+    label: "Native ownership",
     detail:
-      "Measure Qwen3-8B with a KV working set larger than DRAM. Compare request latency, throughput and concurrent SSD reads and writes.",
-    href: "/docs/ssd-performance/",
+      "Native cache and transfer owners manage budgets, registrations and completion while engines retain scheduling and GPU allocation.",
+    href: "/docs/features/",
   },
 ];
 ---

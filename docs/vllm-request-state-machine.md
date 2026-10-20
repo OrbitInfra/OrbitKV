@@ -84,7 +84,7 @@ is established. It reports completed requests through `finished_recving`; vLLM
 records them and promotes them on a later scheduler visit.
 
 Promotion can be blocked by a different request at the front of the deferred
-queue. The [sustained workload](sustained-performance.md) reproduced a cold
+queue. The [sustained workload](https://github.com/feichai0017/orbitkv/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/sustained-performance.md) reproduced a cold
 request needing 128 GPU blocks when only 127 were free, while a completed
 restore behind it held another 128. The scheduler stopped at the allocation
 failure before reaching the completed restore.

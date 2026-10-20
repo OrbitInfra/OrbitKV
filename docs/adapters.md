@@ -2,7 +2,7 @@
 
 OrbitKV integrates external cache recovery with engine-owned GPU pages and
 request lifecycles. Start with the [single-node quickstart](single-node.md).
-The [completion plan](completion-plan.md#release-baseline-and-reference-policy)
+The [completion plan](completion-plan.md#s51--release-and-interface-audit)
 records release targets and upgrade gates. The package and source pins are
 vLLM **0.31.0** and SGLang **0.5.21**. Released callback contracts pass on A100;
 ordinary-cache/restart and shared-Manager pressure have scoped independent
