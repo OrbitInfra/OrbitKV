@@ -512,10 +512,25 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   remain recorded. This accepts healthy recovery, not physical NVMe/GDS, faults,
   physical termination or performance. Reviews are under
   `/root/orbitkv-artifacts/s3-engine-runtime-evidence-20261019/`.
-  The shared fixture still needed the same live evidence. It now records every
-  engine/Manager incarnation before its existing teardown, binding each record
-  to the observed membership identity. This is a test-only implementation;
-  fresh shared-cache model qualification from the same wheel remains required.
+  [PR #285](https://github.com/feichai0017/orbitkv/pull/285) records every shared
+  engine/Manager incarnation and its observed membership before existing teardown.
+  The matching wheel passes independent healthy shared-cache acceptance on
+  vLLM 0.31.0 V1 and SGLang 0.5.21: Qwen3-8B dense, eager/direct DRAM,
+  TP1/PP1, two replicas and two Managers with 2 GiB of DRAM each on one H20
+  using same-host TCP. Across three positive recoveries per engine, READ and
+  H2D each total 288 MiB; consumer restart recovers, while an empty-source
+  restart reads and copies zero bytes. Maintained output equality assertions,
+  all eight current service origins, normal leader waits and selected resource
+  release pass. Raw response bodies are not archived for offline text replay.
+  SGLang acceptance covers its original closed cohort, including the final
+  frozen-input check and controller exit zero. A later audit found a missing
+  old default IPC node and changed directory timestamps. Fresh directory
+  preservation remains failed, its subsequent check suffix was not executed,
+  and the deletion actor is unknown. The forensic archive preserves both
+  checkpoints; it does not authorize another hardware run or establish
+  continuous preservation after the original result.
+  Native source-close status 2 retains backing until process exit; physical
+  drain, faults, RDMA/HA/P-D and performance qualification remain open.
 - Bound and diagnose retained/quarantined source memory while proof is absent.
   Timeout, etcd expiry, cancellation, remote process disappearance and a control
   ACK are not interchangeable with native drain. An unavailable upstream primitive
@@ -1839,6 +1854,10 @@ physical NIC counters and actual GPU destinations for each claimed cell.
 Maintain upstream registration/docs/tests and upgrade gates. Record issue/PR,
 maintainer response, merge commit and first released version separately. Submit
 lifecycle and TENT fixes independently of the minimal cache backend.
+For a confirmed Mooncake/TENT, SGLang or vLLM defect, first isolate the upstream
+cause and search open and closed issues and PRs. Reuse matching work; otherwise
+submit a reproducible issue and a tested fix PR. Keep private evidence and
+credentials out of public contributions.
 
 **Acceptance:** executable scenarios with output, physical-transfer and drain
 receipts for every support claim. A minimal upstream cache contribution need not
