@@ -90,7 +90,7 @@ jobs:
                   paths = [os.fsdecode(path) for path in changed.stdout.split(b"\0") if path]
                   native = any(
                       not (
-                          path.endswith(".md")
+                          (path.endswith(".md") and path != "python/README.md")
                           or path.startswith("website/")
                           or (path.startswith(("benches/", "python/tests/")) and path.endswith(".py"))
                       )
