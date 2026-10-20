@@ -800,23 +800,24 @@ def test_installed_save_requires_frozen_process_tracer_before_admission(tmp_path
     tracer = tmp_path / "tracer"
     tracer.write_text("#!/bin/sh\nexit 0\n")
     tracer.chmod(0o700)
-    metadata = tracer.stat()
-    declaration = {
-        "path": str(tracer),
-        "realpath": str(tracer.resolve()),
-        "sha256": campaign.digest(tracer),
-        "device": metadata.st_dev,
-        "inode": metadata.st_ino,
-        "mode": metadata.st_mode,
-        "uid": metadata.st_uid,
-        "gid": metadata.st_gid,
-        "bytes": metadata.st_size,
-    }
+    declaration = executable_input(tracer)
+    manager = tmp_path / "manager"
+    manager.write_text("#!/bin/sh\nexit 0\n")
+    manager.chmod(0o700)
+    manager_declaration = executable_input(manager)
     contract.update(
         qualification="pending-save-bytes-v2",
-        cells=[{"process_trace_binary": str(tracer)}],
-        executable_inputs=[declaration],
-        input_sha256={str(tracer): declaration["sha256"]},
+        cells=[
+            {
+                "process_trace_binary": str(tracer),
+                "environment": {"ORBITKV_CACHE_MANAGER_BINARY": str(manager)},
+            }
+        ],
+        executable_inputs=[declaration, manager_declaration],
+        input_sha256={
+            str(tracer): declaration["sha256"],
+            str(manager): manager_declaration["sha256"],
+        },
     )
     if fault == "missing":
         contract["cells"][0].clear()
@@ -833,6 +834,133 @@ def test_installed_save_requires_frozen_process_tracer_before_admission(tmp_path
     else:
         with pytest.raises(RuntimeError):
             campaign.check_inputs(contract, deadline=time.monotonic() + 3)
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "lost-execute", "undeclared", "unhashed", "relative", "missing"]
+)
+def test_installed_save_requires_frozen_manager_executable_before_admission(tmp_path, fault):
+    manager = tmp_path / "manager"
+    manager.write_text("#!/bin/sh\nexit 0\n")
+    manager.chmod(0o700)
+    tracer = tmp_path / "tracer"
+    tracer.write_text("#!/bin/sh\nexit 0\n")
+    tracer.chmod(0o700)
+    manager_declaration = executable_input(manager)
+    tracer_declaration = executable_input(tracer)
+    contract = runtime_input_contract(tmp_path, [])
+    contract.update(
+        qualification="pending-save-bytes-v2",
+        cells=[
+            {
+                "process_trace_binary": str(tracer),
+                "environment": {"ORBITKV_CACHE_MANAGER_BINARY": str(manager)},
+            }
+        ],
+        executable_inputs=[tracer_declaration, manager_declaration],
+        input_sha256={
+            str(tracer): tracer_declaration["sha256"],
+            str(manager): manager_declaration["sha256"],
+        },
+    )
+    if fault == "lost-execute":
+        manager.chmod(0o600)
+    elif fault == "undeclared":
+        contract["executable_inputs"].pop()
+    elif fault == "unhashed":
+        del contract["input_sha256"][str(manager)]
+    elif fault == "relative":
+        contract["cells"][0]["environment"]["ORBITKV_CACHE_MANAGER_BINARY"] = manager.name
+    elif fault == "missing":
+        del contract["cells"][0]["environment"]["ORBITKV_CACHE_MANAGER_BINARY"]
+    if fault is None:
+        campaign.check_inputs(contract)
+    else:
+        with pytest.raises(RuntimeError, match="Manager|executable"):
+            campaign.check_inputs(contract)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [None, "manager-hash", "library-hash", "size", "realpath", "missing-file", "missing-map"],
+)
+def test_adapter_runtime_mapping_matches_frozen_input_closure(tmp_path, fault):
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    manager = runtime / "manager"
+    manager.write_text("#!/bin/sh\nexit 0\n")
+    manager.chmod(0o700)
+    library = runtime / "native.so"
+    library.write_bytes(b"frozen native extension")
+    tracer = tmp_path / "tracer"
+    tracer.write_text("#!/bin/sh\nexit 0\n")
+    tracer.chmod(0o700)
+    manifest = tmp_path / "runtime.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "root": str(runtime),
+                "files": [
+                    {
+                        "path": path.name,
+                        "realpath": str(path),
+                        "bytes": path.stat().st_size,
+                        "sha256": campaign.digest(path),
+                    }
+                    for path in (manager, library)
+                ],
+            }
+        )
+    )
+    manager_declaration = executable_input(manager)
+    tracer_declaration = executable_input(tracer)
+    expected = {
+        str(path): {
+            "realpath": str(path),
+            "bytes": path.stat().st_size,
+            "sha256": campaign.digest(path),
+        }
+        for path in (manager, library)
+    }
+    contract = runtime_input_contract(
+        tmp_path, [{"path": str(manifest), "sha256": campaign.digest(manifest)}]
+    )
+    contract.update(
+        qualification="prepared-adapter-lifetime-v2",
+        cells=[
+            {
+                "process_trace_binary": str(tracer),
+                "environment": {"ORBITKV_CACHE_MANAGER_BINARY": str(manager)},
+                "runtime_mapped_files": expected,
+            }
+        ],
+        executable_inputs=[tracer_declaration, manager_declaration],
+        input_sha256={
+            str(tracer): tracer_declaration["sha256"],
+            str(manager): manager_declaration["sha256"],
+        },
+    )
+    if fault == "manager-hash":
+        expected[str(manager)]["sha256"] = "0" * 64
+    elif fault == "library-hash":
+        expected[str(library)]["sha256"] = "0" * 64
+    elif fault == "size":
+        expected[str(library)]["bytes"] += 1
+    elif fault == "realpath":
+        expected[str(library)]["realpath"] = str(tmp_path / "other.so")
+    elif fault == "missing-file":
+        expected[str(tmp_path / "missing.so")] = {
+            "realpath": str(tmp_path / "missing.so"),
+            "bytes": 1,
+            "sha256": "0" * 64,
+        }
+    elif fault == "missing-map":
+        contract["cells"][0].pop("runtime_mapped_files")
+    if fault is None:
+        campaign.check_inputs(contract)
+    else:
+        with pytest.raises(RuntimeError, match="runtime|mapping"):
+            campaign.check_inputs(contract)
 
 
 def test_historical_save_freeze_is_rejected_before_resource_admission(tmp_path, monkeypatch):
@@ -1386,6 +1514,21 @@ def runtime_input_contract(directory, manifests):
                 "guardian_start_ticks": campaign.identity(os.getpid())["start_ticks"],
             }
         ],
+    }
+
+
+def executable_input(path):
+    metadata = path.stat()
+    return {
+        "path": str(path),
+        "realpath": str(path.resolve()),
+        "sha256": campaign.digest(path),
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+        "mode": metadata.st_mode,
+        "uid": metadata.st_uid,
+        "gid": metadata.st_gid,
+        "bytes": metadata.st_size,
     }
 
 

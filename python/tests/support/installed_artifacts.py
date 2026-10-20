@@ -8,6 +8,7 @@ import importlib.metadata as metadata
 import importlib.util
 import json
 import os
+import stat
 import sys
 import sysconfig
 from pathlib import Path
@@ -18,6 +19,7 @@ ENGINE_COMMITS = {
     "sglang": "e00930c5489053f26d86b179cee0d087f846acbb",
 }
 NATIVE_LIBRARIES = {"libtent_shared.so", "libmooncake_common.so", "libasio.so"}
+EXECUTABLE_PACKAGE_FILES = {"orbitkv": ("orbitkv-cache-manager-py",)}
 
 
 def isolated_environment(environment: dict[str, str], directory: Path) -> dict[str, str]:
@@ -79,6 +81,15 @@ def distribution_snapshot(distribution, package: str) -> dict:
             hashes[str(path)] = hashlib.sha256(data).hexdigest()
     package_root = Path(distribution.locate_file(package)).resolve()
     assert package_root.is_dir(), package_root
+    executable_files = {}
+    for relative in EXECUTABLE_PACKAGE_FILES.get(package, ()):
+        path = package_root / relative
+        metadata = path.stat()
+        assert path.resolve() in recorded, f"Installed executable is outside RECORD: {path}"
+        assert stat.S_ISREG(metadata.st_mode), f"Installed executable is not regular: {path}"
+        assert metadata.st_mode & 0o111, f"Installed executable has no execute bit: {path}"
+        assert os.access(path, os.X_OK), f"Installed executable cannot execute: {path}"
+        executable_files[str(path.resolve())] = metadata.st_mode
     unrecorded = [
         str(path)
         for path in package_root.rglob("*")
@@ -92,6 +103,7 @@ def distribution_snapshot(distribution, package: str) -> dict:
         "version": distribution.version,
         "package_root": str(package_root),
         "files": hashes,
+        "executables": executable_files,
     }
 
 

@@ -66,6 +66,7 @@ def main() -> None:
                 "sys_path": sys.path,
                 "installed_artifact_guard": str(guard_path),
                 "record_files_checked": len(snapshot["files"]),
+                "installed_executables": snapshot["executables"],
                 "probe": args.probe,
             }
         ),
