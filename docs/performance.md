@@ -7,61 +7,70 @@ SGLang kernel pairs qualify a bounded serial recovery improvement; sustained
 contention and tail qualification remain separate gates. Qwen3.8 native output
 acceptance does not supply an external-cache comparison.
 
+## SGLang concurrent admission
+
+The [official-release admission comparison](https://github.com/feichai0017/orbitkv/pull/294)
+uses SGLang 0.5.22, Qwen3-8B revision `b968826d`, one H20, BF16/raw, TP1/PP1,
+eager deterministic inference, 16,384 GPU KV tokens and 16 GiB host cache.
+Four fresh baseline/priority process pairs alternate AB/BA/AB/BA, with 640
+measured requests across concurrency 1/4, shared/mixed prefixes and 4K/8K inputs.
+The candidate uses the official equal-priority scheduling flags; neither the
+installed engine nor OrbitKV runtime is patched.
+
+For concurrency-four shared 8K recovery after HBM pressure, the mean of process
+median TTFTs falls from **881.11 ms to 218.53 ms**. The priority/baseline geometric
+ratio is 0.2480, with a 95% process-pair bootstrap interval of 0.2407–0.2556.
+Complete shared-prefix bursts across the declared 4K/8K sequence take 43.1% less
+time, with equal restored and saved work between each matched pair.
+
+**The full regression guard fails.** Complete mixed-prefix pressure bursts take
+8.1% longer, with a 95% ratio interval of 1.0351–1.1290. Mixed cold and 8K pressure
+request groups also fail their declared guards. The first shared 8K request's
+forward-to-finish interval grows while later requests enter earlier; this is a
+scheduler tradeoff, not a faster copy path. All prompts/outputs match, no request
+retractions occur, installed/model hashes agree and final owned resources drain.
+Native child `-9` and IPC shutdown warnings remain explicit lifetime limits.
+
+Keep `--sglang-priority-scheduling` an opt-in benchmark control. These results
+do not recommend a default, qualify stable tails, prove GPU execution overlap or
+compare against native/LMCache/HiCache. Upstream already has a related
+[scheduler proposal](https://github.com/sgl-project/sglang/pull/43901);
+its unreleased changes are not consumed here. Full controls and results remain
+in [the evidence archive](benchmark-evidence.md#sglang-concurrent-admission-archive).
+
 ## Current dense local comparison
 
-The [Qwen3-32B cohort](https://github.com/feichai0017/orbitkv/pull/221) contains
-14 cells and 420 measured requests on one H20, using official vLLM 0.31.0,
-SGLang 0.5.21 and LMCache 0.5.5. Model revision `9216db57`, harness `e28fe829`,
-accepted native build `37b48c50`, BF16/raw, TP=1/PP=1, eager execution and 4 GiB
-GPU KV are frozen. OrbitKV requests 16 GiB host offload; the historical HiCache
-configuration requests 16 decimal GB before page rounding. Read the comparison
-within that capacity difference. Each length/phase has five samples in
-each of two independently started, opposite-order runs; outputs, restored bytes,
-installed-file hashes and final GPU/process cleanup pass independent review.
+The reviewed [Qwen3-32B comparison](https://github.com/feichai0017/orbitkv/pull/221)
+uses one H20, official vLLM 0.31.0/SGLang 0.5.21, LMCache 0.5.5, BF16/raw,
+TP1/PP1, eager execution and 4 GiB GPU KV. Two opposite-order independent runs
+contain five samples per length/phase, with output and restore-byte controls.
+For 8K recovery after HBM pressure:
 
-For 8K pressure recovery, the geometric mean of the two run-median client TTFTs
-is 168.5 ms for vLLM OrbitKV, 170.0 ms for official CPU offload and 175.8 ms for
-this released LMCache MP profile. SGLang OrbitKV is 202.6 ms versus 178.2 ms for
-HiCache, with identical aligned host-hit coverage. The follow-up below profiles
-this SGLang gap; the original collection does not identify a kernel or transport
-cause. Native HBM-eviction recomputation takes about 4.3/4.4 seconds in the
-respective engine controls.
+| Engine | OrbitKV TTFT | Official host offload TTFT | Released LMCache MP TTFT |
+| --- | --- | --- | --- |
+| vLLM | 168.5 ms | 170.0 ms | 175.8 ms |
+| SGLang | 202.6 ms | 178.2 ms | Startup blocked |
 
-Client TTFT ends at the first nonempty SSE text, not a CUDA copy event. The vLLM
-resident phase includes a 16 MiB tail restore and is mixed; SGLang recovery
-restores 8,128 host tokens and recomputes the final 64-token page. These serial
-observations are not stable p99, confidence intervals, throughput, pure HBM-hit
-comparisons or performance promotion. Full logs retain native worker termination
-diagnostics. RDMA, contention, broader ranks and S3 reclamation are separate gates.
+Values are geometric means of run medians. OrbitKV requests 16 GiB host cache;
+historical HiCache requests 16 decimal GB before page rounding, so its budget
+is different. Native HBM-eviction recomputation takes about 4.3/4.4 seconds.
+The vLLM resident control includes a 16 MiB restore; SGLang restores 8,128 tokens
+and recomputes the final 64-token page. TTFT ends at first nonempty SSE text.
+These observations establish neither stable tails nor general superiority.
+The [frozen report](https://github.com/feichai0017/orbitkv/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/performance.md#current-dense-local-comparison)
+retains revisions, native termination diagnostics and complete scope.
 
 ## SGLang restore diagnosis
 
-The [original-order follow-up](https://github.com/feichai0017/orbitkv/pull/224)
-at harness `5b2089a5` retains the same model, engine, budgets and `37b48c50`
-native build. Six freshly restarted cells contain 180 measured requests and 20
-diagnostic traces. Profiler-off 8K recovery medians are 202.09 ms for direct DMA,
-175.90 ms for released HiCache and 181.53 ms for the existing KernelBackend.
-This reproduces the historical DMA gap and retains the kernel direction: 8K
-TTFT is 10.2% lower than DMA, while 4K is 0.6% higher. Each configuration has
-one cell with 30 measured requests and five pressure samples per length; this
-does not qualify a default, tail performance or serving gains.
-
-Diagnostic 8K DMA traces contain 1,536–2,176 GPU copy activities with exact
-2,130,706,432-byte equality. Their transfer spans are 48–52 ms, compared with
-63–64 ms for 64 released HiCache transfer kernels. GPU EXTEND annotations start
-later and captured kernel overlap is lower. Those intervals include helpers,
-and Python admission markers do not establish GPU first-layer readiness.
-Native memcpy CPU API calls are absent and profiling changes timing.
-This supports investigating fragmented submission and
-the existing kernel configuration; it does not assign a causal fraction of the
-unprofiled gap. Preserve all-enqueued admission, event generations and source drain.
-
-Independent review accepts the bounded diagnosis and KDA candidate evaluation.
-All outputs match the original input/output control, installed artifacts remain
-unchanged and physical resources are empty. Six native child exits `-9` and three
-CUDA IPC producer warnings remain explicit lifetime limits. The initial 8K-only
-collection remains separate; its different preparation order cannot be treated
-as a repair. Full traces and reviews are in [the archive](benchmark-evidence.md).
+The [follow-up diagnosis](https://github.com/feichai0017/orbitkv/pull/224)
+reproduces the serial 8K gap and identifies fragmented submission and admission
+as investigation targets. Profiler-off TTFT is 202.09 ms for DMA, 181.53 ms for
+the existing kernel route and 175.90 ms for historical HiCache. Traces do not
+assign a causal fraction of the unprofiled gap or establish first-layer readiness.
+KDA evaluation supports the independent kernel comparison below.
+The [frozen report](https://github.com/feichai0017/orbitkv/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/performance.md#sglang-restore-diagnosis)
+preserves different preparation orders, failed controls and native child/IPC
+shutdown limits. Full traces and reviews remain in [the archive](benchmark-evidence.md).
 
 ## Independent SGLang kernel pairs
 

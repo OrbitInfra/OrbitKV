@@ -238,6 +238,7 @@ def main() -> None:
                     "backend": config["backend"],
                     "observation_mode": config["observation_mode"],
                     "orbitkv_transfer_backend": config.get("orbitkv_transfer_backend"),
+                    "sglang_priority_scheduling": config.get("sglang_priority_scheduling"),
                     "gpu_tokens": config["gpu_tokens"],
                     "host_gib": config["host_gib"],
                     "ssd_gib": config.get("ssd_gib", 0),

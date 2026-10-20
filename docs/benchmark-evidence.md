@@ -9,113 +9,45 @@ versioned evidence; passing a correctness gate does not establish a speedup.
 
 ## Native driver capture archive
 
-The measurement-host archive is
-`/root/orbitkv-artifacts/s4-native-submission-gpu-20261014/`.
-It binds source `4b568860` and the separately accepted v5 runtime preparation at
-`/root/orbitkv-artifacts/s4-native-submission-runtime-20261014/`.
-The original launch review rejects an unresolved-postflight lease-release path;
-its controller expires without launching the native fixture. The separately
-frozen v2 controller passes 18 fresh CPU ownership controls and independent launch
-review. Real default-NVRTC/PTX arithmetic and external driver/JIT closure checks
-precede the single approved capture; these are readiness checks, not copy samples.
-
-`smoke-002/` retains the full directional fixture, raw CUPTI records, native
-waits, approval and physical postflight. `analyzer-rerun.json` retains the parent
-replay; `independent-outcome-review/analyzer-recomputed.json` retains the reviewer's
-separate reconstruction. `OUTCOME-SHA256SUMS` seals 24 files
-with SHA-256 `52fed67599a6be8efb7333828597ca31fc7e9fd6a5e13dced9c6cf5b7780a9e1`.
-The eight groups contain four measured windows each, with all byte/source/guard
-controls passing. Both native and controller wait normally with exit zero and
-an empty GPU postflight. Independent review accepts functional capture only;
-`independent-outcome-review/REVIEW.md` has SHA-256
-`825bdf4c2d9b74f223a9886b788331b073241f7d6b764f99b00a7272d1945ce0`.
-
-This is a private host archive, not a public download. The trace includes CUPTI
-callback overhead; four samples per group cannot qualify latency, throughput,
-observer overhead or a backend default. Unattributed host time is not proven
-packing cost. See [the methodology](kernel-optimization.md#measure-the-bottleneck-before-changing-code).
+`/root/orbitkv-artifacts/s4-native-submission-gpu-20261014/` retains the native
+submission cohort. Its [frozen index](https://github.com/feichai0017/orbitkv/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#native-driver-capture-archive)
+records inputs, failed controls, hashes and clock limits. This is component
+observation evidence, not a serving or default qualification.
 
 ## SGLang independent kernel-pair archive
 
-The measurement-host archive is
-`/root/orbitkv-artifacts/s5-kernel-layout-qualification-20261013/`.
-`02-independent-source-review/` retains the rejected initial source and accepted
-`4b6c7eba` correction. The unlaunched first freeze remains in `03-freeze/`;
-`03-freeze-r2/` and `04-independent-launch-review/` bind the corrected launch
-contract, unchanged `37b48c50` native build and official engine/model/runtime.
-
-`05-cohort/` retains all four full-pool byte cells, nine fresh model cells,
-270 measured requests, commands, literal waits, immutable inputs, raw diagnostics
-and full postflight. Its complete 2,663-file archive SHA-256 is
-`86995c205da1c2ab333373eadfcaead28e7d612f82247b6b77131923d73be1d7`.
-`06-independent-outcome-review/` retains independent byte/statistical
-reconstruction, fresh physical postflight and acceptance;
-`07-final-handoff/` links source, launch, outcome and final documentation delivery.
-Reviewer CPU preparation failures stay beside their successful replacements;
-no hardware cell or original evidence was replaced.
-
-The [frozen methodology](https://github.com/feichai0017/orbitkv/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/benches/transfer/README.md#actual-sglang-pool-byte-and-kernel-pair-checks)
-defines full-byte controls and four-pair bootstrap guards; concise conclusions
-are in [performance](performance.md#independent-sglang-kernel-pairs).
-This is a private host archive. Scoped serial recovery acceptance does not select
-a backend default, qualify p99/throughput or repair native IPC/fault lifetime.
-All nine child `-9` exits, eight IPC warnings, native-client wait gaps and old
-missing waits remain limits.
+`/root/orbitkv-artifacts/s5-kernel-layout-qualification-20261013/` retains the
+reviewed SGLang 0.5.21 byte controls and four serial DMA/kernel process pairs.
+The [frozen index](https://github.com/feichai0017/orbitkv/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#sglang-independent-kernel-pair-archive)
+contains complete provenance, checksums and lifetime limits;
+[performance](performance.md#independent-sglang-kernel-pairs) states the accepted scope.
 
 ## SGLang restore diagnosis archive
 
-The measurement-host archive is
-`/root/orbitkv-artifacts/s5-sglang-restore-profile-20261012/`.
-`09-oldorder-freeze/` binds the `5b2089a5` harness and unchanged `37b48c50`
-installed runtime; `11-oldorder-cohort/` retains all 180 requests, 20 traces,
-control receipts, literal waits and raw IPC/native-child diagnostics. Its complete
-804-file archive SHA-256 is
-`ab663366a88edcd6b1a10ec454277a76b843583040eafb1433c3bb2f9467105d`.
-`12-oldorder-trace-analysis/` retains descriptive reconstruction and clock limits;
-`13-oldorder-independent-outcome-review/` seals independent acceptance.
-
-The earlier 8K-only collection and invalid CPU preparations remain immutable in
-the same archive. The original-order follow-up preserves historical prompt/output
-identity without pooling historical timing. Source-only reviews and CPU controls
-for the rejected cache-first shutdown proposal remain in `14-cleanup-order-gates/`
-through `16-cleanup-boundary-source-review/`. The independently launch-reviewed
-`17-cleanup-smoke-freeze/` fails at its second cell because SGLang still needs the
-stopped Manager for unregistration; its complete failed archive remains in
-`19-cleanup-smoke-cohort/`. No later cell ran or replaced that failure.
-This is a private host archive; one candidate collection does not promote a
-production default, establish a serving advantage or close S3 lifetime gates.
+`/root/orbitkv-artifacts/s5-sglang-restore-profile-20261012/` retains profiler-off
+controls, diagnostic traces and unsuccessful preparations. Use the
+[frozen index](https://github.com/feichai0017/orbitkv/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#sglang-restore-diagnosis-archive)
+for the original source, ordering, hashes and rejected cleanup attempt.
 
 ## Current RDMA component archive
 
-The complete new Manager-only collection is retained at
-`/root/orbitkv-artifacts/s5-manager-rdma-profile-20261012-r2/`.
-`05-freeze/` binds the exact `00c4a041` harness, unchanged `37b48c50` runtime and
-36-cell input contract. `07-cohort-1/` retains all cold, warmup and measured rows;
-`08-postflight-and-archive/` retains both hosts' actual wait events, logs,
-unchanged runtime hashes/stamps and the private etcd DB/WAL. Full run/direction
-statistics and independently reconstructed tensor hashes are in
-`09-descriptive-analysis/`; the accepted independent outcome review is sealed in
-`10-independent-outcome-review/`. Its `REVIEW.md` SHA-256 is
-`3face0a4da6d8cec6181257a1a07b09f487f9eab39689e7f5218201cde20214b`.
+`/root/orbitkv-artifacts/s5-manager-rdma-profile-20261012-r2/` retains the complete
+Manager-only cohort; `/root/orbitkv-artifacts/s4-s5-tent-rdma-profile-20261012/`
+retains the earlier incomplete campaign and GPU-pointer component data. Their
+[frozen index](https://github.com/feichai0017/orbitkv/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#current-rdma-component-archive)
+preserves individual runs, failed startup, reviews and checksums. These are
+private host archives, not public downloads, HA or fault-reclamation qualification.
 
-The resource-readmission proof and rejected preparation controls remain beside
-the collection. They authorize only new work on physically idle resources:
-the earlier invalid campaign and its missing platform wait/reap receipts stay
-unchanged. All 72 CUDA IPC shutdown warnings and failed controls remain in the raw
-logs. This is a private measurement-host archive, not a public download or HA,
-S3 lifetime, serving-performance or support qualification.
+## SGLang concurrent admission archive
 
-The measurement-host archive is
-`/root/orbitkv-artifacts/s4-s5-tent-rdma-profile-20261012/`.
-It retains source/launch reviews, the unchanged native runtime manifests,
-all 72 GPU cells, 13 Manager cells, the failed next startup and all preparation
-controls. `14-descriptive-analysis/REPORT.md` records completed-prefix results
-and the invalid whole-campaign status; its SHA-256 is
-`c4fb29407f9f8d6243414dc4f0e522c18da564bb1745072cfe8360e8d40232c5`.
-`13-final-postflight-and-archive/` contains complete per-host owner logs, failed
-startup, quarantine, h0 etcd DB/WAL and before/after runtime checks. No original
-failed cell or frozen input has been replaced. This is a private local archive,
-not a public download or an independently complete Manager qualification.
+`/root/orbitkv-artifacts/s4-sglang-admission-20261021/` retains the isolated
+one-line scheduler counterfactual and its independent review.
+`/root/orbitkv-artifacts/s4-sglang-official-admission-20261021/` retains the
+eight-cell official-release comparison, frozen contract, all raw requests,
+cleanup, complete wheel/model hashes and process-pair analysis. These private
+host archives are not public downloads. The [reviewed delivery](https://github.com/feichai0017/orbitkv/pull/294)
+and [performance summary](performance.md#sglang-concurrent-admission) state
+the benefit and failed regression guards; no default is selected.
 
 ## Run and retain an experiment
 
@@ -160,7 +92,8 @@ source files whose names contain `result`; it does not infer content from such n
 
 Compare backends inside each engine first. The selected profiles are official
 vLLM 0.31.0 with the V1 runner and one attention group, and official SGLang
-0.5.21. Use dense Qwen3 BF16, TP=1/PP=1 for the initial matrix; broader rank,
+0.5.22. Historical comparisons retain their measured 0.5.21 release. Use dense
+Qwen3 BF16, TP=1/PP=1 for the initial matrix; broader rank,
 hybrid, P/D and Graph profiles need their own qualification. Use separate clean
 installed environments and freeze the resolved dependencies and all installed
 engine/cache files before and after each run. `--installed-artifact` keeps source
@@ -189,15 +122,15 @@ combination before measurement. Its
 documents the server/configuration boundary. A launcher option or successful
 import does not prove model serving or compatible native kernels.
 
-The selected SGLang 0.5.21 MP integration imports
+The historical SGLang 0.5.21 MP integration imports
 `lmcache.integration.sglang.lmcache_mp_metadata`, absent from the released
-LMCache 0.5.5 wheel. Its official startup control is blocked. The
+LMCache 0.5.5 wheel. That official startup control was blocked. The
 [current upstream quickstart](https://docs.lmcache.ai/getting_started/quickstart.html)
 requires the unified MP changes in
 [SGLang #38652](https://github.com/sgl-project/sglang/pull/38652) and
 [LMCache #4828](https://github.com/LMCache/LMCache/pull/4828); the latter merged
-after the 0.5.5 release. Keep that comparison cell unavailable until a consumed
-official release contains the required module. Do not patch installed engines
+after the 0.5.5 release. A new comparison needs its own consumed official
+engine/cache release and startup control. Do not patch installed engines
 or substitute an upstream main checkout for a release comparison.
 
 Freeze model/tokenizer content hashes, tokenized prompts, output length, seed,
@@ -339,59 +272,28 @@ and actual serving controls; it cannot optimize an RPC or connection delay.
 
 ## Historical tracked evidence
 
-The S1 migration starts at
-[`9fe1441c0d7d4c47b1914c303f837bba9f4a758f`](https://github.com/feichai0017/orbitkv/tree/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/benches/results).
-That immutable revision retains all 11 formerly tracked result files, including
-preparation, offload, cache-policy and shared-cache controls. Git history is not
-rewritten. Older collections remain at their existing immutable
+Formerly tracked collections remain at the immutable
+[September 29 snapshot](https://github.com/feichai0017/orbitkv/tree/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/benches/results),
 [September 21 snapshot](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results)
 and [recovery snapshot](https://github.com/feichai0017/orbitkv/tree/4712f780c900120719f178b2ea36c9e0ac7c135f/benches/results/20260922-recovery-baseline).
-The [pre-migration documents](https://github.com/feichai0017/orbitkv/tree/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs)
-retain the original report tables, measured revisions and historical locations.
-These are measurements of those revisions, not fresh evidence for current HEAD.
-Website link tests validate historical file targets with `git cat-file`; a shallow
-checkout needs `git fetch --unshallow` before running `npm test`. Website CI fetches
-full history for this check.
+Original tables and migration details are in the
+[frozen evidence index](https://github.com/feichai0017/orbitkv/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#historical-tracked-evidence).
+Git history is unchanged. Website link tests require full history; shallow
+checkouts need `git fetch --unshallow` before `npm test`.
 
 ## Local archive and verification
 
-The selected S1 archive on the measurement host is
-`/root/orbitkv-artifacts/s1-evidence-20260929/`:
-
-- `legacy-results/` retains the complete local results tree, including ignored
-  run data, commands, failed attempts and controls.
-- `archive-manifest.json` records the source/base commit, relative paths, sizes,
-  SHA-256 values, symlink targets and whether each entry was tracked.
-- `SHA256SUMS` verifies archived regular files; `archive-verified.json` records
-  the inventory hash and totals. The migration hashes the source before copying,
-  hashes the archive, and rehashes the source before removing any originals.
-- `symlink-relocations.json` preserves original absolute targets and their new
-  relative targets inside the archive. All 43 symlinks resolve after migration;
-  35 pytest convenience links required relocation. Regular-file hashes are unchanged.
-- `historical-docs/` is a convenience copy of the documents at the starting
-  revision. Immutable Git links above remain the public reference.
+The selected S1 archive is `/root/orbitkv-artifacts/s1-evidence-20260929/`.
+`archive-manifest.json` records source revisions, paths, sizes and hashes;
+`SHA256SUMS` verifies regular files. Its manifest SHA-256 is
+`55d5155a24a730c6053db91870e0a9515d35e026e18565989b9f0e0bd2f66db3`.
 
 ```bash
 cd /root/orbitkv-artifacts/s1-evidence-20260929
 sha256sum --check SHA256SUMS
 ```
 
-The verified archive contains **2,345 regular files, 85,355,300,572 logical bytes**
-(including sparse files), plus symlinks and directories. The manifest SHA-256 is
-`55d5155a24a730c6053db91870e0a9515d35e026e18565989b9f0e0bd2f66db3`.
-
-The local archive covers the September 28–29 `cache-e2e`, `completion-evidence`,
-`layered-restore`, `partitioned-restore`, `strided-dma`, `same-host-a100`,
-`two-host` and `two-host-natural` run directories present at migration. Their
-original `benches/results/runs/<name>` paths now map to
-`legacy-results/runs/<name>` under that archive root. The manifest, not a path
-mentioned in prose, establishes which bytes were archived.
-
-Earlier ignored runs (including P4 cost/route experiments, queued warming and
-query-budget controls) were absent from this checkout at migration. Their
-historical documents and tracked aggregates remain accessible at the fixed Git
-revisions above; this migration does not claim to have recovered or verified
-missing raw logs. A `historical run label` in a document identifies that earlier
-record, not a readable local directory. The local archive is not a public download
-service or an off-host backup. Publishing new charts requires durable versioned
-artifacts; new performance or hardware claims need their own qualification.
+The [frozen inventory and relocation record](https://github.com/feichai0017/orbitkv/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#local-archive-and-verification)
+identifies the archived bytes, relocated symlinks and older missing raw logs.
+This private archive is not an off-host backup or public download. Publish new
+charts from durable versioned artifacts and qualify every new performance claim.

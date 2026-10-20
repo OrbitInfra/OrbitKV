@@ -356,6 +356,8 @@ def sglang_command(
     ]
     if args.deterministic_inference:
         command.append("--enable-deterministic-inference")
+    if args.sglang_priority_scheduling:
+        command += ["--enable-priority-scheduling", "--default-priority-value", "0"]
     if args.enforce_eager:
         command += [
             "--cuda-graph-backend-decode",

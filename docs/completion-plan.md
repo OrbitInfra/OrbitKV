@@ -139,6 +139,10 @@ not require finishing every fault/topology combination first.
 - [x] Descriptive two-host Manager RDMA and GPU-pointer component measurements;
   they do not establish complete serving superiority.
 - [x] Bounded native observation and offline matched-pair validation implemented.
+- [x] Diagnose SGLang 0.5.22 concurrent admission and compare its official
+  equal-priority option across four independent process pairs. Shared-prefix
+  recovery improves, but mixed-prefix regression guards fail; keep the option
+  explicit and defaults unchanged. See [performance](performance.md#sglang-concurrent-admission).
 - [ ] Pass the matched native-observer overhead pilot before using it to
   diagnose first peer recovery and warm steady state. The current pilot failed
   its tail guard.
