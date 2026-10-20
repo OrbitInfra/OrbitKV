@@ -1184,7 +1184,7 @@ def validate_adapter_bytes(
     if (
         row.get("pid") != owner["pid"]
         or row.get("start_ticks") != owner["start_ticks"]
-        or row.get("release") != ("0.31.0" if vllm else "0.5.21")
+        or row.get("release") != ("0.31.0" if vllm else "0.5.22")
         or row.get("tier") != cell["tier"]
         or any(
             row.get(field) is not True

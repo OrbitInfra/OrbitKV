@@ -106,11 +106,11 @@ on timeout without a full drain acknowledgement. Therefore in-flight transfer
 cancellation, peer loss and delayed-ACK page reuse remain unsupported by this
 candidate; enabling the flag does not qualify them. The model test cancels an
 already-running decode request and does not claim to exercise this DMA boundary.
-See the [release audit](engine-release-audit.md#native-pd-release-limits).
+See the [release audit](engine-release-audit.md#upstream-work-and-independent-limits).
 
 The ordinary cache has two version-coupled internal Hooks, plus optional queue
 preparation. Their purpose and removal conditions are documented in
-[the adapter audit](engine-release-audit.md#remaining-hook-contracts).
+[the adapter audit](engine-release-audit.md#remaining-internal-hooks).
 They are not P/D lifecycle Hooks. Native P/D cancellation/retraction correctness
 must be established against the release itself; the earlier fork's drain/ACK
 fixes are not assumed present.
