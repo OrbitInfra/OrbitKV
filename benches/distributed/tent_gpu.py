@@ -218,8 +218,15 @@ def main() -> None:
         engine = native.MooncakeTransferEngine(bind_host=args.bind, nics=args.nics.split(","))
         initialized = time.monotonic_ns()
         for pointer in memory.buffers[:1]:
-            engine.register_memory([{"addr": pointer.value, "len": CAPACITY, "location": "*"}])
             registrations.append(pointer.value)
+            exposed = True
+            try:
+                engine.register_memory_borrowed(
+                    [{"addr": pointer.value, "len": CAPACITY, "location": "*"}]
+                )
+            except BaseException as error:
+                traceback.print_exc(file=sys.stderr)
+                retain(f"Registration attempt has unproven native ownership: {error}")
         registered = time.monotonic_ns()
         exposed = True
         emit(

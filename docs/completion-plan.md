@@ -99,6 +99,11 @@ and [adapter contracts](adapters.md).
   termination proof exists; retain unresolved owners within explicit budgets.
 - [ ] Complete installed adapter lifetime/fault coverage for both engines.
 
+The Python TENT writable-buffer ownership repair in [PR #288](https://github.com/feichai0017/orbitkv/pull/288)
+has source/CPU and installed CPU-native fixture acceptance. It retains real
+buffer exports through failed cleanup; borrowed GPU backing and canonical
+CUDA/RDMA physical lifetime remain unqualified.
+
 CPU-native TCP source-close controls are accepted only in that scope. Canonical
 CUDA-native source close can return unsupported status 2 and retain the engine,
 registration and pool until process exit. Token Drop/best-effort destruction,

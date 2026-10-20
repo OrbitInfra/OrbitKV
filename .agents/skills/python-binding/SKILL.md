@@ -66,6 +66,16 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   latter reads original held counter descriptors and distinguishes current-path
   identity, missing paths and read errors. Neither API authorizes repayment or
   physical reuse; preserve the original failure and quarantine on uncertainty.
+- Experimental TENT bindings live in `python/src/mooncake.rs`. Owned
+  `register_memory` accepts writable contiguous bytearray memoryviews and retains
+  actual `PyBuffer` exports before native entry, including failed attempts.
+  `close` releases them only after whole-source drain and complete unregister;
+  a failed owner stays charged and GC must not retry explicit cleanup errors.
+  The current receipt supports only CPU-native TCP; CUDA-native close remains
+  unsupported. `register_memory_borrowed` leaves real CPU/GPU backing with its
+  caller through every failure and engine GC. Region/byte/retained-owner counts
+  are diagnostics, never device completion. Run the installed owner CPU controls
+  with their matching native fixture; keep GPU/RDMA qualification separate.
 
 Use the gate table in `AGENTS.md`: default Python tests must remain source-only;
 native lifecycle changes need process integration, and consumed adapter changes

@@ -586,8 +586,37 @@ The token does not own the allocation itself: retain the actual backing and
 token while explicit cleanup is unresolved. The current host pool remains
 beside its tokens in `MooncakeTransport`, whose owner requires a source-close
 receipt before unregistering and retains the pool and engine on failure.
-The raw Python TENT API remains caller-owned; its partial-registration and
-destructor backing lifetime are not qualified by this token API cleanup.
+The experimental Python TENT API uses `register_memory([memoryview(buffer)])`
+for nonempty writable contiguous byte views of built-in `bytearray` storage.
+It retains an actual buffer export, preventing view release and backing resize,
+and returns the registered addresses. Registration attempts become owned before
+entering native code, including a failed call that returns no token. Local
+READ/WRITE slices must fit a successfully registered range; cleanup serializes
+with synchronous transfers. Caller writes must still be ordered after transfers.
+
+`close()` retires the whole source, requires a successful source-drain receipt,
+then unregisters every attempt before releasing exports. An error preserves
+the successful prefix, failed range, engine and charged backing for an explicit
+retry. GC does not retry a preceding failure; it retains that owner until process
+exit. The current native receipt profile supports CPU-only TENT/TCP. CUDA builds
+or other loaded transports reject close, so this API does not qualify physical
+GPU/RDMA termination or reclamation.
+
+The separately named `register_memory_borrowed(regions)` accepts raw CPU/GPU
+pointers for existing experiments. It does **not** retain allocations: callers
+must keep their actual backing through registration errors, unknown completion,
+cleanup failure and engine GC. Its explicit `unregister_memory(addresses)` is
+logical registration cleanup, not a physical drain receipt. Owned and borrowed
+registrations cannot share an engine. The installed TCP gate isolates borrowed
+calls in a child that exits without Python teardown on an unknown failure; this
+does not establish safe device reuse after process exit.
+
+Python live and retained owners share a process cap of 1,024 regions and 1 TiB.
+Owned views charge each complete bytearray allocation, including capacity; aliases
+are conservatively charged again. Borrowed pointers can charge only their declared
+ranges. `MooncakeTransferEngine.memory_usage()` returns region count, charged
+bytes and retained-engine count. These diagnostics are not completion receipts
+and are separate from the Core source-pool budget.
 A future engine-HBM export must similarly keep its page-generation grant beside
 the token, using Mooncake's `cuda:N` location, until native completion drains.
 The current C ABI does not report the data transport actually selected for a
