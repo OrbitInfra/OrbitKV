@@ -49,7 +49,7 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   receives must also be finished receives in the same poll; do not restore a
   custom worker-metadata failure queue. Ordinary cache delivery is best effort,
   while a P/D producer retains the native reliable-delivery requirement.
-- SGLang 0.5.21 cancellation already reaches the external linker through
+- SGLang 0.5.22 cancellation already reaches the external linker through
   `BasePrefixCache.finish(ABORT)` and `UnifiedRadixCache.release_aborted_request`.
   Keep cancellation/drain in that consumed lifecycle; do not restore a duplicate
   private Scheduler abort Hook. Queue preparation is opt-in; fork P/D observation
@@ -76,7 +76,7 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   native-prefix monkey patches are removed. Reopen only after consumed released
   ordering and atomic state hand-off pass GPU/model gates.
 - SGLang native P/D candidate enables released deferred KV release on both P
-  and D, but 0.5.21 still releases on timeout without a full drain ACK. Keep
+  and D, but 0.5.22 still releases on timeout without a full drain ACK. Keep
   transfer cancellation, peer-loss and delayed-ACK page reuse unqualified;
   ordinary linker cancellation is a separate cache-owned contract.
 - vLLM's public `reset_cache()` now invalidates future external reuse through
@@ -92,7 +92,7 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   safe matching. This immutable profile does not intercept engine SDK/RPC
   add/remove/reload or live-weight updates; change artifacts only after stopping
   the engine.
-- SGLang 0.5.21 preserves raw `ServerArgs` and publishes resolved configuration
+- SGLang 0.5.22 preserves raw `ServerArgs` and publishes resolved configuration
   separately. Consume `runtime_context.get_lora()` for effective enable, startup
   LoRARef UIDs, backend and target modules, as its native loader/registry do.
   `--lora-paths` does not make the raw `enable_lora` field true.
@@ -108,13 +108,24 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
 
 ## Replace internal coupling safely
 
+SGLang 0.5.22 requires `finish_layer_wise_loading(index) -> bool`. Its native
+wrapper owns private load destinations and inserts/releases them after forward.
+Return only after actual native Restore completion; unknown submission, timeout
+or lost completion must retain ownership and raise. Preserve known pre-admission
+cancellation without acknowledging submitted work. Use `Req.prefix_len`,
+`MatchResult.device_prefix_len` and `Req.refresh_fill_ids()`; do not reintroduce
+removed load polling or custom `_update_load` insertion. Full/SWA are the only
+released external-linker components; reject recurrent/SSM startup rather than
+adding a custom component override. Earlier 0.5.21 result freezes retain their
+original pins; the 0.5.22 migration needs installed GPU requalification.
+
 The producer-admission candidate reserves native Save handles before adapter
 queues. vLLM keeps completion markers; SGLang returns ownership acceptance on
 unknown preparation so its released wrapper cannot drop tree locks. Rust owns
 batch merge and submission; only never-submitted cancellation may release a
 prepared owner. Preserve the same installed CPU/GPU/engine qualification gates.
 
-Audit every remaining Hook against `docs/engine-release-audit.md`. SGLang 0.5.21
+Audit every remaining Hook against `docs/engine-release-audit.md`. SGLang 0.5.22
 captures graphs before the tree-cache factory; preserve pre-capture events until
 a safe released callback exists. Its linker lookup lacks pending tickets, so
 pending-query admission remains a guarded internal Hook; queue preparation is

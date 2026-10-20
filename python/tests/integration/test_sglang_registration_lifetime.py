@@ -35,8 +35,8 @@ def test_sglang_close_retires_only_its_registration(
 ):
     torch = pytest.importorskip("torch")
     pytest.importorskip("sglang")
-    if importlib.metadata.version("sglang") != "0.5.21":
-        pytest.fail("Prepared Save pool gate requires official SGLang 0.5.21")
+    if importlib.metadata.version("sglang") != "0.5.22":
+        pytest.fail("Prepared Save pool gate requires official SGLang 0.5.22")
     from sglang.srt.mem_cache.allocator.paged import PagedTokenToKVPoolAllocator
     from sglang.srt.mem_cache.cache_init_params import CacheInitParams
     from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
@@ -164,10 +164,7 @@ def test_sglang_close_retires_only_its_registration(
         index = linker.start_layer_wise_loading()
         assert index >= 0
         linker.layer_done_counter.set_consumer(index)
-        while not linker.num_completed_loads():
-            assert time.monotonic() < deadline
-            time.sleep(0.01)
-        assert linker.pop_completed_load() == [rid]
+        assert linker.finish_layer_wise_loading(index) is True
         observed.start_restore.assert_called_once()
         observed.wait_restore.assert_called_once()
         torch.cuda.synchronize()
@@ -226,7 +223,7 @@ def test_sglang_close_retires_only_its_registration(
                     "workers_joined": True,
                     "registration_retired": True,
                     "client_closed": True,
-                    "release": "0.5.21",
+                    "release": "0.5.22",
                     "prepared_submission_consumed": True,
                     "linker_load_consumed": True,
                     "full_byte_oracle": True,

@@ -30,7 +30,7 @@ Missing hardware is unqualified, never passed.
 ## Current delivery sequence
 
 The immediate product is dense TP=1/PP=1 caching on vLLM 0.31.0 and SGLang
-0.5.21, using DRAM, io_uring SSD and already accepted scoped peer profiles.
+0.5.22, using DRAM, io_uring SSD and already accepted scoped peer profiles.
 Finish one useful delivery at a time; do not turn each failed experiment into
 another permanent controller or parallel roadmap.
 
@@ -160,8 +160,10 @@ handshake/proxy implementations or compatibility facades.
 
 ### S5.1 — Release and interface audit
 
-- [x] Selected official vLLM 0.31.0 and SGLang 0.5.21; runtime pins and optional
-  dependencies aligned. These are selected baselines, not a latest-release claim.
+- [x] Select official vLLM 0.31.0 and consume SGLang 0.5.22 public load completion;
+  runtime pins and source tags agree. Earlier SGLang acceptances use 0.5.21.
+- [ ] Qualify the 0.5.22 migration with final installed DRAM/io_uring byte,
+  model/restart and cancellation gates before extending support.
 On an upgrade, check official tags and consume exact released interfaces before
 changing all pins together. Upstream main is not the user's runtime.
 
@@ -183,8 +185,11 @@ correctness protection until a consumed released replacement exists.
 
 - [x] Public SGLang preparation/pending-lookup contributions submitted and CPU
   controls accepted; submission is not released adoption.
-- [ ] Consume released public replacements and remove each superseded private
-  hook in the same delivery.
+- [x] Consume SGLang 0.5.22 private load destinations and public post-forward
+  completion; delete custom load polling/tree insertion and recurrent component
+  override. Real-source CPU controls pass; installed GPU qualification is open.
+- [ ] Consume released pre-capture and pending-admission replacements and remove
+  each superseded private hook in the same delivery.
 - [ ] Complete recovery for all required attention, window, recurrent,
   checkpoint and auxiliary state of each claimed hybrid model. Qwen3.8 native
   output controls and historical fork results are not external-cache support.

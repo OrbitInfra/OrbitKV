@@ -108,19 +108,17 @@ no TTFT claim.
 At load time, transferred keys and engine-attested retained keys must be
 disjoint and together equal the keys in each compiled range. SGLang uses the
 contract instead of Python formulas for each pool kind. All group leases remain
-held until the combined restore completes. Cancelling a request whose
-destinations are already inserted into the radix tree first finishes their
-queued restore, then releases tree pins.
-Transfer errors do not acknowledge partially restored destinations.
-The consumer handoff waits for the whole restore before forward construction;
-CUDA graph replay must not depend on Python per-layer accessors being invoked.
+held until the combined restore completes. SGLang 0.5.22 owns private load
+destinations until the post-forward `finish_layer_wise_loading` callback proves
+that the batch has stopped writing. Only then can it insert or release those
+slots. Unknown submission, timeout or lost completion raises while ownership
+remains held; a logical failure is not a physical completion receipt.
 
-SGLang owns HBM allocation, eviction and checkpoint copy-on-write. The pinned
-0.5.20 external-linker component does not implement Mamba transfers; OrbitKV's
-`RecurrentComponent` supplies that behavior through the component registry.
-It saves sealed tree checkpoints, restores them into tree slots, and hands off
-to SGLang's normal request-state copy-on-write after the transfer fence. There
-is no second radix tree or patched engine submodule.
+SGLang owns HBM allocation and eviction. Its released external-linker wrapper
+supports Full and SWA, not Mamba. OrbitKV rejects recurrent/SSM model startup;
+the old custom recurrent component is removed. Generic state-layout byte tests
+do not establish a model lifecycle or authorize that profile. Full hybrid
+recovery needs a released complete-state contract plus model and fault gates.
 
 ## vLLM hybrid handoff
 

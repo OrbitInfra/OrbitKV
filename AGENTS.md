@@ -51,7 +51,7 @@ maintained skill per workflow and update it when the consumed API changes.
 
 OrbitKV is a framework-neutral state cache with compiled recovery requirements
 for LLM inference; general physical planning remains future work. Engine pins are vLLM `0.31.0`
-and SGLang `0.5.21`; see S5.1 for the 0.31.0 qualification scope and historical
+and SGLang `0.5.22`; see S5.1 for the 0.31.0 qualification scope and historical
 0.29.0 evidence. The SGLang UnifiedRadixCache linker is implemented, while
 public lifecycle integration and broader deployment qualification remain open.
 
@@ -147,12 +147,14 @@ orbitkv/
 ## Build, Check, Test
 
 The selected engine baselines are the pinned `third-party/vllm` v0.31.0 and
-`third-party/sglang` v0.5.21 tags. Keep Python optional dependency pins and
+`third-party/sglang` v0.5.22 tags. Keep Python optional dependency pins and
 the source submodules aligned when updating a release. Native builds and wheel
 CI only initialize `third-party/mooncake`; initialize engine submodules for
-source inspection or release upgrades. The latest-release reference is vLLM
-0.31.0 and SGLang 0.5.21 as checked on 2026-10-06; S5.1 records local upgrade
-qualification and independent acceptance separately. Check official release tags again when starting
+source inspection or release upgrades. The selected baselines are vLLM
+0.31.0 and SGLang 0.5.22; S5.1 separates the new SGLang installed qualification
+from historical 0.5.21 results. SGLang requires Python 3.11+ and its released
+external linker supports Full/SWA only. Public load completion is consumed;
+pre-capture and pending-admission hooks still need released replacements. Check official release tags again when starting
 an upgrade. Use main only to locate fixes and prepare upstream contributions.
 See `docs/adapters.md` and the `engine-integration` skill for ownership and
 removal gates; do not delete a correctness Hook before its replacement is consumed.

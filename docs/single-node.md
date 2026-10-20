@@ -80,11 +80,15 @@ an explicit socket. See [adapter configuration](adapters.md).
 
 ## SGLang
 
+Use Python 3.11+ for SGLang 0.5.22. The public load-completion migration is
+implemented; installed GPU requalification remains pending. Earlier accepted
+0.5.21 profiles retain their recorded versions.
+
 Use a separate official release environment:
 
 ```bash
 uv venv .venv/sglang-release --python 3.11
-uv pip install --python .venv/sglang-release/bin/python 'sglang==0.5.21' --torch-backend=cu130
+uv pip install --python .venv/sglang-release/bin/python 'sglang==0.5.22' --torch-backend=cu130
 uv pip install --python .venv/sglang-release/bin/python /absolute/path/to/the-built-wheel.whl
 ```
 

@@ -35,7 +35,11 @@ def check_engine_releases(root: Path) -> None:
     extras = manifest.get("project", {}).get("optional-dependencies", {})
     for engine, version in versions.items():
         extra = extras.get(engine)
-        if extra != [f"{engine}=={version}"]:
+        if (
+            not isinstance(extra, list)
+            or len(extra) != 1
+            or extra[0].partition(";")[0].strip() != f"{engine}=={version}"
+        ):
             raise SystemExit(
                 f"{engine} extra {extra!r} differs from release gate {version!r}"
             )

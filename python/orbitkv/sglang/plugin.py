@@ -45,6 +45,10 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
         raise ValueError("OrbitKV direct GPU linker requires RadixCache")
     if ctx.enable_hierarchical_cache:
         raise ValueError("OrbitKV direct GPU linker does not support hierarchical cache")
+    if ctx.is_hybrid_ssm:
+        raise ValueError(
+            "OrbitKV requires a complete released external-linker contract for recurrent state"
+        )
     if (
         ctx.is_dsa
         or ctx.params.is_eagle
@@ -66,7 +70,7 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
         raise ValueError("OrbitKV direct GPU linker does not support host-pool retraction")
 
     from .linker import OrbitKVLinker
-    from .recovery import RecoveryLinkerWrapper, RecurrentComponent
+    from .recovery import RecoveryLinkerWrapper
 
     # SGLang's built-in unified-cache factory hardcodes Mooncake/Mori when the
     # external-linker flag is set. Construct its public RadixCache component
@@ -74,9 +78,6 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
     components = [ComponentType.FULL]
     if ctx.is_hybrid_swa:
         components.append(ComponentType.SWA)
-    if ctx.is_hybrid_ssm:
-        components.append(ComponentType.MAMBA)
-        ctx.params.component_registry_override = {ComponentType.MAMBA: RecurrentComponent}
     ctx.params.tree_components = tuple(components)
     cache = UnifiedRadixCache(ctx.params)
     linker = OrbitKVLinker(ctx.server_args, ctx.params)

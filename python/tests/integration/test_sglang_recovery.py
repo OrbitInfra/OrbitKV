@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 import uuid
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 import requests
@@ -194,6 +193,7 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
         index = linker.start_layer_wise_loading()
         linker.layer_done_counter.set_consumer(index)
         linker.layer_done_counter.wait_until(1)
+        assert linker.finish_layer_wise_loading(index) is True
         torch.cuda.synchronize()
         assert torch.equal(kv[32:48], expected[0][4:20])
         assert torch.equal(conv[target], expected[1][source])
@@ -246,10 +246,8 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
                 linker.load(rid, selected)
             assert rid not in linker._queued_loads
 
-        # An aborted request must finish already-published tree destinations,
-        # otherwise a later HBM match can read their uninitialized bytes.
-        linker.pop_completed_load()
-        rid = "cancel-published"
+        # The native wrapper cancels private destinations before submission.
+        rid = "cancel-private"
         linker._origins[rid] = 64
         assert linker.lookup(rid, transfers) == [1, 4]
         assert linker.prepare_recovery(rid, 80) == 1
@@ -268,16 +266,17 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
         wrapper = object.__new__(RecoveryLinkerWrapper)
         wrapper.restore_from_store = True
         wrapper.cache_linker = linker
-        wrapper.cache = SimpleNamespace(dec_lock_ref=MagicMock())
+        wrapper.cache = SimpleNamespace()
         wrapper.hit_markers = {}
-        wrapper.pending_loads = {rid: (7, "pin")}
+        wrapper.inflight_load_rids = [rid]
+        wrapper.private_load_indices = {rid: torch.arange(32, 48, device="cuda")}
         wrapper.release_request(rid)
-        wrapper.cache.dec_lock_ref.assert_called_once_with(7, "pin")
-        assert not wrapper.pending_loads
+        assert not wrapper.inflight_load_rids
+        assert not wrapper.private_load_indices
         assert rid not in linker._origins
         torch.cuda.synchronize()
-        assert torch.equal(conv[target], expected[1][source])
-        assert torch.equal(temporal[target], expected[2][source])
+        assert (conv[target] == -1).all()
+        assert (temporal[target] == -1).all()
 
         # A cache hit can become entirely resident before destination allocation.
         # No load() call occurs, but all lookup evidence still needs retirement.
@@ -289,7 +288,7 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
             "match",
             lambda self, key, req, result: self.cache_linker.lookup(req.rid, transfers),
         )
-        assert wrapper.match(None, req, SimpleNamespace(device_indices=torch.arange(64))) == [1, 4]
+        assert wrapper.match(None, req, SimpleNamespace(device_prefix_len=64)) == [1, 4]
         assert rid not in linker._origins
         wrapper.hit_markers[rid] = SimpleNamespace(device_hit_len=64, tail_hashes=keys)
         monkeypatch.setattr(UnifiedCacheLinkerWrapper, "load_back", lambda self, req: None)

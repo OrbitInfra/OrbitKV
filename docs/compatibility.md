@@ -10,11 +10,13 @@ The [completion plan](completion-plan.md) owns remaining delivery work.
 | Engine | Pinned release | External-cache entry point | Qualified starting profile |
 | --- | --- | --- | --- |
 | vLLM | `0.31.0` | `OrbitKVConnector` through the official KV Connector API | V1 runner, one attention cache group, dense TP=1/PP=1 |
-| SGLang | `0.5.21` | `OrbitKVLinker` through UnifiedRadixCache's external linker | Dense TP=1/PP=1 with ordinary contiguous GPU pools |
+| SGLang | `0.5.22` | `OrbitKVLinker` through UnifiedRadixCache's external linker and public load completion | Migration implemented; installed GPU requalification pending. Earlier dense profiles use 0.5.21 |
 
 Set `VLLM_USE_V2_MODEL_RUNNER=0` before starting vLLM. V2, multiple cache groups
 and recurrent external-cache profiles are rejected until released lifecycle
-contracts can protect their pages. SGLang's public lifecycle migration remains
+contracts can protect their pages. SGLang 0.5.22 requires Python 3.11+ and
+supports only Full/SWA external-linker components; recurrent state is rejected
+before connecting to a Manager. SGLang's public lifecycle migration remains
 open: the current adapter still consumes bounded private graph-initialization
 and pending-query admission hooks. See [adapter contracts](adapters.md) and the
 [interface audit](engine-release-audit.md).
@@ -23,6 +25,9 @@ These are OrbitKV's selected release pins, not a promise that upstream has no
 newer release. Historical results retain their original engine versions.
 
 ## Deployment profiles
+
+The accepted SGLang profiles below were measured on 0.5.21. They do not transfer
+to 0.5.22 until the corresponding installed gates pass.
 
 | Profile | Current evidence and limit |
 | --- | --- |

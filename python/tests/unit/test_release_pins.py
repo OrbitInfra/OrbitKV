@@ -28,7 +28,7 @@ def release_checker(tmp_path, monkeypatch):
     return module, tmp_path, helper, entries
 
 
-@pytest.mark.parametrize("layout", ["ordinary", "multiline"])
+@pytest.mark.parametrize("layout", ["ordinary", "multiline", "python-marker"])
 def test_aligned_release_inputs_pass(release_checker, layout):
     module, root, _, _ = release_checker
     if layout == "multiline":
@@ -36,6 +36,11 @@ def test_aligned_release_inputs_pass(release_checker, layout):
             "[project.optional-dependencies]\n"
             "vllm = [\n  'vllm==0.31.0', # official release\n]\n"
             "sglang = ['sglang==0.5.21']\n"
+        )
+    elif layout == "python-marker":
+        path = root / "python/pyproject.toml"
+        path.write_text(
+            path.read_text().replace("sglang==0.5.21", "sglang==0.5.21; python_version >= '3.11'")
         )
     module.check_engine_releases(root)
 

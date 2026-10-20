@@ -4,7 +4,8 @@ OrbitKV integrates external cache recovery with engine-owned GPU pages and
 request lifecycles. Start with the [single-node quickstart](single-node.md).
 The [completion plan](completion-plan.md#s51--release-and-interface-audit)
 records release targets and upgrade gates. The package and source pins are
-vLLM **0.31.0** and SGLang **0.5.21**. Released callback contracts pass on A100;
+vLLM **0.31.0** and SGLang **0.5.22**. The new SGLang load-completion migration
+needs installed GPU requalification. Earlier 0.5.21 callback contracts pass on A100;
 ordinary-cache/restart and shared-Manager pressure have scoped independent
 acceptance; broader model, lifecycle and deployment qualification remains open. Historical
 0.30.0 eager/graph evidence does not qualify 0.31.0. Historical 0.29.0 model/topology evidence is not
@@ -242,8 +243,8 @@ released attention/TP groups have one participant. With multiple participants,
 the existing collective decision still waits for every required rank before
 admitting or exposing restored state. This removes redundant single-rank tensor
 allocation without changing cancellation, lease expiry or the internal Hooks.
-The installed 0.5.21 CPU interface gate passes; final GPU qualification of this
-cleanup remains open in S5.2.
+The actual 0.5.22 source interface passes the affected CPU controls; final
+installed GPU qualification remains open in S5.2.
 
 `events.py` owns the CUDA events and producer/consumer counters needed before
 graph capture. `linker.py` consumes those events and owns cache queries, loads,
@@ -251,13 +252,16 @@ offloads and registration. Plugin discovery imports neither the native extension
 nor GPU layout code; graph and admission hooks check the selected backend before
 loading OrbitKV resources. Native bindings load on first native API access.
 
-`RecoveryLinkerWrapper` and `RecurrentComponent` currently extend the released
-Full/SWA linker with checkpoint-specific behavior. Aborts use the released
-`BasePrefixCache.finish(ABORT)` → `UnifiedRadixCache.release_aborted_request` →
-`RecoveryLinkerWrapper.release_request` lifecycle. It cancels unconsumed queries
-and drains already-published destinations before releasing their tree locks;
-there is no additional Scheduler abort Hook.
-
+`RecoveryLinkerWrapper` now delegates private destination allocation, native
+cancellation and tree insertion to SGLang 0.5.22. It only translates absolute
+recovery boundaries and rank agreement. `finish_layer_wise_loading(index)` waits
+for native Restore before the engine inserts or frees destinations; unknown
+completion raises and retains ownership. The old load-polling queue, custom tree
+insertion and recurrent component override are removed. Full/SWA are the only
+released external-linker components, so recurrent/SSM startup is rejected.
+Aborts use `BasePrefixCache.finish(ABORT)` and the native linker release path;
+lookup-only cancellation also retires its unsubmitted cache query. There is no
+additional Scheduler abort Hook.
 The ordinary cache profile registers two internal Hooks: graph initialization
 and pending-query admission. Enqueue preparation adds one Hook only when
 `ORBITKV_PREPARE_REQUESTS=1` or `ORBITKV_QUEUE_WARMUP=1` is set before startup.

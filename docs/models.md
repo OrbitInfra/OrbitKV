@@ -7,7 +7,7 @@ vLLM or SGLang does not establish external-cache recovery.
 
 ## Choose a model
 
-| Model/profile | vLLM 0.31.0 | SGLang 0.5.21 | How to use it |
+| Model/profile | vLLM 0.31.0 | SGLang evidence (0.5.21) | How to use it |
 | --- | --- | --- | --- |
 | Qwen3-8B, dense attention | Scoped DRAM/io_uring recovery and engine restart accepted | Scoped DRAM/io_uring recovery and engine restart accepted | Start with the dense recipe below |
 | Qwen3-32B, BF16 dense attention | H20 TP=1/PP=1 ordinary recovery accepted | H20 TP=1/PP=1 ordinary recovery accepted | Size HBM and host cache for the workload; see measured limits below |
@@ -15,6 +15,10 @@ vLLM or SGLang does not establish external-cache recovery.
 | Qwen3.8-27B, BF16/FP8 weights | Native output controls only; external hybrid profile rejected | Native output controls only; full external recovery unqualified | Hybrid recipe requirements below |
 | DeepSeek-V4.1-Flash | Metadata/configuration checked; recovery unqualified | Metadata/configuration checked; recovery unqualified | Requires complete compressed and auxiliary-state contracts |
 | Multimodal, dynamic LoRA or live weight updates | Unqualified | Unqualified | Do not reuse text-only or static-adapter qualification |
+
+The SGLang 0.5.22 lifecycle migration must repeat the selected dense profile
+before inheriting these results. Full/SWA are the released external-linker
+components; recurrent/SSM models remain rejected.
 
 The selected checkpoint revisions are:
 

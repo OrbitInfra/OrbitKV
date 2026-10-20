@@ -9,7 +9,7 @@ import queue
 import threading
 import time
 import uuid
-from concurrent.futures import CancelledError
+from concurrent.futures import CancelledError, Future
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -143,7 +143,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self._queued_loads: dict[str, _Load] = {}
         self._load_queue: queue.Queue[tuple[int, list[_Load]] | None] = queue.Queue()
         self._offload_queue: queue.Queue[tuple[object, torch.cuda.Event] | None] = queue.Queue()
-        self._completed_loads: queue.Queue[list[str]] = queue.Queue()
+        self._load_completions: dict[int, Future[bool]] = {}
         self._load_error: Exception | None = None
         self._completed_offloads: queue.Queue[bool] = queue.Queue()
         self._retained_offloads: list[tuple[object, object]] = []
@@ -413,9 +413,22 @@ class OrbitKVLinker(UnifiedCacheLinker):
         pending = list(self._queued_loads.values())
         self._queued_loads.clear()
         index = self.layer_done_counter.update_producer()
+        self._load_completions[index] = Future()
         self.layer_done_counter.request_ids[index] = [load.rid for load in pending]
         self._load_queue.put((index, pending))
         return index
+
+    def finish_layer_wise_loading(self, counter_index: int) -> bool:
+        self._check_load_failure()
+        if counter_index == -1:
+            return True
+        completion = self._load_completions.get(counter_index)
+        if completion is None:
+            raise ValueError("Unknown OrbitKV restore batch generation")
+        landed = completion.result()
+        self._check_load_failure()
+        del self._load_completions[counter_index]
+        return landed
 
     def _load_worker(self) -> None:
         while True:
@@ -425,6 +438,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
                     return
                 index, pending = task
                 submitted = False
+                landed = False
                 try:
                     ready_stream = self.layer_done_counter._activations[index].result()
                     self._check_load_failure()
@@ -462,7 +476,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
                         raise RuntimeError(status.message)
                     for load in pending:
                         trace_transfer("gpu_ready", load.rid, engine="sglang", success=True)
-                    self._completed_loads.put([load.rid for load in pending])
+                    landed = True
                 except CancelledError:
                     # A batch never admitted to forward has not consumed its source leases.
                     for load in pending:
@@ -476,6 +490,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
                             for _, lease, _ in load.groups:
                                 self.client.release(lease)
                     self.layer_done_counter.publish_events(index, error)
+                finally:
+                    self._load_completions[index].set_result(landed)
             finally:
                 self._load_queue.task_done()
 
@@ -490,14 +506,6 @@ class OrbitKVLinker(UnifiedCacheLinker):
         for _, lease, _ in load.groups:
             self.client.release(lease)
         return True
-
-    def num_completed_loads(self) -> int:
-        self._check_load_failure()
-        return self._completed_loads.qsize()
-
-    def pop_completed_load(self) -> list[str]:
-        self._check_load_failure()
-        return self._completed_loads.get_nowait()
 
     def _check_load_failure(self) -> None:
         if self._load_error is not None:
@@ -629,6 +637,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self.layer_done_counter.cancel_pending()
         self._load_queue.join()
         self._offload_queue.join()
+        self._check_load_failure()
         if self._retained_offloads:
             raise RuntimeError("native Save completion unknown; offload pages remain held")
         for rid in list(self._pending_queries):
@@ -640,8 +649,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
             self._release_lookup(rid)
         for rid in list(self._queued_loads):
             self.cancel_queued_load(rid)
-        while not self._completed_loads.empty():
-            self._completed_loads.get_nowait()
+        self._load_completions.clear()
         while not self._completed_offloads.empty():
             self._completed_offloads.get_nowait()
         self.layer_done_counter.reset()

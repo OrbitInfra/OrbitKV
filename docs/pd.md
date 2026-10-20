@@ -1,6 +1,6 @@
 # Prefill/decode transfer
 
-OrbitKV uses **official vLLM 0.31.0 and SGLang 0.5.21**. Engines own live
+OrbitKV uses **official vLLM 0.31.0 and SGLang 0.5.22**. Engines own live
 P/D routing, allocation, transfer and release. OrbitKV independently caches
 completed state. Manager-to-Manager sharing continues to use Rust/TENT; live
 P/D does not require the same transport.
@@ -100,7 +100,7 @@ and routing. P restores historical state, D only publishes completed state;
 DSA/draft/unknown auxiliary layouts remain rejected.
 
 Enable `SGLANG_DISAGGREGATION_DEFERRED_DECODE_KV_RELEASE=1` on both P and D
-for the candidate; leave its timeout at 30 seconds. In official 0.5.21 this
+for the candidate; leave its timeout at 30 seconds. In official 0.5.22 this
 protection defaults off. Even when enabled, the native queue releases pages
 on timeout without a full drain acknowledgement. Therefore in-flight transfer
 cancellation, peer loss and delayed-ACK page reuse remain unsupported by this

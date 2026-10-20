@@ -54,11 +54,11 @@ def enqueue_request(original: Callable, scheduler: Any, req: Any, *args: Any, **
     )
     # req=None keeps this HBM-only: no external lookup, allocation or load marker.
     resident = scheduler.tree_cache.match_prefix(MatchPrefixParams(key=key, cow_mamba=False))
-    keys = wrapper._tail_hashes(key, resident, int(resident.device_indices.numel()))
+    keys = wrapper._tail_hashes(key, resident, resident.device_prefix_len)
     try:
         hashes = BlockHashes(linker._hashes(keys))
         if prepare:
-            origin = int(resident.device_indices.numel()) // linker.page_size * linker.page_size
+            origin = resident.device_prefix_len // linker.page_size * linker.page_size
             linker.client.prepare_recovery(
                 linker.instance_id,
                 hashes,
@@ -93,7 +93,7 @@ def admit_request(original: Callable, adder: Any, req: Any, *args: Any, **kwargs
 
         match_limit = req._compute_max_prefix_len(len(req.full_untruncated_fill_ids))
         restorable_tokens = match_limit // linker.page_size * linker.page_size
-        if len(req.prefix_indices) >= restorable_tokens:
+        if req.prefix_len >= restorable_tokens:
             linker.cancel_query(req.rid)
         # Every attention rank takes the same admission decision even when its
         # SSD read finishes in a different scheduler iteration.
