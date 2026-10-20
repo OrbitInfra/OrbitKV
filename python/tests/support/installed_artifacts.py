@@ -8,6 +8,7 @@ import importlib.metadata as metadata
 import importlib.util
 import json
 import os
+import stat
 import sys
 import sysconfig
 from pathlib import Path
@@ -18,6 +19,7 @@ ENGINE_COMMITS = {
     "sglang": "e00930c5489053f26d86b179cee0d087f846acbb",
 }
 NATIVE_LIBRARIES = {"libtent_shared.so", "libmooncake_common.so", "libasio.so"}
+EXECUTABLE_PACKAGE_FILES = {"orbitkv": ("orbitkv-cache-manager-py",)}
 
 
 def isolated_environment(environment: dict[str, str], directory: Path) -> dict[str, str]:
@@ -58,9 +60,12 @@ def distribution_snapshot(distribution, package: str) -> dict:
     record_path = (Path(distribution._path) / "RECORD").resolve()
     hashes = {}
     recorded = set()
+    recorded_names = set()
     for relative, checksum, size in rows:
-        path = Path(distribution.locate_file(relative)).resolve()
+        logical_path = Path(distribution.locate_file(relative)).absolute()
+        path = logical_path.resolve()
         recorded.add(path)
+        recorded_names.add(relative)
         assert checksum or path == record_path, f"Installed file has no RECORD hash: {path}"
         if relative.endswith("/"):
             assert path.is_dir(), f"Missing installed directory: {path}"
@@ -79,6 +84,17 @@ def distribution_snapshot(distribution, package: str) -> dict:
             hashes[str(path)] = hashlib.sha256(data).hexdigest()
     package_root = Path(distribution.locate_file(package)).resolve()
     assert package_root.is_dir(), package_root
+    executable_files = {}
+    for relative in EXECUTABLE_PACKAGE_FILES.get(package, ()):
+        path = package_root / relative
+        metadata = path.lstat()
+        record_name = (Path(package) / relative).as_posix()
+        assert record_name in recorded_names, f"Installed executable is outside RECORD: {path}"
+        assert stat.S_ISREG(metadata.st_mode), f"Installed executable is not regular: {path}"
+        assert path.resolve(strict=True) == path, f"Installed executable is not canonical: {path}"
+        assert metadata.st_mode & 0o111, f"Installed executable has no execute bit: {path}"
+        assert os.access(path, os.X_OK), f"Installed executable cannot execute: {path}"
+        executable_files[str(path)] = metadata.st_mode
     unrecorded = [
         str(path)
         for path in package_root.rglob("*")
@@ -92,6 +108,7 @@ def distribution_snapshot(distribution, package: str) -> dict:
         "version": distribution.version,
         "package_root": str(package_root),
         "files": hashes,
+        "executables": executable_files,
     }
 
 

@@ -1077,6 +1077,47 @@ quarantine, six locks and GPU1 ownership remain unchanged. This acceptance is
 not a model, SSD, SGLang, formal, fault, page-generation, physical-termination or
 reclamation gate; S3 remains Partial.
 
+**Scoped vLLM io_uring prepared-adapter acceptance (2026-10-20).** The f198 SSD
+freeze remains `AcceptedInvalidFailStop`: Python ZIP extraction
+discarded the Manager executable mode, so the first cell failed before Manager
+exec and the second never launched. The next host1 cohort also remains
+`AcceptedInvalidFailStop`: its fenced pytest completed, but the health-only
+preflight froze 77 Manager mappings while real CUDA registration loaded the
+installed extension as mapping 78. Both controllers retain their selected
+locks/quarantine; neither result contributes qualification. Their independent
+result `REVIEW.md` SHA256 values are respectively `f7d3c096` and `4bc0da6f`
+under `/root/orbitkv-artifacts/s3-adapter-remaining-lifetime-20261020/`.
+
+The accepted remediation at `bfa290ac` makes the Manager a canonical executable
+input and rejects stale mapped-runtime declarations before READY. The accepted
+`3b02479c` test installer preserves exact wheel Unix modes and RECORD bytes
+through bounded descriptor-relative installation. A fresh registration-consuming
+readiness on the second Forge H20 freezes all 78 Manager mappings. The final
+serial `3b05` pair then completes once on GPU3 and physical NVMe0/data02 without
+retry or forced cleanup. The fenced cell restores the complete 32,768-byte
+payload with SHA256 `5025d2d1`; the no-fence healthy counterfactual preserves
+the sentinel with SHA256 `9bd907d6` and `qualification_passed=false`. Each cell
+has nine ordered stages, actual SSD eviction, 4,096-byte io_uring prefetch and
+one advancing io_uring read, two distinct registration generations and two
+original-credit transitions from one to zero. Both 78-file mapping censuses,
+Manager SIGTERM/reap, pytest/native child waits, controller/root waits and final
+GPU/port/lock postflight pass.
+
+The remote root-wait PID `78770` remains as a PID-1-owned, unreaped zombie after
+its successful wait record. It has no executable, cwd, file descriptors, lock,
+listener, mapping or GPU ownership. This platform reap limitation is retained as
+postflight evidence and is not a resource owner or a physical-fault receipt.
+
+Independent result review accepts exactly
+`AcceptedVllmSsdPreparedAdapterPair`; `REVIEW.md` SHA256 is
+`76c3a35abc73b6e3729af51eb7dfa6a0fda4001a181cd4304233e6b847cff98a`.
+The sparse complete-result archive SHA256 is
+`65a7d15c7646fbfe7f457a190bc083221bf27e65bac32e900464dabf2db93de9`.
+This closes only the official vLLM 0.31.0 prepared-adapter io_uring healthy pair.
+SGLang prepared lifetime, cancellation/faults, allocation/page generations,
+physical termination/reclamation, model serving and performance remain open;
+S3 stays Partial.
+
 ## S4 — Finish communication execution and demonstrate gains
 
 **Partial. Depends on S3 for new reuse/early consumption.** Existing transfer,
