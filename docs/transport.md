@@ -577,10 +577,17 @@ Mooncake TENT C ABI. There is no legacy runtime selector and no OrbitKV-owned ve
 implementation. Authorized plans are lowered directly to Mooncake Segment
 addresses, BatchTransfer operations, and notifications.
 
-Memory registration returns an RAII `MemoryRegistration`. The token retains the
-TransferEngine and unregisters its region on explicit completion or drop. It
-does not own the allocation itself: the current host pool remains beside the
-tokens in `MooncakeTransport` and is released only after registrations clear.
+Memory registration returns a `MemoryRegistration` token. Its nonconsuming
+`try_unregister` keeps the retry handle and TransferEngine after an error; a
+successful call marks the token inactive. Drop the inactive token when its
+engine reference is no longer needed. Token destruction still attempts cleanup
+on a best-effort basis and cannot report failure or prove native drain.
+The token does not own the allocation itself: retain the actual backing and
+token while explicit cleanup is unresolved. The current host pool remains
+beside its tokens in `MooncakeTransport`, whose owner requires a source-close
+receipt before unregistering and retains the pool and engine on failure.
+The raw Python TENT API remains caller-owned; its partial-registration and
+destructor backing lifetime are not qualified by this token API cleanup.
 A future engine-HBM export must similarly keep its page-generation grant beside
 the token, using Mooncake's `cuda:N` location, until native completion drains.
 The current C ABI does not report the data transport actually selected for a

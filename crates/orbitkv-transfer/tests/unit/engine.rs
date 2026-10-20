@@ -127,13 +127,13 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
     let mut memory = vec![0u8; 8192];
     memory[..4096].fill(0xa5);
     let base = NonNull::new(memory.as_mut_ptr()).expect("memory pointer");
-    let registration = unsafe {
+    let mut registration = unsafe {
         engine
             .register_memory_owned(base, memory.len(), "cpu:0")
             .expect("register memory")
     };
     assert_eq!(registration.address(), base);
-    let peer_registration = unsafe {
+    let mut peer_registration = unsafe {
         peer.register_memory_owned(base, memory.len(), "cpu:0")
             .expect("register peer memory")
     };
@@ -194,10 +194,10 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
     assert_eq!(waiter.join().expect("join waiter").unwrap(), None);
     let _ = engine.nic_load_stats().expect("query TENT NIC load stats");
     peer_registration
-        .unregister()
+        .try_unregister()
         .expect("unregister peer memory");
-    registration.unregister().expect("unregister memory");
-    let registration = unsafe {
+    registration.try_unregister().expect("unregister memory");
+    let mut registration = unsafe {
         engine
             .register_memory_owned(base, memory.len(), "cpu:0")
             .expect("register memory again")
@@ -222,6 +222,7 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
             .close_source(Duration::ZERO)
             .expect("idempotent closed source receipt");
     }
+    registration.try_unregister().expect("unregister memory");
     drop(engine);
     drop(registration);
     unsafe {
@@ -280,14 +281,14 @@ fn grant_epoch_rejects_first_read_after_same_endpoint_restart() {
     let mut destination = vec![0x5au8; source.len()];
     let source_pointer = NonNull::new(source.as_mut_ptr()).unwrap();
     let destination_pointer = NonNull::new(destination.as_mut_ptr()).unwrap();
-    let source_registration = unsafe {
+    let mut source_registration = unsafe {
         source_engine
             .register_memory_owned(source_pointer, source.len(), "cpu:0")
             .unwrap()
     };
     let requester =
         Arc::new(TransferEngine::new(P2P_METADATA, "127.0.0.1:0", "127.0.0.1", 0, &[]).unwrap());
-    let target_registration = unsafe {
+    let mut target_registration = unsafe {
         requester
             .register_memory_owned(destination_pointer, destination.len(), "cpu:0")
             .unwrap()
@@ -310,7 +311,8 @@ fn grant_epoch_rejects_first_read_after_same_endpoint_restart() {
     assert_eq!(source, destination);
     destination.fill(0x5a);
     source_engine.close_source(Duration::from_secs(1)).unwrap();
-    source_registration.unregister().unwrap();
+    source_registration.try_unregister().unwrap();
+    drop(source_registration);
     drop(source_engine);
     let replacement =
         Arc::new(TransferEngine::new(P2P_METADATA, &endpoint, "127.0.0.1", port, &[]).unwrap());
@@ -319,7 +321,7 @@ fn grant_epoch_rejects_first_read_after_same_endpoint_restart() {
     for (i, byte) in source.iter_mut().enumerate() {
         *byte = ((i * 29 + 73) % 251) as u8;
     }
-    let replacement_registration = unsafe {
+    let mut replacement_registration = unsafe {
         replacement
             .register_memory_owned(source_pointer, source.len(), "cpu:0")
             .unwrap()
@@ -367,9 +369,9 @@ fn grant_epoch_rejects_first_read_after_same_endpoint_restart() {
     assert_eq!(fresh_read, source.len());
     assert_eq!(source, destination);
     replacement.close_source(Duration::from_secs(1)).unwrap();
-    replacement_registration.unregister().unwrap();
+    replacement_registration.try_unregister().unwrap();
     requester.close_source(Duration::from_secs(1)).unwrap();
-    target_registration.unregister().unwrap();
+    target_registration.try_unregister().unwrap();
     println!(
         "same_endpoint_same_address=true old_grant_rejected_before_batch=true fresh_payload_bytes={fresh_read} mutation={mutation}"
     );
