@@ -26,8 +26,9 @@ newer release. Historical results retain their original engine versions.
 
 ## Deployment profiles
 
-SGLang 0.5.22 repeats the Qwen3-8B single-engine normal path: complete GPU byte
-checks, independent consumer leases, known-unsubmitted cancellation, HBM flush,
+SGLang 0.5.22 repeats the Qwen3-8B BF16/raw normal path on H20, CUDA 13 and
+Python 3.11, with direct copies and TP=1/PP=1: complete GPU byte checks,
+independent consumer leases, known-unsubmitted cancellation, HBM flush,
 engine restart, four concurrent recovery requests and a changed-identity miss.
 The installed official engine files remain unchanged. Native worker exits
 `-9` and CUDA IPC shutdown warnings remain recorded lifetime limits; this does
