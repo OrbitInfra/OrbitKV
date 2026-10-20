@@ -158,6 +158,38 @@ def check_runtime_manifest(declaration: dict, deadline: float | None = None) -> 
     remaining(deadline)
 
 
+def frozen_runtime_closure(contract: dict, deadline: float | None = None) -> dict[str, dict]:
+    closure = {}
+
+    def add(path: str, realpath: str, size: int, sha256: str) -> None:
+        value = {"realpath": realpath, "bytes": size, "sha256": sha256}
+        previous = closure.get(path)
+        if previous is not None and previous != value:
+            raise RuntimeError(f"Frozen runtime declarations conflict: {path}")
+        closure[path] = value
+
+    for name, sha256 in contract["input_sha256"].items():
+        remaining(deadline)
+        path = Path(name)
+        resolved = path.resolve(strict=True)
+        add(name, str(resolved), resolved.stat().st_size, sha256)
+    for declaration in contract.get("runtime_manifests", []):
+        raw = read_bytes(Path(declaration["path"]), MAX_RUNTIME_MANIFEST_BYTES, deadline)
+        if hashlib.sha256(raw).hexdigest() != declaration["sha256"]:
+            raise RuntimeError("Frozen runtime manifest changed")
+        manifest = json.loads(raw)
+        root = Path(manifest["root"])
+        for item in manifest["files"]:
+            remaining(deadline)
+            add(
+                str(root / item["path"]),
+                item["realpath"],
+                item["bytes"],
+                item["sha256"],
+            )
+    return closure
+
+
 def identity(pid: int, deadline: float | None = None) -> dict:
     remaining(deadline)
     fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
@@ -349,6 +381,33 @@ def check_inputs(
             declared = next(item for item in executables if item["path"] == tracer)
             if contract["input_sha256"][tracer] != declared["sha256"]:
                 raise RuntimeError("Process tracer digests disagree")
+    if contract.get("qualification") in (
+        "pending-save-bytes-v2",
+        "prepared-adapter-lifetime-v1",
+        "prepared-adapter-lifetime-v2",
+    ):
+        for cell in contract["cells"]:
+            manager = cell.get("environment", {}).get("ORBITKV_CACHE_MANAGER_BINARY")
+            if (
+                not isinstance(manager, str)
+                or not Path(manager).is_absolute()
+                or manager not in seen_executables
+                or manager not in contract["input_sha256"]
+            ):
+                raise RuntimeError("Installed Save gate requires a frozen Manager executable")
+            declared = next(item for item in executables if item["path"] == manager)
+            if contract["input_sha256"][manager] != declared["sha256"]:
+                raise RuntimeError("Manager executable digests disagree")
+            manager_path = Path(manager)
+            metadata = manager_path.lstat()
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or manager_path.resolve(strict=True) != manager_path
+            ):
+                raise RuntimeError("Manager executable must be a canonical regular file")
+            identity_key = (declared["device"], declared["inode"])
+            if sum((item["device"], item["inode"]) == identity_key for item in executables) != 1:
+                raise RuntimeError("Manager executable has a duplicate physical alias")
     absent = contract.get("absent_inputs", [])
     if not isinstance(absent, list) or len(absent) > MAX_EVIDENCE_FILES:
         raise RuntimeError("Invalid absent input declarations")
@@ -389,6 +448,30 @@ def check_inputs(
                 reader.result()
         finally:
             executor.shutdown(wait=True, cancel_futures=True)
+    if contract.get("qualification") == "prepared-adapter-lifetime-v2":
+        closure = frozen_runtime_closure(contract, deadline)
+        for cell in contract["cells"]:
+            manager = cell["environment"]["ORBITKV_CACHE_MANAGER_BINARY"]
+            expected = cell.get("runtime_mapped_files")
+            if (
+                not isinstance(expected, dict)
+                or not expected
+                or len(expected) > 2048
+                or manager not in expected
+            ):
+                raise RuntimeError("Adapter gate requires a complete frozen runtime mapping")
+            for path, declaration in expected.items():
+                remaining(deadline)
+                if (
+                    not isinstance(path, str)
+                    or not Path(path).is_absolute()
+                    or not isinstance(declaration, dict)
+                    or set(declaration) != {"realpath", "bytes", "sha256"}
+                    or closure.get(path) != declaration
+                ):
+                    raise RuntimeError(
+                        f"Frozen mapped runtime conflicts with input closure: {path}"
+                    )
     if "mutable_runtime_domain" in contract:
         check_runtime_domain(contract["mutable_runtime_domain"], deadline)
     protected_resources = contract["protected_resources"]
