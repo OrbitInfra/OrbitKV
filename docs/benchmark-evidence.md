@@ -33,7 +33,7 @@ an empty GPU postflight. Independent review accepts functional capture only;
 This is a private host archive, not a public download. The trace includes CUPTI
 callback overhead; four samples per group cannot qualify latency, throughput,
 observer overhead or a backend default. Unattributed host time is not proven
-packing cost. See [the methodology](kernel-optimization.md#native-driver-submission-diagnosis).
+packing cost. See [the methodology](kernel-optimization.md#measure-the-bottleneck-before-changing-code).
 
 ## SGLang independent kernel-pair archive
 
@@ -54,7 +54,7 @@ reconstruction, fresh physical postflight and acceptance;
 Reviewer CPU preparation failures stay beside their successful replacements;
 no hardware cell or original evidence was replaced.
 
-The [methodology](../benches/transfer/README.md#actual-sglang-pool-byte-and-kernel-pair-checks)
+The [frozen methodology](https://github.com/feichai0017/orbitkv/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/benches/transfer/README.md#actual-sglang-pool-byte-and-kernel-pair-checks)
 defines full-byte controls and four-pair bootstrap guards; concise conclusions
 are in [performance](performance.md#independent-sglang-kernel-pairs).
 This is a private host archive. Scoped serial recovery acceptance does not select

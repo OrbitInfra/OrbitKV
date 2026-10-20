@@ -497,7 +497,7 @@ drain.
 
 ## Measured process-channel baseline
 
-The [current communication measurements](communication-performance.md) compare
+The [current communication measurements](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/communication-performance.md) compare
 request events, Publish reply notification and encoding changes against the
 preceding revision, including CPU cost and raw-ping regressions.
 

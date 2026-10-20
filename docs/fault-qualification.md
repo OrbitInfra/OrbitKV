@@ -61,7 +61,7 @@ This is single-GPU serving correctness, not multi-rank/P-D/RDMA qualification.
 
 Logs and artifact identifiers are retained in
 `.orbitkv/completion-evidence-20260928/`. The diagnostic performance cohorts in
-[communication measurements](communication-performance.md#completion-evidence-and-copy-path-diagnosis)
+[communication measurements](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/communication-performance.md#completion-evidence-and-copy-path-diagnosis)
 use the preceding Manager build; their hashes are recorded separately.
 
 ## Engine-local raw Restore gates
@@ -130,7 +130,7 @@ correctness on H20: vLLM **6 passed / 1 skipped** (the skipped recurrent-state
 case does not apply to this dense model), and SGLang **1 passed / 1 deselected**
 (DRAM selected, SSD excluded). Both exercise engine restart with a retained
 Manager. These are normal serving gates, not additional injected-fault tests;
-the [exact configuration](single-node-performance.md#engine-local-restore-serving-qualification)
+the [exact configuration](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/single-node-performance.md#engine-local-restore-serving-qualification)
 does not qualify arbitrary graph modes, hybrid models, or multiple GPUs.
 
 ## Reproduce

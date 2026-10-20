@@ -411,7 +411,7 @@ DRAM eviction and engine restart. Default-auto checks require new SSD reads
 through the selected backend after the same eviction and restart sequence.
 Qwen3.8 also exercises full-attention and GDN
 conv/recurrent state in the same request. Reproduce it with the
-[Qwen3.8 engine settings](models.md#qwen38-on-h20) and `--ssd-backend cufile`.
+[Qwen3.8 engine settings](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/models.md#qwen38-on-h20) and `--ssd-backend cufile`.
 
 The Manager gate verifies four adjacent 64 KiB pages restore with one 256 KiB
 cuFile read. Splitting them across two files requires two reads; selecting only

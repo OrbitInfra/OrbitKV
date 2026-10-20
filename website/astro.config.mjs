@@ -17,7 +17,16 @@ export default defineConfig({
     }),
     shikiConfig: { theme: "github-light", langAlias: { promql: "text" } },
   },
-  redirects: { "/evidence/": `${base}/integration/` },
+  redirects: {
+    "/evidence/": `${base}/integration/`,
+    ...Object.fromEntries(
+      ["client-performance", "communication-performance", "single-node-performance",
+        "concurrent-performance", "sustained-performance", "recovery-performance"]
+        .map((slug) => [`/docs/${slug}/`, `${base}/docs/performance/`]),
+    ),
+    "/docs/pd-mooncake-push/": `${base}/docs/pd/`,
+    "/docs/rust-quality/": `${base}/docs/contributing/`,
+  },
   vite: {
     define: {
       "import.meta.env.PUBLIC_SOURCE_REF": JSON.stringify(sourceRevision),

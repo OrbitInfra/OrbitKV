@@ -168,11 +168,11 @@ cohort. Full failures, per-cell clocks and provenance remain in
 
 | Question | Evidence and limits |
 | --- | --- |
-| Does external reuse beat recomputation? | The [historical matched vLLM comparison](single-node-performance.md#matched-vllm-end-to-end-comparison) records an advantage over HBM-eviction recomputation; native CPU offload remained faster in that workload. It does not establish a universal win over native KV caching or LMCache |
-| What changed in the copy/control path? | [Communication measurements](communication-performance.md) retain both the original regression and later idle-stream/plan-compaction improvements; [kernel work](kernel-optimization.md) separates correctness, measured shapes and production selection |
-| How do SSD and query budgets behave? | [SSD methodology](ssd-performance.md), [concurrent queries](concurrent-performance.md) and [recovery profiling](recovery-performance.md) describe bounded storage and restoration workloads |
+| Does external reuse beat recomputation? | The [historical matched vLLM comparison](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/single-node-performance.md#matched-vllm-end-to-end-comparison) records an advantage over HBM-eviction recomputation; native CPU offload remained faster in that workload. It does not establish a universal win over native KV caching or LMCache |
+| What changed in the copy/control path? | [Communication measurements](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/communication-performance.md) retain both the original regression and later idle-stream/plan-compaction improvements; [kernel work](kernel-optimization.md) separates correctness, measured shapes and production selection |
+| How do SSD and query budgets behave? | [SSD methodology](ssd-performance.md), [concurrent queries](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/concurrent-performance.md) and [recovery profiling](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/recovery-performance.md) describe bounded storage and restoration workloads |
 | What is proven across hosts? | [Shared-cache qualification](shared-cache-qualification.md) records scoped TCP/RDMA recovery and restart correctness; HA, broad topology and serving performance remain separate |
-| Is metadata pressure isolated? | [S2 status](completion-plan.md#s210--sustained-live-store-and-independent-domain-qualification): sixteen-owner ordinary visibility passes, but formal DRAM/SSD isolation fails; support stays four owners |
+| Is metadata pressure isolated? | [S2 status](completion-plan.md#s2--metadata-reliability-and-measured-capacity): sixteen-owner ordinary visibility passes, but formal DRAM/SSD isolation fails; support stays four owners |
 
 Historical reports below retain their measured engine/build versions and link to
 immutable full reports. Use [compatibility](compatibility.md) for current support,

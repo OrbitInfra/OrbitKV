@@ -4,19 +4,21 @@ export const docGroups = [
     description: "Install, select a supported profile, and verify an external hit.",
     items: [
       { slug: "goals", title: "Overview" },
+      { slug: "features", title: "Features" },
       { slug: "single-node", title: "Installation & quickstart" },
       { slug: "compatibility", title: "Compatibility & support" },
     ],
   },
   {
-    title: "Deployment",
-    description: "Connect engines, share capacity, and select a topology.",
+    title: "Models & deployment",
+    description: "Choose a model, connect an engine, and share cache capacity.",
     items: [
-      { slug: "adapters", title: "Engine adapter contracts" },
+      { slug: "models", title: "Model recipes" },
       { slug: "deployment", title: "Deployment recipes" },
-      { slug: "models", title: "Model qualification" },
       { slug: "p2p", title: "Cross-host shared cache" },
       { slug: "pd", title: "Native P/D composition" },
+      { slug: "storage-formats", title: "Storage formats & compression" },
+      { slug: "cache-policies", title: "Retention & SSD admission" },
     ],
   },
   {
@@ -25,7 +27,6 @@ export const docGroups = [
     items: [
       { slug: "server", title: "Manager configuration" },
       { slug: "metrics", title: "Metrics & observability" },
-      { slug: "fault-qualification", title: "Fault qualification" },
     ],
   },
   {
@@ -35,10 +36,6 @@ export const docGroups = [
       { slug: "architecture", title: "System architecture" },
       { slug: "transport", title: "Process & network transport" },
       { slug: "state-identity", title: "State identity" },
-      { slug: "hybrid-recovery", title: "Hybrid recovery contracts" },
-      { slug: "cache-policies", title: "Retention & SSD admission" },
-      { slug: "gds", title: "GPU storage & GDS limits" },
-      { slug: "storage-formats", title: "Storage codecs" },
     ],
   },
   {
@@ -57,6 +54,7 @@ export const docGroups = [
     items: [
       { slug: "contributing", title: "Contributor guide" },
       { slug: "completion-plan", title: "Completion plan" },
+      { slug: "adapters", title: "Engine adapter contracts" },
       { slug: "engine-release-audit", title: "Released interface audit" },
       { slug: "releases", title: "Package releases" },
     ],
@@ -65,6 +63,9 @@ export const docGroups = [
 
 // Keep stable reference routes and search entries outside the primary sidebar.
 const referencePages = [
+  { slug: "hybrid-recovery", title: "Hybrid recovery contracts", group: "Reference" },
+  { slug: "gds", title: "GPU storage & GDS limits", group: "Reference" },
+  { slug: "fault-qualification", title: "Fault qualification", group: "Reference" },
   { slug: "engine-local-restore", title: "Engine-local restore ownership", group: "Reference" },
   { slug: "state-planning", title: "Demand & transfer planning", group: "Reference" },
   { slug: "queued-warming", title: "Queued-request warming", group: "Reference" },
@@ -75,14 +76,6 @@ const referencePages = [
   { slug: "distributed-cache", title: "Distributed global index", group: "Reference" },
   { slug: "distributed-design", title: "Inventory and recovery design", group: "Reference" },
   { slug: "distributed-comparison", title: "LMCache, FlexKV & Mooncake comparison", group: "Reference" },
-  { slug: "pd-mooncake-push", title: "Retired P/D protocol", group: "Reference" },
-  { slug: "client-performance", title: "Client control overhead", group: "Reference" },
-  { slug: "communication-performance", title: "Communication measurements", group: "Reference" },
-  { slug: "single-node-performance", title: "Single-node comparisons", group: "Reference" },
-  { slug: "concurrent-performance", title: "Concurrent query budgets", group: "Reference" },
-  { slug: "sustained-performance", title: "Sustained serving", group: "Reference" },
-  { slug: "recovery-performance", title: "Recovery stage profile", group: "Reference" },
-  { slug: "rust-quality", title: "Rust quality gates", group: "Reference" },
 ];
 
 export const docPages = [

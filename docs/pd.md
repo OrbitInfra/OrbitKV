@@ -160,4 +160,4 @@ Its original code/tests remain at that commit; its frozen results remain under
 `/root/orbitkv-artifacts/native-pd-tent-20260930/HANDOFF.md`.
 These are upstream contribution/reproduction material, not supported runtime
 installation instructions or evidence that official releases passed the same gates.
-The [retired protocol history](pd-mooncake-push.md) preserves earlier evidence.
+The [retired protocol history](https://github.com/feichai0017/orbitkv/blob/0e3668ebca0f7d80a049b834390098de7eaf963b/docs/pd-mooncake-push.md) preserves earlier evidence.

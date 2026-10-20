@@ -39,6 +39,11 @@ Python tests require no GPU, engine service or native build. Heavy gates have
 explicit triggers and remain unqualified when hardware is unavailable.
 Local hooks use `prek run` on a topic branch.
 
+PRs limited to Markdown, website and Python benchmark/test files run the relevant
+fast checks. Native, package, CI or unrecognized inputs keep CUDA checks, wheels
+and Clippy; main pushes retain the complete pipeline. Native source moves are
+classified as deletions and additions, so moving a file cannot hide its check.
+
 ## Submit a change
 
 Create a `feat/`, `fix/`, `chore/`, `refactor/`, `style/` or `ci/` branch. Use

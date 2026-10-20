@@ -63,11 +63,43 @@ jobs:
   version-consistency-check:
     name: version consistency check
     runs-on: ubuntu-latest
+    outputs:
+      native: ${{ steps.scope.outputs.native }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 2
+      - name: Select native checks
+        id: scope
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+
+          native = True
+          if os.environ["GITHUB_EVENT_NAME"] == "pull_request":
+              # Checkout supplies the PR merge commit; its first parent is the base.
+              # Disable rename detection so deleting/moving native source stays visible.
+              changed = subprocess.run(
+                  ["git", "diff", "--name-only", "--no-renames", "-z", "HEAD^1", "HEAD"],
+                  capture_output=True,
+              )
+              if changed.returncode == 0:
+                  paths = [os.fsdecode(path) for path in changed.stdout.split(b"\0") if path]
+                  native = any(
+                      not (
+                          (path.endswith(".md") and path != "python/README.md")
+                          or path.startswith("website/")
+                          or (path.startswith(("benches/", "python/tests/")) and path.endswith(".py"))
+                      )
+                      for path in paths
+                  )
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"native={str(native).lower()}\n")
+          print(f"Native build checks required: {native}")
+          PY
       - name: Reject tracked experiment output
         run: python3 scripts/check-experiment-output.py
       - name: Check Rust and Python package versions stay in sync
@@ -110,7 +142,8 @@ jobs:
     name: rust clippy check
     # Keep heavy jobs in bounded waves. Some runner pools cancel jobs that stay
     # eligible but unassigned for 15 minutes.
-    needs: build-wheel
+    needs: [build-wheel, version-consistency-check]
+    if: needs.version-consistency-check.outputs.native == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -194,7 +227,8 @@ jobs:
     name: cargo check (${{ matrix.cuda-variant }})
     # Finish the short feedback waves before consuming the available runners
     # with CUDA builds, so no job expires while waiting for a runner.
-    needs: website-check
+    needs: [website-check, version-consistency-check]
+    if: needs.version-consistency-check.outputs.native == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -245,19 +279,25 @@ jobs:
   cargo-check:
     name: cargo check
     if: always()
-    needs: cargo-check-variant
+    needs: [cargo-check-variant, website-check, version-consistency-check]
     runs-on: ubuntu-latest
     steps:
       - name: Check results
         run: |
-          if [[ "${{ needs.cargo-check-variant.result }}" != "success" ]]; then
-            echo "cargo check variants failed"
+          if [[ "${{ needs.version-consistency-check.result }}" != "success" || "${{ needs.website-check.result }}" != "success" ]]; then
+            echo "prerequisite checks failed"
             exit 1
           fi
+          case "${{ needs.version-consistency-check.outputs.native }}:${{ needs.cargo-check-variant.result }}" in
+            true:success) echo "native checks passed" ;;
+            false:skipped) echo "documentation and Python harness changes: native checks not required" ;;
+            *) echo "native checks failed or scope is unavailable"; exit 1 ;;
+          esac
 
   build-wheel:
     name: build Python 3.14 wheel (${{ matrix.cuda-variant }})
-    needs: cargo-check
+    needs: [cargo-check, version-consistency-check]
+    if: needs.version-consistency-check.outputs.native == 'true'
     runs-on: ubuntu-24.04
     strategy:
       matrix:

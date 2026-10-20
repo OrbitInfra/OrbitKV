@@ -11,7 +11,7 @@ correctness gates live in `python/tests/`; tests here protect benchmark validity
 | [serving/](serving/README.md) | Official engine/backend comparisons, pressure and concurrency | `benches.serving.single_node`, `shared_manager_pressure`, `native_model_readiness` |
 | [transfer/](transfer/README.md) | Local DMA/kernel copies, shapes and observation cost | `benches.transfer.communication`, `kernel_pairs`, `copy_observation` |
 | [distributed/](distributed/README.md) | Remote cache recovery, TENT and RDMA | `benches.distributed.shared_cache_serving`, `rdma_profile`, `tent_trace` |
-| [cluster/](cluster/README.md) | Metadata visibility, isolation and etcd process faults | `benches.cluster.live_store_capacity`, `live_store_isolation`, `three_host_etcd/` |
+| [cluster/](cluster/README.md) | Reusable metadata churn and visibility | `benches.cluster.metadata` |
 | [storage/](storage/README.md) | SSD paths, GDS prerequisites and storage codecs | `benches.storage.gds`, `storage/native/cpu_codec.rs` |
 | [common/](common/README.md) | Process ownership, launch, workloads, metrics and reports | Imported by the benchmark families |
 
@@ -43,3 +43,9 @@ Use that frozen source when replaying old evidence; current commands use the
 module paths above. Module moves do not qualify a new artifact or change a result.
 Use [the completion plan](../docs/completion-plan.md) as the only delivery queue
 and [performance](../docs/performance.md) for reviewed results and limitations.
+
+Completed S2-only capacity/isolation/observer and three-host campaign drivers,
+their dedicated tests and duplicate report pages are retired. Their
+[immutable source](https://github.com/feichai0017/orbitkv/tree/dc52461078bb22910ba6c783ecf0d9213599b10b/benches/cluster)
+and original freezes preserve reproduction. Current correctness tests remain
+with the Rust owners and under `python/tests/`; failed qualifications stay failed.
