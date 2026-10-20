@@ -8,7 +8,7 @@
 #include <dlfcn.h>
 
 static std::atomic<unsigned long long> registers{0}, unregisters{0},
-    destroys{0};
+    destroys{0}, source_closes{0};
 static std::atomic<unsigned long long> unregister_ns{0};
 static bool scenario(const char *value) {
   auto name = std::getenv("ORBITKV_TEST_SOURCE_OWNER_CASE");
@@ -47,6 +47,7 @@ int tent_register_memory_ex(tent_engine_t engine, void *address, size_t length,
 }
 extern "C" int tent_close_source(tent_engine_t engine, uint64_t timeout,
                                  char *epoch, uint64_t *active) {
+  ++source_closes;
   auto fn = native<int (*)(tent_engine_t, uint64_t, char *, uint64_t *)>(
       "tent_close_source");
   if (!fn)
@@ -61,8 +62,9 @@ extern "C" int tent_close_source(tent_engine_t engine, uint64_t timeout,
   return status;
 }
 int tent_unregister_memory(tent_engine_t engine, void *address, size_t length) {
-  ++unregisters;
-  if (scenario("unregister-error"))
+  auto call = ++unregisters;
+  if (scenario("unregister-error") ||
+      (scenario("unregister-after-first") && call == 2))
     return -1;
   auto fn =
       native<int (*)(tent_engine_t, void *, size_t)>("tent_unregister_memory");
@@ -87,6 +89,9 @@ extern "C" unsigned long long orbitkv_test_unregisters() {
 }
 extern "C" unsigned long long orbitkv_test_destroys() {
   return destroys.load();
+}
+extern "C" unsigned long long orbitkv_test_source_closes() {
+  return source_closes.load();
 }
 extern "C" unsigned long long orbitkv_test_unregister_ns() {
   return unregister_ns.load();

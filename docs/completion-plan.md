@@ -535,9 +535,22 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   leaves the retry handle with its caller instead of consuming it and silently
   retrying through destruction. Maintained TCP controls explicitly drop inactive
   tokens before replacing an engine at the same endpoint. This API cleanup
-  leaves best-effort token Drop, terminal destruction and the raw Python
-  partial-registration/backing owner boundary open; it does not establish
-  physical termination or change the Core pool-retention policy.
+  leaves best-effort token Drop and terminal destruction open; it does not
+  establish physical termination or change the Core pool-retention policy.
+  The Python owner retains actual writable bytearray buffer exports
+  before native registration, including a no-token partial failure. Whole-source
+  close gates release, cleanup retries skip completed ranges, and GC retains an
+  already failed owner without implicit retry. Live and retained regions share
+  bounded admission charged against full bytearray capacity. Raw GPU/CPU pointer
+  experiments use the explicitly borrowed API and still own their allocations.
+  Independent `ACCEPTED_CODE_CPU_SCOPE` at `1d14d510` covers seven installed
+  owner controls, including real TCP bytes and a partially retained native
+  provider, plus the bundled TCP and failed borrowed-caller gates. The complete
+  frozen debug wheel uses a CPU-only native override; CUDA-native package
+  qualification is separate. The borrowed caller preserves its failed registration
+  frame through child exit. CUDA/RDMA physical drain, terminal destruction,
+  fault reclamation and S3/S4/S5 completion remain open. Evidence is under
+  `/root/orbitkv-artifacts/s3-python-tent-buffer-owner-20261020/`.
 - Bound and diagnose retained/quarantined source memory while proof is absent.
   Timeout, etcd expiry, cancellation, remote process disappearance and a control
   ACK are not interchangeable with native drain. An unavailable upstream primitive
