@@ -31,13 +31,12 @@ def test_exact_wheel_install_preserves_manager_mode_and_rejects_reuse(tmp_path):
         ],
     )
     target = tmp_path / "installed"
-    target.mkdir()
     result = install(candidate, target)
     manager = target / "orbitkv/orbitkv-cache-manager-py"
     assert result["count"] == 2
     assert stat.S_IMODE(manager.stat().st_mode) == 0o755
     assert manager.read_bytes() == b"manager"
-    with pytest.raises(RuntimeError, match="empty"):
+    with pytest.raises(RuntimeError, match="must not exist"):
         install(candidate, target)
 
 
@@ -53,17 +52,15 @@ def test_exact_wheel_install_preserves_manager_mode_and_rejects_reuse(tmp_path):
 def test_exact_wheel_install_rejects_unsafe_members(tmp_path, entry):
     candidate = wheel(tmp_path, [(entry, b"unsafe")])
     target = tmp_path / "installed"
-    target.mkdir()
     with pytest.raises(RuntimeError):
         install(candidate, target)
-    assert not any(target.iterdir())
+    assert not target.exists()
 
 
 def test_exact_wheel_install_rejects_non_unix_and_duplicate_members(tmp_path):
     non_unix = member("orbitkv/manager", stat.S_IFREG | 0o755)
     non_unix.create_system = 0
     target = tmp_path / "installed"
-    target.mkdir()
     with pytest.raises(RuntimeError, match="Unix"):
         install(wheel(tmp_path, [(non_unix, b"manager")]), target)
     duplicate = member("orbitkv/manager", stat.S_IFREG | 0o755)
@@ -71,3 +68,78 @@ def test_exact_wheel_install_rejects_non_unix_and_duplicate_members(tmp_path):
         duplicate_wheel = wheel(tmp_path, [(duplicate, b"one"), (duplicate, b"two")])
     with pytest.raises(RuntimeError, match="duplicated"):
         install(duplicate_wheel, target)
+    assert not target.exists()
+
+
+def test_exact_wheel_install_applies_directory_modes_after_children(tmp_path):
+    candidate = wheel(
+        tmp_path,
+        [
+            (member("private/payload", stat.S_IFREG | 0o600), b"payload"),
+            (member("private/", stat.S_IFDIR | 0o700), b""),
+        ],
+    )
+    target = tmp_path / "installed"
+    install(candidate, target)
+    assert stat.S_IMODE((target / "private").stat().st_mode) == 0o700
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        [
+            (member("pkg//payload", stat.S_IFREG | 0o600), b"one"),
+            (member("pkg/payload", stat.S_IFREG | 0o600), b"two"),
+        ],
+        [
+            (member("pkg", stat.S_IFREG | 0o600), b"file"),
+            (member("pkg/payload", stat.S_IFREG | 0o600), b"child"),
+        ],
+        [
+            (member("pkg/", stat.S_IFDIR | 0o700), b""),
+            (member("pkg", stat.S_IFREG | 0o600), b"file"),
+        ],
+    ],
+)
+def test_exact_wheel_install_rejects_normalized_overlaps_before_writes(tmp_path, entries):
+    candidate = wheel(tmp_path, entries)
+    target = tmp_path / "installed"
+    with pytest.raises(RuntimeError, match="duplicated|parent|both"):
+        install(candidate, target)
+    assert not target.exists()
+
+
+def test_exact_wheel_install_does_not_follow_replaced_parent(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    candidate = wheel(
+        tmp_path,
+        [(member("pkg/payload", stat.S_IFREG | 0o600), b"payload")],
+    )
+    target = workspace / "installed"
+    original = ZipFile.open
+    replaced = False
+
+    def replace_parent(archive, *args, **kwargs):
+        nonlocal replaced
+        if not replaced:
+            retired = tmp_path / "retired-workspace"
+            workspace.rename(retired)
+            workspace.symlink_to(outside, target_is_directory=True)
+            replaced = True
+        return original(archive, *args, **kwargs)
+
+    monkeypatch.setattr(ZipFile, "open", replace_parent)
+    with pytest.raises(RuntimeError, match="parent|identity"):
+        install(candidate, target)
+    assert not (outside / "installed").exists()
+
+
+def test_exact_wheel_install_rejects_preexisting_target(tmp_path):
+    candidate = wheel(tmp_path, [(member("payload", stat.S_IFREG | 0o600), b"payload")])
+    target = tmp_path / "installed"
+    target.mkdir()
+    with pytest.raises(RuntimeError, match="must not exist"):
+        install(candidate, target)
