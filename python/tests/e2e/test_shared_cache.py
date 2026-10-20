@@ -43,6 +43,7 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
     from benches.common.runtime import server
     from benches.common.workload import evict_host_cache, generate
     from benches.distributed.shared_cache import drain, qualify, synchronize, verify_restore
+    from tests.support.registration_campaign import identity, record_process_group_runtime
 
     config = json.loads((model / "config.json").read_text())
     assert config["model_type"] == "qwen3", "this gate qualifies dense Qwen3"
@@ -58,6 +59,7 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
         endpoint, _ = resources.enter_context(etcd_server(tmp_path))
         launches, managers, engines = {}, {}, {}
         registrations, membership_history = {}, []
+        runtime_services, runtime_history = {}, []
         cluster = "shared-cache-serving"
         starts = {"source": 0, "consumer": 0}
         engine_starts = {"source": 0, "consumer": 0}
@@ -139,14 +141,20 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
             else:
                 assert read_member() is None, f"unexpected existing member: {node}"
             expiry_seconds = time.monotonic() - started
-            managers[node].enter_context(
+            log = tmp_path / f"{node}-manager-{run}.log"
+            process = managers[node].enter_context(
                 server(
                     launch.manager_command,
                     launch.env,
                     launch.manager_url,
-                    tmp_path / f"{node}-manager-{run}.log",
+                    log,
                     pass_fds=inherited_gpu_lock_fds(),
                 )
+            )
+            runtime_services[node, "manager"] = (
+                process,
+                identity(process.pid, time.monotonic() + 5)["start_ticks"],
+                log,
             )
             current = read_member()
             assert current is not None and current["node_id"] == node, current
@@ -177,16 +185,42 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
             launch = launches[node]
             run = engine_starts[node]
             engine_starts[node] += 1
-            engines[node].enter_context(
+            log = tmp_path / f"{node}-engine-{run}.log"
+            process = engines[node].enter_context(
                 server(
                     launch.command,
                     launch.env,
                     launch.base_url,
-                    tmp_path / f"{node}-engine-{run}.log",
+                    log,
                     engine=engine,
                     pass_fds=inherited_gpu_lock_fds(),
                 )
             )
+            runtime_services[node, "engine"] = (
+                process,
+                identity(process.pid, time.monotonic() + 5)["start_ticks"],
+                log,
+            )
+
+        def record_runtime(*services):
+            for node, role in services:
+                process, start_ticks, log = runtime_services[node, role]
+                record_process_group_runtime(process, start_ticks, log, time.monotonic() + 180)
+                runtime_history.append(
+                    {
+                        "node": node,
+                        "role": role,
+                        "pid": process.pid,
+                        "start_ticks": start_ticks,
+                        "log": log.name,
+                        "runtime": f"{log.name}.{process.pid}-{start_ticks}.process-runtime.json",
+                        "membership": registrations[node],
+                    }
+                )
+                (tmp_path / "service-runtime-history.json").write_text(
+                    json.dumps(runtime_history, indent=2) + "\n"
+                )
+                del runtime_services[node, role]
 
         start("consumer")
         start("source")
@@ -206,6 +240,7 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
         drain(source.manager_url, target.manager_url)
 
         # Restart the consumer; rebuild from membership and owner streams. Source KV survives.
+        record_runtime(("consumer", "engine"), ("consumer", "manager"))
         engines["consumer"].close()
         managers["consumer"].close()
         start("consumer")
@@ -217,9 +252,11 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
         report.append({"case": "index_restart", **row, "resources_drained": True})
 
         # Remove all consumer copies and restart the source with no payload.
+        record_runtime(("consumer", "engine"))
         engines["consumer"].close()
         evict_host_cache(target.manager_url)
         synchronize(target.manager_url, source.manager_url)
+        record_runtime(("source", "engine"), ("source", "manager"))
         engines["source"].close()
         managers["source"].close()
         start("source", with_engine=False)
@@ -242,6 +279,8 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
                 "ttft_ms": fallback["ttft_ms"],
             }
         )
+        record_runtime(("consumer", "engine"), ("consumer", "manager"), ("source", "manager"))
+        assert not runtime_services and len(runtime_history) == 8
     (tmp_path / "summary.json").write_text(
         json.dumps({"engine": engine, "deployment": "same-host-tcp", "results": report}, indent=2)
         + "\n"
