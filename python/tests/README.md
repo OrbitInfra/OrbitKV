@@ -137,6 +137,13 @@ still performs normal cleanup. These records prove runtime participation within
 their observed scope, not physical CUDA/RDMA termination or execution of every
 Python source file.
 
+The shared-cache E2E uses the same recorder before each consumer/source restart
+and final teardown. Its `service-runtime-history.json` binds all eight live
+engine/Manager groups to their original PID/start identity, log and observed
+member incarnation. The existing service contexts retain cleanup ownership if
+capture fails. Installed-entry probes alone do not qualify those live groups;
+the selected wheel still needs its own two-engine shared-cache runs.
+
 Shared client ownership is tested in Rust under
 `crates/orbitkv-channel/tests/unit/cache_client.rs`: query revisions, immutable
 hash snapshots and shared views, warming limits/expiry, separate publish traffic, lost restore

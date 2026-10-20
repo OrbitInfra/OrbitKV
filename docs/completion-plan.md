@@ -497,13 +497,25 @@ manifest `c9854b368263cede1cfa7b8732c01cf4426fcb39dee1863e3ac037f8cfe805d1`.
   remain required. See [PR #283](https://github.com/feichai0017/orbitkv/pull/283).
   The first ordinary vLLM 0.31.0 dense restart run passes six functional cases
   with one expected hybrid-model skip and normal zero exits for all four
-  services. Current-artifact qualification remains open: the external observer
-  missed the save/load workers' live native mappings. No artifact mixing was
-  observed, but declared paths cannot replace that evidence. The next test-only
-  change records live service groups inside the maintained engine fixtures,
-  reusing the existing runtime reader before their normal teardown. Its fresh
-  installed-engine and shared-cache qualification remains required; the earlier
-  functional run and unsuccessful observers are retained.
+  services. Its current-artifact qualification was withheld: the external
+  observer missed the save/load workers' live native mappings. No artifact
+  mixing was observed, but declared paths cannot replace that evidence. The
+  original functional run and unsuccessful observers retain their verdicts.
+  The follow-up [PR #284](https://github.com/feichai0017/orbitkv/pull/284)
+  records live groups in the ordinary fixtures. Independent acceptance of its
+  fresh `105eefbc` wheel controls covers vLLM 0.31.0 V1/direct DRAM with Graph
+  NONE (six passed, one unsupported-hybrid skip), and SGLang 0.5.21 direct
+  DRAM/logical file-backed io_uring SSD with default graph settings (two passed),
+  all Qwen3-8B dense TP1/PP1. Actual workers and Managers map the current native
+  artifacts; normal service-leader waits, unchanged inputs and empty selected
+  resource postflight pass. SGLang's internal SIGKILL exits and CUDA IPC warnings
+  remain recorded. This accepts healthy recovery, not physical NVMe/GDS, faults,
+  physical termination or performance. Reviews are under
+  `/root/orbitkv-artifacts/s3-engine-runtime-evidence-20261019/`.
+  The shared fixture still needed the same live evidence. It now records every
+  engine/Manager incarnation before its existing teardown, binding each record
+  to the observed membership identity. This is a test-only implementation;
+  fresh shared-cache model qualification from the same wheel remains required.
 - Bound and diagnose retained/quarantined source memory while proof is absent.
   Timeout, etcd expiry, cancellation, remote process disappearance and a control
   ACK are not interchangeable with native drain. An unavailable upstream primitive
