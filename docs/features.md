@@ -46,7 +46,8 @@ The selected releases are vLLM 0.31.0 and SGLang 0.5.22. vLLM uses the official
 KV Connector; SGLang uses UnifiedRadixCache's external linker with bounded
 internal lifecycle hooks still present. Qwen3-8B/32B dense recovery has scoped
 acceptance on the recorded releases. SGLang 0.5.22 load completion uses its
-public callback but needs installed GPU requalification. Hybrid/auxiliary-state models need complete recovery qualification.
+public callback and repeats the Qwen3-8B DRAM/io_uring byte/model profile.
+Hybrid/auxiliary-state models need complete recovery qualification.
 Check [model recipes](models.md) and [compatibility](compatibility.md).
 
 Native P/D uses vLLM NIXL/MultiConnector or SGLang native disaggregation. OrbitKV

@@ -98,7 +98,8 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   `--lora-paths` does not make the raw `enable_lora` field true.
 - Explicit FULL decode Graph cache recovery is independently qualified only for
   the recorded H20 dense TP1/PP1 serial batch-1 eight-token direct/kernel io_uring
-  profile on both official releases. Use `--release-cuda-graph` in the installed
+  profile on vLLM 0.31.0 and historical SGLang 0.5.21. This does not qualify
+  SGLang 0.5.22 Graph shapes. Use `--release-cuda-graph` in the installed
   gate and require native runtime observations; capture-only logs do not qualify.
   Preset sizes 2/4, long decode/save boundaries, adapters with Graph, concurrency,
   preemption/cancellation, prefill capture and physical topology remain separate.
@@ -117,7 +118,9 @@ cancellation without acknowledging submitted work. Use `Req.prefix_len`,
 removed load polling or custom `_update_load` insertion. Full/SWA are the only
 released external-linker components; reject recurrent/SSM startup rather than
 adding a custom component override. Earlier 0.5.21 result freezes retain their
-original pins; the 0.5.22 migration needs installed GPU requalification.
+original pins. The 0.5.22 Qwen3-8B installed DRAM/io_uring byte/model/restart
+profile passes; broader Graph, shared-pressure, peer and physical fault profiles
+need their own requalification.
 
 The producer-admission candidate reserves native Save handles before adapter
 queues. vLLM keeps completion markers; SGLang returns ownership acceptance on

@@ -3,7 +3,7 @@
 The selected source/package pins are official **vLLM 0.31.0**
 (`db9527a46873454610df6dbedf79a36d6bf1a7f6`) and **SGLang 0.5.22**
 (`baa9befa381511cd4d56f83980951e5a45fffc6d`). The SGLang migration passes
-real-source CPU interface controls but needs installed GPU requalification.
+official installed CPU and Qwen3-8B dense DRAM/io_uring byte/model/restart controls.
 Earlier accepted 0.5.21 workloads retain their original scope. The
 [completion plan](completion-plan.md#s5--released-engine-integration-and-upstream-contributions)
 is the execution queue; this page describes consumed contracts.

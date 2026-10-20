@@ -25,10 +25,9 @@ long conversation prefixes.
 
 Run an independent Cache Manager on each inference host. Engines own GPU pages
 and scheduling; Rust owns external replicas, byte budgets and transfer completion.
-The pinned official engines are **vLLM 0.31.0** and **SGLang 0.5.22**. The new
-SGLang lifecycle migration needs installed GPU requalification; earlier 0.5.21
-results retain their original scope. Start with
-dense TP=1/PP=1 inference and check the [support matrix](docs/compatibility.md).
+The pinned official engines are **vLLM 0.31.0** and **SGLang 0.5.22**. Start with
+Qwen3-8B dense TP=1/PP=1 DRAM or io_uring recovery and check the
+[support matrix](docs/compatibility.md) before extending the deployment.
 Version 0.1.0 is not yet published; interfaces may change before 1.0.
 
 ## Features

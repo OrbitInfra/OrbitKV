@@ -2,12 +2,13 @@
 
 OrbitKV integrates external cache recovery with engine-owned GPU pages and
 request lifecycles. Start with the [single-node quickstart](single-node.md).
-Source/package pins are official **vLLM 0.31.0** and **SGLang 0.5.22**. The new
-SGLang public load-completion migration passes source/CPU controls; installed
-GPU requalification remains open. See [compatibility](compatibility.md).
+Source/package pins are official **vLLM 0.31.0** and **SGLang 0.5.22**. The
+SGLang public load-completion path passes installed Qwen3-8B dense TP1/PP1
+DRAM/io_uring byte and model/restart controls. See [compatibility](compatibility.md).
 
-The accepted workloads below use **vLLM 0.31.0 and SGLang 0.5.21**. None is
-inherited by 0.5.22 simply by upgrading its pin.
+The broader workloads below retain their recorded **vLLM 0.31.0 and SGLang
+0.5.21** versions. The new 0.5.22 ordinary-cache controls do not extend their
+Graph, shared-pressure or peer-cache scope.
 
 | Recorded workload | Accepted scope and limit |
 | --- | --- |
@@ -237,8 +238,8 @@ released attention/TP groups have one participant. With multiple participants,
 the existing collective decision still waits for every required rank before
 admitting or exposing restored state. This removes redundant single-rank tensor
 allocation without changing cancellation, lease expiry or the internal Hooks.
-The actual 0.5.22 source interface passes the affected CPU controls; final
-installed GPU qualification remains open in S5.2.
+The 0.5.22 interface passes the affected CPU controls and the selected installed
+GPU byte/model gates. Physical multi-rank agreement remains unqualified.
 
 `events.py` owns the CUDA events and producer/consumer counters needed before
 graph capture. `linker.py` consumes those events and owns cache queries, loads,

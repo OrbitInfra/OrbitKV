@@ -10,7 +10,7 @@ The [completion plan](completion-plan.md) owns remaining delivery work.
 | Engine | Pinned release | External-cache entry point | Qualified starting profile |
 | --- | --- | --- | --- |
 | vLLM | `0.31.0` | `OrbitKVConnector` through the official KV Connector API | V1 runner, one attention cache group, dense TP=1/PP=1 |
-| SGLang | `0.5.22` | `OrbitKVLinker` through UnifiedRadixCache's external linker and public load completion | Migration implemented; installed GPU requalification pending. Earlier dense profiles use 0.5.21 |
+| SGLang | `0.5.22` | `OrbitKVLinker` through UnifiedRadixCache's external linker and public load completion | Qwen3-8B dense TP=1/PP=1, installed DRAM/io_uring bytes and model/restart controls |
 
 Set `VLLM_USE_V2_MODEL_RUNNER=0` before starting vLLM. V2, multiple cache groups
 and recurrent external-cache profiles are rejected until released lifecycle
@@ -26,12 +26,17 @@ newer release. Historical results retain their original engine versions.
 
 ## Deployment profiles
 
-The accepted SGLang profiles below were measured on 0.5.21. They do not transfer
-to 0.5.22 until the corresponding installed gates pass.
+SGLang 0.5.22 repeats the Qwen3-8B single-engine normal path: complete GPU byte
+checks, independent consumer leases, known-unsubmitted cancellation, HBM flush,
+engine restart, four concurrent recovery requests and a changed-identity miss.
+The installed official engine files remain unchanged. Native worker exits
+`-9` and CUDA IPC shutdown warnings remain recorded lifetime limits; this does
+not qualify physical cancellation or page reuse. Broader SGLang profiles below
+retain their measured 0.5.21 versions until their own gates are repeated.
 
 | Profile | Current evidence and limit |
 | --- | --- |
-| Single engine, DRAM or io_uring SSD | Official-engine dense recovery and engine-restart reuse independently accepted on H20; Manager stays alive |
+| Single engine, DRAM or io_uring SSD | Qwen3-8B repeated on official SGLang 0.5.22; other accepted models retain their recorded release. Manager stays alive during engine restart |
 | Two engines sharing one Manager | H20 900-second dense eager direct/kernel io_uring pressure profile accepted for correctness, progress and bounded resources; fairness and tail isolation remain open |
 | CUDA Graph recovery | Explicit serial batch-1 FULL decode Graph recovery accepted for the fixed H20 direct/kernel io_uring profile; arbitrary graph shapes and hybrid replay remain open |
 | Two hosts, peer cache | Both official engines have scoped two-H20 RDMA dense TP=1/PP=1 DRAM/io_uring restore, consumer restart and controlled empty-source restart acceptance; this is not cache HA qualification |

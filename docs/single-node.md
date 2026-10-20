@@ -80,8 +80,8 @@ an explicit socket. See [adapter configuration](adapters.md).
 
 ## SGLang
 
-Use Python 3.11+ for SGLang 0.5.22. The public load-completion migration is
-implemented; installed GPU requalification remains pending. Earlier accepted
+Use Python 3.11+ for SGLang 0.5.22. Start with the installed Qwen3-8B dense
+DRAM/io_uring profile in [compatibility](compatibility.md). Broader historical
 0.5.21 profiles retain their recorded versions.
 
 Use a separate official release environment:

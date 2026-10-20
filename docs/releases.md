@@ -13,8 +13,8 @@ how to validate a candidate without uploading it to PyPI.
 
 Install one CUDA variant per environment; both provide the `orbitkv` import and
 `orbitkv-cache-manager` command. Engine extras pin vLLM 0.31.0 or SGLang 0.5.22.
-SGLang requires Python 3.11+; core OrbitKV retains Python 3.10+. The SGLang
-0.5.22 migration needs installed GPU requalification.
+SGLang requires Python 3.11+; core OrbitKV retains Python 3.10+. The selected
+0.5.22 Qwen3-8B installed profile is recorded in [compatibility](compatibility.md).
 Use separate engine environments. Build-matrix coverage does not establish
 that every engine/GPU combination works on every Python version; serving
 qualification uses Python 3.11 on H20 and A100, with each result tied to its

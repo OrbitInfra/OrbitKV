@@ -35,9 +35,10 @@ Use separate official environments for **vLLM 0.31.0** and **SGLang 0.5.22**,
 with the same OrbitKV build in the Manager environment. vLLM requires
 `VLLM_USE_V2_MODEL_RUNNER=0` and one attention cache group. SGLang uses the
 UnifiedRadixCache external linker and its public load-completion callback.
-SGLang requires Python 3.11+. Its 0.5.22 migration needs installed GPU
-requalification; earlier 0.5.21 measurements remain historical. Pre-capture and
-pending-admission hooks remain until released replacements are available.
+SGLang requires Python 3.11+. Its 0.5.22 Qwen3-8B normal-path acceptance is
+scoped in [compatibility](../docs/compatibility.md); broader 0.5.21 measurements
+remain historical. Pre-capture and pending-admission hooks remain until released
+replacements are available.
 Follow the [engine quickstart](../docs/single-node.md) for complete commands and
 an external-hit check. Native P/D owns its transport; OrbitKV owns independent
 cache adapters and Manager peer-cache traffic through TENT.

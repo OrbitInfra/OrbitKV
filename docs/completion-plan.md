@@ -34,7 +34,8 @@ The immediate product is dense TP=1/PP=1 caching on vLLM 0.31.0 and SGLang
 Finish one useful delivery at a time; do not turn each failed experiment into
 another permanent controller or parallel roadmap.
 
-1. **Maintainable product surface.** Retire completed campaign-specific code and
+1. **Maintainable product surface — delivered in [PR #289](https://github.com/feichai0017/orbitkv/pull/289).**
+   Retire completed campaign-specific code and
    duplicate reports; keep reusable benchmarks and tests with a current consumer.
    Organize README, model recipes and website around installation, features,
    deployment, operations and performance. Preserve support limits and verify
@@ -172,8 +173,11 @@ handshake/proxy implementations or compatibility facades.
 
 - [x] Select official vLLM 0.31.0 and consume SGLang 0.5.22 public load completion;
   runtime pins and source tags agree. Earlier SGLang acceptances use 0.5.21.
-- [ ] Qualify the 0.5.22 migration with final installed DRAM/io_uring byte,
-  model/restart and cancellation gates before extending support.
+- [x] Repeat the 0.5.22 Qwen3-8B dense TP1/PP1 profile with final installed
+  DRAM/io_uring byte and model/restart controls. Known-unsubmitted cancellation
+  and independent consumer leases pass; physical cancellation/page reuse remain
+  in S3/S5.2. Wider 0.5.21 profiles are not inherited.
+
 On an upgrade, check official tags and consume exact released interfaces before
 changing all pins together. Upstream main is not the user's runtime.
 
@@ -197,7 +201,8 @@ correctness protection until a consumed released replacement exists.
   controls accepted; submission is not released adoption.
 - [x] Consume SGLang 0.5.22 private load destinations and public post-forward
   completion; delete custom load polling/tree insertion and recurrent component
-  override. Real-source CPU controls pass; installed GPU qualification is open.
+  override. Official installed CPU and selected Qwen3-8B GPU controls pass;
+  complete hybrid and fault qualification remain open.
 - [ ] Consume released pre-capture and pending-admission replacements and remove
   each superseded private hook in the same delivery.
 - [ ] Complete recovery for all required attention, window, recurrent,
