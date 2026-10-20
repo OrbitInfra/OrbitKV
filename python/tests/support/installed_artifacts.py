@@ -60,9 +60,12 @@ def distribution_snapshot(distribution, package: str) -> dict:
     record_path = (Path(distribution._path) / "RECORD").resolve()
     hashes = {}
     recorded = set()
+    recorded_names = set()
     for relative, checksum, size in rows:
-        path = Path(distribution.locate_file(relative)).resolve()
+        logical_path = Path(distribution.locate_file(relative)).absolute()
+        path = logical_path.resolve()
         recorded.add(path)
+        recorded_names.add(relative)
         assert checksum or path == record_path, f"Installed file has no RECORD hash: {path}"
         if relative.endswith("/"):
             assert path.is_dir(), f"Missing installed directory: {path}"
@@ -84,12 +87,14 @@ def distribution_snapshot(distribution, package: str) -> dict:
     executable_files = {}
     for relative in EXECUTABLE_PACKAGE_FILES.get(package, ()):
         path = package_root / relative
-        metadata = path.stat()
-        assert path.resolve() in recorded, f"Installed executable is outside RECORD: {path}"
+        metadata = path.lstat()
+        record_name = (Path(package) / relative).as_posix()
+        assert record_name in recorded_names, f"Installed executable is outside RECORD: {path}"
         assert stat.S_ISREG(metadata.st_mode), f"Installed executable is not regular: {path}"
+        assert path.resolve(strict=True) == path, f"Installed executable is not canonical: {path}"
         assert metadata.st_mode & 0o111, f"Installed executable has no execute bit: {path}"
         assert os.access(path, os.X_OK), f"Installed executable cannot execute: {path}"
-        executable_files[str(path.resolve())] = metadata.st_mode
+        executable_files[str(path)] = metadata.st_mode
     unrecorded = [
         str(path)
         for path in package_root.rglob("*")

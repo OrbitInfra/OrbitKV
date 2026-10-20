@@ -837,7 +837,17 @@ def test_installed_save_requires_frozen_process_tracer_before_admission(tmp_path
 
 
 @pytest.mark.parametrize(
-    "fault", [None, "lost-execute", "undeclared", "unhashed", "relative", "missing"]
+    "fault",
+    [
+        None,
+        "lost-execute",
+        "undeclared",
+        "unhashed",
+        "relative",
+        "missing",
+        "initial-alias",
+        "duplicate-alias",
+    ],
 )
 def test_installed_save_requires_frozen_manager_executable_before_admission(tmp_path, fault):
     manager = tmp_path / "manager"
@@ -873,6 +883,19 @@ def test_installed_save_requires_frozen_manager_executable_before_admission(tmp_
         contract["cells"][0]["environment"]["ORBITKV_CACHE_MANAGER_BINARY"] = manager.name
     elif fault == "missing":
         del contract["cells"][0]["environment"]["ORBITKV_CACHE_MANAGER_BINARY"]
+    elif fault == "initial-alias":
+        target = tmp_path / "manager-target"
+        manager.rename(target)
+        manager.symlink_to(target.name)
+        replacement = executable_input(manager)
+        contract["executable_inputs"][-1] = replacement
+        contract["input_sha256"][str(manager)] = replacement["sha256"]
+    elif fault == "duplicate-alias":
+        alias = tmp_path / "manager-alias"
+        alias.symlink_to(manager.name)
+        declaration = executable_input(alias)
+        contract["executable_inputs"].append(declaration)
+        contract["input_sha256"][str(alias)] = declaration["sha256"]
     if fault is None:
         campaign.check_inputs(contract)
     else:
@@ -882,7 +905,16 @@ def test_installed_save_requires_frozen_manager_executable_before_admission(tmp_
 
 @pytest.mark.parametrize(
     "fault",
-    [None, "manager-hash", "library-hash", "size", "realpath", "missing-file", "missing-map"],
+    [
+        None,
+        "manager-hash",
+        "library-hash",
+        "size",
+        "realpath",
+        "missing-file",
+        "missing-map",
+        "manifested-manager-alias",
+    ],
 )
 def test_adapter_runtime_mapping_matches_frozen_input_closure(tmp_path, fault):
     runtime = tmp_path / "runtime"
@@ -892,6 +924,12 @@ def test_adapter_runtime_mapping_matches_frozen_input_closure(tmp_path, fault):
     manager.chmod(0o700)
     library = runtime / "native.so"
     library.write_bytes(b"frozen native extension")
+    runtime_files = [manager, library]
+    if fault == "manifested-manager-alias":
+        target = runtime / "manager-target"
+        manager.rename(target)
+        manager.symlink_to(target.name)
+        runtime_files.insert(1, target)
     tracer = tmp_path / "tracer"
     tracer.write_text("#!/bin/sh\nexit 0\n")
     tracer.chmod(0o700)
@@ -907,7 +945,7 @@ def test_adapter_runtime_mapping_matches_frozen_input_closure(tmp_path, fault):
                         "bytes": path.stat().st_size,
                         "sha256": campaign.digest(path),
                     }
-                    for path in (manager, library)
+                    for path in runtime_files
                 ],
             }
         )
@@ -959,7 +997,7 @@ def test_adapter_runtime_mapping_matches_frozen_input_closure(tmp_path, fault):
     if fault is None:
         campaign.check_inputs(contract)
     else:
-        with pytest.raises(RuntimeError, match="runtime|mapping"):
+        with pytest.raises(RuntimeError, match="runtime|mapping|Manager|canonical"):
             campaign.check_inputs(contract)
 
 

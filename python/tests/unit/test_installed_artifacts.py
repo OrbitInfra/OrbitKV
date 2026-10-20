@@ -117,14 +117,14 @@ def test_release_environment_excludes_source_and_native_overrides(tmp_path):
     assert env["VLLM_USE_V2_MODEL_RUNNER"] == "0"
 
 
-@pytest.mark.parametrize("mode", [0o755, 0o644])
-def test_orbitkv_record_guard_requires_executable_manager(installed_distribution, mode):
+@pytest.mark.parametrize("mutation", ["executable", "not-executable", "alias", "recorded-alias"])
+def test_orbitkv_record_guard_requires_executable_manager(installed_distribution, mutation):
     package = installed_distribution.locate_file("sample")
     orbitkv = package.with_name("orbitkv")
     package.rename(orbitkv)
     manager = orbitkv / "orbitkv-cache-manager-py"
     manager.write_bytes(b"frozen manager bytes")
-    manager.chmod(mode)
+    manager.chmod(0o755 if mutation != "not-executable" else 0o644)
     record = installed_distribution.locate_file("sample-1.0.dist-info/RECORD")
     rows = list(csv.reader(record.read_text().splitlines()))
     for row in rows:
@@ -133,11 +133,17 @@ def test_orbitkv_record_guard_requires_executable_manager(installed_distribution
     data = manager.read_bytes()
     digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
     rows.insert(-1, ("orbitkv/orbitkv-cache-manager-py", f"sha256={digest}", len(data)))
+    if mutation in {"alias", "recorded-alias"}:
+        target = orbitkv / "manager-target"
+        manager.rename(target)
+        manager.symlink_to(target.name)
+        if mutation == "recorded-alias":
+            rows.insert(-1, ("orbitkv/manager-target", f"sha256={digest}", len(data)))
     with record.open("w", newline="") as stream:
         csv.writer(stream).writerows(rows)
-    if mode & 0o111:
+    if mutation == "executable":
         snapshot = distribution_snapshot(installed_distribution, "orbitkv")
         assert snapshot["executables"] == {str(manager): manager.stat().st_mode}
     else:
-        with pytest.raises(AssertionError, match="execute"):
+        with pytest.raises(AssertionError, match="execute|regular|canonical"):
             distribution_snapshot(installed_distribution, "orbitkv")

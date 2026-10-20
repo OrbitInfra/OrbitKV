@@ -398,6 +398,16 @@ def check_inputs(
             declared = next(item for item in executables if item["path"] == manager)
             if contract["input_sha256"][manager] != declared["sha256"]:
                 raise RuntimeError("Manager executable digests disagree")
+            manager_path = Path(manager)
+            metadata = manager_path.lstat()
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or manager_path.resolve(strict=True) != manager_path
+            ):
+                raise RuntimeError("Manager executable must be a canonical regular file")
+            identity_key = (declared["device"], declared["inode"])
+            if sum((item["device"], item["inode"]) == identity_key for item in executables) != 1:
+                raise RuntimeError("Manager executable has a duplicate physical alias")
     absent = contract.get("absent_inputs", [])
     if not isinstance(absent, list) or len(absent) > MAX_EVIDENCE_FILES:
         raise RuntimeError("Invalid absent input declarations")
