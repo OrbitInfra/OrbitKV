@@ -16,7 +16,7 @@ define contracts, not additional delivery queues.
 | --- | --- | --- |
 | S0/S1 | Repository organization and ownership baseline accepted | Preserve established owners and historical evidence |
 | S2 | Accepted engineering scope: inventory-fed indexes, scoped discovery, four-owner baseline and three-host etcd process-only controls | Isolation FAIL; sixteen owners UNQUALIFIED; cross-host cache HA and independent failure domains unqualified |
-| S3 | Explicit registration, native Save ownership, bounded normal-path controls | Page generations, physical termination and eventual fault reclamation |
+| S3 | Explicit registration, native Save ownership and bounded normal-path controls, including recorded vLLM 0.31.0 and SGLang 0.5.21 prepared-adapter pairs | Current-release adapter faults, page generations, physical termination and eventual fault reclamation |
 | S4 | KDA copy work, SSD batching, bounded kernel improvement and RDMA paths | Inference contention, repeatable complete serving benefit and safe promotion |
 | S5 | Official dense cache/restart, scoped Graph/shared-Manager/two-host profiles; custom P/D removed | Public lifecycle, complete hybrid recovery, native P/D faults and broader topology |
 | S6 | Cost observations and guarded limited route choices | One consumed route/admission planner |
@@ -98,7 +98,7 @@ and [adapter contracts](adapters.md).
   before recycling buffers, mappings, events, pages or registration owners.
 - [ ] Reclaim resources after permanent requester/source loss when a valid
   termination proof exists; retain unresolved owners within explicit budgets.
-- [ ] Complete installed adapter lifetime/fault coverage for both engines.
+- [ ] Complete current-release installed adapter fault coverage for both engines.
 
 The Python TENT writable-buffer ownership repair in [PR #288](https://github.com/feichai0017/orbitkv/pull/288)
 has source/CPU and installed CPU-native fixture acceptance. It retains real
@@ -124,6 +124,35 @@ and consumes registration before freezing the complete mapped runtime.
 Earlier invalid cohorts and the platform's non-owning zombie remain in that
 handoff. These scoped controls do not close SGLang lifetime, model serving,
 page generations, cancellation or physical reclamation; S3 remains Partial.
+
+The exact `022cf3b5` / SGLang 0.5.21 wheel also has independent healthy
+prepared-adapter acceptance for separate formal DRAM and physical
+NVMe0/io_uring pairs. Each medium runs sole-owner then independent-exporter-hold,
+checks the complete 2,621,440-byte payload and sentinels, four original IPC
+credits per cell, one-to-zero repayment, registration retirement, the frozen
+78-file Manager mapping, normal Manager SIGTERM/reap and actual controller/root
+waits. The SSD cells additionally evict DRAM and observe 524,288-byte SSD
+save/write and prefetch/load plus an advancing io_uring read on data02/ext4.
+
+The DRAM result is `AcceptedSglangDramPreparedAdapterPair`; its raw archive SHA256
+is `605329e5b0d25cba91f91c798965604a4fa8273ac11de59afff0f54d4be721aa`
+and independent `REVIEW.md` SHA256 is
+`9f270496c46f422bcc8797755bc9f712cc0be435c58e6a369325cbcd74109d36`.
+The SSD result is `AcceptedSglangSsdPreparedAdapterPair`; its sparse raw archive
+SHA256 is `fb44dea1a2c96880ba3b69b324290b476a366e9947e48fae7a97d24e0e0742b3`
+and independent `REVIEW.md` SHA256 is
+`7391b5512dd11b1037f052b3654527ac61a6699016ac020e67c5ca0fc3119936`.
+Evidence is under
+`/root/orbitkv-artifacts/s3-sglang-prepared-lifetime-20261021/`.
+
+Prelaunch closure, helper-count and phase errors remain preserved as unlaunched
+or READY-only failed freezes; a resource readiness also refused a GPU already
+owned by the independent S5 task. None contributes qualification. The accepted
+bytes bind SGLang 0.5.21 and wheel SHA256 `8f2fb9c6...e5f89f03`; the selected
+0.5.22 code does not inherit them. Re-run this lifetime pair on a matching 0.5.22
+artifact before calling its adapter lifetime current. Cancellation, process loss,
+page reuse/generation and physical-fault reclamation remain open, so S3 stays
+Partial.
 
 ## S4 — Finish communication execution and demonstrate gains
 

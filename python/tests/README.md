@@ -99,6 +99,11 @@ READY checks include the registered Manager's complete mapped runtime.
 [PR #290](https://github.com/feichai0017/orbitkv/pull/290) records the accepted
 vLLM DRAM/io_uring healthy controls and retained invalid attempts. These controls
 do not qualify SGLang lifetime, model output, cancellation or physical faults.
+The same maintained controller later accepts exact SGLang 0.5.21
+sole-owner/independent-hold DRAM and physical NVMe0/io_uring pairs at production
+commit `022cf3b5`; their evidence is recorded in S3. They are historical
+release-bound results and do not qualify the selected SGLang 0.5.22 artifact,
+fault cancellation, page reuse/generations or physical reclamation.
 
 ## Release smoke
 
