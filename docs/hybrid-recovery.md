@@ -1,27 +1,19 @@
 # Compiled hybrid recovery
 
-The current official vLLM 0.30.0 adapter supports V1 with one attention cache
-group (`VLLM_USE_V2_MODEL_RUNNER=0`). Multi-group/recurrent serving is rejected;
-historical hybrid evidence below does not reopen that profile. Shared recovery
-contracts and SGLang component work remain available with their stated limits.
-See [the released interface audit](engine-release-audit.md).
+The official vLLM 0.31.0 profile requires V1 with one attention cache group
+(`VLLM_USE_V2_MODEL_RUNNER=0`); multi-group/recurrent serving is rejected.
+SGLang 0.5.22's released external linker supports Full and SWA components;
+OrbitKV rejects recurrent/SSM startup. Full MHA/MLA and Full + SWA are implemented
+SGLang layouts, with model qualification recorded separately in
+[compatibility](compatibility.md) and [model recipes](models.md).
 
-OrbitKV's SGLang and vLLM hybrid adapters use the same compiled recovery
-contract for page demand and leased evidence. Every hybrid lookup must supply
-enough state to resume at one legal token boundary. An attention hit alone is
-insufficient.
-
-Checkpoint-specific results and larger hybrid targets live in
-[model qualification](models.md). The gates below distinguish state-layout
-recovery from native pretrained-model serving.
-
-The adapters accept Full + SWA, Full + recurrent/conv, and Full + SWA +
-recurrent/conv layouts. Full attention and MLA keep their single-group path.
-vLLM groups must share a logical block size and Mamba groups must use `align`.
-SGLang requires ordinary contiguous pools; moving unified-memory pools and SWA
-request rings require additional address-lifetime integration. Supporting these
-state combinations does not establish compatibility with every model or pool
-implementation.
+The shared Rust recovery contract can describe attention, windows and exact
+checkpoints. The sections below explain its group-read and layout implementation,
+not permission to enable every combination in a released engine. Recurrent/conv
+model recipes and earlier hybrid serving results are historical. A valid
+attention prefix alone is insufficient to restore a model that also reads
+recurrent, convolution or auxiliary state. See the
+[released interface audit](engine-release-audit.md).
 
 ## Rules and runtime ownership
 
@@ -122,6 +114,10 @@ recovery needs a released complete-state contract plus model and fault gates.
 
 ## vLLM hybrid handoff
 
+This describes the shared group-layout implementation. The current public vLLM
+profile rejects multi-group/recurrent startup; these mechanics do not qualify
+that deployment.
+
 `CacheGroupLayout` maps vLLM's full-attention groups to storage group zero.
 Each sliding-window or aligned Mamba group gets an independent storage key and
 window/checkpoint requirement. vLLM includes the next query token in its window,
@@ -177,151 +173,27 @@ not a novelty or performance claim.
 
 ## SGLang deployment and limits
 
-Use the same per-host Cache Manager and SGLang flags as
-[single-node deployment](single-node.md). No additional service is required:
+Use the [current dense recipe](single-node.md#sglang). The plugin accepts Full
+MHA/MLA and Full + SWA contiguous, page-aligned pools. Attention groups must cover
+disjoint layers and together cover the model. Recurrent/conv combinations are
+not supported by the current SGLang plugin; the custom recurrent override and
+its unused Inkling fixture have been removed. Unknown auxiliary state, moving
+unified-memory pools and SWA request rings remain unsupported.
 
-```bash
-orbitkv-cache-manager --addr 127.0.0.1:50055 --pool-size 8gb \
-  --ssd-cache-path /data/orbitkv/cache.bin --ssd-cache-capacity 100gb
-
-ORBITKV_SGLANG_ENDPOINT=unix:///tmp/orbitkv-50055.sock \
-  sglang serve --model-path /path/to/Qwen3.5-0.8B --page-size 64 \
-  --enable-unified-cache-external-linker --radix-cache-backend orbitkv
-```
-
-Omit the SSD arguments for DRAM-only caching. A repeated 512-token prompt may
-not reuse a checkpoint at 512: SGLang must compute its last token, so its match
-limit is 511. A 513-token prompt can reuse checkpoint 512. OrbitKV never rounds
-the recovery boundary forward past the requested match limit.
-
-Supported pool combinations are Full MHA/MLA, Full + SWA, Full +
-recurrent/conv, and Full + SWA + recurrent/conv. GPU buffers must be contiguous
-and page aligned. Full/SWA groups must cover disjoint attention layers;
-convolution/checkpoint state may accompany attention in the same layer. The
-union must cover all model layers. Empty temporal state in a convolution-only
-checkpoint is not registered as a zero-byte GPU buffer. DSA, draft state,
-ReplaySSM, speculative sibling state, int8 checkpoint storage, SWA request rings,
-moving unified-memory pools and unknown pool combinations are rejected.
-Optional queue warming currently prepares attention only and
-is therefore bypassed for hybrid pools.
-
-This is validation of engine-declared recovery requirements and registered
-formats. It is not a formal proof of the model's numerical implementation.
-Page-generation fencing, live weight changes and cross-engine byte reuse remain
-open. Multi-rank and remote hybrid serving require additional qualification.
+Complete hybrid recovery, page generations, physical fault reclamation,
+multi-rank serving and cross-engine byte reuse remain separate qualifications.
+A registered layout or passing state-byte fixture is not a model-serving result.
 
 ## Reproducible gates
 
-The 2026-09-23 single-GPU qualification used vLLM 0.29.0 and SGLang 0.5.20:
+Use the [maintained Python gates](../python/tests/README.md) for the current
+native contracts, state-demand bytes and selected official-engine model profile.
+Keep exact-byte and malformed/partial-evidence controls separate from model
+output, restart and physical-lifetime gates. They measure correctness rather
+than a latency or throughput advantage.
 
-| State layout | vLLM evidence | SGLang evidence |
-| --- | --- | --- |
-| Full + SWA | Mellum native serving/restart; exact DRAM/SSD GPU recovery | Mellum DRAM/SSD serving, concurrent restore and restart |
-| Full + recurrent/conv | Qwen3.5-0.8B native serving/restart; exact DRAM/SSD GPU recovery | Qwen3.5-0.8B DRAM/SSD serving, concurrent restore and restart |
-| Full + SWA + recurrent/conv | Exact DRAM/SSD GPU recovery with real adapter/spec objects; native model serving remains unqualified | Exact DRAM/SSD recovery for temporal and conv-only checkpoints; native Inkling conv-only DRAM/SSD serving, concurrent restore and restart |
-
-Final gates passed: 345 source-only unit cases; 16 native-contract/vLLM recovery
-cases; four combined SGLang GPU cases; seven vLLM Qwen3.5 serving checks;
-six vLLM Mellum checks (one recurrent-only check is inapplicable); and two
-SGLang serving cases for each of Qwen3.5, Mellum and Inkling. The combined
-temporal-state GPU fixtures do not establish native model-serving compatibility
-in either engine. Full-attention/MLA support retains its existing gates.
-Raw logs and generated model files are not stored in the repository.
-
-The compiled-demand increment has passed Rust/Python unit and native/CUDA
-DRAM/SSD exact-byte gates. The SGLang GPU gate checks mixed
-retained and copied pages against the shared plan. It also stores orphan
-auxiliary pages beyond the available attention prefix and requires no fetch of
-them, including no increase in SSD read bytes. vLLM checks destination masking
-with the original lease vector preserved. These gates qualify exact recovery
-and lookup scope; they do not measure a latency improvement.
-
-For vLLM 0.29.0, run from `python/`:
-
-```bash
-../.venv/vllm-release/bin/python -m pytest -m integration \
-  tests/integration/test_vllm_recovery.py
-../.venv/vllm-release/bin/python -m pytest -m e2e \
-  tests/e2e/test_vllm_e2e_correctness.py \
-  --model /path/to/Qwen3.5-0.8B --max-model-len 4096
-```
-
-The native integration gate checks nonzero origins, missing checkpoints,
-partial attention coverage, final-token clamping and malformed evidence. The
-GPU cases use real vLLM scheduler/worker adapters to restore poisoned attention,
-conv and temporal destinations from DRAM and forced SSD. They also check that
-unrequested GPU pages remain untouched and SSD bytes equal the selected ranges. Unit tests separately cover pending
-group cancellation, query drift/expiry, shard intersection and allocation
-changes. The vLLM SSD fixture stores four attention pages and two checkpoints, then
-selects an earlier boundary under the logits limit. Actual reads are exactly
-**8,704 bytes** (two attention pages plus one checkpoint), versus the former
-17,408-byte candidate materialization. SGLang fixtures also store an unused
-early checkpoint/window page and an orphan outside the attention prefix;
-metadata discovery reads zero payload bytes and materialization reads only
-the selected ranges. These synthetic byte controls establish read reduction,
-not serving latency or throughput gains.
-
-The serving gate compares matching native-vLLM cache execution plans
-and requires real GPU loads after engine restart.
-
-Use the pinned SGLang 0.5.20 environment and a freshly built extension/Manager.
-From `python/`:
-
-```bash
-../.venv/sglang-release/bin/python -m pytest -m integration \
-  tests/integration/test_state_demand.py \
-  tests/integration/test_sglang_admission.py \
-  tests/integration/test_sglang_direct_transfer.py \
-  tests/integration/test_sglang_recovery.py \
-  tests/integration/test_sglang_combined_recovery.py
-
-../.venv/sglang-release/bin/python -m pytest -m e2e \
-  tests/e2e/test_sglang_direct_e2e.py --model /path/to/Qwen3.5-0.8B
-
-../.venv/sglang-release/bin/python -m tests.support.attention_fixture \
-  --tokenizer-path /path/to/local/qwen-tokenizer --output /tmp/orbitkv-swa-model
-../.venv/vllm-release/bin/python -m pytest -m e2e \
-  tests/e2e/test_vllm_e2e_correctness.py --model /tmp/orbitkv-swa-model \
-  --max-model-len 2048
-../.venv/sglang-release/bin/python -m pytest -m e2e \
-  tests/e2e/test_sglang_direct_e2e.py --model /tmp/orbitkv-swa-model
-```
-
-The SWA fixture has deterministic random weights, four layers alternating full
-and sliding attention, a 256-token window, and one sparse MLP layer. It uses
-both engines' native Mellum implementations. It validates recovery rather than pretrained-model quality
-or throughput. Changing `sliding_window` in a Qwen2.5 config does not activate
-this execution path in SGLang and is not an equivalent test.
-
-The GPU integration gate restores poisoned attention/window/conv/temporal
-destinations from DRAM and forced SSD, checks sparse legal boundaries, rejects
-incomplete plans and exercises cancellation after destination publication. The
-serving gate checks HBM flush, engine restart, concurrent requests, positive GPU
-load bytes and forced SSD prefetch bytes. Restored output IDs must match a native
-HBM-hit control that performs no external GPU load; a changed identity must miss
-and match the cold control. Generated-token log probabilities must be finite
-and match the corresponding control within 0.05 absolute log-probability units.
-The random SWA fixture produces different cold and warm outputs even with native
-SGLang, so comparing identical execution paths is essential. CUDA graphs remain
-enabled for Qwen3.5 and Mellum. These are TP=1 correctness gates,
-not throughput measurements or a claim that all hybrid architectures work.
-
-The combined SGLang serving fixture uses the native Inkling model with full and
-sliding attention plus short-convolution state in every layer:
-
-```bash
-../.venv/sglang-release/bin/python -m tests.support.sglang_combined_fixture \
-  --tokenizer-path /path/to/local/qwen-tokenizer --output /tmp/orbitkv-combined-model
-ORBITKV_MODEL_FINGERPRINT=7777777777777777777777777777777777777777777777777777777777777777 \
-  ../.venv/sglang-release/bin/python -m pytest -m e2e \
-  tests/e2e/test_sglang_direct_e2e.py --model /tmp/orbitkv-combined-model \
-  --sglang-load-format dummy
-```
-
-This fixture declares a fixed test-only identity for seed-42 dummy weights; do
-not use that identity for a deployment or changed configuration. It uses BF16,
-four dense MLP layers, a 256-token window, and a sufficiently large SWA pool for
-the 513-token prefill. The gate disables prefill CUDA graphs because the pinned
-deterministic Triton backend does not capture Inkling EXTEND; decode graphs stay
-enabled. Full + SWA + temporal recurrent state also has exact GPU-byte gates;
-these are separate from the convolution-only model-serving fixture.
+Earlier vLLM 0.29.0/SGLang 0.5.20 hybrid controls, Qwen3.5/Mellum/Inkling recipes
+and their reproduction details remain in the
+[pre-migration report](https://github.com/feichai0017/orbitkv/blob/c407188168bffaef7cb98e197e636ee823399712/docs/hybrid-recovery.md#reproducible-gates).
+Reproduce those results with their original source, wheel and engine freezes.
+They are not deployment instructions or support claims for the current package.

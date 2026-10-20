@@ -35,13 +35,12 @@ def check_engine_releases(root: Path) -> None:
     extras = manifest.get("project", {}).get("optional-dependencies", {})
     for engine, version in versions.items():
         extra = extras.get(engine)
-        if (
-            not isinstance(extra, list)
-            or len(extra) != 1
-            or extra[0].partition(";")[0].strip() != f"{engine}=={version}"
-        ):
+        requirement = f"{engine}=={version}"
+        if engine == "sglang":
+            requirement += "; python_version >= '3.11'"
+        if extra != [requirement]:
             raise SystemExit(
-                f"{engine} extra {extra!r} differs from release gate {version!r}"
+                f"{engine} extra {extra!r} differs from release gate {requirement!r}"
             )
         commit = commits[engine]
         if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
