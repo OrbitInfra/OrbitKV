@@ -114,6 +114,16 @@ ACKs, partial submission, repeated page reuse and restart. No premature recycle;
 retention must be bounded and observable, and reclamation must eventually follow
 a valid proof. TTL, lease expiry and logical errors are not physical drain.
 
+The official vLLM 0.31.0 prepared-adapter DRAM/io_uring healthy pairs are
+accepted in [PR #290](https://github.com/feichai0017/orbitkv/pull/290). The SSD
+pair verifies complete restored bytes after DRAM eviction and an advancing
+io_uring read; the no-fence counterfactual preserves sentinel bytes and reports
+qualification false. Installed admission now preserves wheel executable modes
+and consumes registration before freezing the complete mapped runtime.
+Earlier invalid cohorts and the platform's non-owning zombie remain in that
+handoff. These scoped controls do not close SGLang lifetime, model serving,
+page generations, cancellation or physical reclamation; S3 remains Partial.
+
 ## S4 — Finish communication execution and demonstrate gains
 
 **Partial.** Owners: existing transfer, channel, SSD, codec and engine-hook code.

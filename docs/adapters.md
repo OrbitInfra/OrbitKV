@@ -62,8 +62,16 @@ fenced cell consumes producer readiness and restores complete bytes, while the
 no-fence control submits before readiness and must preserve the destination
 sentinel with `qualification_passed=false`. Both cells prove normal
 registration retirement and original-credit repayment. This scoped healthy
-result does not qualify io_uring, SGLang, model serving, page-slot generation,
-physical faults or reclamation; the earlier timed-out pair remains quarantined.
+result does not qualify SGLang, model serving, page-slot generation, physical
+faults or reclamation; the earlier timed-out pair remains quarantined.
+The separate vLLM 0.31.0 io_uring pair is independently accepted on the final
+`3b05` freeze after a registration-consuming readiness froze the Manager's full
+78-file runtime mapping. It applies the same producer fence/no-fence byte oracle,
+and additionally clears DRAM, requires actual NVMe io_uring read counters and
+retains exact installed-wheel executable/RECORD evidence. Earlier executable-mode
+and incomplete-mapping cohorts remain invalid and quarantined; their descriptive
+pytest outcomes are not reused. This SSD acceptance is still a healthy adapter
+lifetime result, not cancellation, process-loss or physical-termination proof.
 
 | Responsibility | Owner |
 | --- | --- |

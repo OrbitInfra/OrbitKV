@@ -91,7 +91,14 @@ and [compatibility](../../docs/compatibility.md) retain the actual limits.
 `support/registration_campaign.py` remains the installed registration controller
 and shared runtime-evidence owner used by current gates. It is not production
 Python. Run its CPU units when changing admission/runtime checks; do not build a
-second controller or manually weaken frozen cell validators.
+second controller or manually weaken frozen cell validators. Its current
+`pending-save-bytes-v2` and per-engine/per-medium `prepared-adapter-lifetime-v2`
+contracts replace the historical unlaunched freezes. Installed wheel projection
+uses `support/install_wheel.py` to preserve executable modes and RECORD bytes;
+READY checks include the registered Manager's complete mapped runtime.
+[PR #290](https://github.com/feichai0017/orbitkv/pull/290) records the accepted
+vLLM DRAM/io_uring healthy controls and retained invalid attempts. These controls
+do not qualify SGLang lifetime, model output, cancellation or physical faults.
 
 ## Release smoke
 
