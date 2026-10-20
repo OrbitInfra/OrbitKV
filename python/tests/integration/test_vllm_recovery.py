@@ -1,13 +1,25 @@
 """Native recovery validation and the vLLM scheduler/worker CUDA handoff."""
 
+import contextlib
+import ctypes
+import hashlib
+import importlib.metadata
+import json
+import os
 import threading
 import time
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 import requests
+
+from tests.support.ipc_credit import hold_counters, release_receipt
+from tests.support.metrics import fetch_orbitkv_metrics
+from tests.support.registration_campaign import identity as process_identity
+from tests.support.registration_campaign import write
 
 pytestmark = pytest.mark.integration
 
@@ -186,53 +198,183 @@ def test_window_and_checkpoint_restore_only_required_destinations(channel_server
         client.close()
 
 
-def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel_server):
+@pytest.mark.gpu
+@pytest.mark.parametrize("fence", [True, False], ids=["fenced", "no-fence-control"])
+@pytest.mark.parametrize(
+    "channel_server",
+    [{"tier": "dram", "installed": True}, {"tier": "ssd", "installed": True}],
+    ids=["dram", "ssd"],
+    indirect=True,
+)
+def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
+    channel_server, tmp_path, fence
+):
     torch = pytest.importorskip("torch")
     from orbitkv import BlockHashes, CacheManagerClient, QueryReady
     from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, SaveIntent
     from orbitkv.vllm.worker import WorkerAdapter
 
+    if importlib.metadata.version("vllm") != "0.31.0":
+        pytest.fail("Prepared Save adapter gate requires official vLLM 0.31.0")
     client = CacheManagerClient(channel_server.bootstrap_socket)
     identity = f"producer-{uuid.uuid4().hex}"
     client.start_session_watcher(identity, identity, 1, 1)
     worker = WorkerAdapter(context(client, instance_id=identity, namespace=identity))
     kv = torch.zeros((2, 8, 16, 1, 32), device="cuda", dtype=torch.float32)
+    payload = torch.arange(2 * 16 * 32, dtype=torch.float32).reshape(2, 16, 1, 32)
+    producer_payload = payload.to("cuda")
+    expected = torch.full_like(kv, -167, device="cpu")
+    expected[:, 1] = payload
+    expected[:, 2] = payload
     producer, unrelated = torch.cuda.Stream(), torch.cuda.Stream()
+    release_stream = torch.cuda.Stream()
+    gate_flags = torch.zeros(2, device="cuda", dtype=torch.int32)
+    gate_path = Path(os.environ["ORBITKV_TEST_CUDA_GATE_LIB"]).resolve(strict=True)
+    gate = ctypes.CDLL(str(gate_path))
+    if gate.orbitkv_test_stream_gate_version() != 1:
+        raise RuntimeError("CUDA readiness helper ABI differs")
+    for name in ("orbitkv_test_stream_wait", "orbitkv_test_stream_release"):
+        function = getattr(gate, name)
+        function.argtypes = [ctypes.c_uint64, ctypes.c_uint64]
+        function.restype = ctypes.c_int
+
+    def stream_gate(operation, stream, index):
+        status = getattr(gate, operation)(stream.cuda_stream, gate_flags.data_ptr() + index * 4)
+        if status != 0:
+            raise RuntimeError(f"CUDA readiness gate failed: {operation} status={status}")
+
     unrelated_done = torch.cuda.Event()
+    producer_done = torch.cuda.Event()
     submitted = threading.Event()
     overlapped = []
+    prepared_ids = []
+    producer_ready_at_submit = []
     hashes = BlockHashes([b"h" * 32])
+    counters = contextlib.ExitStack()
+    stage_index = 0
 
-    def save(*args):
+    def record_stage(stage):
+        nonlocal stage_index
+        write(
+            tmp_path / f"vllm-stage-{stage_index:02d}.json",
+            {
+                "owner": process_identity(os.getpid()),
+                "stage": stage,
+                "monotonic_ns": time.monotonic_ns(),
+                "physical_termination_claimed": False,
+            },
+        )
+        stage_index += 1
+
+    def prepare(*args):
+        handle = client.prepare_save(*args)
+        prepared_ids.append(handle.operation_id)
+        return handle
+
+    def submit(handles):
         overlapped.append(not unrelated_done.query())
+        producer_ready_at_submit.append(producer_done.query())
         submitted.set()
-        return client.start_save(*args)
+        return client.submit_saves(handles)
+
+    if not fence:
+        make_task = worker._make_save_task
+
+        class WithoutFence:
+            def __init__(self, event):
+                self.event = event
+
+            def synchronize(self):
+                pass
+
+        def omit_fence(*args, **kwargs):
+            task = make_task(*args, **kwargs)
+            task.ready = WithoutFence(task.ready)
+            return task
+
+        worker._make_save_task = omit_fence
 
     try:
         worker.register_kv_caches({"layer": kv})
+        original_registration = worker._registration
+        write(
+            tmp_path / "original.credit-owner.json",
+            {
+                "owner": process_identity(os.getpid()),
+                "instance_id": identity,
+                "evidence": json.loads(original_registration.ipc_credit_evidence),
+            },
+        )
+        original_counters = hold_counters(counters, tmp_path / "original.credit-owner.json")
+        record_stage("registered")
+        channel_server.record_runtime()
         worker._client = MagicMock(wraps=client)
-        worker._client.start_save.side_effect = save
+        worker._client.prepare_save.side_effect = prepare
+        worker._client.submit_saves.side_effect = submit
+        # Prewarm the first strided CUDA copy before either stream waits on a
+        # test gate. Lazy CUDA module setup may synchronize the context and
+        # would otherwise deadlock behind the deliberately blocked producer.
+        record_stage("copy_kernel_prewarm_started")
+        warmup = torch.full_like(kv, -167)
+        warmup[:, 1].copy_(producer_payload)
+        torch.cuda.synchronize()
+        assert torch.equal(warmup[:, 1].cpu(), payload)
+        del warmup
+        record_stage("copy_kernel_prewarmed")
+        kv.fill_(-167)
         torch.cuda.synchronize()
         # A delayed producer verifies that the background thread cannot read
         # the initial zeros. Independent work must not extend its save fence.
         with torch.cuda.stream(producer):
-            torch.cuda._sleep(100_000_000)
-            kv[:, 1].fill_(17)
+            stream_gate("orbitkv_test_stream_wait", producer, 0)
+            record_stage("producer_wait_enqueued")
+            kv[:, 1].copy_(producer_payload)
+            record_stage("producer_copy_enqueued")
+            producer_done.record()
+            record_stage("producer_event_recorded")
         with torch.cuda.stream(unrelated):
-            torch.cuda._sleep(1_500_000_000)
+            stream_gate("orbitkv_test_stream_wait", unrelated, 1)
             unrelated_done.record()
+            record_stage("unrelated_wait_enqueued")
         with torch.cuda.stream(producer):
+            assert not producer_done.query(), "producer completed before handoff fence test"
             worker._current_metadata = OrbitKVConnectorMetadata(
                 save_intents={
                     "save": SaveIntent(block_ids_by_group=((1,),), block_hashes=(b"h" * 32,))
                 }
             )
+            record_stage("handoff_started")
             worker.wait_for_save()
+            record_stage("handoff_returned")
 
+        assert len(prepared_ids) == 1, "producer did not reserve native ownership before return"
+        if fence:
+            stream_gate("orbitkv_test_stream_release", release_stream, 0)
+            release_stream.synchronize()
         assert submitted.wait(10), "the save worker never submitted Publish"
         worker._save_queue.join()
         assert overlapped == [True], "Publish waited for unrelated GPU work"
+        assert producer_ready_at_submit == [fence], "native submission did not prove its fence"
         assert worker.get_transfer_results({"save"}).finished_sending == {"save"}
+        worker._client.prepare_save.assert_called_once()
+        worker._client.submit_saves.assert_called_once()
+        worker._client.wait_save.assert_called_once()
+        worker._client.start_save.assert_not_called()
+        if not fence:
+            stream_gate("orbitkv_test_stream_release", release_stream, 0)
+            release_stream.synchronize()
+        stream_gate("orbitkv_test_stream_release", release_stream, 1)
+        release_stream.synchronize()
+        if channel_server.ssd_cache_path:
+            synced = requests.post(
+                f"http://127.0.0.1:{channel_server.http_port}/cache/sync", timeout=35
+            )
+            synced.raise_for_status()
+            assert synced.json()["local_flush_complete"] is True
+            from tests.support.cache_manager import evict_dram_after_ssd_writes
+
+            evict_dram_after_ssd_writes(channel_server.http_port)
+        before_restore = fetch_orbitkv_metrics(channel_server.http_port)
         deadline = time.monotonic() + 10
         while True:
             ready = client.query_prefetch(identity, hashes, "restore")
@@ -252,12 +394,117 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel
             timeout=10,
         )
         assert restored.success, restored.message
-        assert torch.equal(kv[:, 2].cpu(), torch.full_like(kv[:, 2], 17, device="cpu"))
-    finally:
         producer.synchronize()
-        unrelated.synchronize()
-        worker.shutdown()
-        client.close()
+        torch.cuda.synchronize()
+        actual = kv.cpu()
+        oracle_matches = torch.equal(actual, expected)
+        if fence:
+            assert oracle_matches, "complete payload/untouched sentinel differs"
+            actual[0, 2, 0, 0, 0] += 1
+            assert not torch.equal(actual, expected), "mutation was invisible to full-byte oracle"
+            actual[0, 2, 0, 0, 0] -= 1
+        else:
+            assert not oracle_matches, "no-fence control unexpectedly passed the positive oracle"
+            untouched = expected.clone()
+            untouched[:, 2].fill_(-167)
+            assert torch.equal(actual, untouched), "negative control corrupted unowned bytes"
+        (tmp_path / "vllm-prepared-save.payload.bin").write_bytes(actual.numpy().tobytes())
+        after_restore = fetch_orbitkv_metrics(channel_server.http_port)
+        if channel_server.ssd_cache_path:
+            for name in (
+                "orbitkv_ssd_prefetch_bytes_total",
+                "orbitkv_ssd_uring_read_operations_total",
+            ):
+                assert name in after_restore and after_restore[name] > before_restore.get(name, 0)
+        worker.unregister_context()
+        write(tmp_path / "original.credit-release.json", release_receipt(original_counters))
+        assert worker._registration is None
+        worker.register_kv_caches({"layer": kv})
+        replacement = worker._registration
+        write(
+            tmp_path / "replacement.credit-owner.json",
+            {
+                "owner": process_identity(os.getpid()),
+                "instance_id": identity,
+                "evidence": json.loads(replacement.ipc_credit_evidence),
+            },
+        )
+        replacement_counters = hold_counters(counters, tmp_path / "replacement.credit-owner.json")
+        assert replacement.generation != original_registration.generation
+        from orbitkv import SaveNotSubmittedError
+
+        with pytest.raises(SaveNotSubmittedError, match="no longer active"):
+            client.prepare_save(original_registration, [("layer", [1], [b"h" * 32])])
+        receipt = {
+            "pid": os.getpid(),
+            "start_ticks": int(Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]),
+            "release": "0.31.0",
+            "instance_id": identity,
+            "prepared_ids": prepared_ids,
+            "producer_reserved": True,
+            "producer_pending_at_handoff": True,
+            "copy_kernel_prewarmed": True,
+            "explicit_stream_gate": True,
+            "cuda_gate_sha256": hashlib.sha256(gate_path.read_bytes()).hexdigest(),
+            "prepared_submission_consumed": True,
+            "full_destination_bytes": kv[:, 2].numel() * kv.element_size(),
+            "full_buffer_bytes": kv.numel() * kv.element_size(),
+            "payload_sha256": hashlib.sha256(actual.numpy().tobytes()).hexdigest(),
+            "full_byte_oracle": True,
+            "mutation_rejected": True,
+            "fence_enabled": fence,
+            "positive_byte_oracle_passed": oracle_matches,
+            "producer_ready_at_submit": producer_ready_at_submit,
+            "qualification_passed": fence,
+            "tier": "ssd-uring" if channel_server.ssd_cache_path else "dram",
+            "read_before": before_restore,
+            "read_after": after_restore,
+            "replacement_generation": replacement.generation.hex(),
+            "registration_generation": original_registration.generation.hex(),
+            "stale_registration_rejected": True,
+            "physical_fault_termination_claimed": False,
+        }
+    finally:
+        try:
+            release_errors = []
+            for index in (0, 1):
+                try:
+                    stream_gate("orbitkv_test_stream_release", release_stream, index)
+                except BaseException as error:
+                    release_errors.append({"index": index, "error": repr(error)})
+            if release_errors:
+                (tmp_path / "stream-gate-release-errors.json").write_text(
+                    json.dumps(
+                        {"errors": release_errors, "physical_termination_claimed": False}, indent=2
+                    )
+                    + "\n"
+                )
+                raise RuntimeError(f"CUDA gate release remains unknown: {release_errors}")
+            release_stream.synchronize()
+            producer.synchronize()
+            unrelated.synchronize()
+            worker.shutdown()
+            try:
+                if "replacement_counters" in locals():
+                    write(
+                        tmp_path / "replacement.credit-release.json",
+                        release_receipt(replacement_counters),
+                    )
+            finally:
+                client.close()
+        finally:
+            counters.close()
+    if worker._save_thread.is_alive() or worker._registration is not None:
+        raise RuntimeError("vLLM worker or GPU registration survived normal shutdown")
+    receipt.update(
+        workers_joined=True,
+        registration_retired=True,
+        client_closed=True,
+        completed_mono_ns=time.monotonic_ns(),
+    )
+    (tmp_path / "vllm-prepared-save.native-release.json").write_text(
+        json.dumps(receipt, indent=2) + "\n"
+    )
 
 
 @pytest.mark.parametrize(

@@ -1,9 +1,13 @@
 """CPU controls for launch admission and strict lifecycle evidence."""
 
+import ast
+import contextlib
 import errno
 import fcntl
+import hashlib
 import json
 import os
+import struct
 import subprocess
 import sys
 import threading
@@ -97,6 +101,622 @@ raise SystemExit(code)
         assert code == 0, errors
 
 
+def capture_save_metrics(monkeypatch, raw):
+    from tests.integration import test_pending_save_bytes as byte_gate
+
+    monkeypatch.setattr(
+        byte_gate.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, stdout=raw, stderr=b""),
+    )
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "extra-process",
+        "manager-record",
+        "boolean-pending",
+        "payload",
+        "loader-query",
+        "loader-wrong-argv",
+        "loader-extra-exec",
+    ],
+)
+def test_readiness_only_diagnostic_rejects_service_and_false_byte_evidence(tmp_path, fault):
+    owner = {"pid": 1, "start_ticks": 2}
+    cell = {
+        "kind": "cuda-readiness",
+        "passed": 1,
+        "cleanup_receipts": 0,
+        "normal_exit_codes": [0],
+        "adopted_exit_codes": [0],
+        "process_trace_binary": "tracer",
+        "cuda_gate_sha256": "a" * 64,
+        "log_sets": [{"pattern": "pytest.log", "count": 1}],
+    }
+    (tmp_path / "junit.xml").write_text('<testsuite><testcase name="readiness"/></testsuite>')
+    (tmp_path / "pytest.log").write_text("CPU fixture, no GPU")
+    child = (
+        "1.0 clone(child_stack=NULL, flags=0) = 2\n1.1 wait4(2, [{WIFEXITED(s) && WEXITSTATUS(s) == 0}], 0, NULL) = 2\n"
+        if fault in ("extra-process", "loader-query", "loader-wrong-argv", "loader-extra-exec")
+        else ""
+    )
+    (tmp_path / "process.trace.1").write_text(
+        '0.0 execve("/python", ["/python"], 0x0) = 0\n' + child + "2.0 +++ exited with 0 +++\n"
+    )
+    if fault == "extra-process":
+        (tmp_path / "process.trace.2").write_text(
+            '1.0 execve("/orbitkv-cache-manager", [], 0x0) = 0\n2.0 +++ exited with 0 +++\n'
+        )
+    if fault in ("loader-query", "loader-wrong-argv", "loader-extra-exec"):
+        cell["loader_queries"] = [{"argv": ["/sbin/ldconfig", "-p"], "sha256": "b" * 64}]
+        argument = "-v" if fault == "loader-wrong-argv" else "-p"
+        extra = (
+            '1.1 execveat(AT_FDCWD, "/orbitkv-cache-manager", [], 0x0, 0) = 0\n'
+            if fault == "loader-extra-exec"
+            else ""
+        )
+        (tmp_path / "process.trace.2").write_text(
+            f'1.0 execve("/sbin/ldconfig", ["/sbin/ldconfig", "{argument}"], 0x0) = 0\n'
+            + extra
+            + "2.0 +++ exited with 0 +++\n"
+        )
+    if fault == "manager-record":
+        (tmp_path / "bad.manager-start.json").write_text("{}")
+    raw = struct.pack("=1024i", *range(1024))
+    (tmp_path / "STREAM-READINESS.payload.bin").write_bytes(
+        bytes([raw[0] ^ 1]) + raw[1:] if fault == "payload" else raw
+    )
+    summary = {
+        "owner": owner,
+        "helper_sha256": "a" * 64,
+        "pending_before_release": [1, 1] if fault == "boolean-pending" else [True, True],
+        "independent_release": True,
+        "observed_bytes": 4096,
+        "payload_sha256": hashlib.sha256(raw).hexdigest(),
+        "mutation_rejected": True,
+        "streams_synchronized": True,
+        "Manager_created": False,
+        "physical_fault_qualification": False,
+    }
+    (tmp_path / "STREAM-READINESS.json").write_text(json.dumps(summary))
+    if fault in (None, "loader-query"):
+        campaign.validate_cell(cell, tmp_path, owner, [owner], time.monotonic() + 3)
+    else:
+        with pytest.raises(RuntimeError):
+            campaign.validate_cell(cell, tmp_path, owner, [owner], time.monotonic() + 3)
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "payload", "prewarm", "pending", "stage-missing", "stage-order", "stage-claim"]
+)
+def test_strided_copy_readiness_recomputes_stages_and_full_bytes(tmp_path, fault):
+    owner = {"pid": 1, "start_ticks": 2}
+    cell = {
+        "kind": "cuda-strided-readiness",
+        "passed": 1,
+        "cleanup_receipts": 0,
+        "normal_exit_codes": [0],
+        "adopted_exit_codes": [0],
+        "process_trace_binary": "tracer",
+        "cuda_gate_sha256": "a" * 64,
+        "log_sets": [{"pattern": "pytest.log", "count": 1}],
+    }
+    (tmp_path / "junit.xml").write_text('<testsuite><testcase name="readiness"/></testsuite>')
+    (tmp_path / "pytest.log").write_text("CPU fixture, no GPU")
+    (tmp_path / "process.trace.1").write_text(
+        '0.0 execve("/python", ["/python"], 0x0) = 0\n2.0 +++ exited with 0 +++\n'
+    )
+    stages = [
+        "copy_kernel_prewarm_started",
+        "copy_kernel_prewarmed",
+        "producer_wait_enqueued",
+        "producer_copy_enqueued",
+        "producer_event_recorded",
+        "pending_observed",
+        "producer_released",
+        "producer_synchronized",
+    ]
+    for index, stage in enumerate(stages):
+        (tmp_path / f"strided-stage-{index:02d}.json").write_text(
+            json.dumps(
+                {
+                    "owner": owner,
+                    "stage": stage,
+                    "monotonic_ns": index + 1,
+                    "physical_termination_claimed": fault == "stage-claim" and index == 2,
+                }
+            )
+        )
+    if fault == "stage-missing":
+        (tmp_path / "strided-stage-07.json").unlink()
+    if fault == "stage-order":
+        path = tmp_path / "strided-stage-04.json"
+        value = json.loads(path.read_text())
+        value["stage"] = "producer_synchronized"
+        path.write_text(json.dumps(value))
+    raw = b"".join(
+        struct.pack("=f", plane * 512 + offset if block == 1 else -167)
+        for plane in range(2)
+        for block in range(8)
+        for offset in range(512)
+    )
+    (tmp_path / "STRIDED-READINESS.payload.bin").write_bytes(
+        bytes([raw[0] ^ 1]) + raw[1:] if fault == "payload" else raw
+    )
+    summary = {
+        "owner": owner,
+        "helper_sha256": "a" * 64,
+        "copy_kernel_prewarmed": fault != "prewarm",
+        "pending_before_release": fault != "pending",
+        "observed_bytes": 32768,
+        "payload_sha256": hashlib.sha256(raw).hexdigest(),
+        "mutation_rejected": True,
+        "streams_synchronized": True,
+        "Manager_created": False,
+        "physical_fault_qualification": False,
+    }
+    (tmp_path / "STRIDED-READINESS.json").write_text(json.dumps(summary))
+    if fault is None:
+        campaign.validate_cell(cell, tmp_path, owner, [owner], time.monotonic() + 3)
+    else:
+        with pytest.raises(RuntimeError):
+            campaign.validate_cell(cell, tmp_path, owner, [owner], time.monotonic() + 3)
+
+
+@pytest.mark.parametrize("fault", ["producer", "shutdown", "credit", "client"])
+def test_vllm_gate_cleanup_closes_original_counter_fd_on_every_error(tmp_path, fault):
+    path = Path(__file__).parents[1] / "integration/test_vllm_recovery.py"
+    module = ast.parse(path.read_text())
+    function = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work"
+    )
+    cleanup = next(node for node in function.body if isinstance(node, ast.Try)).finalbody
+    fd = os.open(tmp_path / "counter", os.O_CREAT | os.O_RDWR, 0o600)
+    counters = contextlib.ExitStack()
+    counters.callback(os.close, fd)
+
+    def raise_error():
+        raise RuntimeError("controlled cleanup failure")
+
+    def noop():
+        pass
+
+    scope = {
+        "stream_gate": lambda *_: None,
+        "release_stream": SimpleNamespace(synchronize=noop),
+        "producer": SimpleNamespace(synchronize=raise_error if fault == "producer" else noop),
+        "unrelated": SimpleNamespace(synchronize=noop),
+        "worker": SimpleNamespace(shutdown=raise_error if fault == "shutdown" else noop),
+        "client": SimpleNamespace(close=raise_error if fault == "client" else noop),
+        "counters": counters,
+        "replacement_counters": object(),
+        "tmp_path": tmp_path,
+        "release_receipt": lambda _: raise_error() if fault == "credit" else {},
+        "write": lambda *_: None,
+    }
+    with pytest.raises(RuntimeError, match="controlled cleanup"):
+        exec(compile(ast.Module(body=cleanup, type_ignores=[]), str(path), "exec"), scope)
+    with pytest.raises(OSError):
+        os.fstat(fd)
+
+
+@pytest.mark.parametrize("failed_index", [0, 1])
+def test_cuda_gate_cleanup_attempts_both_releases_and_keeps_unknown(tmp_path, failed_index):
+    path = Path(__file__).parents[1] / "integration/test_vllm_recovery.py"
+    function = next(
+        node
+        for node in ast.parse(path.read_text()).body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work"
+    )
+    cleanup = next(node for node in function.body if isinstance(node, ast.Try)).finalbody
+    calls = []
+
+    def release(_operation, _stream, index):
+        calls.append(index)
+        if index == failed_index:
+            raise RuntimeError("controlled release refusal")
+
+    scope = {
+        "stream_gate": release,
+        "release_stream": object(),
+        "tmp_path": tmp_path,
+        "json": json,
+        "counters": contextlib.ExitStack(),
+    }
+    with pytest.raises(RuntimeError, match="release remains unknown"):
+        exec(compile(ast.Module(body=cleanup, type_ignores=[]), str(path), "exec"), scope)
+    assert calls == [0, 1]
+    evidence = json.loads((tmp_path / "stream-gate-release-errors.json").read_text())
+    assert evidence["errors"][0]["index"] == failed_index
+    assert evidence["physical_termination_claimed"] is False
+
+
+@pytest.mark.parametrize("engine", ["vllm-positive", "vllm-negative", "sglang-sole", "sglang-held"])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "bytes",
+        "credit",
+        "identity",
+        "generation",
+        "claim",
+        "missing",
+        "slot-alias",
+        "never-imported",
+        "observation-error",
+        "path-identity",
+        "export-replay",
+        "prewarm",
+        "stage-missing",
+        "stage-order",
+        "stage-claim",
+        "stage-after-completion",
+    ],
+)
+def test_adapter_byte_evidence_rejects_corruption_and_false_completion(tmp_path, engine, fault):
+    from uuid import UUID
+
+    vllm = engine.startswith("vllm")
+    fence = engine == "vllm-positive"
+    hold = engine == "sglang-held"
+    owner = {"pid": 1, "start_ticks": 2}
+    cell = {
+        "kind": "vllm-prepared" if vllm else "sglang-prepared",
+        "tier": "dram",
+        "fence": fence,
+        "independent_hold": hold,
+        "cuda_gate_sha256": "a" * 64,
+    }
+    row = {
+        "pid": 1,
+        "start_ticks": 2,
+        "instance_id": "instance",
+        "release": "0.31.0" if vllm else "0.5.21",
+        "tier": "dram",
+        "workers_joined": True,
+        "registration_retired": True,
+        "client_closed": True,
+        "prepared_submission_consumed": True,
+        "full_byte_oracle": True,
+        "mutation_rejected": True,
+        "physical_fault_termination_claimed": False,
+        "completed_mono_ns": 100,
+        "registration_generation": UUID(int=1).hex,
+    }
+    if vllm:
+        row.update(
+            fence_enabled=fence,
+            qualification_passed=fence,
+            positive_byte_oracle_passed=fence,
+            producer_ready_at_submit=[fence],
+            producer_pending_at_handoff=True,
+            copy_kernel_prewarmed=True,
+            explicit_stream_gate=True,
+            cuda_gate_sha256="a" * 64,
+            producer_reserved=True,
+            stale_registration_rejected=True,
+            full_destination_bytes=4096,
+            prepared_ids=[1],
+            replacement_generation=UUID(int=2).hex,
+        )
+        raw = b"".join(
+            struct.pack("=f", plane * 512 + offset if block == 1 or block == 2 and fence else -167)
+            for plane in range(2)
+            for block in range(8)
+            for offset in range(512)
+        )
+        stages = [
+            "registered",
+            "copy_kernel_prewarm_started",
+            "copy_kernel_prewarmed",
+            "producer_wait_enqueued",
+            "producer_copy_enqueued",
+            "producer_event_recorded",
+            "unrelated_wait_enqueued",
+            "handoff_started",
+            "handoff_returned",
+        ]
+        for index, stage in enumerate(stages):
+            (tmp_path / f"vllm-stage-{index:02d}.json").write_text(
+                json.dumps(
+                    {
+                        "owner": owner,
+                        "stage": stage,
+                        "monotonic_ns": index + 1,
+                        "physical_termination_claimed": False,
+                    }
+                )
+            )
+    else:
+        row.update(
+            linker_load_consumed=True,
+            offload_completed=True,
+            independent_hold=hold,
+            exporters_after_close=4 if hold else 0,
+            exporters_after_last_hold=0,
+        )
+        raw = b"".join(
+            struct.pack(
+                "=f", ((slot % 64) * 1024 + offset) % 127 + layer * 16 if 64 <= slot < 192 else -167
+            )[2:]
+            for layer in range(4)
+            for slot in range(320)
+            for offset in range(1024)
+        )
+    row.update(full_buffer_bytes=len(raw), payload_sha256=hashlib.sha256(raw).hexdigest())
+    basename = "vllm-prepared-save" if vllm else "sglang-registration"
+    payload = tmp_path / (
+        ("vllm-prepared-save" if vllm else "sglang-prepared-save") + ".payload.bin"
+    )
+    payload.write_bytes(raw)
+    for index, role in enumerate(("original", "replacement") if vllm else ("original",)):
+        credits = [
+            {
+                "counter_name": "counter",
+                "counter_offset": slot,
+                "exclusive_value_at_export": 1,
+                "disposition": "importer_owned",
+                "observation_error": None,
+                "observation": {
+                    "device": 1,
+                    "inode": 2,
+                    "path_device": 1,
+                    "path_inode": 2,
+                    "observed_value": 1,
+                    "same_object": True,
+                    "path_error": None,
+                    "read_error": None,
+                },
+            }
+            for slot in range(1 if vllm else 4)
+        ]
+        evidence = {
+            "schema": "orbitkv.cuda-credit-observation.v1",
+            "registration_generation": str(UUID(int=index + 1)),
+            "export_owner_generation": str(UUID(int=index + 10)),
+            "credits": credits,
+            "physical_termination_claimed": False,
+            "reclamation_authorized": False,
+        }
+        if fault == "slot-alias" and not vllm:
+            for slot, credit in enumerate(credits):
+                credit["counter_offset"] = 0
+                credit["counter_name"] = f"alias{slot}"
+        if fault == "never-imported":
+            credits[0]["disposition"] = "never_imported"
+        if fault == "observation-error":
+            credits[0]["observation_error"] = "counterlost"
+        if fault == "path-identity":
+            credits[0]["observation"]["path_inode"] = 3
+        if fault == "export-replay" and vllm:
+            evidence["export_owner_generation"] = str(UUID(int=10))
+        handoff = tmp_path / (role + ".credit-owner.json")
+        handoff.write_text(
+            json.dumps({"owner": owner, "instance_id": "instance", "evidence": evidence})
+        )
+        final = {
+            "schema": "orbitkv.cuda-credit-release.v1",
+            "owner": owner,
+            "instance_id": "instance",
+            "handoff_sha256": campaign.digest(handoff),
+            "registration_generation": evidence["registration_generation"],
+            "export_owner_generation": evidence["export_owner_generation"],
+            "physical_termination_claimed": False,
+            "observed_mono_ns": 99,
+            "counters": [
+                {
+                    "counter_name": credit["counter_name"],
+                    "counter_offset": credit["counter_offset"],
+                    "device": 1,
+                    "inode": 2,
+                    "before": 1,
+                    "after": 0,
+                }
+                for credit in credits
+            ],
+        }
+        if fault == "credit":
+            final["counters"][0]["after"] = 1
+        if fault == "generation":
+            final["registration_generation"] = str(UUID(int=99))
+        (tmp_path / (role + ".credit-release.json")).write_text(json.dumps(final))
+    if fault == "identity":
+        row["instance_id"] = "foreign"
+    if fault == "claim":
+        row["physical_fault_termination_claimed"] = True
+    if fault == "bytes":
+        payload.write_bytes(bytes([raw[0] ^ 1]) + raw[1:])
+    if vllm and fault == "prewarm":
+        row["copy_kernel_prewarmed"] = False
+    if vllm and fault == "stage-missing":
+        (tmp_path / "vllm-stage-08.json").unlink()
+    if vllm and fault == "stage-order":
+        stage = tmp_path / "vllm-stage-04.json"
+        value = json.loads(stage.read_text())
+        value["stage"] = "producer_event_recorded"
+        stage.write_text(json.dumps(value))
+    if vllm and fault == "stage-claim":
+        stage = tmp_path / "vllm-stage-02.json"
+        value = json.loads(stage.read_text())
+        value["physical_termination_claimed"] = True
+        stage.write_text(json.dumps(value))
+    if vllm and fault == "stage-after-completion":
+        stage = tmp_path / "vllm-stage-08.json"
+        value = json.loads(stage.read_text())
+        value["monotonic_ns"] = row["completed_mono_ns"] + 1
+        stage.write_text(json.dumps(value))
+    receipt = tmp_path / (basename + ".native-release.json")
+    if fault != "missing":
+        receipt.write_text(json.dumps(row))
+    vllm_only_faults = {
+        "prewarm",
+        "stage-missing",
+        "stage-order",
+        "stage-claim",
+        "stage-after-completion",
+    }
+    invalid = fault is not None and not (
+        fault == "slot-alias"
+        and vllm
+        or fault == "export-replay"
+        and not vllm
+        or fault in vllm_only_faults
+        and not vllm
+    )
+    if not invalid:
+        campaign.validate_adapter_bytes(cell, tmp_path, owner, time.monotonic() + 5)
+    else:
+        with pytest.raises(RuntimeError):
+            campaign.validate_adapter_bytes(cell, tmp_path, owner, time.monotonic() + 5)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "NaN",
+        "inf",
+        "-1",
+        "0.5",
+        "9007199254740994",
+        "9007199254740993",
+        "9007199254740991.5",
+        "1_6384",
+    ],
+)
+def test_save_byte_snapshot_rejects_missing_or_inexact_counter(monkeypatch, text):
+    from tests.integration.test_pending_save_bytes import save_bytes_snapshot
+
+    capture_save_metrics(monkeypatch, f"orbitkv_save_bytes_total {text}\n".encode())
+    with pytest.raises(RuntimeError, match="counter is missing"):
+        save_bytes_snapshot(1)
+
+
+@pytest.mark.parametrize("text", ["0", "16384.0", "1.6384e4", "9007199254740992"])
+def test_save_byte_snapshot_preserves_exact_raw_integer(monkeypatch, text):
+    from decimal import Decimal
+
+    from tests.integration.test_pending_save_bytes import save_bytes_snapshot
+
+    capture_save_metrics(monkeypatch, f"orbitkv_save_bytes_total {text}\n".encode())
+    value = save_bytes_snapshot(1)
+    assert type(value) is int and value == int(Decimal(text))
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "orbitkv_save_bytes_total 0\n" * 2,
+        'orbitkv_save_bytes_total{label="' + "x" * 1024 + '"} 16384\n',
+        "# " + "x" * 4096 + "\norbitkv_save_bytes_total 0\n",
+        "# x\n" * (1024**2 // 4 + 1) + "orbitkv_save_bytes_total 0\n",
+    ],
+    ids=["duplicate", "oversized-label", "long-line", "large-body"],
+)
+def test_save_byte_snapshot_bounds_raw_response(monkeypatch, body):
+    from tests.integration.test_pending_save_bytes import save_bytes_snapshot
+
+    capture_save_metrics(monkeypatch, body.encode())
+    with pytest.raises(RuntimeError, match="counter"):
+        save_bytes_snapshot(1)
+
+
+def test_save_byte_snapshot_consumes_actual_exporter_labels(monkeypatch):
+    from tests.integration.test_pending_save_bytes import save_bytes_snapshot
+
+    raw = (
+        b'orbitkv_save_bytes_total{otel_scope_name="orbitkv-core",otel_scope_schema_url=""} 8192\n'
+        b'orbitkv_save_bytes_total{otel_scope_name="other-core",otel_scope_schema_url=""} 8192.0\n'
+    )
+    capture_save_metrics(monkeypatch, raw)
+    assert save_bytes_snapshot(1) == 16384
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("mode", ["normal", "oversized", "trickle", "slow-headers", "redirect"])
+def test_save_byte_snapshot_actual_http_is_bounded(mode):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from tests.integration.test_pending_save_bytes import save_bytes_snapshot
+
+    stopped = threading.Event()
+    foreign_requests = []
+
+    class Trickle(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path != "/metrics":
+                foreign_requests.append(self.path)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"orbitkv_save_bytes_total 16384\n")
+                return
+            if mode == "redirect":
+                self.send_response(302)
+                self.send_header("Location", "/other-metrics")
+                self.end_headers()
+                return
+            if mode == "slow-headers":
+                self.connection.settimeout(1)
+                self.wfile.write(b"HTTP/1.1 200 ")
+                self.wfile.flush()
+                while not stopped.wait(4):
+                    try:
+                        self.wfile.write(b"x")
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        return
+                return
+            self.send_response(200)
+            if mode in ("normal", "oversized"):
+                body = b"orbitkv_save_bytes_total 0\n"
+                if mode == "oversized":
+                    body = b"# x\n" * (1024**2 // 4 + 1)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                self.wfile.flush()
+                return
+            self.send_header("Content-Length", "100")
+            self.end_headers()
+            while not stopped.wait(4):
+                try:
+                    self.wfile.write(b"x")
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Trickle)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        started = time.monotonic()
+        if mode == "normal":
+            assert save_bytes_snapshot(server.server_port) == 0
+        else:
+            with pytest.raises(RuntimeError, match="time bound|byte bound|response failed"):
+                save_bytes_snapshot(server.server_port)
+        assert time.monotonic() - started < 11
+        assert not foreign_requests
+    finally:
+        stopped.set()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+
+
 def cpu_ready_inputs(tmp_path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -136,13 +756,123 @@ def cpu_ready_inputs(tmp_path):
         "review_wait_seconds": 1,
         "campaign_seconds": 1,
         "cleanup_seconds": 1,
-        "cells": [{"kind": "native", "passed": 2}],
+        "cells": [{"kind": "native", "passed": 2, "seconds": 1}],
     }
     path = tmp_path / "CONTRACT.json"
     path.write_text(json.dumps(contract))
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
     return path, env, lease
+
+
+@pytest.mark.parametrize("kind", ["vllm-prepared", "sglang-prepared"])
+@pytest.mark.parametrize("tier", ["dram", "ssd-uring"])
+@pytest.mark.parametrize(
+    "fault",
+    [None, "historical-matrix", "eight-cells", "mixed-tier", "mixed-kind", "reversed-flags"],
+)
+def test_adapter_pair_admission_preserves_complete_controls(
+    tmp_path, monkeypatch, kind, tier, fault
+):
+    path, _environment, _lease = cpu_ready_inputs(tmp_path)
+    contract = json.loads(path.read_text())
+    library = str(tmp_path / "gate.so")
+    flags = [True, False] if kind == "vllm-prepared" else [False, True]
+    field = "fence" if kind == "vllm-prepared" else "independent_hold"
+    contract.update(
+        qualification="prepared-adapter-lifetime-v2", adapter_kind=kind, adapter_tier=tier
+    )
+    contract["input_sha256"][library] = "a" * 64
+    contract["cells"] = [
+        {
+            "kind": kind,
+            "tier": tier,
+            field: flag,
+            "passed": 1,
+            "seconds": 1,
+            "process_trace_binary": "/frozen/tracer",
+            "cuda_gate_sha256": "a" * 64,
+            "environment": {"ORBITKV_TEST_CUDA_GATE_LIB": library},
+            "argv": ["/python", "--ssd-backend", "uring", "--ssd-read-path", "uring"],
+        }
+        for flag in flags
+    ]
+    if fault == "historical-matrix":
+        contract["qualification"] = "prepared-adapter-lifetime-v1"
+    elif fault == "eight-cells":
+        contract["cells"] *= 4
+    elif fault == "mixed-tier":
+        contract["cells"][1]["tier"] = "ssd-uring" if tier == "dram" else "dram"
+    elif fault == "mixed-kind":
+        contract["cells"][1]["kind"] = (
+            "sglang-prepared" if kind == "vllm-prepared" else "vllm-prepared"
+        )
+    elif fault == "reversed-flags":
+        contract["cells"].reverse()
+    path.write_text(json.dumps(contract))
+    monkeypatch.setattr(sys, "argv", [campaign.__file__, str(path)])
+
+    class AdmittedPair(BaseException):
+        pass
+
+    def before_resources(*_arguments):
+        raise AdmittedPair
+
+    monkeypatch.setattr(campaign.ctypes, "CDLL", before_resources)
+    if fault is None:
+        with pytest.raises(AdmittedPair):
+            campaign.main()
+    else:
+        with pytest.raises(RuntimeError):
+            campaign.main()
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [None, "formal", "old-profile", "extra-cell", "wrong-kind", "missing-helper", "cleanup"],
+)
+def test_strided_readiness_profile_has_exact_single_cell_admission(tmp_path, monkeypatch, fault):
+    path, _environment, _lease = cpu_ready_inputs(tmp_path)
+    contract = json.loads(path.read_text())
+    helper = str(tmp_path / "gate.so")
+    contract.update(qualification="cuda-strided-copy-readiness-v1")
+    contract["input_sha256"][helper] = "a" * 64
+    contract["cells"] = [
+        {
+            "kind": "cuda-strided-readiness",
+            "passed": 1,
+            "cleanup_receipts": 0,
+            "seconds": 1,
+            "process_trace_binary": "/frozen/tracer",
+            "cuda_gate_sha256": "a" * 64,
+            "environment": {"ORBITKV_TEST_CUDA_GATE_LIB": helper},
+        }
+    ]
+    if fault == "formal":
+        contract["phase"] = "formal"
+    elif fault == "old-profile":
+        contract["qualification"] = "cuda-stream-readiness-v1"
+    elif fault == "extra-cell":
+        contract["cells"] *= 2
+    elif fault == "wrong-kind":
+        contract["cells"][0]["kind"] = "cuda-readiness"
+    elif fault == "missing-helper":
+        contract["cells"][0]["environment"] = {}
+    elif fault == "cleanup":
+        contract["cells"][0]["cleanup_receipts"] = 1
+    path.write_text(json.dumps(contract))
+    monkeypatch.setattr(sys, "argv", [campaign.__file__, str(path)])
+
+    class ValidatedProfile(BaseException):
+        pass
+
+    monkeypatch.setattr(campaign.ctypes, "CDLL", lambda *_: (_ for _ in ()).throw(ValidatedProfile))
+    if fault is None:
+        with pytest.raises(ValidatedProfile):
+            campaign.main()
+    else:
+        with pytest.raises(RuntimeError):
+            campaign.main()
 
 
 @pytest.mark.parametrize("fault", [None, "missing", "relative", "undeclared", "unhashed", "digest"])
@@ -165,7 +895,7 @@ def test_installed_save_requires_frozen_process_tracer_before_admission(tmp_path
         "bytes": metadata.st_size,
     }
     contract.update(
-        qualification="pending-save-bytes-v1",
+        qualification="pending-save-bytes-v2",
         cells=[{"process_trace_binary": str(tracer)}],
         executable_inputs=[declaration],
         input_sha256={str(tracer): declaration["sha256"]},
@@ -185,6 +915,19 @@ def test_installed_save_requires_frozen_process_tracer_before_admission(tmp_path
     else:
         with pytest.raises(RuntimeError):
             campaign.check_inputs(contract, deadline=time.monotonic() + 3)
+
+
+def test_historical_save_freeze_is_rejected_before_resource_admission(tmp_path, monkeypatch):
+    path, _env, lease = cpu_ready_inputs(tmp_path)
+    contract = json.loads(path.read_text())
+    contract["qualification"] = "pending-save-bytes-v1"
+    path.write_text(json.dumps(contract))
+    monkeypatch.setattr(sys, "argv", ["registration_campaign.py", str(path)])
+    with pytest.raises(RuntimeError, match="historical freezes"):
+        campaign.main()
+    assert not (tmp_path / "READY.json").exists()
+    with lease.open("rb") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
 @pytest.mark.parametrize(
@@ -870,7 +1613,7 @@ def test_last_startup_stat_crossing_deadline_cannot_acquire_resources(tmp_path, 
         campaign_seconds=10,
         cleanup_seconds=10,
         cpus=sorted(os.sched_getaffinity(0))[:1],
-        cells=[{"kind": "native", "passed": 2}],
+        cells=[{"kind": "native", "passed": 2, "seconds": 1}],
         locks=[{"path": str(lease), "device": lease.stat().st_dev, "inode": lease.stat().st_ino}],
     )
     path = tmp_path / "CONTRACT.json"
@@ -1328,12 +2071,33 @@ def test_native_credit_oracle_refuses_malformed_types_and_aliased_slots(
         "rejection-missing-counter",
         "rejection-late",
         "rejection-count-claim",
+        "admission-missing",
+        "admission-api",
+        "admission-operation-replay",
+        "admission-operation-duplicate",
+        "admission-operation-bool",
+        "admission-pending",
+        "admission-cancel",
+        "admission-cancel-success",
+        "admission-submitted-cancel",
+        "admission-completed",
+        "admission-prepare-copied",
+        "admission-copy-bytes",
+        "admission-late",
+        "admission-physical-claim",
     ],
 )
 def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
     tmp_path, monkeypatch, fault
 ):
     import hashlib
+
+    from tests.integration.test_pending_save_bytes import save_bytes_snapshot
+
+    def parsed_save_bytes(value):
+        with monkeypatch.context() as capture:
+            capture_save_metrics(capture, f"orbitkv_save_bytes_total {value}\n".encode())
+            return save_bytes_snapshot(1)
 
     captured = []
     validate = campaign.validate_cell
@@ -1403,12 +2167,27 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
                 "full_oracle": True,
                 "mutation_rejected": True,
                 "normal_unregister": True,
+                "producer_admission": {
+                    "api": "prepare_save/submit_saves/cancel_save",
+                    "operation_ids": [index * 3 + offset for offset in (1, 2, 3)],
+                    "pending_before_submit": 2,
+                    "canceled_before_submit": True,
+                    "canceled_done": True,
+                    "canceled_success": False,
+                    "submitted_cancel_refused": 2,
+                    "completed_successfully": 2,
+                    "prepare_copy_bytes": parsed_save_bytes(0) - parsed_save_bytes(0),
+                    "submitted_copy_bytes": parsed_save_bytes(16384) - parsed_save_bytes(0),
+                    "started_mono_ns": index * 10 + 1,
+                    "completed_mono_ns": index * 10 + 2,
+                    "physical_fault_termination_claimed": False,
+                },
                 "rejected_save": {
                     "instance_id": "source",
                     "exception": "SaveNotSubmittedError",
                     "cause": "ValueError",
-                    "started_mono_ns": index * 4 + 2,
-                    "ended_mono_ns": index * 4 + 3,
+                    "started_mono_ns": index * 10 + 3,
+                    "ended_mono_ns": index * 10 + 4,
                     "io_before": {
                         "orbitkv_save_bytes_total": (index + 1) * 16384,
                         "orbitkv_load_bytes_total": index * 16384,
@@ -1441,7 +2220,7 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
                     "source": "source",
                     "consumer": "consumer",
                     "physical_fault_termination_claimed": False,
-                    "completed_mono_ns": index * 4 + 4,
+                    "completed_mono_ns": index * 10 + 5,
                 }
             )
         )
@@ -1510,6 +2289,31 @@ def test_pending_save_cell_recomputes_payload_and_requires_complete_receipts(
         row = json.loads(path.read_text())
         row["completed_mono_ns"] = 1
         path.write_text(json.dumps(row))
+    elif fault is not None and fault.startswith("admission-"):
+        admission = rows[0]["producer_admission"]
+        if fault == "admission-missing":
+            rows[0].pop("producer_admission")
+        elif fault == "admission-operation-replay":
+            rows[1]["producer_admission"]["operation_ids"] = admission["operation_ids"]
+        elif fault == "admission-operation-duplicate":
+            admission["operation_ids"][1] = admission["operation_ids"][0]
+        elif fault == "admission-operation-bool":
+            admission["operation_ids"][0] = True
+        else:
+            field, value = {
+                "admission-api": ("api", "start_save"),
+                "admission-pending": ("pending_before_submit", True),
+                "admission-cancel": ("canceled_before_submit", False),
+                "admission-cancel-success": ("canceled_success", True),
+                "admission-submitted-cancel": ("submitted_cancel_refused", 1),
+                "admission-completed": ("completed_successfully", 1),
+                "admission-prepare-copied": ("prepare_copy_bytes", 1),
+                "admission-copy-bytes": ("submitted_copy_bytes", 8192),
+                "admission-late": ("completed_mono_ns", 1000),
+                "admission-physical-claim": ("physical_fault_termination_claimed", True),
+            }[fault]
+            admission[field] = value
+        (tmp_path / "PENDING-SAVE-BYTES.json").write_text(json.dumps(rows))
     elif fault is not None and fault.startswith("rejection-"):
         rejected = rows[0]["rejected_save"]
         if fault == "rejection-missing":
