@@ -12,6 +12,7 @@ import time
 import weakref
 from pathlib import Path
 from unittest.mock import MagicMock
+from uuid import UUID
 
 import pytest
 import requests
@@ -100,6 +101,18 @@ def test_sglang_close_retires_only_its_registration(
             },
         )
         held_counters = hold_counters(counters, tmp_path / "original.credit-owner.json")
+        assert UUID(held_counters[0]["evidence"]["registration_generation"]).hex == generation
+        assert len(held_counters[2]) == len(exporters)
+        assert len(
+            {
+                (
+                    credit["observation"]["device"],
+                    credit["observation"]["inode"],
+                    credit["counter_offset"],
+                )
+                for _, credit in held_counters[2]
+            }
+        ) == len(exporters)
         geometry = [
             {"object_id": id(tensor), "shape": list(tensor.shape), "dtype": str(tensor.dtype)}
             for tensor in layout.pools[PoolName.KV].entry.kv_buffer

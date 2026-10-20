@@ -94,7 +94,8 @@ loop. `support/install_wheel.py` preserves wheel executable modes and RECORD
 bytes; `support/installed_pytest.py` keeps the installed package ahead of source.
 Run the retained native and adapter integration tests when those contracts change,
 including `test_sglang_registration_lifetime.py` for sole-owner and independent
-exporter holds in DRAM and io_uring.
+exporter holds in DRAM and io_uring. Its SGLang 0.5.22 normal pool/linker fixture
+is independently accepted; it is not a model-shutdown or fault-reclamation gate.
 
 Completed registration-campaign controllers, their validator-only tests and CPU
 process-trace fixtures are retired from the maintained tree. Exact historical

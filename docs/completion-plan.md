@@ -16,7 +16,7 @@ define contracts, not additional delivery queues.
 | --- | --- | --- |
 | S0/S1 | Repository organization and ownership baseline accepted | Preserve established owners and historical evidence |
 | S2 | Accepted engineering scope: inventory-fed indexes, scoped discovery, four-owner baseline and three-host etcd process-only controls | Isolation FAIL; sixteen owners UNQUALIFIED; cross-host cache HA and independent failure domains unqualified |
-| S3 | Explicit registration, native Save ownership and bounded normal-path controls, including recorded vLLM 0.31.0 and SGLang 0.5.21 prepared-adapter pairs | Current-release adapter faults, page generations, physical termination and eventual fault reclamation |
+| S3 | Explicit registration, native Save ownership and bounded normal-path controls, including vLLM 0.31.0 and SGLang 0.5.22 prepared-adapter pairs | Current-release adapter faults, page generations, physical termination and eventual fault reclamation |
 | S4 | KDA copy work, SSD batching, bounded kernel improvement and RDMA paths | Inference contention, repeatable complete serving benefit and safe promotion |
 | S5 | Official dense cache/restart, scoped Graph/shared-Manager/two-host profiles; custom P/D removed | Public lifecycle, complete hybrid recovery, native P/D faults and broader topology |
 | S6 | Cost observations and guarded limited route choices | One consumed route/admission planner |
@@ -34,7 +34,7 @@ The immediate product is dense TP=1/PP=1 caching on vLLM 0.31.0 and SGLang
 Finish one useful delivery at a time; do not turn each failed experiment into
 another permanent controller or parallel roadmap.
 
-1. **Maintainable product surface — delivered in [PR #289](https://github.com/feichai0017/orbitkv/pull/289).**
+1. **Maintainable product surface — delivered in [PR #289](https://github.com/feichai0017/orbitkv/pull/289) and [PR #295](https://github.com/feichai0017/orbitkv/pull/295).**
    Retire completed campaign-specific code and
    duplicate reports; keep reusable benchmarks and tests with a current consumer.
    Organize README, model recipes and website around installation, features,
@@ -117,15 +117,18 @@ a valid proof. TTL, lease expiry and logical errors are not physical drain.
 
 Official vLLM 0.31.0 prepared-adapter DRAM/io_uring healthy pairs are
 accepted in [PR #290](https://github.com/feichai0017/orbitkv/pull/290).
-[PR #293](https://github.com/feichai0017/orbitkv/pull/293) records the separate
-SGLang 0.5.21 sole-owner/independent-exporter-hold pairs; they do not qualify the
-selected 0.5.22 artifact. Both engines check complete bytes/sentinels, original
-IPC credits, registration retirement and real normal process waits; SSD controls
-also evict DRAM and require io_uring reads. The
+The selected SGLang 0.5.22 pair for each medium is independently accepted in
+[PR #295](https://github.com/feichai0017/orbitkv/pull/295): the released GPU-pool/linker
+fixture restores all 2,621,440 bytes including sentinels, repays four original
+IPC credits and retires registration with normal process waits. Both sole
+ownership and an independent exporter hold pass; the SSD pair clears DRAM and
+requires reads from the ext4 NVMe file through io_uring. This is a normal
+prepared-adapter fixture, separate from model serving and fault reclamation.
+[PR #293](https://github.com/feichai0017/orbitkv/pull/293) retains the earlier
+0.5.21 results. The
 [immutable lifetime record](https://github.com/feichai0017/orbitkv/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
 preserves exact source/wheel/review/archive hashes and all failed freezes.
-Current-release lifetime, cancellation, page reuse and physical reclamation
-remain separate obligations.
+Cancellation, page reuse and physical reclamation remain separate obligations.
 
 ## S4 — Finish communication execution and demonstrate gains
 
@@ -195,6 +198,8 @@ changing all pins together. Upstream main is not the user's runtime.
 - [x] Scoped shared-Manager pressure, fixed batch-1 FULL decode Graph recovery,
   static immutable LoRA and two-H20 RDMA profiles recorded in
   [compatibility](compatibility.md).
+- [x] Selected-release normal prepared-adapter retirement in DRAM/io_uring;
+  the SGLang 0.5.22 pool/linker fixture covers sole and independent exporter holds.
 - [ ] Finish consumed cancellation/preemption/page-reuse lifetime contracts with
   S3 before extending support. Manager restart does not preserve the SSD file.
 

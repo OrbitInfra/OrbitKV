@@ -34,15 +34,16 @@ engine completion pending; SGLang also preserves its FIFO tree locks.
 
 The retained integration gates exercise native producer readiness, complete
 restored bytes and sentinels, original IPC-credit repayment and registration
-retirement. SGLang covers both sole ownership and an independent exporter hold;
+retirement on vLLM 0.31.0 and SGLang 0.5.22. The SGLang GPU-pool/linker fixture
+covers both sole ownership and an independent exporter hold;
 vLLM includes a no-fence counterfactual. SSD gates evict DRAM and require actual
-io_uring reads. These normal-path controls do not establish cancellation, page
-reuse/generations or physical-fault reclamation.
+io_uring reads. These normal-path controls do not establish complete model
+shutdown, cancellation, page reuse/generations or physical-fault reclamation.
 
 Historical per-cohort details and failures remain in the
 [accepted lifetime record](https://github.com/feichai0017/orbitkv/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#ownership-contract).
 Use the [completion plan](completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
-for current-release acceptance; earlier 0.5.21 results do not extend to 0.5.22.
+for current-release acceptance; earlier 0.5.21 results retain their original scope.
 
 | Responsibility | Owner |
 | --- | --- |
@@ -247,15 +248,11 @@ and pending-query admission. Enqueue preparation adds one Hook only when
 `ORBITKV_PREPARE_REQUESTS=1` or `ORBITKV_QUEUE_WARMUP=1` is set before startup.
 P/D transport factories and fork observation callbacks are removed. Native P/D
 uses the official engine lifecycle and is qualified separately.
-The historical installed 0.5.21 ordinary-cache checks pass on A100 for dense eager
-DRAM/io_uring recovery. A calibrated normal-exit diagnosis observes all 72
-OrbitKV export credits return to zero after the released linker close and Manager
-unregister. The earlier nonzero reading came from the shared-memory file header,
-not a tensor counter, and is retained as an invalid measurement. The PyTorch exit
-warning remains in the evidence; it is not a per-counter leak oracle.
 The [S5.2 evidence](completion-plan.md#s52--minimal-official-cache-backends)
-qualifies neither crash reclamation nor cancellation during DMA; independent
-acceptance and S3 lifetime work remain open.
+accepts normal prepared-adapter retirement on the selected release. It does not
+qualify crash reclamation or cancellation during DMA. The earlier model-process
+shutdown warnings and calibrated 0.5.21 measurements remain in the
+[immutable ownership record](https://github.com/feichai0017/orbitkv/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#ownership-contract).
 
 These remaining targets are version-coupled dependencies, not stable public APIs.
 Replace them with consumed factory/lifecycle/component contracts and then delete
