@@ -258,13 +258,18 @@ unsupported.
 **Partial.** Follow [LMCache's documentation organization](https://docs.lmcache.ai/)
 for user navigation while retaining OrbitKV's Rust owners and website identity.
 
-- [ ] Keep README, quickstart, feature/model/deployment recipes, configuration,
-  metrics and benchmark methodology concise and consistent. Remove duplicate
-  reports and development diaries; preserve verified immutable evidence links.
+- [x] Consolidate the product documentation and retire completed campaign code
+  and duplicate reports in [PR #289](https://github.com/feichai0017/orbitkv/pull/289).
+  Feature/model recipes, current support limits, links and historical references
+  have independent source/CPU review; runtime support is unchanged.
 - [ ] Build final Manager/engine images and wheels, preserve licenses/provenance,
   and qualify clean installed artifacts on claimed hosts and profiles.
 - [ ] Publish only within release authorization. The 0.1.0 package remains
   unpublished; a wheel CI build does not establish a published release.
+
+Maintain concise README, quickstart, configuration and benchmark guidance with
+each future behavior change. Publication and final artifact qualification remain
+open independently of this documentation cleanup.
 
 ## Review contract for every delivery
 

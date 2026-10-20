@@ -26,16 +26,16 @@ heavy imports inside fixtures/functions so default collection stays source-only.
 From `python/`:
 
 ```bash
-uv run --group test pytest
-
-# CI: prove the dependency boundary without building OrbitKV
 uv run --isolated --no-project --with pytest --with numpy \
-  --with 'requests>=2.26.0' pytest
+  --with 'requests>=2.26.0' --with 'tomli>=2.0; python_version < "3.11"' pytest
 ```
 
 Markers in `pyproject.toml` exclude integration, E2E, stress and release by
 default (`release_smoke` selects installed-artifact checks). Stub modules must not shadow
 real runtime modules during heavy-gate collection.
+
+`--no-project` keeps this command independent of Maturin and optional engine
+dependency resolution. CI uses the same source-only dependency boundary.
 
 From the repository root, benchmark-only changes use the affected family:
 

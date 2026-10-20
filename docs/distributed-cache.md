@@ -30,7 +30,8 @@ flowchart LR
     DB[DRAM / SSD]
   end
   A <-.->|Inventory snapshots and deltas| B
-  IA -->|Candidate and exact source grant| B
+  IA -->|Candidate discovery and grant request| B
+  B -->|Authoritative source grant| A
   DB -->|TENT READ into consumer DRAM| DA
 ```
 
