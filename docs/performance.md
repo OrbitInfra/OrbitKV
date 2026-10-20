@@ -198,9 +198,10 @@ KV precision, eager/Graph execution and NUMA placement. Record correctness and
 actual restore bytes before interpreting latency or throughput. Compare cold,
 resident-HBM, evicted/reused and restarted-engine cases separately.
 
-`--host-gib` requests binary GiB; SGLang's `--hicache-size` consumes decimal GB,
-so the harness converts between them. Earlier SGLang comparisons passed the
-same numeric value without conversion: their nominal 16 GiB HiCache setting
+`--host-gib` requests binary GiB; SGLang's integer `--hicache-size` consumes
+decimal GB. The harness uses `--hicache-size 0` and a host/device byte ratio to
+preserve the requested budget, before native page rounding. Earlier comparisons
+passed the same numeric value without conversion: their nominal 16 GiB HiCache setting
 requested 16 GB, before page rounding. Retain those measured latencies, but do
 not interpret their host budgets as equal to OrbitKV's 16 GiB. Verify actual
 allocated tokens and bytes in engine logs as well as configured budgets.

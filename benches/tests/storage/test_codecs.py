@@ -161,11 +161,15 @@ def test_matched_execution_mode_uses_released_engine_controls(tmp_path, engine, 
         assert ("--enforce-eager" in launch.command) == eager
         assert launch.command.count("--shutdown-timeout") == 1
         assert launch.command[launch.command.index("--shutdown-timeout") + 1] == "30"
+        if backend == "cpu":
+            connector = json.loads(launch.command[launch.command.index("--kv-transfer-config") + 1])
+            assert connector["kv_connector_extra_config"]["cpu_bytes_to_use"] == 16 * 1024**3
     else:
         assert "--shutdown-timeout" not in launch.command
         if backend == "cpu":
-            host_gb = float(launch.command[launch.command.index("--hicache-size") + 1])
-            assert host_gb * 1e9 == pytest.approx(16 * 1024**3, abs=1, rel=0)
+            assert int(launch.command[launch.command.index("--hicache-size") + 1]) == 0
+            ratio = float(launch.command[launch.command.index("--hicache-ratio") + 1])
+            assert ratio * args.gpu_tokens * 147456 == pytest.approx(16 * 1024**3, abs=1, rel=0)
         for flag in ("--cuda-graph-backend-decode", "--cuda-graph-backend-prefill"):
             assert (flag in launch.command) == eager
             if eager:
