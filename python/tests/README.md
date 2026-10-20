@@ -27,9 +27,14 @@
   starting a Manager; neither test prewarm nor readiness is a production fence.
   The exact vLLM 0.31.0 DRAM fenced/no-fence pair from `549f4a00` has independent
   result acceptance. Its negative cell must retain sentinel destination bytes
-  and report qualification false. That acceptance covers this one healthy
-  two-cell adapter contract only; SSD, SGLang, model, fault, page-generation and
-  physical-reclamation gates remain separate.
+  and report qualification false. The separate `3b05` io_uring pair also has
+  independent result acceptance after mode-preserving wheel installation and a
+  registration-consuming 78-mapping readiness. It additionally requires DRAM
+  eviction plus advancing physical io_uring counters on NVMe. Earlier SSD
+  freezes with a non-executable Manager or incomplete mapping census remain
+  invalid and quarantined. These acceptances cover only the two healthy vLLM
+  media pairs; SGLang, model, fault, page-generation and physical-reclamation
+  gates remain separate.
 - `conftest.py`: shared options and the Cache Manager fixture used by both engine
   E2E and channel integration tests; `integration/conftest.py` owns GPU fixtures.
 
