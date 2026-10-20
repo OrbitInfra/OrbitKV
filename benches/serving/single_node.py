@@ -159,6 +159,11 @@ def main() -> None:
         action="store_true",
         help="Enable the engine's deterministic kernels for output-parity qualification",
     )
+    parser.add_argument(
+        "--sglang-priority-scheduling",
+        action="store_true",
+        help="Measure official SGLang priority scheduling with equal default request priority 0",
+    )
     parser.add_argument("--seed", type=int, default=20260920)
     parser.add_argument("--settle-seconds", type=float, default=1.2)
     parser.add_argument(
@@ -170,6 +175,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.sglang_profile and (args.engine != "sglang" or args.workload != "serial"):
         parser.error("--sglang-profile requires the serial SGLang workload")
+    if args.sglang_priority_scheduling and args.engine != "sglang":
+        parser.error("--sglang-priority-scheduling requires --engine sglang")
     if len(set(args.resource_lock_fd)) != len(args.resource_lock_fd):
         parser.error("resource-lock descriptors must be distinct")
     for descriptor in args.resource_lock_fd:

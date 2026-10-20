@@ -69,6 +69,13 @@ run at least three pairs in direct/kernel, kernel/direct, direct/kernel order.
 An observation-overhead comparison requires one matched transfer mode in each
 off/on pair.
 
+For an SGLang admission comparison, `--sglang-priority-scheduling` passes the
+released `--enable-priority-scheduling --default-priority-value 0` options.
+The workload gives every request the same default priority. This also enables
+native preemption plumbing and priority sorting; measure the whole configuration
+and retain the actual engine command in the manifest. It changes no engine files
+or adapter defaults and does not qualify mixed-priority preemption or P/D.
+
 Use `--observation-mode boundary` for request-timing controls without an
 in-process metrics sampler during requests. Engine/Manager snapshots before and
 after the interval, quiet/drain checks and service cleanup still run. The default

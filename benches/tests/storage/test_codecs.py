@@ -37,6 +37,7 @@ def launch_arguments(tmp_path, engine="vllm", codec="none", ssd_gib=4):
         prepare_requests="off",
         trace_transfers=False,
         deterministic_inference=False,
+        sglang_priority_scheduling=False,
         read_batch_mib=0,
         read_timeout_ms=0,
         read_max_batches=0,
