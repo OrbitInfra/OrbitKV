@@ -4,6 +4,7 @@ from zipfile import ZipFile, ZipInfo
 
 import pytest
 
+from tests.support import install_wheel as installer
 from tests.support.install_wheel import install
 
 
@@ -143,3 +144,46 @@ def test_exact_wheel_install_rejects_preexisting_target(tmp_path):
     target.mkdir()
     with pytest.raises(RuntimeError, match="must not exist"):
         install(candidate, target)
+
+
+def test_exact_wheel_install_rejects_replaced_staging_name(tmp_path, monkeypatch):
+    candidate = wheel(
+        tmp_path,
+        [(member("pkg/payload", stat.S_IFREG | 0o600), b"payload")],
+    )
+    target = tmp_path / "installed"
+    original = installer.write_member
+    replaced = False
+
+    def replace_stage(archive, wheel_member, parts, mode, root_fd):
+        nonlocal replaced
+        if not replaced:
+            stage = Path(f"/proc/self/fd/{root_fd}").resolve(strict=True)
+            retired = stage.with_name(stage.name + "-retained")
+            stage.rename(retired)
+            stage.mkdir()
+            (stage / "injected").write_bytes(b"not the wheel")
+            replaced = True
+        return original(archive, wheel_member, parts, mode, root_fd)
+
+    monkeypatch.setattr(installer, "write_member", replace_stage)
+    with pytest.raises(RuntimeError, match="staging.*identity"):
+        install(candidate, target)
+    assert not target.exists()
+
+
+def test_exact_wheel_install_preserves_primary_post_publish_error(tmp_path, monkeypatch):
+    candidate = wheel(tmp_path, [(member("payload", stat.S_IFREG | 0o600), b"payload")])
+    target = tmp_path / "installed"
+    original = installer.rename_noreplace
+
+    def move_published_target(parent_fd, source, name):
+        original(parent_fd, source, name)
+        parent = Path(f"/proc/self/fd/{parent_fd}").resolve(strict=True)
+        (parent / name).rename(parent / "retired-installation")
+
+    monkeypatch.setattr(installer, "rename_noreplace", move_published_target)
+    with pytest.raises(FileNotFoundError):
+        install(candidate, target)
+    assert not target.exists()
+    assert (tmp_path / "retired-installation").is_dir()

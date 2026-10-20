@@ -178,6 +178,16 @@ def same_identity(path: Path, descriptor: int) -> bool:
     return (current.st_dev, current.st_ino) == (opened.st_dev, opened.st_ino)
 
 
+def require_entry_identity(directory_fd: int, name: str, expected_fd: int, label: str) -> None:
+    current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    expected = os.fstat(expected_fd)
+    if not stat.S_ISDIR(current.st_mode) or (current.st_dev, current.st_ino) != (
+        expected.st_dev,
+        expected.st_ino,
+    ):
+        raise RuntimeError(f"{label} identity differs from the retained directory")
+
+
 def rename_noreplace(parent_fd: int, source: str, target: str) -> None:
     libc = ctypes.CDLL(None, use_errno=True)
     renameat2 = libc.renameat2
@@ -226,7 +236,6 @@ def install(wheel: Path, target: Path) -> dict:
         )
         stage = f".orbitkv-install-{target.name}-{os.getpid()}-{secrets.token_hex(8)}"
         root_fd = None
-        published = False
         try:
             os.mkdir(stage, 0o700, dir_fd=parent_fd)
             root_fd = os.open(
@@ -248,9 +257,10 @@ def install(wheel: Path, target: Path) -> dict:
             )
             if not same_identity(parent_path, parent_fd):
                 raise RuntimeError("Installation parent changed before publication")
+            require_entry_identity(parent_fd, stage, root_fd, "Installation staging")
             rename_noreplace(parent_fd, stage, target.name)
-            published = True
             os.fsync(parent_fd)
+            require_entry_identity(parent_fd, target.name, root_fd, "Published installation")
             if (
                 not same_identity(parent_path, parent_fd)
                 or target.resolve(strict=True) != target
@@ -262,8 +272,6 @@ def install(wheel: Path, target: Path) -> dict:
             if root_fd is not None:
                 os.close(root_fd)
             os.close(parent_fd)
-            if published and not target.exists():
-                raise RuntimeError("Published installation disappeared")
 
 
 def main() -> None:
