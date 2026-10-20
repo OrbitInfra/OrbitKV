@@ -4,9 +4,10 @@ Run commands from the repository root. [Benchmark navigation](../README.md).
 
 ## Single-node comparison
 
-Use separate installed environments for the selected official vLLM 0.31.0 and
-SGLang 0.5.21 releases. Earlier 0.29.0/0.5.20 measurements remain historical
-evidence for those revisions. Follow the [deployment guide](../../docs/single-node.md)
+Use separate installed environments for the official releases in the
+[support matrix](../../docs/compatibility.md). Historical comparisons retain
+their frozen engine, OrbitKV wheel and harness versions; upgrading a pin does
+not requalify their performance. Follow the [deployment guide](../../docs/single-node.md)
 to build/install the release wheel. The harness needs `requests`; the selected
 engine provides its tokenizer and GPU runtime. LMCache and FlexKV are comparison
 dependencies, not OrbitKV package dependencies. The LMCache comparison target is
