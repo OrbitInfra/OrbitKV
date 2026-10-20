@@ -222,7 +222,7 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
     command = (
         vllm_command(args, port, bytes_per_token, cache_port)
         if args.engine == "vllm"
-        else sglang_command(args, port, cache_config)
+        else sglang_command(args, port, bytes_per_token, cache_config)
     )
     backend_configuration["execution_mode"] = "eager" if args.enforce_eager else "engine-default"
     return Launch(
@@ -315,7 +315,9 @@ def vllm_command(
     return command
 
 
-def sglang_command(args: Namespace, port: int, cache_config: Path | None) -> list[str]:
+def sglang_command(
+    args: Namespace, port: int, bytes_per_token: int, cache_config: Path | None
+) -> list[str]:
     pressure_tokens = (
         max(args.lengths) if args.workload == "sustained" else args.gpu_tokens * 3 // 4
     )
@@ -365,7 +367,9 @@ def sglang_command(args: Namespace, port: int, cache_config: Path | None) -> lis
         command += [
             "--enable-hierarchical-cache",
             "--hicache-size",
-            str(args.host_gib),
+            "0",
+            "--hicache-ratio",
+            str(args.host_gib * 1024**3 / (args.gpu_tokens * bytes_per_token)),
             "--hicache-write-policy",
             "write_through",
         ]

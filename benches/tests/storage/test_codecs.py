@@ -147,9 +147,11 @@ def test_installed_benchmark_rejects_incomplete_or_external_wheel(tmp_path, monk
 
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])
 @pytest.mark.parametrize("eager", [False, True])
-def test_matched_execution_mode_uses_released_engine_controls(tmp_path, engine, eager):
+@pytest.mark.parametrize("backend", ["native", "cpu"])
+def test_matched_execution_mode_uses_released_engine_controls(tmp_path, engine, eager, backend):
     args = launch_arguments(tmp_path, engine)
-    args.backend = "native"
+    args.backend = backend
+    args.host_gib = 16
     args.enforce_eager = eager
     launch = configure(args, 147456)
     assert launch.backend_configuration["execution_mode"] == (
@@ -159,8 +161,15 @@ def test_matched_execution_mode_uses_released_engine_controls(tmp_path, engine, 
         assert ("--enforce-eager" in launch.command) == eager
         assert launch.command.count("--shutdown-timeout") == 1
         assert launch.command[launch.command.index("--shutdown-timeout") + 1] == "30"
+        if backend == "cpu":
+            connector = json.loads(launch.command[launch.command.index("--kv-transfer-config") + 1])
+            assert connector["kv_connector_extra_config"]["cpu_bytes_to_use"] == 16 * 1024**3
     else:
         assert "--shutdown-timeout" not in launch.command
+        if backend == "cpu":
+            assert int(launch.command[launch.command.index("--hicache-size") + 1]) == 0
+            ratio = float(launch.command[launch.command.index("--hicache-ratio") + 1])
+            assert ratio * args.gpu_tokens * 147456 == pytest.approx(16 * 1024**3, abs=1, rel=0)
         for flag in ("--cuda-graph-backend-decode", "--cuda-graph-backend-prefill"):
             assert (flag in launch.command) == eager
             if eager:

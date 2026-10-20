@@ -12,8 +12,10 @@ acceptance does not supply an external-cache comparison.
 The [Qwen3-32B cohort](https://github.com/feichai0017/orbitkv/pull/221) contains
 14 cells and 420 measured requests on one H20, using official vLLM 0.31.0,
 SGLang 0.5.21 and LMCache 0.5.5. Model revision `9216db57`, harness `e28fe829`,
-accepted native build `37b48c50`, BF16/raw, TP=1/PP=1, eager execution, 4 GiB
-GPU KV and 16 GiB host offload are frozen. Each length/phase has five samples in
+accepted native build `37b48c50`, BF16/raw, TP=1/PP=1, eager execution and 4 GiB
+GPU KV are frozen. OrbitKV requests 16 GiB host offload; the historical HiCache
+configuration requests 16 decimal GB before page rounding. Read the comparison
+within that capacity difference. Each length/phase has five samples in
 each of two independently started, opposite-order runs; outputs, restored bytes,
 installed-file hashes and final GPU/process cleanup pass independent review.
 
@@ -195,6 +197,14 @@ Match actual input/output tokens, concurrency, HBM/DRAM/SSD budgets, reuse patte
 KV precision, eager/Graph execution and NUMA placement. Record correctness and
 actual restore bytes before interpreting latency or throughput. Compare cold,
 resident-HBM, evicted/reused and restarted-engine cases separately.
+
+`--host-gib` requests binary GiB; SGLang's integer `--hicache-size` consumes
+decimal GB. The harness uses `--hicache-size 0` and a host/device byte ratio to
+preserve the requested budget, before native page rounding. Earlier comparisons
+passed the same numeric value without conversion: their nominal 16 GiB HiCache setting
+requested 16 GB, before page rounding. Retain those measured latencies, but do
+not interpret their host budgets as equal to OrbitKV's 16 GiB. Verify actual
+allocated tokens and bytes in engine logs as well as configured budgets.
 
 Report TTFT, inter-token latency, request latency and throughput with independent
 run uncertainty. For transfer components, include payload size, batching,
