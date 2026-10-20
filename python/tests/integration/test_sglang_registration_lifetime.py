@@ -18,7 +18,7 @@ import requests
 
 from tests.support.ipc_credit import hold_counters, release_receipt
 from tests.support.metrics import fetch_orbitkv_metrics
-from tests.support.registration_campaign import identity, write
+from tests.support.runtime_checks import identity, write
 
 pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 

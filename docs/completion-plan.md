@@ -115,44 +115,17 @@ ACKs, partial submission, repeated page reuse and restart. No premature recycle;
 retention must be bounded and observable, and reclamation must eventually follow
 a valid proof. TTL, lease expiry and logical errors are not physical drain.
 
-The official vLLM 0.31.0 prepared-adapter DRAM/io_uring healthy pairs are
-accepted in [PR #290](https://github.com/feichai0017/orbitkv/pull/290). The SSD
-pair verifies complete restored bytes after DRAM eviction and an advancing
-io_uring read; the no-fence counterfactual preserves sentinel bytes and reports
-qualification false. Installed admission now preserves wheel executable modes
-and consumes registration before freezing the complete mapped runtime.
-Earlier invalid cohorts and the platform's non-owning zombie remain in that
-handoff. These scoped controls do not close SGLang lifetime, model serving,
-page generations, cancellation or physical reclamation; S3 remains Partial.
-
-The exact `022cf3b5` / SGLang 0.5.21 wheel also has independent healthy
-prepared-adapter acceptance for separate formal DRAM and physical
-NVMe0/io_uring pairs. Each medium runs sole-owner then independent-exporter-hold,
-checks the complete 2,621,440-byte payload and sentinels, four original IPC
-credits per cell, one-to-zero repayment, registration retirement, the frozen
-78-file Manager mapping, normal Manager SIGTERM/reap and actual controller/root
-waits. The SSD cells additionally evict DRAM and observe 524,288-byte SSD
-save/write and prefetch/load plus an advancing io_uring read on data02/ext4.
-
-The DRAM result is `AcceptedSglangDramPreparedAdapterPair`; its raw archive SHA256
-is `605329e5b0d25cba91f91c798965604a4fa8273ac11de59afff0f54d4be721aa`
-and independent `REVIEW.md` SHA256 is
-`9f270496c46f422bcc8797755bc9f712cc0be435c58e6a369325cbcd74109d36`.
-The SSD result is `AcceptedSglangSsdPreparedAdapterPair`; its sparse raw archive
-SHA256 is `fb44dea1a2c96880ba3b69b324290b476a366e9947e48fae7a97d24e0e0742b3`
-and independent `REVIEW.md` SHA256 is
-`7391b5512dd11b1037f052b3654527ac61a6699016ac020e67c5ca0fc3119936`.
-Evidence is under
-`/root/orbitkv-artifacts/s3-sglang-prepared-lifetime-20261021/`.
-
-Prelaunch closure, helper-count and phase errors remain preserved as unlaunched
-or READY-only failed freezes; a resource readiness also refused a GPU already
-owned by the independent S5 task. None contributes qualification. The accepted
-bytes bind SGLang 0.5.21 and wheel SHA256 `8f2fb9c6...e5f89f03`; the selected
-0.5.22 code does not inherit them. Re-run this lifetime pair on a matching 0.5.22
-artifact before calling its adapter lifetime current. Cancellation, process loss,
-page reuse/generation and physical-fault reclamation remain open, so S3 stays
-Partial.
+Official vLLM 0.31.0 prepared-adapter DRAM/io_uring healthy pairs are
+accepted in [PR #290](https://github.com/feichai0017/orbitkv/pull/290).
+[PR #293](https://github.com/feichai0017/orbitkv/pull/293) records the separate
+SGLang 0.5.21 sole-owner/independent-exporter-hold pairs; they do not qualify the
+selected 0.5.22 artifact. Both engines check complete bytes/sentinels, original
+IPC credits, registration retirement and real normal process waits; SSD controls
+also evict DRAM and require io_uring reads. The
+[immutable lifetime record](https://github.com/feichai0017/orbitkv/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
+preserves exact source/wheel/review/archive hashes and all failed freezes.
+Current-release lifetime, cancellation, page reuse and physical reclamation
+remain separate obligations.
 
 ## S4 — Finish communication execution and demonstrate gains
 
@@ -172,12 +145,13 @@ not require finishing every fault/topology combination first.
   equal-priority option across four independent process pairs. Shared-prefix
   recovery improves, but mixed-prefix regression guards fail; keep the option
   explicit and defaults unchanged. See [performance](performance.md#sglang-concurrent-admission).
-- [ ] Pass the matched native-observer overhead pilot before using it to
-  diagnose first peer recovery and warm steady state. The current pilot failed
-  its tail guard.
-- [ ] Reduce engine-local H2D observation overhead until its full matched guard
-  passes. Keep prior valid failed cohorts and clocks distinct.
-- [ ] Demonstrate repeatable complete serving benefit with concurrent inference,
+- [ ] **Qualification failed:** the implemented native observer must pass its
+  matched overhead pilot before diagnosing first peer recovery and warm steady
+  state. Its current tail guard fails.
+- [ ] **Qualification failed:** reduce the implemented engine-local H2D
+  observer overhead until the full matched guard passes. Keep prior failed
+  cohorts and clocks distinct.
+- [ ] **Qualification open:** demonstrate repeatable complete serving benefit with concurrent inference,
   cold/native-HBM regression controls, throughput, tails and resource budgets.
 - [ ] Qualify S3-dependent reuse, fault reclamation and earlier multipart,
   SSD or codec consumption before enabling those behaviors.
@@ -236,7 +210,7 @@ correctness protection until a consumed released replacement exists.
   completion; delete custom load polling/tree insertion and recurrent component
   override. Official installed CPU and selected Qwen3-8B GPU controls pass;
   complete hybrid and fault qualification remain open.
-- [ ] Consume released pre-capture and pending-admission replacements and remove
+- [ ] **Waiting on released APIs:** consume pre-capture and pending-admission replacements and remove
   each superseded private hook in the same delivery.
 - [ ] Complete recovery for all required attention, window, recurrent,
   checkpoint and auxiliary state of each claimed hybrid model. Qwen3.8 native

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.support import cache_manager, registration_campaign
+from tests.support import cache_manager, runtime_checks
 from tests.support.cache_manager import CacheManagerProcess, manager_pythonpath
 from tests.support.paths import PYTHON_ROOT
 from tests.support.vllm_helpers import CacheManager, VLLMServer
@@ -161,14 +161,14 @@ def test_strict_manager_start_records_actual_command_and_keeps_failed_record_own
         bootstrap_socket=str(tmp_path / "fixture.sock"),
         log_path=tmp_path / "manager.log",
     )
-    write = registration_campaign.write
+    write = runtime_checks.write
 
     def persist(path, value, deadline=None):
         if write_failure and path.name.endswith("manager-start.json"):
             raise OSError("controlled Manager startup record failure")
         write(path, value, deadline)
 
-    monkeypatch.setattr(registration_campaign, "write", persist)
+    monkeypatch.setattr(runtime_checks, "write", persist)
     try:
         if write_failure:
             with pytest.raises(OSError, match="startup record failure"):
@@ -260,7 +260,7 @@ def test_runtime_hash_is_bound_to_the_opened_mapped_inode(tmp_path, monkeypatch,
     server = CacheManagerProcess(port=12345, log_path=tmp_path / "manager.log")
     process = subprocess.Popen(argv, start_new_session=True)
     server.process = process
-    server._process_start_ticks = str(registration_campaign.identity(process.pid)["start_ticks"])
+    server._process_start_ticks = str(runtime_checks.identity(process.pid)["start_ticks"])
     server._log_path = tmp_path / "manager.log"
     deadline = time.monotonic() + 5
     try:
@@ -309,7 +309,7 @@ def test_runtime_hash_is_bound_to_the_opened_mapped_inode(tmp_path, monkeypatch,
                 runtime = json.loads(next(tmp_path.glob("*.manager-runtime.json")).read_text())
                 row = next(row for row in runtime["files"] if row["path"] == str(library))
                 assert row["inode"] == library.stat().st_ino
-                assert row["sha256"] == registration_campaign.digest(library)
+                assert row["sha256"] == runtime_checks.digest(library)
             assert process.poll() is None
     finally:
         process.terminate()
@@ -355,7 +355,7 @@ def test_overlay_runtime_requires_actual_complete_executable_bytes(
     )
     server = CacheManagerProcess(port=12345, log_path=tmp_path / "manager.log")
     server.process = process
-    server._process_start_ticks = str(registration_campaign.identity(process.pid)["start_ticks"])
+    server._process_start_ticks = str(runtime_checks.identity(process.pid)["start_ticks"])
     server._log_path = tmp_path / "manager.log"
     try:
         deadline = time.monotonic() + 5
@@ -407,7 +407,7 @@ def test_overlay_runtime_requires_actual_complete_executable_bytes(
 def test_large_runtime_code_proof_is_complete_and_bounded(tmp_path, monkeypatch, control):
     library = tmp_path / "large-executable.so"
     size = (
-        registration_campaign.MAX_MAPPED_EXECUTABLE_BYTES + 4096
+        runtime_checks.MAX_MAPPED_EXECUTABLE_BYTES + 4096
         if control == "over-bound"
         else 513 * 1024 * 1024
     )
@@ -438,7 +438,7 @@ def test_large_runtime_code_proof_is_complete_and_bounded(tmp_path, monkeypatch,
     )
     server = CacheManagerProcess(port=12345, log_path=tmp_path / "manager.log")
     server.process = process
-    server._process_start_ticks = str(registration_campaign.identity(process.pid)["start_ticks"])
+    server._process_start_ticks = str(runtime_checks.identity(process.pid)["start_ticks"])
     server._log_path = tmp_path / "manager.log"
     try:
         deadline = time.monotonic() + 5

@@ -91,7 +91,7 @@ else:retain('CPU ownership control EOF; no CUDA or native memory in this test')
 
 
 def attach_runtime_inputs(contract, host, tmp_path):
-    helper = Path(__file__).resolve().parents[3] / "python/tests/support/registration_campaign.py"
+    helper = Path(__file__).resolve().parents[3] / "python/tests/support/runtime_checks.py"
     resources = contract.setdefault("resource_locks", [])
     declarations = []
     for name in resources:

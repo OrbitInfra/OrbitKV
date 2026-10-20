@@ -74,7 +74,7 @@ def channel_client_context(
         ctx.register_kv_caches()
     finally:
         if os.environ.get("ORBITKV_TEST_STRICT_SHUTDOWN") == "1":
-            from tests.support.registration_campaign import identity, write
+            from tests.support.runtime_checks import identity, write
 
             registration = ctx.registration
             evidence = (

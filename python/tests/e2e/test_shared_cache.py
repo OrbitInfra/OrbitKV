@@ -43,7 +43,7 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
     from benches.common.runtime import server
     from benches.common.workload import evict_host_cache, generate
     from benches.distributed.shared_cache import drain, qualify, synchronize, verify_restore
-    from tests.support.registration_campaign import identity, record_process_group_runtime
+    from tests.support.runtime_checks import identity, record_process_group_runtime
 
     config = json.loads((model / "config.json").read_text())
     assert config["model_type"] == "qwen3", "this gate qualifies dense Qwen3"

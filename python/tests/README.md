@@ -67,7 +67,7 @@ are part of each gate, not provided by pytest collection.
 The shared-cache serving gate uses two replicas/two Managers on one host over
 TCP; it does not qualify cross-host HA, RDMA or physical ranks. Installed CUDA
 identity checks require the declared physical devices. Run `pytest --help` for
-layout, SSD, copy backend, process-trace and deployment options rather than
+layout, SSD, copy backend and deployment options rather than
 adding another launcher.
 
 ## Installed runtime and lifecycle
@@ -88,22 +88,21 @@ its process group. Current scoped healthy results do not erase previous native
 SIGKILL/IPC warnings or establish fault reclamation. [S3](../../docs/completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
 and [compatibility](../../docs/compatibility.md) retain the actual limits.
 
-`support/registration_campaign.py` remains the installed registration controller
-and shared runtime-evidence owner used by current gates. It is not production
-Python. Run its CPU units when changing admission/runtime checks; do not build a
-second controller or manually weaken frozen cell validators. Its current
-`pending-save-bytes-v2` and per-engine/per-medium `prepared-adapter-lifetime-v2`
-contracts replace the historical unlaunched freezes. Installed wheel projection
-uses `support/install_wheel.py` to preserve executable modes and RECORD bytes;
-READY checks include the registered Manager's complete mapped runtime.
-[PR #290](https://github.com/feichai0017/orbitkv/pull/290) records the accepted
-vLLM DRAM/io_uring healthy controls and retained invalid attempts. These controls
-do not qualify SGLang lifetime, model output, cancellation or physical faults.
-The same maintained controller later accepts exact SGLang 0.5.21
-sole-owner/independent-hold DRAM and physical NVMe0/io_uring pairs at production
-commit `022cf3b5`; their evidence is recorded in S3. They are historical
-release-bound results and do not qualify the selected SGLang 0.5.22 artifact,
-fault cancellation, page reuse/generations or physical reclamation.
+`support/runtime_checks.py` owns the process/runtime checks shared by Manager,
+engine and RDMA tests. It has no campaign scheduler, launch grant or GPU admission
+loop. `support/install_wheel.py` preserves wheel executable modes and RECORD
+bytes; `support/installed_pytest.py` keeps the installed package ahead of source.
+Run the retained native and adapter integration tests when those contracts change,
+including `test_sglang_registration_lifetime.py` for sole-owner and independent
+exporter holds in DRAM and io_uring.
+
+Completed registration-campaign controllers, their validator-only tests and CPU
+process-trace fixtures are retired from the maintained tree. Exact historical
+reproduction uses the
+[frozen controller and tests](https://github.com/feichai0017/orbitkv/tree/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/python/tests)
+and the original external artifacts referenced by [S3](../../docs/completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership).
+Normal-path acceptance does not qualify cancellation, page reuse/generations or
+physical-fault reclamation.
 
 ## Release smoke
 

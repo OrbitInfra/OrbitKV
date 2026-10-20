@@ -85,10 +85,9 @@ hit its native GPU cache instead.
 | Measure latency and throughput | [Performance](docs/performance.md), [benchmark methodology](docs/benchmark-evidence.md) |
 | Develop and review changes | [Contributing](docs/contributing.md), [completion plan](docs/completion-plan.md) |
 
-Distributed HA, native GDS, broader parallelism and hybrid external recovery
-remain subject to separate gates. Current metadata support stays at four owners;
-the 16-owner visibility gate passed, but DRAM/SSD isolation failed. Component
-speedups do not establish a win over native caching or LMCache in serving.
+Use the [support matrix](docs/compatibility.md) for experimental features and
+current qualification limits. Reviewed component speedups do not establish a
+serving advantage over native caching or LMCache.
 
 ## License
 

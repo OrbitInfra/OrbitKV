@@ -254,7 +254,7 @@ class VLLMServer:
         return self
 
     def record_runtime(self) -> None:
-        from tests.support.registration_campaign import record_process_group_runtime
+        from tests.support.runtime_checks import record_process_group_runtime
 
         if self.process is None or self.log_file is None or self._process_start_ticks is None:
             raise RuntimeError("vLLM runtime capture requires a live logged service")
@@ -499,7 +499,7 @@ class CacheManager:
         raise TimeoutError(f"Cache Manager did not become ready within {timeout}s")
 
     def record_runtime(self) -> None:
-        from tests.support.registration_campaign import record_process_group_runtime
+        from tests.support.runtime_checks import record_process_group_runtime
 
         if self.process is None or self.log_file is None:
             raise RuntimeError("Manager runtime capture requires a live logged service")
