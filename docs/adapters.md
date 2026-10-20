@@ -47,6 +47,22 @@ engine completion pending; SGLang also preserves its FIFO tree locks. The matchi
 same-host TCP shared-cache gates recorded in [S3](completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership).
 These healthy profiles add no page-generation, physical-failure or performance
 qualification.
+The installed prepared-lifetime harness freezes one engine and one medium per
+two-cell cohort. Both vLLM producer fence controls or both SGLang exporter-hold
+controls remain mandatory, along with complete bytes, original IPC credit
+observations and actual normal process waits. Each pair requires independent
+launch and result acceptance; this test organization does not expand support.
+Its test-only vLLM stream gate prewarms the exact strided copy before blocking
+the producer stream, so CUDA module initialization is outside the intended
+counterfactual. Ordered receipts make a pre-enqueue stall distinct from native
+Save/Publish waiting. This changes qualification instrumentation only.
+The exact vLLM 0.31.0 DRAM pair is independently accepted at `549f4a00`: the
+fenced cell consumes producer readiness and restores complete bytes, while the
+no-fence control submits before readiness and must preserve the destination
+sentinel with `qualification_passed=false`. Both cells prove normal
+registration retirement and original-credit repayment. This scoped healthy
+result does not qualify io_uring, SGLang, model serving, page-slot generation,
+physical faults or reclamation; the earlier timed-out pair remains quarantined.
 
 | Responsibility | Owner |
 | --- | --- |

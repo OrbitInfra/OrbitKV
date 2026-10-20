@@ -756,6 +756,7 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
         #[cfg(feature = "mooncake")]
         metrics.transfer_completion_outstanding.add(0, &[]);
         metrics.load_bytes.add(0, &[]);
+        metrics.save_bytes.add(0, &[]);
         metrics
     })
 }

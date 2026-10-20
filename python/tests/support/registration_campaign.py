@@ -14,6 +14,7 @@ import re
 import selectors
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import time
@@ -329,7 +330,13 @@ def check_inputs(
             or digest(path, deadline) != executable["sha256"]
         ):
             raise RuntimeError(f"Frozen executable changed or cannot execute: {path}")
-    if contract.get("qualification") == "pending-save-bytes-v1":
+    if contract.get("qualification") in (
+        "pending-save-bytes-v2",
+        "prepared-adapter-lifetime-v1",
+        "prepared-adapter-lifetime-v2",
+        "cuda-stream-readiness-v1",
+        "cuda-strided-copy-readiness-v1",
+    ):
         for cell in contract["cells"]:
             tracer = cell.get("process_trace_binary")
             if (
@@ -939,6 +946,19 @@ def process_trace_inventory(
             raise RuntimeError("Process trace is incomplete or has conflicting exits")
         tasks[pid] = {"pid": pid, "exit_code": terminals[0]}
         for stamp, event in events:
+            if event.startswith(("execve(", "execveat(")):
+                tasks[pid].setdefault("exec_events", []).append(event)
+                executed = re.fullmatch(r'execve\(("(?:[^"\\]|\\.)*"), \[(.*?)\], .*\) = 0', event)
+                if executed:
+                    try:
+                        executable = json.loads(executed[1])
+                        arguments = json.loads("[" + executed[2] + "]")
+                    except ValueError:
+                        pass
+                    else:
+                        tasks[pid].setdefault("executions", []).append(
+                            {"path": executable, "argv": arguments}
+                        )
             created = re.fullmatch(r"(clone3?|fork|vfork)\((.*)\)\s+= (\d+)", event)
             if created and int(created[3]) > 0:
                 child = int(created[3])
@@ -994,6 +1014,265 @@ def traced_child_wait(directory: Path, child: dict, deadline: float | None = Non
     if task is None or task.get("waited_by") is None:
         raise RuntimeError("Observed native child has no unique traced parent wait")
     return task["exit_code"]
+
+
+def validate_adapter_bytes(
+    cell: dict, directory: Path, owner: dict, deadline: float | None
+) -> None:
+    vllm = cell["kind"] == "vllm-prepared"
+    basename = "vllm-prepared-save" if vllm else "sglang-registration"
+    receipts = evidence_paths(directory, basename + ".native-release.json", deadline)
+    if len(receipts) != 1:
+        raise RuntimeError("Missing exact adapter lifetime receipt")
+    path = receipts[0]
+    row = read_json(path, deadline)
+    if (
+        row.get("pid") != owner["pid"]
+        or row.get("start_ticks") != owner["start_ticks"]
+        or row.get("release") != ("0.31.0" if vllm else "0.5.21")
+        or row.get("tier") != cell["tier"]
+        or any(
+            row.get(field) is not True
+            for field in (
+                "workers_joined",
+                "registration_retired",
+                "client_closed",
+                "prepared_submission_consumed",
+                "full_byte_oracle",
+                "mutation_rejected",
+            )
+        )
+        or row.get("physical_fault_termination_claimed") is not False
+        or type(row.get("completed_mono_ns")) is not int
+        or row["completed_mono_ns"] <= 0
+    ):
+        raise RuntimeError("Adapter lifetime identity/completion differs")
+    payload_name = "vllm-prepared-save" if vllm else "sglang-prepared-save"
+    raw = read_bytes(path.parent / (payload_name + ".payload.bin"), 4 * 1024**2, deadline)
+    if (
+        type(row.get("full_buffer_bytes")) is not int
+        or len(raw) != row["full_buffer_bytes"]
+        or hashlib.sha256(raw).hexdigest() != row.get("payload_sha256")
+    ):
+        raise RuntimeError("Adapter payload archive differs")
+    if vllm:
+        fence = cell.get("fence")
+        stages = [
+            read_json(path, deadline)
+            for path in evidence_paths(path.parent, "vllm-stage-*.json", deadline)
+        ]
+        expected_stages = [
+            "registered",
+            "copy_kernel_prewarm_started",
+            "copy_kernel_prewarmed",
+            "producer_wait_enqueued",
+            "producer_copy_enqueued",
+            "producer_event_recorded",
+            "unrelated_wait_enqueued",
+            "handoff_started",
+            "handoff_returned",
+        ]
+        if (
+            type(fence) is not bool
+            or row.get("fence_enabled") is not fence
+            or row.get("qualification_passed") is not fence
+            or row.get("positive_byte_oracle_passed") is not fence
+            or row.get("producer_ready_at_submit") != [fence]
+            or row.get("producer_pending_at_handoff") is not True
+            or row.get("copy_kernel_prewarmed") is not True
+            or row.get("producer_reserved") is not True
+            or row.get("explicit_stream_gate") is not True
+            or row.get("cuda_gate_sha256") != cell.get("cuda_gate_sha256")
+            or row.get("stale_registration_rejected") is not True
+            or len(raw) != 2 * 8 * 16 * 32 * 4
+            or type(row.get("full_destination_bytes")) is not int
+            or row["full_destination_bytes"] != 2 * 16 * 32 * 4
+            or not isinstance(row.get("prepared_ids"), list)
+            or len(row["prepared_ids"]) != 1
+            or type(row["prepared_ids"][0]) is not int
+            or row["prepared_ids"][0] <= 0
+            or [stage.get("stage") for stage in stages] != expected_stages
+            or any(
+                stage.get("owner") != owner
+                or type(stage.get("monotonic_ns")) is not int
+                or stage["monotonic_ns"] <= 0
+                or stage.get("physical_termination_claimed") is not False
+                for stage in stages
+            )
+            or any(
+                left["monotonic_ns"] >= right["monotonic_ns"]
+                for left, right in zip(stages, stages[1:], strict=False)
+            )
+            or stages[-1]["monotonic_ns"] >= row["completed_mono_ns"]
+        ):
+            raise RuntimeError("Producer fence positive/negative receipt differs")
+        for field in ("registration_generation", "replacement_generation"):
+            value = row.get(field)
+            if (
+                not isinstance(value, str)
+                or not re.fullmatch("[0-9a-f]{32}", value)
+                or UUID(hex=value).int == 0
+            ):
+                raise RuntimeError("Adapter registration generation is invalid")
+        if row["registration_generation"] == row["replacement_generation"]:
+            raise RuntimeError("Reused adapter registration generation")
+        expected = []
+        for plane in range(2):
+            for block in range(8):
+                remaining(deadline)
+                for offset in range(16 * 32):
+                    expected.append(
+                        plane * 16 * 32 + offset if block == 1 or block == 2 and fence else -167
+                    )
+        expected_raw = struct.pack("=" + "f" * len(expected), *expected)
+    else:
+        if (
+            row.get("linker_load_consumed") is not True
+            or row.get("offload_completed") is not True
+            or type(cell.get("independent_hold")) is not bool
+            or row.get("independent_hold") is not cell["independent_hold"]
+            or type(row.get("exporters_after_close")) is not int
+            or row["exporters_after_close"] != (4 if cell["independent_hold"] else 0)
+            or type(row.get("exporters_after_last_hold")) is not int
+            or row["exporters_after_last_hold"] != 0
+            or len(raw) != 4 * 320 * 8 * 128 * 2
+        ):
+            raise RuntimeError("SGLang pool/last owner receipt differs")
+        expected_raw = bytearray()
+        for layer in range(4):
+            for slot in range(320):
+                remaining(deadline)
+                for offset in range(8 * 128):
+                    value = (
+                        ((slot % 64) * 8 * 128 + offset) % 127 + layer * 16
+                        if 64 <= slot < 192
+                        else -167
+                    )
+                    expected_raw.extend(struct.pack("=f", value)[2:])
+    if raw != expected_raw:
+        raise RuntimeError("Recomputed full adapter payload/sentinel failed")
+    roles = ("original", "replacement") if vllm else ("original",)
+    export_generations = set()
+    for role in roles:
+        remaining(deadline)
+        handoff = path.parent / (role + ".credit-owner.json")
+        released = path.parent / (role + ".credit-release.json")
+        initial, final = read_json(handoff, deadline), read_json(released, deadline)
+        evidence = initial.get("evidence", {})
+        if (
+            initial.get("owner") != owner
+            or final.get("owner") != owner
+            or final.get("instance_id") != initial.get("instance_id")
+            or final.get("handoff_sha256") != digest(handoff, deadline)
+            or final.get("physical_termination_claimed") is not False
+            or initial.get("instance_id") != row.get("instance_id")
+            or evidence.get("schema") != "orbitkv.cuda-credit-observation.v1"
+            or final.get("schema") != "orbitkv.cuda-credit-release.v1"
+            or type(final.get("observed_mono_ns")) is not int
+            or final["observed_mono_ns"] <= 0
+            or final["observed_mono_ns"] > row["completed_mono_ns"]
+        ):
+            raise RuntimeError("Adapter original credit owner/receipt differs")
+        if (
+            not isinstance(evidence.get("credits"), list)
+            or len(evidence["credits"]) != (1 if vllm else 4)
+            or len(final.get("counters", [])) != len(evidence["credits"])
+        ):
+            raise RuntimeError("Missing exact adapter original credit slots")
+        for field in ("registration_generation", "export_owner_generation"):
+            value = evidence.get(field)
+            if (
+                not isinstance(value, str)
+                or str(UUID(value)) != value
+                or UUID(value).int == 0
+                or final.get(field) != value
+            ):
+                raise RuntimeError("Adapter credit generation changed")
+        if evidence["export_owner_generation"] in export_generations:
+            raise RuntimeError("Replayed adapter exporter generation")
+        export_generations.add(evidence["export_owner_generation"])
+        registration = (
+            row["registration_generation"] if role == "original" else row["replacement_generation"]
+        )
+        if UUID(evidence["registration_generation"]).hex != registration:
+            raise RuntimeError("Adapter receipt and exporter registration differ")
+        seen_credits = set()
+        physical_slots = set()
+        for original, counter in zip(evidence["credits"], final["counters"], strict=True):
+            observation = original.get("observation", {})
+            marker = (original.get("counter_name"), original.get("counter_offset"))
+            slot = (
+                observation.get("device"),
+                observation.get("inode"),
+                original.get("counter_offset"),
+            )
+            name = original.get("counter_name")
+            normalized = name.removeprefix("/") if isinstance(name, str) else ""
+            if (
+                marker in seen_credits
+                or slot in physical_slots
+                or not normalized
+                or normalized in (".", "..")
+                or "/" in normalized
+                or "\0" in normalized
+                or len(normalized.encode()) > 255
+                or type(original.get("counter_offset")) is not int
+                or not 0 <= original["counter_offset"] < 10_000
+                or original.get("disposition") != "importer_owned"
+                or original.get("observation_error") is not None
+                or evidence.get("physical_termination_claimed") is not False
+                or evidence.get("reclamation_authorized") is not False
+                or type(observation.get("device")) is not int
+                or observation["device"] < 0
+                or type(observation.get("inode")) is not int
+                or observation["inode"] <= 0
+                or type(observation.get("path_device")) is not int
+                or type(observation.get("path_inode")) is not int
+                or observation["path_device"] != observation["device"]
+                or observation["path_inode"] != observation["inode"]
+                or type(original.get("exclusive_value_at_export")) is not int
+                or original.get("exclusive_value_at_export") != 1
+                or type(observation.get("observed_value")) is not int
+                or observation.get("observed_value") != 1
+                or observation.get("same_object") is not True
+                or observation.get("path_error") is not None
+                or observation.get("read_error") is not None
+            ):
+                raise RuntimeError("Adapter original credit observation is unproven")
+            seen_credits.add(marker)
+            physical_slots.add(slot)
+            expected_counter = {
+                "counter_name": original.get("counter_name"),
+                "counter_offset": original.get("counter_offset"),
+                "device": observation.get("device"),
+                "inode": observation.get("inode"),
+                "before": 1,
+                "after": 0,
+            }
+            if counter != expected_counter or any(
+                type(counter.get(field)) is not int
+                for field in ("counter_offset", "device", "inode", "before", "after")
+            ):
+                raise RuntimeError("Adapter original counter did not repay its exact slot")
+    if cell["tier"] == "ssd-uring":
+        for name in ("orbitkv_ssd_prefetch_bytes_total", "orbitkv_ssd_uring_read_operations_total"):
+            before, after = (
+                row.get("read_before", {}).get(name),
+                row.get("read_after", {}).get(name),
+            )
+            if (
+                type(after) not in (int, float)
+                or not math.isfinite(after)
+                or after <= 0
+                or before is not None
+                and (
+                    type(before) not in (int, float)
+                    or not math.isfinite(before)
+                    or before < 0
+                    or after <= before
+                )
+            ):
+                raise RuntimeError("Adapter Restore has no actual advancing io_uring read")
 
 
 def validate_cell(
@@ -1106,7 +1385,110 @@ def validate_cell(
             or "panicked at" in text
         ):
             raise RuntimeError(f"Native/worker failure remains in log: {path}")
-    if cell["kind"] in ("native", "pending-save-bytes"):
+    if cell["kind"] in ("cuda-readiness", "cuda-strided-readiness"):
+        if evidence_paths(directory, "*.manager-start.json", deadline) or evidence_paths(
+            directory, "*.manager-runtime.json", deadline
+        ):
+            raise RuntimeError("Readiness-only diagnostic contains Manager evidence")
+        tasks = process_trace_inventory(directory, pytest_owner["pid"], deadline)
+        queries = cell.get("loader_queries", [])
+        processes = [
+            task
+            for task in tasks.values()
+            if not task.get("thread") and task["pid"] != pytest_owner["pid"]
+        ]
+        if len(processes) != len(queries):
+            raise RuntimeError("Readiness-only diagnostic started an unexpected process")
+        for process, query in zip(
+            sorted(processes, key=lambda task: task["pid"]), queries, strict=True
+        ):
+            if (
+                process.get("parent") != pytest_owner["pid"]
+                or len(process.get("exec_events", [])) != 1
+                or process.get("waited_by") != pytest_owner["pid"]
+                or process.get("exit_code") != 0
+                or process.get("executions") != [{"path": query["argv"][0], "argv": query["argv"]}]
+            ):
+                raise RuntimeError("Readiness loader query command/parent wait differs")
+        executions = tasks[pytest_owner["pid"]].get("exec_events", [])
+        if len(executions) != 1:
+            raise RuntimeError("Readiness-only diagnostic executable census differs")
+        strided = cell["kind"] == "cuda-strided-readiness"
+        summary_name = "STRIDED-READINESS.json" if strided else "STREAM-READINESS.json"
+        payload_name = (
+            "STRIDED-READINESS.payload.bin" if strided else "STREAM-READINESS.payload.bin"
+        )
+        summaries = evidence_paths(directory, summary_name, deadline)
+        if len(summaries) != 1 or receipts:
+            raise RuntimeError("CUDA readiness has missing evidence or unexpected services")
+        summary = read_json(summaries[0], deadline)
+        if (
+            summary.get("owner") != pytest_owner
+            or summary.get("helper_sha256") != cell.get("cuda_gate_sha256")
+            or summary.get("mutation_rejected") is not True
+            or summary.get("streams_synchronized") is not True
+            or summary.get("Manager_created") is not False
+            or summary.get("physical_fault_qualification") is not False
+        ):
+            raise RuntimeError("Explicit CUDA readiness evidence differs")
+        raw = read_bytes(summaries[0].parent / payload_name, 32768 if strided else 4096, deadline)
+        if strided:
+            stages = [
+                read_json(path, deadline)
+                for path in evidence_paths(directory, "strided-stage-*.json", deadline)
+            ]
+            expected_stages = [
+                "copy_kernel_prewarm_started",
+                "copy_kernel_prewarmed",
+                "producer_wait_enqueued",
+                "producer_copy_enqueued",
+                "producer_event_recorded",
+                "pending_observed",
+                "producer_released",
+                "producer_synchronized",
+            ]
+            expected_raw = b"".join(
+                struct.pack("=f", plane * 512 + offset if block == 1 else -167)
+                for plane in range(2)
+                for block in range(8)
+                for offset in range(512)
+            )
+            invalid = (
+                summary.get("copy_kernel_prewarmed") is not True
+                or summary.get("pending_before_release") is not True
+                or summary.get("observed_bytes") != 32768
+                or [stage.get("stage") for stage in stages] != expected_stages
+                or any(
+                    stage.get("owner") != pytest_owner
+                    or type(stage.get("monotonic_ns")) is not int
+                    or stage["monotonic_ns"] <= 0
+                    or stage.get("physical_termination_claimed") is not False
+                    for stage in stages
+                )
+                or any(
+                    left["monotonic_ns"] >= right["monotonic_ns"]
+                    for left, right in zip(stages, stages[1:], strict=False)
+                )
+            )
+        else:
+            expected_raw = struct.pack("=1024i", *range(1024))
+            invalid = (
+                summary.get("pending_before_release") != [True, True]
+                or any(
+                    type(value) is not bool for value in summary.get("pending_before_release", [])
+                )
+                or summary.get("independent_release") is not True
+                or summary.get("observed_bytes") != 4096
+            )
+        if (
+            invalid
+            or raw != expected_raw
+            or hashlib.sha256(raw).hexdigest() != summary.get("payload_sha256")
+        ):
+            raise RuntimeError("Recomputed CUDA readiness bytes differ")
+        remaining(deadline)
+        return
+    if cell["kind"] in ("native", "pending-save-bytes", "vllm-prepared", "sglang-prepared"):
         expected_origin = cell.get("manager_python")
         if not expected_origin:
             raise RuntimeError("Frozen Manager Python origin contract is required")
@@ -1267,6 +1649,10 @@ def validate_cell(
             for row in [read_json(path, deadline)]
         }:
             raise RuntimeError("Manager runtime records do not match actual cleanup owners")
+        if cell["kind"] in ("vllm-prepared", "sglang-prepared"):
+            validate_adapter_bytes(cell, directory, pytest_owner, deadline)
+            remaining(deadline)
+            return
         pending_bytes = cell["kind"] == "pending-save-bytes"
         credits = evidence_paths(
             directory,
@@ -1433,6 +1819,7 @@ def validate_cell(
                 raise RuntimeError("Invalid Save byte medium or round count")
             previous_release = 0
             previous_reads = {}
+            save_operations = set()
             for index, row in enumerate(rows):
                 if (
                     not isinstance(row, dict)
@@ -1459,6 +1846,39 @@ def validate_cell(
                     raise RuntimeError("Save source and consumer identities are invalid")
                 if close.get("source") != source_id or close.get("consumer") != consumer_id:
                     raise RuntimeError("Save client close identity differs")
+                admission = row.get("producer_admission")
+                if not isinstance(admission, dict):
+                    raise RuntimeError("Missing consumed producer Save admission evidence")
+                operations = admission.get("operation_ids")
+                if (
+                    admission.get("api") != "prepare_save/submit_saves/cancel_save"
+                    or not isinstance(operations, list)
+                    or len(operations) != 3
+                    or any(type(value) is not int or value <= 0 for value in operations)
+                    or len(set(operations)) != 3
+                    or set(operations) & save_operations
+                    or admission.get("canceled_before_submit") is not True
+                    or admission.get("canceled_done") is not True
+                    or admission.get("canceled_success") is not False
+                    or admission.get("physical_fault_termination_claimed") is not False
+                    or any(
+                        type(admission.get(field)) is not int or admission[field] != expected
+                        for field, expected in (
+                            ("pending_before_submit", 2),
+                            ("submitted_cancel_refused", 2),
+                            ("completed_successfully", 2),
+                            ("prepare_copy_bytes", 0),
+                            ("submitted_copy_bytes", 16384),
+                        )
+                    )
+                    or type(admission.get("started_mono_ns")) is not int
+                    or type(admission.get("completed_mono_ns")) is not int
+                    or not previous_release
+                    < admission["started_mono_ns"]
+                    < admission["completed_mono_ns"]
+                ):
+                    raise RuntimeError("Prepared Save ownership/cancellation evidence differs")
+                save_operations.update(operations)
                 rejected = row.get("rejected_save")
                 if (
                     not isinstance(rejected, dict)
@@ -1470,7 +1890,9 @@ def validate_cell(
                     or type(rejected.get("started_mono_ns")) is not int
                     or type(rejected.get("ended_mono_ns")) is not int
                     or not (
-                        previous_release < rejected["started_mono_ns"] < rejected["ended_mono_ns"]
+                        admission["completed_mono_ns"]
+                        < rejected["started_mono_ns"]
+                        < rejected["ended_mono_ns"]
                     )
                 ):
                     raise RuntimeError("Missing exact retired Save rejection observation")
@@ -1727,25 +2149,114 @@ def main() -> None:
     contract_bytes = read_bytes(args.contract, 16 * MAX_JSON_BYTES, startup_deadline)
     contract_sha = hashlib.sha256(contract_bytes).hexdigest()
     contract = json.loads(contract_bytes)
+    if contract.get("qualification") not in (
+        None,
+        "pending-save-bytes-v2",
+        "prepared-adapter-lifetime-v2",
+        "cuda-stream-readiness-v1",
+        "cuda-strided-copy-readiness-v1",
+    ):
+        raise RuntimeError("Unsupported qualification contract; historical freezes stay immutable")
     remaining(startup_deadline)
     root = args.contract.parent
     if contract["phase"] not in ("precheck", "formal"):
         raise RuntimeError("Unknown registration gate phase")
     if contract["schema"] != "orbitkv.explicit-registration-campaign.v1":
         raise RuntimeError("Unknown campaign schema")
+    adapter_profile = contract.get("qualification") == "prepared-adapter-lifetime-v2"
+    readiness_profile = contract.get("qualification") in (
+        "cuda-stream-readiness-v1",
+        "cuda-strided-copy-readiness-v1",
+    )
+    if readiness_profile and contract["phase"] != "precheck":
+        raise RuntimeError("CUDA readiness diagnostics cannot be formal cells")
+    readiness_kind = (
+        "cuda-strided-readiness"
+        if contract.get("qualification") == "cuda-strided-copy-readiness-v1"
+        else "cuda-readiness"
+    )
     expected = (
-        [("pending-save-bytes", 1), ("pending-save-bytes", 1)]
-        if contract.get("qualification") == "pending-save-bytes-v1"
+        [(readiness_kind, 1)]
+        if readiness_profile
         else (
-            [("native", 2)]
-            if contract["phase"] == "precheck"
-            else [("credits", 2), ("native", 2), ("vllm-worker", 1), ("sglang-pool", 2)]
+            [(contract.get("adapter_kind"), 1)] * 2
+            if adapter_profile
+            else (
+                [("pending-save-bytes", 1), ("pending-save-bytes", 1)]
+                if contract.get("qualification") == "pending-save-bytes-v2"
+                else (
+                    [("native", 2)]
+                    if contract["phase"] == "precheck"
+                    else [("credits", 2), ("native", 2), ("vllm-worker", 1), ("sglang-pool", 2)]
+                )
+            )
         )
     )
     if [(cell["kind"], cell["passed"]) for cell in contract["cells"]] != expected:
         raise RuntimeError("Frozen registration gate cells differ")
-    if contract.get("qualification") == "pending-save-bytes-v1":
-        if [cell.get("tier") for cell in contract["cells"]] != ["dram", "ssd-uring"]:
+    if readiness_profile:
+        cell = contract["cells"][0]
+        library = cell.get("environment", {}).get("ORBITKV_TEST_CUDA_GATE_LIB")
+        if (
+            not isinstance(library, str)
+            or not Path(library).is_absolute()
+            or library not in contract["input_sha256"]
+            or not isinstance(cell.get("cuda_gate_sha256"), str)
+            or not re.fullmatch("[0-9a-f]{64}", cell["cuda_gate_sha256"])
+            or cell["cuda_gate_sha256"] != contract["input_sha256"][library]
+            or not cell.get("process_trace_binary")
+            or cell.get("cleanup_receipts") != 0
+        ):
+            raise RuntimeError("Invalid frozen CUDA readiness inputs")
+        queries = cell.get("loader_queries", [])
+        if not isinstance(queries, list) or len(queries) > 1:
+            raise RuntimeError("Invalid readiness loader query count")
+        for query in queries:
+            if (
+                query.get("argv") != ["/sbin/ldconfig", "-p"]
+                or not isinstance(query.get("sha256"), str)
+                or not re.fullmatch("[0-9a-f]{64}", query["sha256"])
+                or contract["input_sha256"].get("/sbin/ldconfig") != query["sha256"]
+                or not any(
+                    executable.get("path") == "/sbin/ldconfig"
+                    and executable.get("sha256") == query["sha256"]
+                    for executable in contract.get("executable_inputs", [])
+                )
+            ):
+                raise RuntimeError("Unfrozen readiness loader query")
+    if adapter_profile:
+        kind, tier = contract.get("adapter_kind"), contract.get("adapter_tier")
+        if kind not in ("vllm-prepared", "sglang-prepared") or tier not in (
+            "dram",
+            "ssd-uring",
+        ):
+            raise RuntimeError("Unknown frozen adapter pair")
+        flags = (True, False) if kind == "vllm-prepared" else (False, True)
+        declarations = [(kind, tier, flag) for flag in flags]
+        for cell, (kind, tier, flag) in zip(contract["cells"], declarations, strict=True):
+            field = "fence" if kind == "vllm-prepared" else "independent_hold"
+            if (
+                cell.get("tier") != tier
+                or cell.get(field) is not flag
+                or not cell.get("process_trace_binary")
+            ):
+                raise RuntimeError("Frozen adapter positive/negative matrix differs")
+            if kind == "vllm-prepared":
+                library = cell.get("environment", {}).get("ORBITKV_TEST_CUDA_GATE_LIB")
+                if (
+                    not isinstance(library, str)
+                    or not Path(library).is_absolute()
+                    or library not in contract["input_sha256"]
+                    or not isinstance(cell.get("cuda_gate_sha256"), str)
+                    or not re.fullmatch("[0-9a-f]{64}", cell["cuda_gate_sha256"])
+                    or cell.get("cuda_gate_sha256") != contract["input_sha256"].get(library)
+                ):
+                    raise RuntimeError("Missing exact frozen CUDA stream gate")
+    if contract.get("qualification") == "pending-save-bytes-v2" or adapter_profile:
+        if not adapter_profile and [cell.get("tier") for cell in contract["cells"]] != [
+            "dram",
+            "ssd-uring",
+        ]:
             raise RuntimeError("Frozen installed Save medium order differs")
         for cell in contract["cells"]:
             argv = cell.get("argv", [])
@@ -1765,6 +2276,12 @@ def main() -> None:
             raise RuntimeError("Invalid bounded campaign/review/cleanup budget")
     if any(type(cell["passed"]) is not int for cell in contract["cells"]):
         raise RuntimeError("Invalid declared gate count")
+    if any(
+        type(cell.get("seconds")) is not int
+        or not 0 < cell["seconds"] <= contract["campaign_seconds"]
+        for cell in contract["cells"]
+    ):
+        raise RuntimeError("Invalid bounded cell budget")
     if identity(os.getpid())["pid"] != os.getpid():
         raise RuntimeError("Invalid controller process identity")
     locks = []
@@ -1775,7 +2292,11 @@ def main() -> None:
         signal.signal(number, signal.SIG_IGN)
     try:
         check_inputs(contract, deadline=startup_deadline)
-        if contract.get("qualification") == "pending-save-bytes-v1":
+        if (
+            contract.get("qualification") == "pending-save-bytes-v2"
+            or adapter_profile
+            or readiness_profile
+        ):
             write(
                 root / "DLOPEN-PREFLIGHT.json",
                 check_dlopen(contract, startup_deadline),

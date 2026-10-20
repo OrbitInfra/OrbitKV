@@ -122,27 +122,31 @@ def test_probe_has_bounded_output_and_actual_child_wait(tmp_path, dlopen_contrac
     contract = dlopen_contract
     helper = tmp_path / "helper.py"
     original = contract["runtime_dlopen"]["helper"]
-    prefix = "import os,sys,time,runpy,json,io,contextlib\n"
-    baseline_helper = tmp_path / "baseline-helper.py"
-    baseline_helper.write_text(prefix + f"runpy.run_path({original!r},run_name='__main__')\n")
-    baseline = subprocess.run(
-        [
-            contract["runtime_dlopen"]["python"],
-            "-I",
-            "-S",
-            "-B",
-            str(baseline_helper),
-            contract["runtime_dlopen"]["library"],
-        ],
-        env=contract["cells"][0]["environment"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    assert baseline.returncode == 0, baseline.stderr
-    for path, digest in json.loads(baseline.stdout)["files"].items():
-        assert contract["input_sha256"].get(path, digest) == digest
-        contract["input_sha256"][path] = digest
+    prefix = "import os,sys,time,json\n"
+    if control == "foreign-pid":
+        baseline_helper = tmp_path / "baseline-helper.py"
+        baseline_helper.write_text(
+            "import runpy,json,io,contextlib\n"
+            + f"runpy.run_path({original!r},run_name='__main__')\n"
+        )
+        baseline = subprocess.run(
+            [
+                contract["runtime_dlopen"]["python"],
+                "-I",
+                "-S",
+                "-B",
+                str(baseline_helper),
+                contract["runtime_dlopen"]["library"],
+            ],
+            env=contract["cells"][0]["environment"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert baseline.returncode == 0, baseline.stderr
+        for path, digest in json.loads(baseline.stdout)["files"].items():
+            assert contract["input_sha256"].get(path, digest) == digest
+            contract["input_sha256"][path] = digest
     if control.startswith("fork-"):
         prefix += "ready_read,ready_write=os.pipe()\nif os.fork() == 0:\n os.close(ready_read)\n"
         if control == "fork-session":
@@ -160,6 +164,7 @@ def test_probe_has_bounded_output_and_actual_child_wait(tmp_path, dlopen_contrac
         prefix += "os.write(2,b'x'*65536);os.write(2,b'x'*65536)\n"
     if control == "foreign-pid":
         prefix += (
+            "import runpy,io,contextlib\n"
             "captured=io.StringIO()\n"
             "with contextlib.redirect_stdout(captured):\n"
             f" runpy.run_path({original!r},run_name='__main__')\n"
@@ -167,7 +172,10 @@ def test_probe_has_bounded_output_and_actual_child_wait(tmp_path, dlopen_contrac
             "print(json.dumps(receipt),flush=True)\n"
         )
     else:
-        prefix += f"runpy.run_path({original!r},run_name='__main__')\n"
+        prefix += (
+            f"source=open({original!r},encoding='utf-8').read()\n"
+            f"exec(compile(source,{original!r},'exec'),{{'__name__':'__main__'}})\n"
+        )
     helper.write_text(prefix)
     contract["runtime_dlopen"]["helper"] = str(helper)
     contract["input_sha256"][str(helper)] = hashlib.sha256(helper.read_bytes()).hexdigest()

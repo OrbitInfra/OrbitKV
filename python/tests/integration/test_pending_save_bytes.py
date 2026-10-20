@@ -8,8 +8,13 @@ import contextlib
 import hashlib
 import json
 import os
+import re
+import subprocess
+import sys
 import time
 import uuid
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
 import pytest
 import requests
@@ -19,6 +24,61 @@ from tests.support.metrics import fetch_orbitkv_metrics
 from tests.support.registration_campaign import identity, write
 
 pytestmark = [pytest.mark.integration, pytest.mark.gpu]
+
+
+def save_bytes_snapshot(http_port: int) -> int:
+    deadline = time.monotonic() + 10
+    helper = Path(__file__).parents[1] / "support/save_metrics_http.py"
+    try:
+        response = subprocess.run(
+            [sys.executable, "-I", "-S", "-B", str(helper), str(http_port)],
+            capture_output=True,
+            timeout=max(0.001, deadline - time.monotonic()),
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("Save byte counter response exceeded its time bound") from error
+    raw = response.stdout
+    if response.returncode or len(raw) > 1024**2:
+        raise RuntimeError("Save byte counter response failed or exceeded its byte bound")
+    if time.monotonic() >= deadline:
+        raise RuntimeError("Save byte counter response exceeded its time bound")
+    samples = []
+    label_sets = set()
+    for line in raw.decode("ascii", errors="strict").splitlines():
+        if len(line) > 4096:
+            raise RuntimeError("Save byte counter response exceeded its line bound")
+        if not line.startswith("orbitkv_save_bytes_total"):
+            continue
+        match = re.fullmatch(
+            r"orbitkv_save_bytes_total(?:\{([^}]*)\})?\s+([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)",
+            line,
+        )
+        if match is None or len(match[2]) > 128 or len(samples) >= 4096:
+            raise RuntimeError("Save byte counter is missing or malformed")
+        labels = match[1] or ""
+        label_pattern = r'[a-zA-Z_][a-zA-Z0-9_]*="(?:[^"\\]|\\[\\"n])*"'
+        if len(labels) > 1024 or (
+            labels and re.fullmatch(label_pattern + r"(?:," + label_pattern + r")*", labels) is None
+        ):
+            raise RuntimeError("Save byte counter labels are malformed or oversized")
+        pairs = re.findall(r'([a-zA-Z_][a-zA-Z0-9_]*)=("(?:[^"\\]|\\[\\"n])*")', labels)
+        label_set = tuple(sorted(pairs))
+        if len({key for key, _ in pairs}) != len(pairs) or label_set in label_sets:
+            raise RuntimeError("Save byte counter labels are duplicated")
+        label_sets.add(label_set)
+        try:
+            value = Decimal(match[2])
+        except InvalidOperation as error:
+            raise RuntimeError("Save byte counter is missing or malformed") from error
+        if not value.is_finite() or not 0 <= value <= 2**53 or value != value.to_integral_value():
+            raise RuntimeError("Save byte counter is missing, nonintegral or outside exact range")
+        samples.append(int(value))
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Save byte counter response exceeded its time bound")
+    if not samples or sum(samples) > 2**53:
+        raise RuntimeError("Save byte counter is missing or outside exact range")
+    return sum(samples)
 
 
 def register(client, identity, namespace, tensor):
@@ -122,9 +182,45 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                 hashlib.sha256(f"{namespace}/{round_id}/{index}".encode()).digest()
                 for index in source_indices
             ]
-            handle = source.start_save(source_registration, [("bytes", source_indices, hashes)])
-            status = source.wait_save(handle, timeout=30)
-            assert status.done and status.success, status.message
+            admission_started = time.monotonic_ns()
+            admission_before = save_bytes_snapshot(channel_server.http_port)
+            canceled = source.prepare_save(
+                source_registration,
+                [("bytes", [source_indices[0]], [hashlib.sha256(b"never-published").digest()])],
+            )
+            pending = source.wait_save(canceled, timeout=0)
+            if pending.done or pending.success:
+                raise RuntimeError("Prepared Save reported completion before submission")
+            if not source.cancel_save(canceled):
+                raise RuntimeError("Never-submitted Save cancellation lacked a receipt")
+            canceled_status = source.wait_save(canceled, timeout=0)
+            if not canceled_status.done or canceled_status.success:
+                raise RuntimeError("Prepared cancellation reported a successful Publish")
+            handles = [
+                source.prepare_save(
+                    source_registration,
+                    [("bytes", source_indices[start : start + 2], hashes[start : start + 2])],
+                )
+                for start in (0, 2)
+            ]
+            operation_ids = [canceled.operation_id, *(handle.operation_id for handle in handles)]
+            if len(set(operation_ids)) != 3:
+                raise RuntimeError("Prepared Save operation identities were reused")
+            for handle in handles:
+                pending = source.wait_save(handle, timeout=0)
+                if pending.done or pending.success:
+                    raise RuntimeError("Prepared batch completed before Rust submission")
+            admission_prepared = save_bytes_snapshot(channel_server.http_port)
+            if admission_prepared != admission_before:
+                raise RuntimeError("Preparation/cancellation copied source bytes")
+            source.submit_saves(handles)
+            for handle in handles:
+                if source.cancel_save(handle):
+                    raise RuntimeError("Submitted Save was canceled as never-submitted")
+                status = source.wait_save(handle, timeout=30)
+                if not status.done or not status.success:
+                    raise RuntimeError(f"Prepared Save did not complete: {status.message}")
+            admission_completed = time.monotonic_ns()
             success, message = source.unregister_context(source_id)
             assert success, message
             source_registered = False
@@ -146,6 +242,24 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                 "orbitkv_inflight_bytes",
             ]
             before = wait_idle(channel_server.http_port, idle_names)
+            submitted_bytes = save_bytes_snapshot(channel_server.http_port) - admission_before
+            if submitted_bytes != 16384:
+                raise RuntimeError("Rust submitted batch copied an unexpected number of bytes")
+            admission = {
+                "api": "prepare_save/submit_saves/cancel_save",
+                "operation_ids": operation_ids,
+                "pending_before_submit": 2,
+                "canceled_before_submit": True,
+                "canceled_done": canceled_status.done,
+                "canceled_success": canceled_status.success,
+                "submitted_cancel_refused": 2,
+                "completed_successfully": 2,
+                "prepare_copy_bytes": admission_prepared - admission_before,
+                "submitted_copy_bytes": submitted_bytes,
+                "started_mono_ns": admission_started,
+                "completed_mono_ns": admission_completed,
+                "physical_fault_termination_claimed": False,
+            }
             if channel_server.ssd_cache_path is not None:
                 write_deadline = time.monotonic() + 30
                 while True:
@@ -171,7 +285,7 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
             assert io_before_rejection["orbitkv_load_bytes_total"] is not None
             rejected_started = time.monotonic_ns()
             with pytest.raises(SaveNotSubmittedError, match="no longer active") as rejected:
-                source.start_save(source_registration, [("bytes", source_indices, hashes)])
+                source.prepare_save(source_registration, [("bytes", source_indices, hashes)])
             rejected_ended = time.monotonic_ns()
             assert isinstance(rejected.value.__cause__, ValueError)
             observed = fetch_orbitkv_metrics(channel_server.http_port)
@@ -188,7 +302,7 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                 "publish_count_claimed": False,
                 "physical_termination_claimed": False,
             }
-            del handle, source_registration
+            del handle, handles, canceled, source_registration
             if channel_server.ssd_cache_path is not None:
                 reply = requests.post(
                     f"http://127.0.0.1:{channel_server.http_port}/cache/memory/cleanup", timeout=30
@@ -285,6 +399,7 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                     "consumer_identity": consumer_id,
                     "normal_unregister": True,
                     "rejected_save": rejection,
+                    "producer_admission": admission,
                     "read_before": read_before,
                     "read_after": {name: after.get(name) for name in read_before},
                 }

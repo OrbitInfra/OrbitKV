@@ -9,6 +9,27 @@
 - `e2e/`: actual inference-engine correctness and restart recovery.
 - `stress/`: concurrent or pressure workloads with explicit resource requirements.
 - `support/`: process helpers, import stubs, paths, and immutable test data.
+  `support/registration_campaign.py` consumes the installed pending Save byte
+  gate's `pending-save-bytes-v2` freeze: preparation performs no copy, explicit
+  never-submitted cancellation completes as failure, and Rust submits two
+  prepared handles before normal payload/release checks. Old v1 freezes are
+  historical evidence; a new reviewed freeze is required for this controller.
+  `prepared-adapter-lifetime-v2` freezes one engine and one medium per two-cell
+  cohort: vLLM producer fence/no-fence controls or SGLang sole/independent
+  exporter holds. DRAM and io_uring require separate reviewed cohorts. The old
+  eight-cell v1 freeze remains unlaunched after its cumulative-budget rejection.
+  Every cell includes exact payload, original-credit repayment,
+  registered generation and complete Manager/native process evidence. A passing
+  no-fence test records rejected positive bytes and qualification false.
+  Before installing the deliberate producer wait, the vLLM gate prewarms the
+  exact strided copy and records ordered stage receipts. The separate
+  `cuda-strided-copy-readiness-v1` diagnostic proves that test primitive without
+  starting a Manager; neither test prewarm nor readiness is a production fence.
+  The exact vLLM 0.31.0 DRAM fenced/no-fence pair from `549f4a00` has independent
+  result acceptance. Its negative cell must retain sentinel destination bytes
+  and report qualification false. That acceptance covers this one healthy
+  two-cell adapter contract only; SSD, SGLang, model, fault, page-generation and
+  physical-reclamation gates remain separate.
 - `conftest.py`: shared options and the Cache Manager fixture used by both engine
   E2E and channel integration tests; `integration/conftest.py` owns GPU fixtures.
 
