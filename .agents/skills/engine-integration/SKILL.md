@@ -112,8 +112,10 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
 SGLang 0.5.22 requires `finish_layer_wise_loading(index) -> bool`. Its native
 wrapper owns private load destinations and inserts/releases them after forward.
 Return only after actual native Restore completion; unknown submission, timeout
-or lost completion must retain ownership and raise. Preserve known pre-admission
-cancellation without acknowledging submitted work. Use `Req.prefix_len`,
+or lost completion must retain ownership and raise. Catch `CancelledError` as
+non-submission only at the pre-forward activation future. The same exception
+from submission or completion waiting must retain leases/pages and publish an
+error, rather than return false. Use `Req.prefix_len`,
 `MatchResult.device_prefix_len` and `Req.refresh_fill_ids()`; do not reintroduce
 removed load polling or custom `_update_load` insertion. Full/SWA are the only
 released external-linker components; reject recurrent/SSM startup rather than

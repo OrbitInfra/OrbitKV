@@ -7,7 +7,7 @@ import queue
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import CancelledError, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -51,8 +51,28 @@ def load_linker(monkeypatch):
     return linker
 
 
-@pytest.mark.parametrize("failure", ["submit", "enqueue", "drain", "timeout"])
-def test_linker_failure_never_acknowledges_gpu_destinations(load_linker, failure):
+@pytest.mark.parametrize(
+    ("failure", "error_type"),
+    [
+        ("submit", ConnectionError),
+        ("enqueue", ConnectionError),
+        ("drain", ConnectionError),
+        ("timeout", TimeoutError),
+        ("submit", CancelledError),
+        ("enqueue", CancelledError),
+        ("drain", CancelledError),
+    ],
+    ids=[
+        "submit",
+        "enqueue",
+        "drain",
+        "timeout",
+        "cancel-submit",
+        "cancel-enqueue",
+        "cancel-drain",
+    ],
+)
+def test_linker_failure_never_acknowledges_gpu_destinations(load_linker, failure, error_type):
     from orbitkv.sglang.linker import _Load
 
     linker = load_linker
@@ -62,11 +82,7 @@ def test_linker_failure_never_acknowledges_gpu_destinations(load_linker, failure
         "drain": "wait_restore",
         "timeout": "wait_restore",
     }[failure]
-    error = (
-        TimeoutError("restore deadline")
-        if failure == "timeout"
-        else ConnectionError("lost completion")
-    )
+    error = error_type("restore completion unavailable")
     getattr(linker.client, method).side_effect = error
     pending = [_Load(str(i), (("kv", bytes([i]), (i,)),)) for i in range(12)]
     linker._queued_loads = {load.rid: load for load in pending}
@@ -74,17 +90,24 @@ def test_linker_failure_never_acknowledges_gpu_destinations(load_linker, failure
     linker._load_queue.put(None)
     thread = threading.Thread(target=linker._load_worker, daemon=True)
     thread.start()
-    if failure in ("submit", "enqueue"):
-        with pytest.raises(ConnectionError):
-            linker.layer_done_counter.set_consumer(index)
-    else:
-        linker.layer_done_counter.set_consumer(index)
-    thread.join(timeout=5)
-    assert not thread.is_alive()
-    linker.client.release.assert_not_called()
-    for observe in (lambda: linker.finish_layer_wise_loading(index), linker.reset):
-        with pytest.raises(RuntimeError, match="GPU pages remain held"):
-            observe()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        consumer = executor.submit(linker.layer_done_counter.set_consumer, index)
+        try:
+            thread.join(timeout=5)
+            assert not thread.is_alive()
+            linker.client.release.assert_not_called()
+            if failure in ("submit", "enqueue"):
+                with pytest.raises(error_type):
+                    consumer.result(timeout=1)
+            else:
+                consumer.result(timeout=1)
+            for observe in (lambda: linker.finish_layer_wise_loading(index), linker.reset):
+                with pytest.raises(RuntimeError, match="GPU pages remain held"):
+                    observe()
+        finally:
+            staged = linker.layer_done_counter._staged.get(index)
+            if staged is not None and not staged.done():
+                staged.set_exception(RuntimeError("test cleanup after missing publication"))
     assert index in linker._load_completions
 
 

@@ -39,6 +39,9 @@ covers both sole ownership and an independent exporter hold;
 vLLM includes a no-fence counterfactual. SSD gates evict DRAM and require actual
 io_uring reads. These normal-path controls do not establish complete model
 shutdown, cancellation, page reuse/generations or physical-fault reclamation.
+For Restore, only cancellation of the pre-forward activation future proves
+non-submission. A `CancelledError` from submission or completion waiting keeps
+leases and GPU destinations held and propagates an error to the consumer.
 
 Historical per-cohort details and failures remain in the
 [accepted lifetime record](https://github.com/feichai0017/orbitkv/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#ownership-contract).

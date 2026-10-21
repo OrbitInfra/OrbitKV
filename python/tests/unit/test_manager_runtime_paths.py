@@ -133,8 +133,9 @@ def test_vllm_worker_keeps_installed_package_priority(monkeypatch):
 
 
 @pytest.mark.parametrize("write_failure", [False, True])
+@pytest.mark.parametrize("selected_package", ["source", "installed", "installed-before-native"])
 def test_strict_manager_start_records_actual_command_and_keeps_failed_record_owner(
-    tmp_path, monkeypatch, write_failure
+    tmp_path, monkeypatch, write_failure, selected_package
 ):
     actual = tmp_path / "actual.json"
     binary = tmp_path / "cpu-manager"
@@ -143,7 +144,8 @@ def test_strict_manager_start_records_actual_command_and_keeps_failed_record_own
         "import json,os,signal,sys\nfrom pathlib import Path\n"
         "def stop(*_):\n print('SIGTERM received, shutting down', flush=True)\n sys.exit(0)\n"
         "signal.signal(signal.SIGTERM, stop)\n"
-        f"Path({str(actual)!r}).write_text(json.dumps({{'argv':sys.argv,'pid':os.getpid()}}))\n"
+        f"Path({str(actual)!r}).write_text(json.dumps({{'argv':sys.argv,'pid':os.getpid(),"
+        "'pythonpath':os.environ['PYTHONPATH']}))\n"
         "while True: signal.pause()\n"
     )
     binary.chmod(0o755)
@@ -153,6 +155,22 @@ def test_strict_manager_start_records_actual_command_and_keeps_failed_record_own
     monkeypatch.setenv("PYTHONNOUSERSITE", "1")
     monkeypatch.setenv("MC_FORCE_TCP", "1")
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-CPU-fixture")
+    package_directory = (
+        PYTHON_ROOT / "orbitkv"
+        if selected_package == "source"
+        else tmp_path / "installed" / "orbitkv"
+    )
+    monkeypatch.setitem(
+        sys.modules, "orbitkv", SimpleNamespace(__file__=str(package_directory / "__init__.py"))
+    )
+    if selected_package == "installed-before-native":
+        monkeypatch.delitem(sys.modules, "orbitkv.orbitkv", raising=False)
+    else:
+        monkeypatch.setitem(
+            sys.modules,
+            "orbitkv.orbitkv",
+            SimpleNamespace(__file__=str(package_directory / "orbitkv.so")),
+        )
     server = CacheManagerProcess(
         port=12345,
         http_port=12346,
@@ -183,6 +201,7 @@ def test_strict_manager_start_records_actual_command_and_keeps_failed_record_own
             time.sleep(0.01)
         observed = json.loads(actual.read_text())
         assert observed["pid"] == server.process.pid
+        assert observed["pythonpath"].split(os.pathsep)[0] == str(package_directory.parent)
         if not write_failure:
             executable = cache_manager.Path(f"/proc/{server.process.pid}/exe").resolve()
             raw = cache_manager.Path(f"/proc/{server.process.pid}/maps").read_text()

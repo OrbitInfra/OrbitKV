@@ -440,7 +440,13 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 submitted = False
                 landed = False
                 try:
-                    ready_stream = self.layer_done_counter._activations[index].result()
+                    try:
+                        ready_stream = self.layer_done_counter._activations[index].result()
+                    except CancelledError:
+                        for load in pending:
+                            for _, lease, _ in load.groups:
+                                self.client.release(lease)
+                        continue
                     self._check_load_failure()
                     for load in pending:
                         trace_transfer("restore_submit", load.rid, engine="sglang")
@@ -477,11 +483,6 @@ class OrbitKVLinker(UnifiedCacheLinker):
                     for load in pending:
                         trace_transfer("gpu_ready", load.rid, engine="sglang", success=True)
                     landed = True
-                except CancelledError:
-                    # A batch never admitted to forward has not consumed its source leases.
-                    for load in pending:
-                        for _, lease, _ in load.groups:
-                            self.client.release(lease)
                 except Exception as error:
                     self._load_error = error
                     logger.exception("OrbitKV SGLang GPU restore failed")
