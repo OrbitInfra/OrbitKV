@@ -183,11 +183,13 @@ allocated pages to `WorkerAdapter` in `worker.py`; the worker registers tensors,
 completion through the pinned engine contract. `layout.py` and `metadata.py`
 describe actual groups and intents rather than a second cache scheduler.
 
-Ready cache hits can share one forward with other hits, misses and native HBM
-reuse. vLLM retains its token and page-allocation budgets; a pending lookup defers
-only its own request. The worker batches admitted restores and fences layer reads
-with CUDA events, then waits for complete restoration before reporting completion.
-There is no connector-wide one-restore-per-step admission gate.
+Requests with no external suffix can proceed immediately. Once a restore is
+admitted, another request can join when native prefix matching leaves only one
+external block. Other external lookups keep preparing but wait for the current
+metadata handoff. vLLM retains its token and page budgets. Native prefix matches
+can refer to pages being restored in the same forward: CUDA layer events and the
+full native completion wait still protect their consumption. The existing load
+intents own this admission boundary; no separate completion set is maintained.
 
 All worker roles implement the released engine's `get_transfer_results` directly. P/D failure
 and receive completion are drained together into `KVConnectorTransferResults`;

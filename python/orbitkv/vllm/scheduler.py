@@ -371,6 +371,12 @@ class SchedulerAdapter:
         lookup_us: float | None,
         reused: bool,
     ) -> tuple[int | None, bool]:
+        # Pace independent prefixes while batching the final block of native hits.
+        if self._pending_load_intents and (
+            probe.computed_blocks == 0 or len(probe.query_hashes) != 1
+        ):
+            return (None, False)
+
         # `_finish_cache_lookup` may release the probe, so snapshot what the
         # junction hint needs first.
         computed_blocks = probe.computed_blocks

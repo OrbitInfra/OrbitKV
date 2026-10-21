@@ -78,20 +78,24 @@ GPU destinations still require their own restores. See
 ## Batched restoration and compute admission
 
 After allocation, vLLM adds the request and its positive compute token count to
-the current step. Subsequent ready hits, misses and HBM hits can join that step
-within native token and page budgets. If a later allocation fails, vLLM stops
-admission without removing requests already scheduled; their restores still run.
+the current step. Requests with no external suffix can join immediately. While
+load intents are pending, external lookup can also admit a native prefix hit
+with exactly one remaining block. Larger external suffixes and independent
+prefixes keep preparing but wait for metadata handoff. If a later allocation
+fails, vLLM stops admission without removing requests already scheduled; their restores still run.
 The unallocated request retains its query lease for a later lookup or cancellation.
 
 Worker metadata carries every admitted load intent. One native restore batches
 these requests; per-layer CUDA events fence reads, including shared HBM pages
 used by another request in the same forward. The worker waits for full native
-restore completion before returning transfer completion. Removing the old
-global admission gate does not release a lease, GPU page or copy owner.
+restore completion before returning transfer completion. A native prefix match
+does not itself prove those pages have finished restoring. Metadata handoff
+clears the scheduler's load-intent dictionary; that is not physical completion.
 
 The [historical async-restore deadlock and admission gate](https://github.com/feichai0017/orbitkv/blob/a9befeec596bb9064d25d34f93d07fe59077809d/docs/vllm-request-state-machine.md#restore-completion-is-not-compute-admission)
-describe the earlier waiting/promotion path. That gate is unnecessary for the
-current synchronous scheduling contract and prevented useful batching.
+describe the earlier waiting/promotion path. The current adapter retains paced
+admission for independent prefixes while allowing single-block tails to batch;
+it no longer maintains a separate `_restores_awaiting_compute` set.
 
 ## Publish, preemption and cancellation
 

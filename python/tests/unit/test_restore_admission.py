@@ -1,4 +1,4 @@
-"""Cache hits share a consuming forward without blocking unrelated requests."""
+"""Shared-prefix tail restores batch without changing independent-prefix admission."""
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -159,41 +159,61 @@ def restoring():
     scheduler.shutdown()
 
 
-@pytest.mark.parametrize("kind", ["hit", "miss", "short", "hbm", "loading"])
-def test_restore_does_not_defer_unrelated_requests_in_the_same_step(restoring, kind):
+@pytest.mark.parametrize(
+    "tokens,computed,hits,expected",
+    [
+        pytest.param(32, 0, 2, None, id="independent-hit"),
+        pytest.param(32, 0, 0, None, id="independent-miss"),
+        pytest.param(48, 16, 2, None, id="multi-block-suffix"),
+        pytest.param(32, 16, 1, 15, id="tail-hit"),
+        pytest.param(32, 16, 0, 0, id="tail-miss"),
+        pytest.param(32, 16, None, None, id="tail-loading"),
+        pytest.param(7, 0, 0, 0, id="short"),
+        pytest.param(33, 32, 0, 0, id="hbm"),
+    ],
+)
+def test_restore_admission_batches_only_native_prefix_tails(
+    restoring, tokens, computed, hits, expected
+):
     scheduler, _ = restoring
-    waiting = request("waiting", {"short": 7, "hbm": 33}.get(kind, 32))
-    computed = 32 if kind == "hbm" else 0
-    ready = QueryReady(2, b"next") if kind == "hit" else QueryReady(0, b"")
+    waiting = request("waiting", tokens)
+    waiting.block_hashes[: computed // 16] = request("restore").block_hashes[: computed // 16]
     scheduler._ctx.client.query_prefetch.return_value = (
-        QueryLoading() if kind == "loading" else ready
+        QueryLoading() if hits is None else QueryReady(hits, b"next" if hits else b"")
     )
-    hit_tokens = 31 if kind == "hit" else None if kind == "loading" else 0
-    assert scheduler.get_num_new_matched_tokens(waiting, computed) == (hit_tokens, False)
+    assert scheduler.get_num_new_matched_tokens(waiting, computed) == (expected, False)
 
     scheduled = [("restore", [1, 2], 31, 1)]
-    if hit_tokens is not None:
-        blocks = [1, 2, 3] if kind == "hbm" else [3, 4]
+    if expected is not None:
+        blocks = [1, 2, 3] if computed == 32 else [1, 3] if computed == 16 else [3]
         scheduler.update_state_after_alloc(
-            waiting, SimpleNamespace(get_block_ids=lambda: (blocks,)), hit_tokens
+            waiting, SimpleNamespace(get_block_ids=lambda: (blocks,)), expected
         )
-        scheduled.append(("waiting", blocks, computed + hit_tokens, 1))
+        scheduled.append(("waiting", blocks, computed + expected, 1))
     metadata = scheduler.build_connector_meta(step(*scheduled))
-    assert set(metadata.load_intents) == ({"restore", "waiting"} if kind == "hit" else {"restore"})
+    assert set(metadata.load_intents) == ({"restore", "waiting"} if expected else {"restore"})
     assert metadata.load_intents["restore"].leases == (b"hold",)
     assert metadata.load_intents["restore"].block_ids_by_group == ((1, 2),)
-    if kind == "hit":
+    if expected:
         assert metadata.load_intents["waiting"].leases == (b"next",)
-        assert metadata.load_intents["waiting"].block_ids_by_group == ((3, 4),)
+        assert metadata.load_intents["waiting"].block_ids_by_group == ((3,),)
     assert not scheduler._pending_load_intents
+    if expected is None and hits is not None:
+        calls = scheduler._ctx.client.query_prefetch.call_count
+        assert scheduler.get_num_new_matched_tokens(waiting, computed) == (
+            min(hits * 16, tokens - computed - 1),
+            False,
+        )
+        assert scheduler._ctx.client.query_prefetch.call_count == calls
 
 
 def test_allocation_failure_keeps_only_the_unallocated_query_for_the_next_step(restoring):
     scheduler, _ = restoring
     waiting = request("waiting")
+    waiting.block_hashes[0] = request("restore").block_hashes[0]
     client = scheduler._ctx.client
-    client.query_prefetch.return_value = QueryReady(2, b"next")
-    assert scheduler.get_num_new_matched_tokens(waiting, 0) == (31, False)
+    client.query_prefetch.return_value = QueryReady(1, b"next")
+    assert scheduler.get_num_new_matched_tokens(waiting, 16) == (15, False)
 
     # A failed allocation has no update_state_after_alloc callback. The earlier
     # synchronous restore is already scheduled and must still reach the worker.
@@ -202,12 +222,12 @@ def test_allocation_failure_keeps_only_the_unallocated_query_for_the_next_step(r
     assert scheduler._pending_query_probes["waiting"].leases == (b"next",)
     client.release.assert_not_called()
 
-    assert scheduler.get_num_new_matched_tokens(waiting, 0) == (31, False)
+    assert scheduler.get_num_new_matched_tokens(waiting, 16) == (15, False)
     assert client.query_prefetch.call_count == 2
     scheduler.update_state_after_alloc(
-        waiting, SimpleNamespace(get_block_ids=lambda: ([3, 4],)), 31
+        waiting, SimpleNamespace(get_block_ids=lambda: ([1, 3],)), 15
     )
-    metadata = scheduler.build_connector_meta(step(("waiting", [3, 4], 31, 1)))
+    metadata = scheduler.build_connector_meta(step(("waiting", [1, 3], 31, 1)))
     assert set(metadata.load_intents) == {"waiting"}
     assert not scheduler._pending_query_probes
 
