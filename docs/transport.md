@@ -712,9 +712,15 @@ reuse, eviction and actual TCP bytes. The server gate reuses the maintained
 workload with actual Manager gRPC services, etcd/inventory discovery, source
 budget/replay/fencing controls and GPU Save/Restore byte comparison. It awaits
 both service tasks and records test-owned etcd wait results outside the checkout.
-A private CUDA 12.2 runtime/binding selection can qualify a scoped H20 source
-pilot; it does not qualify CUDA 12 serving or CUDA 13 runtime support. Keep exact
-source/binary/runtime hashes, GPU leases and descendant cleanup with the run.
+At implementation `5a50d092c651d28ff3f79f6de661c9da8120b2b3`, both H20
+source gates passed and were independently rerun with a private CUDA 12.2
+runtime. Source checks, protocol/ticket controls, exact artifact hashes, mapped
+libraries, GPU leases and owned native/supervisor/etcd reaping were checked.
+The retained failed first attempt and corrected runs are outside the checkout at
+`/root/orbitte-artifacts/peer-read-20261021/`; see [PR #304](https://github.com/OrbitInfra/OrbitKV/pull/304).
+This is a same-host embedded Manager source pilot. It does not qualify an
+installed Manager, serving, CUDA 13 runtime, physical cross-host Manager traffic,
+RDMA or device DMA.
 
 ## What OrbitKV reuses
 
