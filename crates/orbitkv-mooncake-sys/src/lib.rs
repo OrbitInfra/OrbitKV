@@ -16,8 +16,8 @@ use std::sync::LazyLock;
 
 use libloading::os::unix::{Library, RTLD_GLOBAL, RTLD_NOW};
 
-pub const SOURCE_VERSION: &str = "v0.3.13.post1";
-pub const SOURCE_REVISION: &str = "719735896c86b56fabec6cf3e825fb2ea640597a";
+pub const SOURCE_VERSION: &str = "v0.3.13.post1+orbitkv.1";
+pub const SOURCE_REVISION: &str = "12cbf549b6351c800de0f94a480276d216b9a43b";
 #[cfg(feature = "cuda")]
 const WORKSPACE_RUNTIME_LIB_DIR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),

@@ -209,6 +209,8 @@ and `integration`. Run it from a fresh fixture directory with the installed
 wheel and without source-package import paths. It checks changing READ/WRITE
 payloads, untouched gaps, source stability, native mappings and explicit
 unregistration. This gate requires no GPU and does not replace the healthy GPU,
-RDMA, Manager SSD or adapter lifetime gates. Native source builds currently
-apply the documented [upstream copy-status backport](../crates/orbitkv-mooncake-sys/patches/README.md)
-in a private directory; freeze the patch and resulting bytes with the wheel.
+RDMA, Manager SSD or adapter lifetime gates. Native source builds consume the
+pinned [OrbitInfra/Mooncake integration commit](../crates/orbitkv-mooncake-sys/README.md#native-source)
+without build-time patches. Freeze that commit and the resulting library bytes
+with the wheel; upstream releases and arbitrary prebuilt TENT libraries are not
+interchangeable with its source-epoch ABI.

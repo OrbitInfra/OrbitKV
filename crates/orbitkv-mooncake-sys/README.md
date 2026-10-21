@@ -5,7 +5,7 @@ TENT. It does not build or load the legacy Transfer Engine backend.
 
 The crate has three responsibilities:
 
-1. build the pinned stable Mooncake release from `third-party/mooncake`;
+1. build the pinned Mooncake integration commit from `third-party/mooncake`;
 2. build the `tent_shared` target and stage `libtent_shared.so`,
    `libmooncake_common.so`, and `libasio.so` in
    a relocatable runtime directory;
@@ -28,11 +28,20 @@ later without changing cache or framework code.
 
 ## Native source
 
-- release: `v0.3.13.post1`
-- commit: `719735896c86b56fabec6cf3e825fb2ea640597a`
+- repository: [OrbitInfra/Mooncake](https://github.com/OrbitInfra/Mooncake)
+- branch: `orbitkv-integration`
+- pinned commit: `12cbf549b6351c800de0f94a480276d216b9a43b`
+- upstream base: `v0.3.13.post1`, `719735896c86b56fabec6cf3e825fb2ea640597a`
 
-The private build copy applies the checked TCP copy/context and worker-ownership
-backports plus the unreleased `tcp-source-admission-drain.patch` candidate.
+The gitlink selects an immutable integration commit; builds never resolve a moving
+branch head. The fork carries the previously consumed TCP copy/context,
+worker ownership, source drain/epoch and registration ownership fixes as ordinary
+commits. Cargo copies this source into its private build directory and invokes
+CMake directly. It does not apply patches or rewrite the submodule.
+See the [integration branch guide](https://github.com/OrbitInfra/Mooncake/blob/12cbf549b6351c800de0f94a480276d216b9a43b/ORBITKV_INTEGRATION.md)
+for upstream origins and the update policy. The initial native source is identical
+to the old patched build; this migration grants no new hardware qualification.
+
 `tent_close_source` closes a whole engine permanently: status 0 is CPU/TCP
 handler drain, 1 remains owned, 2 has an unsupported physical path, and negative
 status is an error. It never drains requester batches or fences one RDMA ticket.
@@ -48,3 +57,5 @@ batch allocation. The wire/ABI requires matching bundles and is unreleased.
 To use compatible prebuilt libraries instead of invoking CMake, set
 `ORBITKV_MOONCAKE_LIB_DIR` to a directory containing the three TENT runtime
 shared objects. A directory containing only `libtransfer_engine.so` is rejected.
+Record the integration commit and artifact hashes for an override; a compatible
+symbol set alone does not establish its source provenance or runtime qualification.

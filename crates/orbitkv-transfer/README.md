@@ -31,8 +31,9 @@ The public Rust API is deliberately small:
   and wake cancelled/replaced waiters; `send_notification` emits completion and
   failure signals.
 
-The upstream source is pinned to stable release `v0.3.13.post1` by the
-`third-party/mooncake` submodule. `orbitkv-mooncake-sys` builds and stages
+The `third-party/mooncake` submodule pins the OrbitInfra integration branch,
+based on upstream `v0.3.13.post1`; see [native source provenance](../orbitkv-mooncake-sys/README.md#native-source).
+`orbitkv-mooncake-sys` builds and stages
 `libtent_shared.so`,
 `libmooncake_common.so`, and `libasio.so`; the libraries use an `$ORIGIN`
 runpath so the three files can be bundled together in a wheel or container.
@@ -58,7 +59,7 @@ The host-safe smoke test forces Mooncake TCP and verifies registration, segment
 opening, WRITE completion, and byte equality. RDMA/GPUDirect qualification is a
 separate hardware gate.
 
-For the source-shutdown candidate, use the private patched headers from the
+For the source-shutdown candidate, use the matching integration headers from the
 Cargo native `OUT_DIR`, its matching CPU libraries, and the actual fetched YLT
 source. Keep each output directory outside the checkout and new:
 
