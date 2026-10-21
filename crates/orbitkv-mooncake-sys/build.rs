@@ -39,7 +39,7 @@ fn main() {
 
     if let Some(prebuilt_dir) = env::var_os("ORBITKV_MOONCAKE_LIB_DIR") {
         println!(
-            "cargo:warning=prebuilt TENT override: verify copy/context, worker ownership and source-admission candidate patches in artifact provenance; matching TCP wire and tent_close_source are required"
+            "cargo:warning=prebuilt TENT override: verify the pinned OrbitInfra/Mooncake integration commit in artifact provenance; matching TCP wire and tent_close_source are required"
         );
         stage_prebuilt_libraries(Path::new(&prebuilt_dir), &runtime_dir);
         set_origin_runpaths(&runtime_dir);
@@ -63,36 +63,7 @@ fn main() {
     if native_source.exists() {
         fs::remove_dir_all(&native_source).expect("remove old private Mooncake source");
     }
-    verify_backport_source(&workspace.join("third-party/mooncake"));
     copy_mooncake_source(&workspace.join("third-party/mooncake"), &native_source);
-    for name in [
-        "tcp-copy-status-and-cuda-context.patch",
-        "tcp-worker-terminal-owner.patch",
-        "tcp-source-admission-drain.patch",
-        "source-grant-epoch.patch",
-        "unregister-retry-ownership.patch",
-        "register-error-ownership.patch",
-    ] {
-        let patch = manifest_dir.join("patches").join(name);
-        println!("cargo:rerun-if-changed={}", patch.display());
-        let status = Command::new("patch")
-            .args(["--batch", "--forward", "--fuzz=0", "--dry-run", "-p1", "-i"])
-            .arg(&patch)
-            .current_dir(&native_source)
-            .status()
-            .expect("check merged upstream Mooncake backport");
-        assert!(
-            status.success(),
-            "Mooncake backport does not match its pinned source"
-        );
-        let status = Command::new("patch")
-            .args(["--batch", "--forward", "--fuzz=0", "-p1", "-i"])
-            .arg(&patch)
-            .current_dir(&native_source)
-            .status()
-            .expect("apply merged upstream Mooncake backport");
-        assert!(status.success(), "Mooncake backport application failed");
-    }
     configure(&native_source.join("mooncake-transfer-engine"), &build_dir);
     build(&build_dir);
     stage_libraries(&build_dir, &runtime_dir);
@@ -231,99 +202,4 @@ fn copy_mooncake_source(source: &Path, destination: &Path) {
             fs::copy(entry.path(), target).expect("copy pinned Mooncake source file");
         }
     }
-}
-
-fn verify_backport_source(source: &Path) {
-    for (path, expected) in [
-        (
-            "mooncake-transfer-engine/tent/include/tent/runtime/segment.h",
-            "e913abe9d235106f906f2b565b8b816aaeb7c003",
-        ),
-        (
-            "mooncake-transfer-engine/tent/src/runtime/segment_tracker.cpp",
-            "0faf27ba25face54efe9ba98502cc1ae490f987c",
-        ),
-        (
-            "mooncake-transfer-engine/tent/include/tent/runtime/transport.h",
-            "93bf585a9ccc928d241714aac48768a92f0e93ef",
-        ),
-        (
-            "mooncake-transfer-engine/tent/include/tent/transport/rdma/buffers.h",
-            "07f3bc505d22c2171017506d8b9044e0b0325182",
-        ),
-        (
-            "mooncake-transfer-engine/tent/include/tent/transport/rdma/rdma_transport.h",
-            "6ff05db7b8a5ffafd225a73f923519bbe3f757e9",
-        ),
-        (
-            "mooncake-transfer-engine/tent/src/transport/rdma/rdma_transport.cpp",
-            "7bdb5bd1c3c17727cd67f15d190738b9cca1960a",
-        ),
-        (
-            "mooncake-transfer-engine/tent/include/tent/platform/cuda.h",
-            "a808a2b6f0729c25512e5e3d44ebbd9b18383357",
-        ),
-        (
-            "mooncake-transfer-engine/tent/src/platform/cuda/cuda_allocator.cpp",
-            "d60ddffa2f6b220e6294162b422a5c25b963164b",
-        ),
-        (
-            "mooncake-transfer-engine/tent/src/platform/cuda/cuda_probe.cpp",
-            "6a52601c9a2ce7132742debeefa89038d3bcd006",
-        ),
-        (
-            "mooncake-transfer-engine/tent/src/transport/tcp/tcp_transport.cpp",
-            "973173ca723e292916166ae5f9e70b240d65b772",
-        ),
-        (
-            "mooncake-transfer-engine/tent/src/runtime/control_plane.cpp",
-            "0378593de88cfc90b7407b8ca3bd4f1d14516fee",
-        ),
-        (
-            "mooncake-transfer-engine/tent/include/tent/runtime/transfer_engine_impl.h",
-            "3dceb048732b8574f8199dbf51fb0c8d03f5f904",
-        ),
-        (
-            "mooncake-transfer-engine/tent/src/runtime/transfer_engine_impl.cpp",
-            "adba998dbd2687b01a40e3da8cd098453527a70d",
-        ),
-        (
-            "mooncake-transfer-engine/tent/src/transport/rdma/context.cpp",
-            "ca4629eea8e653752780e7f91b5af97a4d1a9e83",
-        ),
-        (
-            "mooncake-transfer-engine/tent/src/transport/rdma/buffers.cpp",
-            "72fe68d9a2f6548e1fa066df16bf6330c429112d",
-        ),
-        (
-            "mooncake-transfer-engine/tent/include/tent/runtime/segment_manager.h",
-            "26fccd234bfe47aa3034b96f179ccd8be1392a75",
-        ),
-        (
-            "mooncake-transfer-engine/tent/src/runtime/segment_manager.cpp",
-            "618117190015fbd89916688cc4fda23dd2e3bc9d",
-        ),
-    ] {
-        let output = Command::new("git")
-            .arg("hash-object")
-            .arg(source.join(path))
-            .output()
-            .expect("hash pinned Mooncake backport input");
-        assert!(
-            output.status.success(),
-            "Mooncake source hash failed: {path}"
-        );
-        let actual = String::from_utf8(output.stdout).expect("Git object hash is UTF-8");
-        assert_eq!(
-            actual.trim(),
-            expected,
-            "Mooncake backport input differs: {path}"
-        );
-    }
-    assert!(
-        !source
-            .join("mooncake-transfer-engine/tent/include/tent/platform/cuda_utils.h")
-            .exists(),
-        "Mooncake backport header already exists in the pinned input"
-    );
 }

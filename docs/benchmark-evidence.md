@@ -249,7 +249,7 @@ The existing expandable-segments registration
 [PR #3538](https://github.com/kvcache-ai/Mooncake/pull/3538), which fixes the
 DMA-BUF export range and addresses a different RDMA registration path.
 
-The currently selected official `v0.3.13.post1` source does not contain the
+The cohort's official `v0.3.13.post1` source does not contain the
 merged NVLink fixes for
 [peer device ordinals (#3678)](https://github.com/kvcache-ai/Mooncake/pull/3678)
 and [shared suballocation IPC handles (#3679)](https://github.com/kvcache-ai/Mooncake/pull/3679).

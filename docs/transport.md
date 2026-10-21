@@ -561,9 +561,10 @@ custom TCP socket daemon, exchanges JSON metadata and QP/MR information, and
 then uses the selected data transport. Larger deployments may instead publish
 Segment metadata through etcd, Redis, or HTTP.
 
-OrbitKV pins Mooncake `v0.3.13.post1` at
-`719735896c86b56fabec6cf3e825fb2ea640597a` and builds its shared Transfer
-Engine through the TENT `tent_shared` target in `orbitkv-mooncake-sys`. Native
+OrbitKV pins [OrbitInfra/Mooncake](https://github.com/OrbitInfra/Mooncake/tree/12cbf549b6351c800de0f94a480276d216b9a43b)
+integration commit `12cbf549b6351c800de0f94a480276d216b9a43b`, based on upstream
+`v0.3.13.post1`, and builds the TENT `tent_shared` target in
+`orbitkv-mooncake-sys` without applying build-time patches. Native
 loading first checks `ORBITKV_MOONCAKE_LIB_DIR`, then the executable or Python
 extension directory, then the local `.orbitkv/mooncake/{cuda|cpu}/lib` build cache. Wheels
 bundle `libtent_shared.so`, `libmooncake_common.so`, and `libasio.so`; the legacy
@@ -710,9 +711,9 @@ remain separate from the local source allocation IDs used by raw grants.
 
 ### TCP copy error propagation candidate
 
-The pinned native build applies a scoped backport of merged Mooncake #3476 and
-#3973 in a private build-source directory; see
-[backport provenance](../crates/orbitkv-mooncake-sys/patches/README.md). TCP client
+The pinned integration branch carries the scoped backports of merged Mooncake
+#3476 and #3973; see [native source provenance](../crates/orbitkv-mooncake-sys/README.md#native-source).
+TCP client
 and server copy errors propagate to native FAILED. A READ error response whose
 length equals the requested payload is padded, preventing error text from being
 consumed as valid bytes. CUDA host-only copies use memcpy, while device copies
@@ -798,7 +799,8 @@ cargo test -p orbitkv-transfer --no-default-features --lib \
 ```
 
 The production unregister subset adapts existing upstream #4573 and #4249;
-see the [pinned native patch notes](https://github.com/OrbitInfra/OrbitKV/blob/main/crates/orbitkv-mooncake-sys/patches/README.md#unregister-errors-and-retry-ownership).
+see the [original ownership notes](https://github.com/OrbitInfra/OrbitKV/blob/4cd00b809b4ee81de89e4712fadda8208459840f/crates/orbitkv-mooncake-sys/patches/README.md#unregister-errors-and-retry-ownership)
+and the [current native pin](../crates/orbitkv-mooncake-sys/README.md#native-source).
 It preserves unfinished transport cleanup and failed-publication tombstones,
 rejects same-base registration during retirement and returns failures through
 the C ABI to Rust `try_unregister`. Partial registration rollback, consuming

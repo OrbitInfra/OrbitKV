@@ -149,7 +149,9 @@ orbitkv/
 The selected engine baselines are the pinned `third-party/vllm` v0.31.0 and
 `third-party/sglang` v0.5.22 tags. Keep Python optional dependency pins and
 the source submodules aligned when updating a release. Native builds and wheel
-CI only initialize `third-party/mooncake`; initialize engine submodules for
+CI only initialize `third-party/mooncake`, pinned to an accepted commit on
+`OrbitInfra/Mooncake`'s `orbitkv-integration` branch. Builds consume that commit
+directly without patch application or moving-branch resolution. Initialize engine submodules for
 source inspection or release upgrades. The selected baselines are vLLM
 0.31.0 and SGLang 0.5.22; S5.1 separates the new SGLang installed qualification
 from historical 0.5.21 results. SGLang requires Python 3.11+ and its released

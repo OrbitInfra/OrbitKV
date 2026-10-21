@@ -46,7 +46,8 @@ pipelines block publication and lease updates. Borrow local discovery and batche
 background work; do not assume periodic rebuilding or changing databases removes
 the cost of distributing all records to all readers.
 
-OrbitKV pins Mooncake at `719735896c86b56fabec6cf3e825fb2ea640597a`.
+OrbitKV's [native integration](../crates/orbitkv-mooncake-sys/README.md#native-source)
+uses upstream base `719735896c86b56fabec6cf3e825fb2ea640597a`.
 [Store](https://github.com/kvcache-ai/Mooncake/blob/719735896c86b56fabec6cf3e825fb2ea640597a/docs/source/design/store/mooncake-store.md)
 uses a Master for object metadata and allocation, with peer payload movement.
 Its [optional HA OpLog](https://github.com/kvcache-ai/Mooncake/blob/719735896c86b56fabec6cf3e825fb2ea640597a/docs/source/deployment/mooncake-store-deployment-guide.md#high-availability-ha)
