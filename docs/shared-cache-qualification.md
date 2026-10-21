@@ -124,14 +124,14 @@ GPUDirect, distributed throughput, P/D or mid-transfer crash/partition revocatio
 
 ### Earlier same-host gates
 
-The [2026-09-25 ownership-layout recheck](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#ownership-layout-final-evidence)
+The [2026-09-25 ownership-layout recheck](https://github.com/OrbitInfra/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#ownership-layout-final-evidence)
 passed on native source `046b16f5` with a matching query-body-v6 client and frozen
 Manager. Both engines completed three remote GPU restores, catalog restart
 replay and correct recomputation after source payload loss. Each transferred
 and restored 288 MiB; outputs matched and checked resource counters drained.
 This remains single-H20, same-host TCP evidence.
 
-The [2026-09-23 Qwen3-8B gate](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/benches/results/20260923-shared-cache/README.md)
+The [2026-09-23 Qwen3-8B gate](https://github.com/OrbitInfra/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/benches/results/20260923-shared-cache/README.md)
 passed on one H20 with vLLM 0.29.0 and SGLang 0.5.20, tested separately. Each
 engine completed three remote GPU restores, including catalog restart recovery,
 and one correct recomputation after source payload loss. Outputs matched and

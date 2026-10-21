@@ -7,7 +7,7 @@ import test from "node:test";
 
 const dist = fileURLToPath(new URL("../dist/", import.meta.url));
 const repository = resolve(dist, "../..");
-const base = "https://feichai0017.github.io/orbitkv/";
+const base = "https://orbitinfra.github.io/orbitkv/";
 const decode = (value) =>
   value.replaceAll("&amp;", "&").replaceAll("&quot;", '"');
 const files = globSync("**/*.html", { cwd: dist });
@@ -26,7 +26,7 @@ test("published pages have valid internal links, fragments and repository target
       const target = new URL(decode(attribute), current);
       if (target.origin === "https://github.com") {
         const match = target.pathname.match(
-          /^\/feichai0017\/orbitkv\/blob\/([^/]+)\/(.+)$/,
+          /^\/OrbitInfra\/orbitkv\/blob\/([^/]+)\/(.+)$/,
         );
         const [, revision, path] = match ?? [];
         // Historical snapshots can contain evidence removed from the current tree.

@@ -58,7 +58,7 @@ routing. Update affected docs, README and site copy with behavioral changes.
 
 CI validates the site on pull requests. The Pages workflow checks, builds and
 deploys `website/` or `docs/` changes merged into `main` at
-[feichai0017.github.io/orbitkv](https://feichai0017.github.io/orbitkv/).
+[orbitinfra.github.io/orbitkv](https://orbitinfra.github.io/orbitkv/).
 
 Repository links bind to the build's `GITHUB_SHA`. Local previews use `main`
 unless `PUBLIC_SOURCE_REF` is set. Navigation and search respect Astro's

@@ -29,10 +29,10 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://feichai0017.github.io/orbitkv/"
-Documentation = "https://feichai0017.github.io/orbitkv/docs/"
-Repository = "https://github.com/feichai0017/orbitkv"
-Issues = "https://github.com/feichai0017/orbitkv/issues"
+Homepage = "https://orbitinfra.github.io/orbitkv/"
+Documentation = "https://orbitinfra.github.io/orbitkv/docs/"
+Repository = "https://github.com/OrbitInfra/orbitkv"
+Issues = "https://github.com/OrbitInfra/orbitkv/issues"
 
 [project.optional-dependencies]
 vllm = ["vllm==0.31.0"]

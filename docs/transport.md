@@ -497,7 +497,7 @@ drain.
 
 ## Measured process-channel baseline
 
-The [current communication measurements](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/communication-performance.md) compare
+The [current communication measurements](https://github.com/OrbitInfra/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/communication-performance.md) compare
 request events, Publish reply notification and encoding changes against the
 preceding revision, including CPU cost and raw-ping regressions.
 
@@ -798,7 +798,7 @@ cargo test -p orbitkv-transfer --no-default-features --lib \
 ```
 
 The production unregister subset adapts existing upstream #4573 and #4249;
-see the [pinned native patch notes](https://github.com/feichai0017/orbitkv/blob/main/crates/orbitkv-mooncake-sys/patches/README.md#unregister-errors-and-retry-ownership).
+see the [pinned native patch notes](https://github.com/OrbitInfra/orbitkv/blob/main/crates/orbitkv-mooncake-sys/patches/README.md#unregister-errors-and-retry-ownership).
 It preserves unfinished transport cleanup and failed-publication tombstones,
 rejects same-base registration during retirement and returns failures through
 the C ABI to Rust `try_unregister`. Partial registration rollback, consuming

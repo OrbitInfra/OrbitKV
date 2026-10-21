@@ -96,9 +96,9 @@ running the manual workflow does not test that credential or reserve the names.
 
 ## Layer-readiness candidate qualification, 2026-09-29
 
-[Release candidate run 36513923017](https://github.com/feichai0017/orbitkv/actions/runs/36513923017)
+[Release candidate run 36513923017](https://github.com/OrbitInfra/orbitkv/actions/runs/36513923017)
 at `de451189` passes all 15 wheel targets and combined artifact validation. Its
-[PR CI run](https://github.com/feichai0017/orbitkv/actions/runs/36513885825)
+[PR CI run](https://github.com/OrbitInfra/orbitkv/actions/runs/36513885825)
 passes all 13 checks. The manual workflow does not publish a package.
 
 The downloaded CPython 3.11/CUDA 13/x86_64 artifact is
@@ -118,12 +118,12 @@ RDMA qualification is claimed.
 
 ## CUDA 13 candidate qualification, 2026-09-28
 
-[Release run 36423388612](https://github.com/feichai0017/orbitkv/actions/runs/36423388612)
+[Release run 36423388612](https://github.com/OrbitInfra/orbitkv/actions/runs/36423388612)
 at commit `06e04fc3` passes all 15 build targets and the combined artifact
 validation. Python 3.10–3.14, x86_64 CUDA 12/13 and aarch64 CUDA 13 artifacts
 are available from that run. Its publish job is skipped because this was a
 manual candidate build. The matching
-[PR CI run](https://github.com/feichai0017/orbitkv/actions/runs/36423395059)
+[PR CI run](https://github.com/OrbitInfra/orbitkv/actions/runs/36423395059)
 also passes all 13 checks. Build coverage is separate from the GPU qualification
 below.
 

@@ -174,7 +174,7 @@ pilot above before consuming native trace timings.
 
 The retired CPU-mmap diagnostic used an unpatched upstream 48-byte request;
 OrbitKV's current request is 88 bytes on Linux x86-64. Historical campaigns use
-[the frozen probe](https://github.com/feichai0017/orbitkv/blob/800a755fe88e119cd10b19c28c27e02d78d40d09/benches/distributed/tent_stage.py)
+[the frozen probe](https://github.com/OrbitInfra/orbitkv/blob/800a755fe88e119cd10b19c28c27e02d78d40d09/benches/distributed/tent_stage.py)
 and their original contract, libraries and actual cleanup receipts. The offline
 reader retains support for these archived traces. Do not load production
 libraries with that old probe.
@@ -270,7 +270,7 @@ do not measure transport performance.
 ### Native TENT library comparison
 
 The standalone upstream-ABI comparison controller and its dedicated tests are
-retired. Its [frozen source](https://github.com/feichai0017/orbitkv/blob/800a755fe88e119cd10b19c28c27e02d78d40d09/benches/distributed/tent_compare.py)
+retired. Its [frozen source](https://github.com/OrbitInfra/orbitkv/blob/800a755fe88e119cd10b19c28c27e02d78d40d09/benches/distributed/tent_compare.py)
 remains available for historical reproduction with the matching 48-byte probe.
 Keep original contracts, failed controls and external evidence unchanged.
 Private CPU-buffer results do not qualify OrbitKV's consumed Manager path.

@@ -7,7 +7,7 @@ const sourceRevision =
 const base = "/orbitkv";
 
 export default defineConfig({
-  site: "https://feichai0017.github.io",
+  site: "https://orbitinfra.github.io",
   base,
   output: "static",
   trailingSlash: "always",

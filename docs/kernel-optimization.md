@@ -88,7 +88,7 @@ contracts to improve a timing result.
 Detailed component cohorts, A/A repeatability, CPU traces, thread CPU
 attribution, interleaved calibration, capture diagnostics, failed candidates and
 external artifact locations are preserved in the
-[immutable kernel report](https://github.com/feichai0017/orbitkv/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/kernel-optimization.md).
+[immutable kernel report](https://github.com/OrbitInfra/orbitkv/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/kernel-optimization.md).
 Those frozen guards remain the authority for their corresponding experiments.
 They do not form a second execution queue. Generated traces/results stay outside
 Git; see [benchmark evidence](benchmark-evidence.md).
