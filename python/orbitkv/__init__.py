@@ -32,13 +32,10 @@ _NATIVE_EXPORTS = {
 }
 
 _native = None
-__version__ = "0.0.0"
-for _distribution in ("orbitkv-llm", "orbitkv-llm-cu13"):
-    try:
-        __version__ = version(_distribution)
-        break
-    except PackageNotFoundError:
-        continue
+try:
+    __version__ = version("orbitkv-llm")
+except PackageNotFoundError:
+    __version__ = "0.0.0"
 
 
 def __getattr__(name: str) -> Any:

@@ -12,14 +12,15 @@ root; this example selects Python 3.11 and CUDA 13:
 
 ```bash
 git submodule update --init --recursive third-party/mooncake
-./scripts/build-wheel.sh --release --no-default-features --features cuda-13,mooncake
+./scripts/build-wheel.sh --release
 ```
 
-Use `./scripts/build-wheel.sh --release` for CUDA 12. Select the newly built wheel
+CUDA 13 is the default and only release runtime. Select the newly built wheel
 in `target/wheels` explicitly and use its absolute path in the installation commands
 below. A complete wheel includes the Manager, extension and Mooncake libraries;
-`maturin build` alone does not stage all of them. Install only one CUDA distribution
-per environment. The Manager also needs compatible PyTorch/CUDA; it does not load
+`maturin build` alone does not stage all of them. The Manager also needs compatible
+PyTorch/CUDA 13 and an NVIDIA R580 or newer driver; see [runtime requirements](releases.md#packages).
+It does not load
 model weights. Install the same OrbitKV build in client and Manager environments.
 
 After creating an engine environment below, start one Manager from that environment:

@@ -13,8 +13,8 @@ from pathlib import Path
 from zipfile import ZipFile
 
 
-def check_wheel(path: Path, variant: str, version: str | None = None) -> None:
-    expected_name = "orbitkv-llm-cu13" if variant == "cu13" else "orbitkv-llm"
+def check_wheel(path: Path, version: str | None = None) -> None:
+    expected_name = "orbitkv-llm"
     required_files = {
         "orbitkv/__init__.py",
         "orbitkv/orbitkv.pyi",
@@ -101,7 +101,7 @@ def check_wheel(path: Path, variant: str, version: str | None = None) -> None:
             ):
                 raise ValueError(f"missing exact {engine} release dependency")
         if any("orbitkv-llm[test]" in req for req in requirements):
-            raise ValueError("wheel has a self-dependency on the cu12 package")
+            raise ValueError("wheel has a self-dependency on its test extra")
 
         entry_points = metadata_files[0].replace("METADATA", "entry_points.txt")
         if entry_points not in files:
@@ -130,11 +130,11 @@ def check_wheel(path: Path, variant: str, version: str | None = None) -> None:
         corrupt = wheel.testzip()
         if corrupt:
             raise ValueError(f"corrupt wheel member: {corrupt}")
-    print(f"Wheel validated: {path.name} ({variant}, {metadata['Version']})")
+    print(f"Wheel validated: {path.name} ({metadata['Version']})")
 
 
-def check_install(path: Path, variant: str) -> None:
-    distribution = "orbitkv-llm-cu13" if variant == "cu13" else "orbitkv-llm"
+def check_install(path: Path) -> None:
+    distribution = "orbitkv-llm"
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
     env.pop("PYTHONHOME", None)
@@ -175,14 +175,13 @@ def check_install(path: Path, variant: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("wheel", type=Path)
-    parser.add_argument("--variant", required=True, choices=("cu12", "cu13"))
     parser.add_argument("--version", help="Expected release version")
     parser.add_argument("--install-smoke", action="store_true")
     args = parser.parse_args()
     try:
-        check_wheel(args.wheel, args.variant, args.version)
+        check_wheel(args.wheel, args.version)
         if args.install_smoke:
-            check_install(args.wheel, args.variant)
+            check_install(args.wheel)
     except (OSError, subprocess.CalledProcessError, ValueError) as error:
         print(f"Wheel validation failed: {error}", file=sys.stderr)
         return 1

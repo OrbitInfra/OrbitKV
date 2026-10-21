@@ -1,10 +1,10 @@
 use super::*;
-#[cfg(not(any(feature = "cuda-12", feature = "cuda-13")))]
+#[cfg(not(feature = "cuda-13"))]
 use crate::P2P_METADATA;
 use crate::types::{STATUS_CANCELED, STATUS_FAILED, STATUS_INVALID};
 
 #[test]
-#[cfg(not(any(feature = "cuda-12", feature = "cuda-13")))]
+#[cfg(not(feature = "cuda-13"))]
 #[ignore = "requires a frozen CPU TENT build and its matching native unregister control library"]
 fn failed_native_unregister_preserves_the_rust_registration_until_retry() {
     struct Library(NonNull<c_void>);
@@ -202,7 +202,7 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
             .register_memory_owned(base, memory.len(), "cpu:0")
             .expect("register memory again")
     };
-    #[cfg(not(any(feature = "cuda-12", feature = "cuda-13")))]
+    #[cfg(not(feature = "cuda-13"))]
     {
         engine
             .close_source(Duration::from_secs(1))
@@ -264,7 +264,7 @@ fn engine_creation_restores_the_process_nic_filter() {
 }
 
 #[test]
-#[cfg(not(any(feature = "cuda-12", feature = "cuda-13")))]
+#[cfg(not(feature = "cuda-13"))]
 fn grant_epoch_rejects_first_read_after_same_endpoint_restart() {
     unsafe {
         libc::setenv(c"MC_FORCE_TCP".as_ptr(), c"1".as_ptr(), 1);

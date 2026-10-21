@@ -31,14 +31,6 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
-        cuda-variant: ['cu12', 'cu13']
-        include:
-          - cuda-variant: cu12
-            cuda-version: '12.8.1'
-            cargo-features: ""
-          - cuda-variant: cu13
-            cuda-version: '13.0.2'
-            cargo-features: "--no-default-features --features cuda-13,mooncake"
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -59,7 +51,7 @@ jobs:
       - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
-          cuda: ${{ matrix.cuda-version }}
+          cuda: '13.0.2'
           linux-local-args: '["--toolkit"]'
           method: 'network'
           sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
@@ -84,7 +76,7 @@ jobs:
 
       - name: Build wheel
         run: |
-          ./scripts/build-wheel.sh --release ${{ matrix.cargo-features }}
+          ./scripts/build-wheel.sh --release
           mkdir -p dist
           cp target/wheels/*.whl dist/
         env:
@@ -94,7 +86,7 @@ jobs:
         id: generate_tag
         run: |
           PYTAG=$(echo "py${{ matrix.python-version }}" | tr -d '.')
-          echo "artifact_tag=${PYTAG}-${{ matrix.cuda-variant }}" >> "$GITHUB_OUTPUT"
+          echo "artifact_tag=${PYTAG}-x86_64" >> "$GITHUB_OUTPUT"
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
@@ -102,7 +94,7 @@ jobs:
           name: orbitkv-wheel-${{ steps.generate_tag.outputs.artifact_tag }}
           path: dist/*.whl
 
-  build-arm-cu13:
+  build-arm:
     needs: version
     runs-on: ubuntu-24.04-arm
     strategy:
@@ -156,7 +148,7 @@ jobs:
 
       - name: Build wheel
         run: |
-          ./scripts/build-wheel.sh --release --no-default-features --features cuda-13,mooncake
+          ./scripts/build-wheel.sh --release
           mkdir -p dist
           cp target/wheels/*.whl dist/
         env:
@@ -168,7 +160,7 @@ jobs:
         id: generate_tag
         run: |
           PYTAG=$(echo "py${{ matrix.python-version }}" | tr -d '.')
-          echo "artifact_tag=${PYTAG}-arm64-cu13" >> "$GITHUB_OUTPUT"
+          echo "artifact_tag=${PYTAG}-aarch64" >> "$GITHUB_OUTPUT"
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
@@ -177,7 +169,7 @@ jobs:
           path: dist/*.whl
 
   verify-artifacts:
-    needs: [build, build-arm-cu13]
+    needs: [build, build-arm]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -191,19 +183,16 @@ jobs:
           VERSION="$(python3 scripts/check-versions.py)"
           shopt -s nullglob
           WHEELS=(dist/*.whl)
-          test "${#WHEELS[@]}" -eq 15
+          test "${#WHEELS[@]}" -eq 10
           for WHEEL in "${WHEELS[@]}"; do
-            VARIANT=cu12
-            if [[ "$WHEEL" == *orbitkv_llm_cu13-* ]]; then
-              VARIANT=cu13
-            fi
-            python3 scripts/check-wheel.py "$WHEEL" --variant "$VARIANT" --version "$VERSION"
+            python3 scripts/check-wheel.py "$WHEEL" --version "$VERSION"
           done
 
   publish-release:
     if: github.event_name == 'push'
     needs: verify-artifacts
     runs-on: ubuntu-22.04
+    environment: pypi
     permissions:
       contents: write
       id-token: write
@@ -211,30 +200,16 @@ jobs:
       - name: Download all wheel artifacts
         uses: actions/download-artifact@v4
         with:
-          path: dist-all
-
-      - name: Prepare wheels for release
-        run: |
-          mkdir -p dist-cu12 dist-cu13 dist-release
-          find dist-all -name "orbitkv_llm_cu13-*.whl" -exec cp {} dist-cu13/ \;
-          find dist-all -name "orbitkv_llm-*.whl" ! -name "orbitkv_llm_cu13-*" -exec cp {} dist-cu12/ \;
-          cp dist-cu12/*.whl dist-cu13/*.whl dist-release/
-          echo "Collected wheels:"
-          ls -la dist-release/
+          pattern: orbitkv-wheel-*
+          merge-multiple: true
+          path: dist
 
       - name: Upload wheels to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist-release/*.whl
+          files: dist/*.whl
 
       - name: Publish orbitkv-llm to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: dist-cu12/
-          password: ${{ secrets.PYPI_API_TOKEN }}
-
-      - name: Publish orbitkv-llm-cu13 to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist-cu13/
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: dist/

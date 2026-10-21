@@ -117,7 +117,7 @@ def installation_snapshot(engine: str, initialize_transfer: bool = False) -> dic
     owners = metadata.packages_distributions().get("orbitkv", [])
     assert len(owners) == 1, f"Expected one OrbitKV distribution, got {owners}"
     distribution = metadata.distribution(owners[0])
-    assert distribution.metadata["Name"] in {"orbitkv-llm", "orbitkv-llm-cu13"}
+    assert distribution.metadata["Name"] == "orbitkv-llm"
     engine_distribution = metadata.distribution(engine)
     assert engine_distribution.version == ENGINE_VERSIONS[engine], engine_distribution.version
     snapshots = {}

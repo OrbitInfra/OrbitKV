@@ -12,19 +12,19 @@ and transfer completion.
 
 | CUDA runtime | Distribution | Import |
 | --- | --- | --- |
-| CUDA 12 | `orbitkv-llm` | `orbitkv` |
-| CUDA 13 | `orbitkv-llm-cu13` | `orbitkv` |
+| CUDA 13 | `orbitkv-llm` | `orbitkv` |
 
-Install one distribution per environment. Version 0.1.0 is being prepared for
-release; build a complete wheel from the repository root:
+CUDA 13 is the only supported runtime, with NVIDIA R580 or newer and a driver
+compatible with the selected toolkit's runtime-compiled kernels. Version 0.1.0
+is being prepared for release; build a complete wheel from the repository root:
 
 ```bash
 git submodule update --init --recursive third-party/mooncake
-./scripts/build-wheel.sh --release --no-default-features --features cuda-13,mooncake
+./scripts/build-wheel.sh --release
 python -m pip install /absolute/path/to/the-built-wheel.whl
 ```
 
-Use `./scripts/build-wheel.sh --release` for CUDA 12. The wheel includes the
+The wheel includes the
 extension, Manager and Mooncake libraries; the host supplies compatible Python,
 CUDA and RDMA libraries. The Manager also requires compatible PyTorch, which the
 base package does not install. See [release requirements](../docs/releases.md).

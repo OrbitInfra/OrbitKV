@@ -9,8 +9,7 @@ license.workspace = true
 workspace = true
 
 [features]
-default = ["cuda-12"]
-cuda-12 = ["orbitkv-mooncake-sys/cuda"]
+default = ["cuda-13"]
 cuda-13 = ["orbitkv-mooncake-sys/cuda"]
 
 [dependencies]
