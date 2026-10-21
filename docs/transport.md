@@ -605,6 +605,50 @@ bundle `libtent_shared.so`, `libmooncake_common.so`, and `libasio.so`; the legac
 `libtransfer_engine.so` is removed from staged runtimes. System
 RDMA/CUDA libraries remain deployment prerequisites.
 
+## Experimental OrbitTE allocation bridge
+
+The opt-in `orbitkv-core/orbitte` feature pins
+[OrbitTE `02d64e55`](https://github.com/OrbitInfra/OrbitTE/commit/02d64e552f94ef965eff32b35a55789018223439).
+`PinnedAllocation::orbitte_memory` returns a canonical `Arc<HostMemory>` retaining
+that exact allocation. A pool owner alone would keep the mapping alive while
+allowing a slot to be reused. The allocation holds only a weak cached view, so
+concurrent aliases share one access lock without creating a reference cycle.
+The unsafe caller must coordinate CPU, GPU and other process access; this lock
+cannot synchronize unrelated CUDA streams or another process's mapping.
+
+Register these views through OrbitTE's host registration/batch API and retain
+its returned handles. Accepted requests retain the allocation through logical
+cancellation, wait timeout, unregister and a detached batch until the backend
+proves local drain. This first bridge registers allocation ranges; it does not
+add a whole-pool MR cache or switch the Manager peer path. OrbitKV still owns
+source grants, allocation generations and completion-mailbox matching. Their
+OrbitTE consumption and installed serving qualification remain open.
+
+Source CI checks the optional feature with the normal CUDA 13 build. Run the
+hardware gate explicitly on an isolated GPU with a compatible CUDA runtime:
+
+```sh
+cargo test --locked -p orbitkv-core --features orbitte --lib \
+  memory::pool::orbitte_tests -- --ignored --test-threads=1
+```
+
+The two tests use the production `PinnedAllocator` (memfd, CUDA host registration
+and real slot reclamation), actual OrbitTE engines and TCP bytes. They cover
+concurrent aliases, duplicate/subrange registrations, READ/WRITE integrity,
+blocked transfer cancellation and detach, failed early free, unregister, slot
+exhaustion, allocator drop and eventual owner release. A TCP relay delays the
+actual data connection without implementing a fake transfer engine. They are
+ignored by ordinary tests because a real GPU is required; an unavailable GPU
+leaves this gate unqualified.
+
+For a CUDA 12.2 driver pilot, an isolated test build can instead use
+`--no-default-features --features orbitte,cudarc/cuda-12020`, with the CUDA 12.2
+runtime selected in its process library path. That allocator-only profile is
+not CUDA 12 serving support or an installed Manager qualification. Keep exact
+source/binary/runtime hashes, device identity, resource locks, bytes and cleanup
+in an external artifact directory; do not infer RDMA, GPU DMA or crash recovery
+from this TCP ownership gate.
+
 ## What OrbitKV reuses
 
 `orbitkv-transfer::TransferEngine` is a narrow wrapper over the pinned upstream

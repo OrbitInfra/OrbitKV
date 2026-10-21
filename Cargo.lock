@@ -2031,6 +2031,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-te"
+version = "0.1.0-alpha.1"
+source = "git+https://github.com/OrbitInfra/OrbitTE?rev=02d64e552f94ef965eff32b35a55789018223439#02d64e552f94ef965eff32b35a55789018223439"
+
+[[package]]
 name = "orbitkv-catalog"
 version = "0.1.0"
 dependencies = [
@@ -2093,6 +2098,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-prometheus",
  "opentelemetry_sdk",
+ "orbit-te",
  "orbitkv-catalog",
  "orbitkv-common",
  "orbitkv-proto",

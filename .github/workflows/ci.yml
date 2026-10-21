@@ -181,6 +181,7 @@ jobs:
         run: |
           cargo clippy --workspace --exclude orbitkv-py --all-targets -- -D warnings
           cargo clippy -p orbitkv-server --all-targets --features test-hooks -- -D warnings
+          cargo clippy -p orbitkv-core --all-targets --features orbitte -- -D warnings
 
   ruff-check:
     name: ruff check
@@ -263,6 +264,7 @@ jobs:
       - name: Run cargo check
         run: |
           cargo check -p orbitkv-core
+          cargo check -p orbitkv-core --features orbitte
           cargo check -p orbitkv-server --all-targets
         env:
           CUDA_PATH: /usr/local/cuda
