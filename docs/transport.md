@@ -52,6 +52,31 @@ matching real-model regression and physical lifetime remain separate gates in
 CPU authority controls use an authenticated process fixture and an idle worker
 with no CUDA executor; they do not register, compute or submit device DMA.
 
+The official vLLM 0.31.0 `KVCacheBlock` callback and SGLang 0.5.22 external-linker
+page descriptors expose reusable slot IDs without allocator-issued allocation
+generations. OrbitKV cannot repair that boundary with an adapter-local map: such
+a map misses allocations and frees performed by native prefix, scheduler and
+other connector paths. The upstream interface work is tracked in
+[vLLM #62810](https://github.com/vllm-project/vllm/issues/62810) and
+[SGLang #45493](https://github.com/sgl-project/sglang/issues/45493). Until a
+released interface is consumed, adapters retain unknown work and do not claim
+generation-safe page reuse.
+
+Draft [vLLM #62819](https://github.com/vllm-project/vllm/pull/62819), exact
+`b37aa38c`, has independent source/CPU acceptance for allocation and finish-time
+identity handoff. It remains an upstream candidate rather than a selected
+release; OrbitKV does not patch the pinned engine or enable a compatibility
+fallback around it.
+
+Draft [SGLang #45548](https://github.com/sgl-project/sglang/pull/45548), exact
+`3cc5121f`, has independent source/CPU acceptance plus a scoped H20 allocator
+primitive pass for warmed steady-state asynchronous generation issuance,
+snapshot and cross-stream readiness. Its unwarmed first invocation still waits
+for preceding CUDA work. This does not qualify the current installed engine,
+its default Rust tree runtime under faults, serving performance, page reuse
+after cancellation or physical termination; the selected 0.5.22 package remains
+unchanged.
+
 Explicit registration replaces the framework pickle payload with
 versioned protobuf storage/view metadata. The native client exports retained
 tensors directly; Manager validation precedes CUDA device discovery/import.
@@ -156,6 +181,15 @@ physical memory remains owned by the existing pool/query/source budgets. Native
 transport failover on polling is disabled until the preceding attempt's
 termination can be established. Successful normal TCP/RDMA/CUDA transfers keep
 the existing completion path; physical-failure recovery remains unqualified.
+
+[Mooncake #4816](https://github.com/kvcache-ai/Mooncake/issues/4816) requests a
+per-transfer physical termination receipt for this retained boundary. The
+independently accepted public reproducer is OrbitKV
+[PR #237](https://github.com/OrbitInfra/OrbitKV/pull/237), merge `53e69620`: it
+pauses an admitted TCP READ, observes successful logical unregister, mutates
+still-valid source bytes and then observes the old READ consume the replacement
+payload. The control proves why unregister is not a drain; it does not simulate
+freed memory or establish CUDA/RDMA behavior.
 
 Retention is visible through `orbitkv_native_transfer_batches`,
 `orbitkv_native_transfer_request_bytes`,

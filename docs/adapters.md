@@ -43,6 +43,19 @@ For Restore, only cancellation of the pre-forward activation future proves
 non-submission. A `CancelledError` from submission or completion waiting keeps
 leases and GPU destinations held and propagates an error to the consumer.
 
+Neither selected release currently supplies the allocator-owned page identity
+needed to reject a late completion after physical slot reuse. The missing vLLM
+and SGLang interfaces are tracked in
+[vLLM #62810](https://github.com/vllm-project/vllm/issues/62810) and
+[SGLang #45493](https://github.com/sgl-project/sglang/issues/45493). Local
+candidate code is contribution evidence only: OrbitKV does not add a
+version-fallback facade, patch the selected engine package, or call an upstream
+proposal released support. Current adapters continue to retain uncertain pages.
+The reviewed contribution candidates are draft
+[vLLM #62819](https://github.com/vllm-project/vllm/pull/62819) and
+[SGLang #45548](https://github.com/sgl-project/sglang/pull/45548); neither changes
+the supported engine pins or closes installed page-reuse fault qualification.
+
 Historical per-cohort details and failures remain in the
 [accepted lifetime record](https://github.com/OrbitInfra/OrbitKV/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#ownership-contract).
 Use the [completion plan](completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)

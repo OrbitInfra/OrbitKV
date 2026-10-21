@@ -100,6 +100,47 @@ and [adapter contracts](adapters.md).
   termination proof exists; retain unresolved owners within explicit budgets.
 - [ ] Complete current-release installed adapter fault coverage for both engines.
 
+The selected engine releases do not expose an allocator-issued identity for the
+physical page allocation carried by their connector/linker handoffs. The generic
+upstream contracts are tracked in
+[vLLM #62810](https://github.com/vllm-project/vllm/issues/62810) and
+[SGLang #45493](https://github.com/sgl-project/sglang/issues/45493). Candidate
+code, an open issue or an upstream merge is not released OrbitKV support; pins
+and consumers change only after the matching release and installed page-reuse
+fault gates pass. Connector-local counters keyed by block/page ID are rejected
+because they cannot observe allocations made by other engine paths.
+
+The vLLM source/CPU API candidate in draft
+[vLLM #62819](https://github.com/vllm-project/vllm/pull/62819), exact
+`b37aa38c`, independently passes allocator identity, finish-time ordinary/HMA/
+partial-tail/MultiConnector handoff and compatibility review. It remains
+unmerged, unreleased and unconsumed. Its acceptance does not authorize an engine
+pin change, page reuse or physical fault reclamation.
+
+The SGLang source/CPU API candidate in draft
+[SGLang #45548](https://github.com/sgl-project/sglang/pull/45548), exact
+`3cc5121f`, independently passes allocator ownership, Full/SWA descriptor
+geometry, default Rust tree-core adapter enrichment, legacy compatibility,
+overflow/resize and unsupported-profile controls. Its H20 allocator primitive
+also passes warmed steady-state asynchronous issuance/snapshot,
+readiness-event handoff and stale generation rejection. An unwarmed first call
+still waits for preceding CUDA work, and the measured primitive has no serving
+performance threshold. It remains unmerged, unreleased and unconsumed; complete
+installed SGLang page-reuse faults and physical termination stay open.
+
+TENT likewise has no per-transfer receipt proving that failed, canceled or
+timed-out CUDA/RDMA work can no longer touch caller memory; the required native
+contract is tracked in
+[Mooncake #4816](https://github.com/kvcache-ai/Mooncake/issues/4816). The accepted
+unregister-with-active-READ reproducer is OrbitKV
+[PR #237](https://github.com/OrbitInfra/OrbitKV/pull/237), merge `53e69620`.
+Separately, the accepted whole-engine CPU/TCP source-close scope does stop new
+pointer READ admission, wait for admitted CPU handlers and dispatch owners, then
+unregister and release the pool. Unsupported paths, timeouts and unregister
+errors retain the complete engine/registration/pool owner under the existing
+1,024-pool/1-TiB process budget. That is real CPU/TCP reclamation after its valid
+receipt, not a per-ticket, CUDA or RDMA termination proof.
+
 The Python TENT writable-buffer ownership repair in [PR #288](https://github.com/OrbitInfra/OrbitKV/pull/288)
 has source/CPU and installed CPU-native fixture acceptance. It retains real
 buffer exports through failed cleanup; borrowed GPU backing and canonical
