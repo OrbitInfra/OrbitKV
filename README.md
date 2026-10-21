@@ -51,7 +51,7 @@ see [P/D composition](docs/pd.md).
 ## Get started
 
 Follow the [installation and quickstart](docs/single-node.md) to build a complete
-wheel for your Python/CUDA runtime. Use a separate environment for each engine
+`orbitkv-llm` wheel for your Python version and CUDA 13 runtime. Use a separate environment for each engine
 and install the same OrbitKV build in the Manager environment. The Manager needs
 compatible PyTorch and does not load model weights.
 
