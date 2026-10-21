@@ -98,6 +98,13 @@ and [adapter contracts](adapters.md).
   real-CUDA allocator gate are described in [transport](transport.md#experimental-orbitte-allocation-bridge).
   Manager adoption, source-grant/mailbox integration, installed serving and
   independent acceptance remain open; the default transport is still TENT.
+- [x] Experimental OrbitTE TCP peer candidate: explicit provider selection,
+  allocation registrations retained by source tickets, grant-supplied epochs,
+  shared peer planning and gRPC generation completion. Cancellation keeps the
+  blocking owner; a locally unquiesced outcome retains ticket/buffers/admission.
+  See the [profile, limits and gates](transport.md#experimental-orbitte-peer-tcp-profile).
+  This remains an isolated source candidate pending independent acceptance,
+  hardware profile evidence and installed Manager/serving qualification.
 - [ ] Carry allocation/page generations through source grants, destination
   ownership and actual engine page reuse. Session/registration epochs alone
   do not establish this contract.

@@ -103,7 +103,7 @@ async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
         let scheduler = ReadCoordinator::new(
             cache.clone(),
             Some(store),
-            #[cfg(feature = "mooncake")]
+            #[cfg(feature = "peer")]
             None,
             0,
         );

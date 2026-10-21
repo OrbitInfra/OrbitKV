@@ -2,7 +2,7 @@ use super::*;
 
 pub(crate) mod etcd;
 pub(crate) mod gate;
-#[cfg(feature = "mooncake")]
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 mod p2p_mooncake;
 
 #[test]

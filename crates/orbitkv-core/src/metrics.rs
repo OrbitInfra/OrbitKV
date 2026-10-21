@@ -39,7 +39,7 @@ pub(crate) struct CoreMetrics {
     pub cost_shadow_candidates: Counter<u64>,
     pub cost_shadow_prediction_seconds: Histogram<f64>,
     pub cost_shadow_decisions: Counter<u64>,
-    #[cfg(feature = "mooncake")]
+    #[cfg(feature = "peer")]
     pub cost_route_decisions: Counter<u64>,
     pub cost_estimate_samples: Histogram<u64>,
     pub cost_estimate_age_seconds: Histogram<f64>,
@@ -154,27 +154,27 @@ pub(crate) struct CoreMetrics {
     pub transfer_lock_rejections: Counter<u64>,
 
     // Mooncake remote fetch (client side)
-    #[cfg(feature = "mooncake")]
+    #[cfg(feature = "peer")]
     pub transfer_completion_outstanding: UpDownCounter<i64>,
-    #[cfg(feature = "mooncake")]
+    #[cfg(feature = "peer")]
     pub transfer_completion_retries: Counter<u64>,
-    #[cfg(feature = "mooncake")]
+    #[cfg(feature = "peer")]
     pub transfer_completion_rejections: Counter<u64>,
-    #[cfg(feature = "mooncake")]
+    #[cfg(feature = "peer")]
     pub remote_fetch_total: Counter<u64>,
-    #[cfg(feature = "mooncake")]
+    #[cfg(feature = "peer")]
     pub remote_fetch_duration_seconds: Histogram<f64>,
-    #[cfg(feature = "mooncake")]
+    #[cfg(feature = "peer")]
     pub remote_stage_duration_seconds: Histogram<f64>,
-    #[cfg(feature = "mooncake")]
+    #[cfg(feature = "peer")]
     pub remote_fetch_bytes: Counter<u64>,
     #[cfg(feature = "mooncake")]
     pub tent_nic_inflight_bytes: Histogram<u64>,
     #[cfg(feature = "mooncake")]
     pub tent_nic_bandwidth_bytes_per_second: Histogram<f64>,
-    #[cfg(feature = "mooncake")]
+    #[cfg(feature = "peer")]
     pub remote_fetch_plan_segments: Histogram<u64>,
-    #[cfg(feature = "mooncake")]
+    #[cfg(feature = "peer")]
     pub remote_fetch_plan_completed_segments: Histogram<u64>,
 }
 
@@ -189,7 +189,7 @@ fn ssd_throughput_boundaries() -> Vec<f64> {
 }
 
 /// Histogram boundaries for Mooncake remote fetch (authorization + Mooncake READ).
-#[cfg(feature = "mooncake")]
+#[cfg(feature = "peer")]
 fn remote_fetch_duration_boundaries() -> Vec<f64> {
     vec![
         0.01, // 10ms
@@ -204,7 +204,7 @@ fn remote_fetch_duration_boundaries() -> Vec<f64> {
 }
 
 /// Histogram boundaries for the number of segments in one Mooncake fetch plan.
-#[cfg(feature = "mooncake")]
+#[cfg(feature = "peer")]
 fn remote_fetch_plan_segment_boundaries() -> Vec<f64> {
     vec![
         0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 16.0, 32.0, 64.0, 128.0,
@@ -325,7 +325,7 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
             cost_shadow_decisions: meter.u64_counter("orbitkv_cost_shadow_decisions")
                 .with_description("Shadow agreement with compatibility, empirical-error and gain-margin checks; never selects execution")
                 .build(),
-            #[cfg(feature = "mooncake")]
+            #[cfg(feature = "peer")]
             cost_route_decisions: meter.u64_counter("orbitkv_cost_route_decisions")
                 .with_description("Opt-in execution choices among fresh compatible complete-route estimates")
                 .build(),
@@ -674,37 +674,37 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .build(),
 
             // Mooncake remote fetch (client side)
-            #[cfg(feature = "mooncake")]
+            #[cfg(feature = "peer")]
             transfer_completion_outstanding: meter.i64_up_down_counter("orbitkv_transfer_completion_outstanding")
                 .with_description("Reserved requester completion slots, including active authorizations and READs")
                 .build(),
-            #[cfg(feature = "mooncake")]
+            #[cfg(feature = "peer")]
             transfer_completion_retries: meter.u64_counter("orbitkv_transfer_completion_retries")
                 .with_description("Unacknowledged release attempts; completion retained for retry")
                 .build(),
-            #[cfg(feature = "mooncake")]
+            #[cfg(feature = "peer")]
             transfer_completion_rejections: meter.u64_counter("orbitkv_transfer_completion_rejections")
                 .with_description("Authorizations skipped because requester completion capacity is exhausted")
                 .build(),
-            #[cfg(feature = "mooncake")]
+            #[cfg(feature = "peer")]
             remote_fetch_total: meter
                 .u64_counter("orbitkv_remote_fetch_total")
                 .with_description("Mooncake remote fetch attempts (status=ok|error)")
                 .build(),
-            #[cfg(feature = "mooncake")]
+            #[cfg(feature = "peer")]
             remote_fetch_duration_seconds: meter
                 .f64_histogram("orbitkv_remote_fetch_duration")
                 .with_unit("s")
                 .with_description("End-to-end Mooncake fetch latency (authorization + READ)")
                 .with_boundaries(remote_fetch_duration_boundaries())
                 .build(),
-            #[cfg(feature = "mooncake")]
+            #[cfg(feature = "peer")]
             remote_stage_duration_seconds: meter.f64_histogram("orbitkv_remote_stage_duration")
                 .with_unit("s")
                 .with_description("Remote discovery RPC, authorization and completed transfer stages")
                 .with_boundaries(remote_fetch_duration_boundaries())
                 .build(),
-            #[cfg(feature = "mooncake")]
+            #[cfg(feature = "peer")]
             remote_fetch_bytes: meter
                 .u64_counter("orbitkv_remote_fetch_bytes")
                 .with_unit("bytes")
@@ -722,13 +722,13 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .with_unit("By/s")
                 .with_description("TENT RDMA rail EWMA bandwidth snapshot after a peer batch")
                 .build(),
-            #[cfg(feature = "mooncake")]
+            #[cfg(feature = "peer")]
             remote_fetch_plan_segments: meter
                 .u64_histogram("orbitkv_remote_fetch_plan_segments")
                 .with_description("Number of segments attempted per Mooncake fetch plan, including stale-candidate retries")
                 .with_boundaries(remote_fetch_plan_segment_boundaries())
                 .build(),
-            #[cfg(feature = "mooncake")]
+            #[cfg(feature = "peer")]
             remote_fetch_plan_completed_segments: meter
                 .u64_histogram("orbitkv_remote_fetch_plan_completed_segments")
                 .with_description(
@@ -753,7 +753,7 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
         ] {
             counter.add(0, &[]);
         }
-        #[cfg(feature = "mooncake")]
+        #[cfg(feature = "peer")]
         metrics.transfer_completion_outstanding.add(0, &[]);
         metrics.load_bytes.add(0, &[]);
         metrics.save_bytes.add(0, &[]);

@@ -465,6 +465,16 @@ impl SealedBlock {
         })
     }
 
+    #[cfg(feature = "orbitte")]
+    pub(crate) fn allocations(&self) -> impl Iterator<Item = &Arc<PinnedAllocation>> {
+        self.slots.iter().flat_map(|slot| {
+            slot.segments
+                .as_slice()
+                .iter()
+                .map(|segment| &segment._allocation)
+        })
+    }
+
     /// Get all slots (for serialization / cross-node transfer)
     pub fn slots(&self) -> &[RawBlock] {
         &self.slots

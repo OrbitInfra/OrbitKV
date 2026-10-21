@@ -181,3 +181,11 @@ records, compares the exact old format revision/value, preserves epoch keys and
 deletes retired block/publisher keys in the same transaction. Rollback likewise
 requires all new Managers stopped and restarts the frozen old binary with fresh
 incarnations; it does not restore live leases or old cursors.
+
+## Experimental peer payload selection
+
+`--peer-transfer-backend` accepts `mooncake` (default) or `orbitte-tcp`. The latter
+requires an `orbitte` build, a concrete numeric advertised IP and no `--nics`
+filter. See the [OrbitTE TCP profile](transport.md#experimental-orbitte-peer-tcp-profile)
+for its limits and explicit gates. This source candidate does not change the
+installed serving support matrix.

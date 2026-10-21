@@ -210,6 +210,10 @@ pub struct Cli {
     #[arg(long, default_value_t = false)]
     pub blockwise_alloc: bool,
 
+    /// Peer payload provider; orbitte-tcp requires an orbitte-enabled build.
+    #[arg(long, default_value = "mooncake")]
+    pub peer_transfer_backend: orbitkv_core::PeerTransferBackend,
+
     /// Optional Mooncake RDMA rail filter (e.g. --nics mlx5_0,mlx5_1).
     /// Without it, Mooncake selects the available transport, including TCP.
     #[arg(long, value_delimiter = ',', value_parser = parse_nic_name, num_args = 1..)]
@@ -724,6 +728,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         codec: cli.storage_codec,
         codec_budget: cli.storage_codec_budget,
         mooncake_nic_names: cli.nics.clone().unwrap_or_default(),
+        peer_transfer_backend: cli.peer_transfer_backend,
         enable_numa_affinity: !cli.disable_numa_affinity,
         blockwise_alloc: cli.blockwise_alloc,
         transfer_lock_timeout: Duration::from_secs(cli.transfer_lock_timeout_secs),

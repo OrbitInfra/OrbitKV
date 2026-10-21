@@ -56,6 +56,8 @@ pub struct PeerExports {
     membership: Option<Arc<orbitkv_catalog::MembershipView>>,
     endpoint: Option<String>,
     locks: TransferLockManager,
+    #[cfg(feature = "orbitte")]
+    transport: Option<Arc<super::provider::PeerTransport>>,
 }
 
 impl PeerExports {
@@ -64,6 +66,7 @@ impl PeerExports {
         ssd: Option<Arc<crate::storage::ssd::SsdStore>>,
         membership: Option<Arc<orbitkv_catalog::MembershipView>>,
         endpoint: Option<String>,
+        #[cfg(feature = "orbitte")] transport: Option<Arc<super::provider::PeerTransport>>,
         timeout: Duration,
         budget_bytes: u64,
     ) -> Self {
@@ -73,6 +76,8 @@ impl PeerExports {
             membership,
             endpoint,
             locks: TransferLockManager::new(timeout, budget_bytes),
+            #[cfg(feature = "orbitte")]
+            transport,
         }
     }
 
@@ -125,6 +130,8 @@ impl PeerExports {
             .map_err(|reason| PeerError::InvalidRequest(reason.into()))?;
         if let Some(blocks) = self.dram.pin_residencies(records) {
             self.locks.lock_blocks(ticket, blocks.clone())?;
+            #[cfg(feature = "orbitte")]
+            self.register_source(ticket, &blocks)?;
             return Ok(blocks);
         }
 
@@ -149,7 +156,47 @@ impl PeerExports {
             let _ = self.locks.release(ticket);
             return Err(PeerError::StaleReplica);
         }
+        #[cfg(feature = "orbitte")]
+        self.register_source(ticket, &blocks)?;
         Ok(blocks)
+    }
+
+    #[cfg(feature = "orbitte")]
+    fn register_source(
+        &self,
+        ticket: TransferTicket,
+        blocks: &[(StateKey, Arc<SealedBlock>)],
+    ) -> Result<(), PeerError> {
+        let Some(super::provider::PeerTransport::OrbitTe(transport)) = self.transport.as_deref()
+        else {
+            return Ok(());
+        };
+        let result = transport
+            .register(
+                blocks.iter().flat_map(|(_, block)| block.allocations()),
+                orbit_te::Permission::RemoteRead,
+            )
+            .map_err(|error| {
+                warn!("OrbitTE source registration rejected: {error}");
+                PeerError::BudgetExhausted
+            })
+            .and_then(|registration| {
+                let mut inner = self.locks.inner.lock();
+                let session = inner
+                    .windows
+                    .get_mut(&ticket.window)
+                    .and_then(|window| window.slots.get_mut(ticket.slot))
+                    .filter(|slot| slot.generation == ticket.generation)
+                    .and_then(|slot| slot.transfer.as_mut())
+                    .filter(|session| matches!(session.state, TransferState::Ready(_)))
+                    .ok_or(PeerError::StaleTicket)?;
+                session.registration = Some(registration);
+                Ok(())
+            });
+        if result.is_err() {
+            let _ = self.locks.release(ticket);
+        }
+        result
     }
 
     pub fn release(&self, ticket: TransferTicket) -> Result<usize, PeerError> {
@@ -177,6 +224,8 @@ struct TransferSession {
     created_at: Instant,
     reserved_bytes: u64,
     expired: bool,
+    #[cfg(feature = "orbitte")]
+    registration: Option<super::orbitte::RegistrationSet>,
 }
 
 enum TransferState {
@@ -379,6 +428,8 @@ impl TransferLockManager {
             created_at: Instant::now(),
             reserved_bytes: bytes,
             expired: false,
+            #[cfg(feature = "orbitte")]
+            registration: None,
         });
         inner.active += 1;
         inner.reserved_bytes += bytes;

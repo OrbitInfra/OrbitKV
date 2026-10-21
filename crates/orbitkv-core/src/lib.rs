@@ -27,7 +27,7 @@ pub use completion::{
     CompletionAdmission, CompletionIntent, CompletionObservation, CompletionOutcome,
     CompletionResourceEvidence, CompletionRoute,
 };
-pub use engine::config::EngineConfig;
+pub use engine::config::{EngineConfig, PeerTransferBackend};
 pub use engine::instance::{GpuContext, InstanceContext, QueryRegistration};
 pub use engine::{
     EngineError, MetadataStatus, OrbitKVEngine, PublishDiagnostic, RawRestoreGrant,

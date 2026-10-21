@@ -182,6 +182,7 @@ jobs:
           cargo clippy --workspace --exclude orbitkv-py --all-targets -- -D warnings
           cargo clippy -p orbitkv-server --all-targets --features test-hooks -- -D warnings
           cargo clippy -p orbitkv-core --all-targets --features orbitte -- -D warnings
+          cargo clippy -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbitte -- -D warnings
 
   ruff-check:
     name: ruff check
@@ -265,6 +266,10 @@ jobs:
         run: |
           cargo check -p orbitkv-core
           cargo check -p orbitkv-core --features orbitte
+          cargo check -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbitte
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib peer::orbitte::tests
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib peer::completion::tests
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib peer::completion::tests::unquiesced_transfer_retains_source_ticket_and_actual_buffer_owner -- --exact --ignored
           cargo check -p orbitkv-server --all-targets
         env:
           CUDA_PATH: /usr/local/cuda

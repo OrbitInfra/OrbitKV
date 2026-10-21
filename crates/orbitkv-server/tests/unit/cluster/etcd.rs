@@ -90,6 +90,17 @@ impl Etcd {
                     .unwrap(),
             );
         }
+        std::fs::write(
+            directory.join("etcd-processes.json"),
+            serde_json::to_vec(
+                &processes
+                    .iter()
+                    .map(|process| process.id())
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
         let mut server = Self {
             processes,
             endpoints,
@@ -147,10 +158,15 @@ fn checkout_root() -> Option<std::path::PathBuf> {
 
 impl Drop for Etcd {
     fn drop(&mut self) {
-        for process in &mut self.processes {
+        let results: Vec<_> = self.processes.iter_mut().map(|process| {
             let _ = process.kill();
-            let _ = process.wait();
-        }
+            let status = process.wait();
+            serde_json::json!({"pid": process.id(), "child_reaped": status.is_ok(), "status": status.map(|status| status.to_string()).unwrap_or_else(|error| error.to_string())})
+        }).collect();
+        let _ = std::fs::write(
+            self.directory.join("etcd-exit.json"),
+            serde_json::to_vec(&results).unwrap(),
+        );
     }
 }
 

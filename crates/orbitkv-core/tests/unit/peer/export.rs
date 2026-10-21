@@ -301,6 +301,8 @@ fn exports() -> (
             None,
             Some(membership.clone()),
             Some("127.0.0.1:12345".into()),
+            #[cfg(feature = "orbitte")]
+            None,
             Duration::ZERO,
             1 << 20,
         ),
@@ -419,4 +421,92 @@ async fn export_rejects_invalid_evidence_before_reserving_resources() {
         exports.authorize(owner, ticket, &[valid]).await,
         Err(PeerError::Unavailable)
     ));
+}
+
+#[cfg(feature = "orbitte")]
+#[tokio::test]
+#[ignore = "OrbitTE source registration hardware gate: requires a real CUDA pinned allocator"]
+async fn orbitte_grant_registrations_share_backing_and_fence_old_completion_generations() {
+    use crate::peer::orbitte::{OrbitTeTransport, parse_endpoint};
+    use crate::peer::provider::PeerTransport;
+    use orbit_te::{
+        EngineConfig, Permission, TransferEngine, TransferOp, TransferRequest, Transport,
+    };
+
+    let (mut exports, membership, inventory) = exports();
+    let source = Arc::new(OrbitTeTransport::new(1 << 20, "127.0.0.1:0").unwrap());
+    exports.transport = Some(Arc::new(PeerTransport::OrbitTe(Arc::clone(&source))));
+    let owner = membership.owner().incarnation;
+    let (blocks, allocation) = shared_slab();
+    let weak = Arc::downgrade(&allocation);
+    let address = allocation.as_non_null().as_ptr() as usize as u64;
+    // Initialize before publishing immutable source blocks; all later access is READ.
+    let memory = unsafe { allocation.orbitte_memory().unwrap() };
+    memory.write(0, &[0x42; 4096]).unwrap();
+    drop(memory);
+    exports.dram.batch_insert(blocks);
+    let records = inventory.page(None).unwrap();
+    let first = TransferTicket::new(exports.open(owner, Uuid::new_v4()).unwrap(), 0, 1).unwrap();
+    let second = TransferTicket { slot: 1, ..first };
+    drop(exports.authorize(owner, first, &records).await.unwrap());
+    drop(exports.authorize(owner, second, &records).await.unwrap());
+    let client = TransferEngine::new(EngineConfig::default()).unwrap();
+    let endpoint = parse_endpoint(&source.endpoint).unwrap();
+    let epoch = source.epoch.parse().unwrap();
+    assert_eq!(
+        client
+            .open_segment(endpoint, epoch, Duration::from_secs(2))
+            .unwrap()
+            .regions()
+            .len(),
+        1
+    );
+    assert_eq!(exports.release(first), Ok(2));
+    let current = TransferTicket {
+        generation: 2,
+        ..first
+    };
+    drop(exports.authorize(owner, current, &records).await.unwrap());
+    assert_eq!(exports.release(first), Ok(0));
+    assert_eq!(exports.release(second), Ok(2));
+    drop(exports.dram.remove_all());
+    drop(allocation);
+    assert!(weak.upgrade().is_some());
+    let peer = client
+        .open_segment(endpoint, epoch, Duration::from_secs(2))
+        .unwrap();
+    assert_eq!(peer.regions().len(), 1);
+    let local = client
+        .register_memory(vec![0; 64].into_boxed_slice(), Permission::LocalOnly)
+        .unwrap();
+    let read = client
+        .submit_and_wait(
+            TransferOp::Read,
+            &peer,
+            &[TransferRequest {
+                transport: Transport::Tcp,
+                local_address: local.base_address(),
+                remote_address: address,
+                length: 64,
+            }],
+            Duration::from_secs(2),
+        )
+        .unwrap();
+    assert!(read.is_complete() && read.locally_drained);
+    let mut bytes = [0; 64];
+    local.read(0, &mut bytes).unwrap();
+    assert_eq!(bytes, [0x42; 64]);
+    assert_eq!(exports.release(current), Ok(2));
+    assert!(
+        client
+            .open_segment(endpoint, epoch, Duration::from_secs(2))
+            .unwrap()
+            .regions()
+            .is_empty()
+    );
+    client.unregister_memory(&local).unwrap();
+    client.close_requester(Duration::from_secs(2)).unwrap();
+    drop(exports);
+    drop(source);
+    assert!(weak.upgrade().is_none());
 }

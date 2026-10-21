@@ -198,11 +198,11 @@ async fn spawn_engine_server(
     engine: Arc<OrbitKVEngine>,
     inventory: crate::cluster::InventoryRuntime,
     port: u16,
-) -> tokio::sync::oneshot::Sender<()> {
+) -> PeerServer {
     let service = P2pTransferService::new(engine);
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
     let (stop, stopped) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         Server::builder()
             .add_service(EngineServer::new(service))
             .add_service(InventoryServer::new(inventory.service()))
@@ -213,7 +213,37 @@ async fn spawn_engine_server(
             .expect("peer service");
     });
     wait_for_grpc_ready(port).await;
-    stop
+    PeerServer {
+        stop: Some(stop),
+        task: Some(task),
+    }
+}
+
+struct PeerServer {
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl PeerServer {
+    async fn shutdown(mut self) {
+        let _ = self.stop.take().unwrap().send(());
+        tokio::time::timeout(Duration::from_secs(5), self.task.as_mut().unwrap())
+            .await
+            .expect("peer service did not drain")
+            .expect("peer service task failed");
+        self.task.take();
+    }
+}
+
+impl Drop for PeerServer {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
 }
 
 async fn capture_inventory_fence(
@@ -396,6 +426,17 @@ const DEVICE_ID: i32 = 0;
 #[tokio::test]
 #[ignore = "requires CUDA and Mooncake; set MC_FORCE_TCP=1 for the same-host TCP gate"]
 async fn p2p_mooncake_remote_fetch_roundtrip() {
+    peer_remote_fetch_roundtrip(PeerTransferBackend::Mooncake).await;
+}
+
+#[cfg(feature = "orbitte")]
+#[tokio::test]
+#[ignore = "OrbitTE peer hardware gate: requires CUDA and ETCD_BIN; actual Manager gRPC, inventory and TCP READ"]
+async fn p2p_orbitte_remote_fetch_roundtrip() {
+    peer_remote_fetch_roundtrip(PeerTransferBackend::OrbitTeTcp).await;
+}
+
+async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
     orbitkv_common::logging::init_stdout_colored("debug");
     let _cuda_ctx = CudaContext::new(0).expect("CUDA init");
 
@@ -416,7 +457,13 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         membership: Some(membership_a.clone()),
         global_index: Some(index_a),
         inventory: Some(inventory_a),
-        mooncake_nic_names: mooncake_nics(),
+        peer_transfer_backend: backend,
+        enable_numa_affinity: backend == PeerTransferBackend::Mooncake,
+        mooncake_nic_names: if backend == PeerTransferBackend::Mooncake {
+            mooncake_nics()
+        } else {
+            Vec::new()
+        },
         transfer_budget_bytes: Some(TOTAL_SIZE),
         transfer_lock_timeout: Duration::ZERO,
         ..EngineConfig::default()
@@ -555,6 +602,17 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         .unwrap()
         .into_inner();
     assert_eq!(granted.blocks.len(), grant_blocks);
+    assert_eq!(
+        granted.native_source_epoch,
+        engine_a.transfer_source_epoch().unwrap()
+    );
+    assert_eq!(
+        granted.transfer_endpoint,
+        engine_a.transfer_endpoint().unwrap()
+    );
+    if backend == PeerTransferBackend::OrbitTeTcp {
+        assert!(granted.transfer_endpoint.starts_with("orbitte+tcp://"));
+    }
     assert_eq!(engine_a.expire_transfer_locks(), 1);
     assert_eq!(engine_a.expire_transfer_locks(), 0);
     assert_eq!(
@@ -643,7 +701,13 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         membership: Some(membership_b.clone()),
         global_index: Some(index_b),
         inventory: Some(inventory_b),
-        mooncake_nic_names: mooncake_nics(),
+        peer_transfer_backend: backend,
+        enable_numa_affinity: backend == PeerTransferBackend::Mooncake,
+        mooncake_nic_names: if backend == PeerTransferBackend::Mooncake {
+            mooncake_nics()
+        } else {
+            Vec::new()
+        },
         ..EngineConfig::default()
     };
     let engine_b = Arc::new(
@@ -892,6 +956,22 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     );
     cluster_b.shutdown().await;
     cluster_a.shutdown().await;
+    _target_server.shutdown().await;
+    _source_server.shutdown().await;
+    assert!(engine_b.unregister_all_instances().is_empty());
+    assert!(engine_a.unregister_all_instances().is_empty());
+    if backend == PeerTransferBackend::OrbitTeTcp {
+        let artifact_root = std::env::var_os("ORBITKV_METADATA_ARTIFACT_DIR")
+            .expect("explicit external peer evidence directory");
+        std::fs::write(
+            std::path::Path::new(&artifact_root).join("peer-maps.txt"),
+            std::fs::read_to_string("/proc/self/maps").unwrap(),
+        )
+        .unwrap();
+        println!(
+            "ORBITTE_PEER_GATES GPU Save/Restore bytes verified; source grants, generations and membership controls passed; peer service tasks drained"
+        );
+    }
 }
 
 #[tokio::test]

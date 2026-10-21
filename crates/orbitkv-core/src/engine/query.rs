@@ -91,7 +91,7 @@ impl OrbitKVEngine {
                 if candidate.is_available() {
                     positions.push((batch * orbitkv_state::DISCOVERY_MAX_KEYS + position) as u32);
                 } else {
-                    #[cfg(feature = "mooncake")]
+                    #[cfg(feature = "peer")]
                     if candidate.remote_coverage().is_some_and(|coverage| {
                         coverage != orbitkv_state::DiscoveryCoverage::CompleteAtWatermarks
                     }) {

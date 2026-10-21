@@ -16,7 +16,7 @@ pub(crate) enum ExecutionResource {
         destination_device: u64,
         copy_backend: u8,
     },
-    #[cfg(feature = "mooncake")]
+    #[cfg(feature = "peer")]
     Peer(u64),
     SsdRestore {
         device: u64,
