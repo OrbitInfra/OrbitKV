@@ -401,7 +401,7 @@ with both read slots occupied, held host-copy completion, corrupted encoded
 objects, GPU/CPU SIMD FP8 conversion against Torch, and ANS/TurboQuant recovery
 after DRAM eviction and re-registration. Each checks actual GPU bytes and final
 resource release. The exact-storage serving results are retained from the
-[GDS baseline](https://github.com/OrbitInfra/orbitkv/pull/176).
+[GDS baseline](https://github.com/OrbitInfra/OrbitKV/pull/176).
 
 The serving results above use exact storage. GPU codec capacity and model-quality
 qualification are recorded separately in [storage formats](storage-formats.md#qualification).
@@ -411,7 +411,7 @@ DRAM eviction and engine restart. Default-auto checks require new SSD reads
 through the selected backend after the same eviction and restart sequence.
 Qwen3.8 also exercises full-attention and GDN
 conv/recurrent state in the same request. Reproduce it with the
-[Qwen3.8 engine settings](https://github.com/OrbitInfra/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/models.md#qwen38-on-h20) and `--ssd-backend cufile`.
+[Qwen3.8 engine settings](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/models.md#qwen38-on-h20) and `--ssd-backend cufile`.
 
 The Manager gate verifies four adjacent 64 KiB pages restore with one 256 KiB
 cuFile read. Splitting them across two files requires two reads; selecting only
@@ -500,7 +500,7 @@ With `ORBITKV_COST_OBSERVATIONS=1`, the `ssd_uring_restore` and
 these totals;
 do not add them or count their physical bytes twice. Observations remain off by
 default while the earlier SGLang ANS overhead gate is open. The route changes have
-[separate validation](https://github.com/OrbitInfra/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#ssd-sourcepath-separation-final-evidence);
+[separate validation](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#ssd-sourcepath-separation-final-evidence);
 the earlier serving and observation matrices are not reruns of this implementation.
 
 Before claiming a performance improvement, compare io_uring and **verified native** GDS on the same

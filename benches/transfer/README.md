@@ -45,5 +45,5 @@ Run the relevant CPU tests with `python -m pytest benches/tests/transfer`.
 Hardware entry points are explicit and are not default pytest jobs.
 [Kernel behavior and current result](../../docs/kernel-optimization.md),
 [serving measurements](../../docs/performance.md) and
-[the frozen detailed recipes](https://github.com/OrbitInfra/orbitkv/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/benches/transfer/README.md)
+[the frozen detailed recipes](https://github.com/OrbitInfra/OrbitKV/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/benches/transfer/README.md)
 preserve the commands/contracts for previous campaigns.

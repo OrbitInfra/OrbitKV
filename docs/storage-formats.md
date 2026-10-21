@@ -204,7 +204,7 @@ the inference process before restoring; they also retain cold controls.
 
 The batching comparison uses the same Qwen3-8B BF16 artifacts, engine versions,
 library paths and ANS policy before and after this change. The baseline is
-[`227b849e`](https://github.com/OrbitInfra/orbitkv/commit/227b849e). On each engine,
+[`227b849e`](https://github.com/OrbitInfra/OrbitKV/commit/227b849e). On each engine,
 all 64 prompt hashes and generated texts match across revisions.
 
 This is a finite concurrency-four cohort: 4,096 input tokens, 16 output tokens,
@@ -215,7 +215,7 @@ use **io_uring**, isolating codec improvements from GDS backend selection.
 Throughput uses actual time to complete all 64 requests and excludes model
 startup and prefix preparation.
 
-[Historical measurement table](https://github.com/OrbitInfra/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/storage-formats.md)
+[Historical measurement table](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/storage-formats.md)
 
 During the measured window, vLLM batches 142,920 codec segments into 620 batches;
 SGLang batches 271,872 into 1,136. They record two and one workspace allocations,
@@ -236,7 +236,7 @@ io_uring payload reads during the window, including repeated reads; it is not
 cache size. Different representations change residency, misses and recomputation
 as well as transfer cost.
 
-[Historical measurement table](https://github.com/OrbitInfra/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/storage-formats.md)
+[Historical measurement table](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/storage-formats.md)
 
 ANS improves throughput over unencoded SSD storage by about 15% on vLLM and
 20% on SGLang in this cohort. Moving from 4-bit to 3-bit reduces reads further,
@@ -253,7 +253,7 @@ approximately 15.19 GiB of distinct logical KV after cold traffic. Compression
 therefore still changes eviction and residency. Every generated text matches
 the corresponding `none` control.
 
-[Historical measurement table](https://github.com/OrbitInfra/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/storage-formats.md)
+[Historical measurement table](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/storage-formats.md)
 
 ANS improves throughput by about 10% and 4%, respectively, while median TTFT
 increases by about 12% and 17%. This is a workload-dependent capacity/latency
@@ -286,7 +286,7 @@ Use `--seconds 0.5 --samples 5` to reproduce this sampling configuration.
 ### Model-quality probes
 
 The model-quality checks below were recorded before batching, at
-[`227b849e`](https://github.com/OrbitInfra/orbitkv/commit/227b849e).
+[`227b849e`](https://github.com/OrbitInfra/OrbitKV/commit/227b849e).
 The serving byte figures count **slots that were actually encoded**,
 including their alignment and raw sibling segments. They exclude raw-only slots
 such as TurboQuant's protected layers, so they are not whole-cache capacity or

@@ -46,6 +46,6 @@ and [performance](../docs/performance.md) for reviewed results and limitations.
 
 Completed S2-only capacity/isolation/observer and three-host campaign drivers,
 their dedicated tests and duplicate report pages are retired. Their
-[immutable source](https://github.com/OrbitInfra/orbitkv/tree/dc52461078bb22910ba6c783ecf0d9213599b10b/benches/cluster)
+[immutable source](https://github.com/OrbitInfra/OrbitKV/tree/dc52461078bb22910ba6c783ecf0d9213599b10b/benches/cluster)
 and original freezes preserve reproduction. Current correctness tests remain
 with the Rust owners and under `python/tests/`; failed qualifications stay failed.

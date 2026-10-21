@@ -154,10 +154,10 @@ remain open; these results do not change the candidate status.
 ## Preserved upstream contribution material
 
 The former fork profile and its exact patches remain in
-[the immutable pre-retirement guide](https://github.com/OrbitInfra/orbitkv/blob/9aee895ebe0ae2fb97279a477f00452b32025480/docs/pd.md).
+[the immutable pre-retirement guide](https://github.com/OrbitInfra/OrbitKV/blob/9aee895ebe0ae2fb97279a477f00452b32025480/docs/pd.md).
 Its original code/tests remain at that commit; its frozen results remain under
 `/root/orbitkv-artifacts/native-pd-cutover-20260930/HANDOFF.md` and
 `/root/orbitkv-artifacts/native-pd-tent-20260930/HANDOFF.md`.
 These are upstream contribution/reproduction material, not supported runtime
 installation instructions or evidence that official releases passed the same gates.
-The [retired protocol history](https://github.com/OrbitInfra/orbitkv/blob/0e3668ebca0f7d80a049b834390098de7eaf963b/docs/pd-mooncake-push.md) preserves earlier evidence.
+The [retired protocol history](https://github.com/OrbitInfra/OrbitKV/blob/0e3668ebca0f7d80a049b834390098de7eaf963b/docs/pd-mooncake-push.md) preserves earlier evidence.

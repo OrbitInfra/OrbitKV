@@ -194,6 +194,6 @@ than a latency or throughput advantage.
 
 Earlier vLLM 0.29.0/SGLang 0.5.20 hybrid controls, Qwen3.5/Mellum/Inkling recipes
 and their reproduction details remain in the
-[pre-migration report](https://github.com/OrbitInfra/orbitkv/blob/c407188168bffaef7cb98e197e636ee823399712/docs/hybrid-recovery.md#reproducible-gates).
+[pre-migration report](https://github.com/OrbitInfra/OrbitKV/blob/c407188168bffaef7cb98e197e636ee823399712/docs/hybrid-recovery.md#reproducible-gates).
 Reproduce those results with their original source, wheel and engine freezes.
 They are not deployment instructions or support claims for the current package.

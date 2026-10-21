@@ -26,7 +26,7 @@ cases; the caller CUDA-context preservation test also passed. See the
 [recorded artifacts and scoped results](fault-qualification.md#engine-local-raw-restore-gates).
 The same production build subsequently passed single-H20 Qwen3-8B DRAM serving
 correctness in vLLM 0.29.0 and SGLang 0.5.20, including engine-restart reuse.
-See the [serving configuration and evidence](https://github.com/OrbitInfra/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/single-node-performance.md#engine-local-restore-serving-qualification).
+See the [serving configuration and evidence](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/single-node-performance.md#engine-local-restore-serving-qualification).
 Multiple-GPU, huge-page, sustained allocator-pressure, and exhaustive graph-mode
 qualification remain open. Correctness alone does not establish a serving speedup.
 
@@ -338,7 +338,7 @@ execution failure. It cannot transparently recompute pages already used by that
 forward. A timeout or missing acknowledgement retains destinations until teardown.
 
 Idle-stream queries, reusable destination-readiness events, and plan compaction
-reduce the existing handoff overhead; see [matched measurements](https://github.com/OrbitInfra/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/communication-performance.md).
+reduce the existing handoff overhead; see [matched measurements](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/communication-performance.md).
 This layer implementation does not remove the destination's previous-user fence
 or prove a serving speedup. Compare complete requests under matched graph modes,
 HBM budgets and workload pressure before making a performance claim.
@@ -376,7 +376,7 @@ Raw logs and the source/binary manifest are under
 `/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/layered-restore-20260929/`. Reproduction switches are in
 [the Python test guide](../python/tests/README.md). These gates establish
 correctness and native copy/compute overlap. The separate
-[30-cohort serving matrix](https://github.com/OrbitInfra/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/communication-performance.md#repeated-serving-comparison-after-layer-readiness)
+[30-cohort serving matrix](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/communication-performance.md#repeated-serving-comparison-after-layer-readiness)
 passes exact output controls. It shows a vLLM improvement for the full scheduling
 and copy increment; SGLang throughput does not improve over the old implementation.
 
@@ -419,7 +419,7 @@ broadening those claims.
 Measure preparation, queue delay, native submission, GPU drain, connector
 observation, first engine use, and source-retirement lag separately. Compare
 serving TTFT/ITL and goodput at equal CPU, host/HBM memory, model, and quality
-budgets. The [communication measurements](https://github.com/OrbitInfra/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/communication-performance.md) record
+budgets. The [communication measurements](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/communication-performance.md) record
 matched microbenchmarks; a metadata speedup alone is not a serving improvement.
 
 ## Engine-local completion evidence

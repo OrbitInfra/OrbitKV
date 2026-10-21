@@ -741,7 +741,7 @@ count and DMA-coalesced range count, using the executor's own merge iterator.
 The actual descriptors refine the observation and shadow together without
 restarting queue timing. These shapes still do not model NUMA placement or
 interference with inference kernels.
-The [fixed-backend DRAM comparison](https://github.com/OrbitInfra/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#dmakernel-comparison-final-evidence)
+The [fixed-backend DRAM comparison](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#dmakernel-comparison-final-evidence)
 exceeds the throughput and TTFT p50 regression budgets for kernel in both
 engines; it does not qualify automatic selection or change registration defaults.
 
@@ -781,7 +781,7 @@ Observations and shadow work are **off by default**. Set
 unset or `0` preserves the disabled baseline. The earlier observation-only matrix
 passes five of six cells; SGLang ANS SSD exceeds the TTFT p50 budget, so default
 enablement remains unqualified. That matrix predates independent SSD-route
-execution; [current validation](https://github.com/OrbitInfra/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#ssd-sourcepath-separation-final-evidence)
+execution; [current validation](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#ssd-sourcepath-separation-final-evidence)
 is recorded separately.
 Set `ORBITKV_COST_SELECTION=1` in addition to observations to allow the guarded
 same-medium peer-owner choice. Either variable absent or unequal to `1` keeps
@@ -1081,7 +1081,7 @@ The [completion plan](completion-plan.md) owns the execution sequence. Its S3
 covers page generations and drain; S4 covers storage/copy overlap; S5 covers
 released engine lifecycles; S6 covers consumed physical choices and optional
 router work; S7 covers semantic retention. The former P0–P6/R1 chronology is
-retained in [the historical design](https://github.com/OrbitInfra/orbitkv/blob/ec3add9bcaf91a0171685ba42b5ae8330076c397/docs/state-planning.md#implementation-sequence).
+retained in [the historical design](https://github.com/OrbitInfra/OrbitKV/blob/ec3add9bcaf91a0171685ba42b5ae8330076c397/docs/state-planning.md#implementation-sequence).
 Current pending-query ownership is documented in [transport](transport.md),
 SGLang admission in [adapters](adapters.md), preparation in
 [request preparation](request-preparation.md), and layer dependencies in

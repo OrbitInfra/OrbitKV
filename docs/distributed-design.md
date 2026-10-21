@@ -657,8 +657,8 @@ The existing heavy entry points are the frozen Rust test
 and Python integration test
 `test_manager_process_metadata_faults_preserve_exact_dram_and_ssd`. Preserve their
 workload intent while changing the metadata oracle at streaming cutover. Follow
-the historical [capacity recipe](https://github.com/OrbitInfra/orbitkv/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/distributed-cache.md#sustained-metadata-churn-and-capacity),
-[Manager recipe](https://github.com/OrbitInfra/orbitkv/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/distributed-cache.md#manager-process-dram-and-io_uring-metadata-faults)
+the historical [capacity recipe](https://github.com/OrbitInfra/OrbitKV/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/distributed-cache.md#sustained-metadata-churn-and-capacity),
+[Manager recipe](https://github.com/OrbitInfra/OrbitKV/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/distributed-cache.md#manager-process-dram-and-io_uring-metadata-faults)
 and [shared-cache engine gate](shared-cache-qualification.md) for commands and
 environment setup. Use the existing `integration`/`e2e` markers and ignored Rust
 gates; do not introduce an all-tests runner or start GPU services from default

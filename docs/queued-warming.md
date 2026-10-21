@@ -1,7 +1,7 @@
 # Preparing queued requests
 
 For artifact locations and verification limits, see [benchmark evidence](benchmark-evidence.md).
-The [pre-migration report](https://github.com/OrbitInfra/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/queued-warming.md) retains full tables and historical run details.
+The [pre-migration report](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/queued-warming.md) retains full tables and historical run details.
 
 The vLLM 0.30.0 and SGLang 0.5.20 adapters can announce an exact missing prefix when a
 request enters their ordinary serving queue. OrbitKV uses that interval to
@@ -89,7 +89,7 @@ Set `ORBITKV_TRACE_TRANSFERS=1` for both Manager and engine. Their logs emit
 `cache_timeline` JSON records containing request IDs, process IDs, stage and
 timestamps, without tokens or cache keys:
 
-[Full historical measurement table](https://github.com/OrbitInfra/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/queued-warming.md)
+[Full historical measurement table](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/queued-warming.md)
 
 `first_use` is an engine callback observation, not a CUDA kernel timestamp.
 SGLang records it for restored requests; cold/HBM-only requests have no external
@@ -111,7 +111,7 @@ joining a demand-started read or hitting existing DRAM does not create warmup
 bytes. Joining a warmup-started read does not count them again. Rereading an
 evicted key creates a new cohort.
 
-[Full historical measurement table](https://github.com/OrbitInfra/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/queued-warming.md)
+[Full historical measurement table](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/queued-warming.md)
 
 At quiescence, prepared bytes equal restored + unused + pending bytes. Query
 success, lease creation and cancellation do not resolve a pending page. The
@@ -179,7 +179,7 @@ gates remain separate correctness evidence.
 
 The summaries, complete window counters, native output control and its
 reproduction script remain in the
-[historical dataset snapshot](https://github.com/OrbitInfra/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results).
+[historical dataset snapshot](https://github.com/OrbitInfra/OrbitKV/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results).
 The earlier raw samples use `historical run label: queued-warming-*`; those
 ignored logs were absent at the S1 migration. Initial SGLang logs repeat the first-layer wait callback;
 the collector pairs each enqueue with its first callback, and the adapter now
@@ -253,7 +253,7 @@ matches native cold computation. No new native control or batch-invariance
 claim is implied. The exact GPU-byte and both engine recovery gates pass on
 this implementation.
 
-The [historical accounting dataset](https://github.com/OrbitInfra/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results)
+The [historical accounting dataset](https://github.com/OrbitInfra/OrbitKV/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results)
 retains final summaries, complete window counters and the recorded native
 output comparison.
 Earlier raw samples use `historical run label: warmup-accounting-*`; those
