@@ -1,4 +1,4 @@
-export const repositoryUrl = "https://github.com/feichai0017/orbitkv";
+export const repositoryUrl = "https://github.com/OrbitInfra/OrbitKV";
 
 export const sourceUrl = (path: string) =>
   `${repositoryUrl}/blob/${import.meta.env.PUBLIC_SOURCE_REF}/${path}`;

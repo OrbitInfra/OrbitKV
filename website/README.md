@@ -13,7 +13,7 @@ npm ci
 npm run dev
 ```
 
-Open the printed URL under `/orbitkv/`. Before publishing:
+Open the printed URL under `/OrbitKV/`. Before publishing:
 
 ```sh
 npm run check
@@ -58,8 +58,8 @@ routing. Update affected docs, README and site copy with behavioral changes.
 
 CI validates the site on pull requests. The Pages workflow checks, builds and
 deploys `website/` or `docs/` changes merged into `main` at
-[feichai0017.github.io/orbitkv](https://feichai0017.github.io/orbitkv/).
+[orbitinfra.github.io/OrbitKV](https://orbitinfra.github.io/OrbitKV/).
 
 Repository links bind to the build's `GITHUB_SHA`. Local previews use `main`
 unless `PUBLIC_SOURCE_REF` is set. Navigation and search respect Astro's
-`/orbitkv/` base path. No external font or search service is required.
+`/OrbitKV/` base path. No external font or search service is required.

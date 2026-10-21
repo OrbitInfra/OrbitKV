@@ -216,5 +216,5 @@ S2 owns metadata/coverage reliability; S3 owns generations and physical terminat
 S4 optimizes measured execution; S5 consumes released engine contracts; S6 owns
 executed route/admission planning; S7 owns semantic retention; S8 owns final product
 artifacts and publication. [The completion plan](completion-plan.md) records status,
-dependencies and acceptance. The [immutable architecture snapshot](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/architecture.md)
+dependencies and acceptance. The [immutable architecture snapshot](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/architecture.md)
 retains earlier detailed comparisons and design history.

@@ -3,15 +3,15 @@
 </p>
 
 <p align="center">
-  <a href="https://feichai0017.github.io/orbitkv/">Website</a> ·
-  <a href="https://feichai0017.github.io/orbitkv/docs/">Documentation</a> ·
+  <a href="https://orbitinfra.github.io/OrbitKV/">Website</a> ·
+  <a href="https://orbitinfra.github.io/OrbitKV/docs/">Documentation</a> ·
   <a href="docs/single-node.md">Quickstart</a> ·
   <a href="docs/compatibility.md">Compatibility</a> ·
   <a href="docs/contributing.md">Contributing</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/feichai0017/orbitkv/actions/workflows/ci.yml"><img src="https://github.com/feichai0017/orbitkv/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/OrbitInfra/OrbitKV/actions/workflows/ci.yml"><img src="https://github.com/OrbitInfra/OrbitKV/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="docs/releases.md"><img src="https://img.shields.io/badge/Python_package-v0.1.0%20%28unreleased%29-203b30" alt="Python package v0.1.0 — not yet published" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-203b30" alt="Apache 2.0 license" /></a>
 </p>

@@ -1,7 +1,7 @@
 # Single-node offload under SSD pressure
 
 For artifact locations and verification limits, see [benchmark evidence](benchmark-evidence.md).
-The [pre-migration report](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/ssd-performance.md) retains full tables and historical run details.
+The [pre-migration report](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/ssd-performance.md) retains full tables and historical run details.
 
 ## Native SSD host restore batching (2026-10-07)
 
@@ -290,8 +290,8 @@ and transfer tracing is on. Throughput includes the admitted-request tail but
 excludes initialization, reference preparation and the later resource-drain
 check. It is not an arrival-rate SLO experiment.
 
-The [final CSV](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/benches/results/20260923-offload/summary.csv) and
-[reproduction instructions](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/benches/results/20260923-offload/README.md)
+The [final CSV](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/benches/results/20260923-offload/summary.csv) and
+[reproduction instructions](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/benches/results/20260923-offload/README.md)
 identify revisions, configuration and counters. Raw samples, manifests,
 process-local timelines and service logs stay in external artifact directories.
 The baseline uses vLLM 0.29.0 and SGLang 0.5.20 with the same engine releases
@@ -327,7 +327,7 @@ held page and compares its exact GPU bytes.
 
 Milliseconds for TTFT; generated tokens per second for throughput.
 
-[Full historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/ssd-performance.md)
+[Full historical measurement table](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/ssd-performance.md)
 
 At the unchanged 8K prefill limit, vLLM throughput is essentially flat
 (59.35 → 59.39); SGLang is 2.0% lower (59.01 → 57.83). SGLang P95 is
@@ -422,6 +422,6 @@ after forced DRAM eviction, both engines restored **15/15** requests from SSD,
 with positive and matching SSD-read/H2D byte counts. At 8K, median TTFT was
 244.47 ms for vLLM and 268.04 ms for SGLang, versus cold prefill near one second.
 The old SGLang integration's 0/15 result predates readiness-aware admission.
-See the [immutable experiment and its controls](https://github.com/feichai0017/orbitkv/blob/4712f780c900120719f178b2ea36c9e0ac7c135f/docs/ssd-performance.md).
+See the [immutable experiment and its controls](https://github.com/OrbitInfra/OrbitKV/blob/4712f780c900120719f178b2ea36c9e0ac7c135f/docs/ssd-performance.md).
 These serial forced-eviction numbers must not be mixed with the concurrent
 natural-pressure measurements above.

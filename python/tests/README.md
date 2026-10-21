@@ -45,7 +45,7 @@ python -m pytest benches/tests/transfer
 
 Use the complete `benches/tests` suite for shared harness changes or before
 merge. Retired S2 campaign controllers/tests are reproduced from their
-[immutable source](https://github.com/feichai0017/orbitkv/tree/dc52461078bb22910ba6c783ecf0d9213599b10b/benches/cluster).
+[immutable source](https://github.com/OrbitInfra/OrbitKV/tree/dc52461078bb22910ba6c783ecf0d9213599b10b/benches/cluster).
 
 ## Select a hardware gate
 
@@ -100,7 +100,7 @@ is independently accepted; it is not a model-shutdown or fault-reclamation gate.
 Completed registration-campaign controllers, their validator-only tests and CPU
 process-trace fixtures are retired from the maintained tree. Exact historical
 reproduction uses the
-[frozen controller and tests](https://github.com/feichai0017/orbitkv/tree/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/python/tests)
+[frozen controller and tests](https://github.com/OrbitInfra/OrbitKV/tree/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/python/tests)
 and the original external artifacts referenced by [S3](../../docs/completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership).
 Normal-path acceptance does not qualify cancellation, page reuse/generations or
 physical-fault reclamation.
@@ -156,7 +156,7 @@ checkout. Freeze consumed artifacts, retain failed runs and report uncertainty
 before claiming performance. Use [benchmark methodology](../../docs/benchmark-evidence.md)
 and the existing gate's workload instead of adding another verification layer.
 
-The [pre-cleanup gate reference](https://github.com/feichai0017/orbitkv/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/python/tests/README.md)
+The [pre-cleanup gate reference](https://github.com/OrbitInfra/OrbitKV/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/python/tests/README.md)
 retains exact earlier installed campaign commands and evidence locations. Its
 recorded versions and failures remain unchanged; the
 [completion plan](../../docs/completion-plan.md) is the only execution queue.

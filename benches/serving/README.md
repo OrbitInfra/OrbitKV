@@ -389,4 +389,4 @@ includes the additional cost-series export and sampling at that frequency;
 it does not isolate observer hot-path cost. These finite cohorts measure
 instrumentation overhead on the recorded host; they do not establish a throughput ceiling, dynamic-path benefit, native GDS
 performance or distributed-cache qualification. See the final evidence in the
-[implementation handoff](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#p41-final-evidence).
+[implementation handoff](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#p41-final-evidence).

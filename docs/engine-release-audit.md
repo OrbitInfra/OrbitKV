@@ -79,7 +79,7 @@ their own consumed lifecycle and installed model gates.
 
 ## Historical evidence
 
-The [pre-migration audit](https://github.com/feichai0017/orbitkv/blob/d9d500b9f45230662121387a2d2d6d7ad9ac9eb2/docs/engine-release-audit.md)
+The [pre-migration audit](https://github.com/OrbitInfra/OrbitKV/blob/d9d500b9f45230662121387a2d2d6d7ad9ac9eb2/docs/engine-release-audit.md)
 retains prior release checks, contribution commits, accepted/failed controls and
 external artifact locations. No historic failure or qualification is overwritten
 by this interface migration. Current capability claims belong in

@@ -9,7 +9,7 @@ acceptance does not supply an external-cache comparison.
 
 ## SGLang concurrent admission
 
-The [official-release admission comparison](https://github.com/feichai0017/orbitkv/pull/294)
+The [official-release admission comparison](https://github.com/OrbitInfra/OrbitKV/pull/294)
 uses SGLang 0.5.22, Qwen3-8B revision `b968826d`, one H20, BF16/raw, TP1/PP1,
 eager deterministic inference, 16,384 GPU KV tokens and 16 GiB host cache.
 Four fresh baseline/priority process pairs alternate AB/BA/AB/BA, with 640
@@ -40,7 +40,7 @@ in [the evidence archive](benchmark-evidence.md#sglang-concurrent-admission-arch
 
 ## Current dense local comparison
 
-The reviewed [Qwen3-32B comparison](https://github.com/feichai0017/orbitkv/pull/221)
+The reviewed [Qwen3-32B comparison](https://github.com/OrbitInfra/OrbitKV/pull/221)
 uses one H20, official vLLM 0.31.0/SGLang 0.5.21, LMCache 0.5.5, BF16/raw,
 TP1/PP1, eager execution and 4 GiB GPU KV. Two opposite-order independent runs
 contain five samples per length/phase, with output and restore-byte controls.
@@ -57,24 +57,24 @@ is different. Native HBM-eviction recomputation takes about 4.3/4.4 seconds.
 The vLLM resident control includes a 16 MiB restore; SGLang restores 8,128 tokens
 and recomputes the final 64-token page. TTFT ends at first nonempty SSE text.
 These observations establish neither stable tails nor general superiority.
-The [frozen report](https://github.com/feichai0017/orbitkv/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/performance.md#current-dense-local-comparison)
+The [frozen report](https://github.com/OrbitInfra/OrbitKV/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/performance.md#current-dense-local-comparison)
 retains revisions, native termination diagnostics and complete scope.
 
 ## SGLang restore diagnosis
 
-The [follow-up diagnosis](https://github.com/feichai0017/orbitkv/pull/224)
+The [follow-up diagnosis](https://github.com/OrbitInfra/OrbitKV/pull/224)
 reproduces the serial 8K gap and identifies fragmented submission and admission
 as investigation targets. Profiler-off TTFT is 202.09 ms for DMA, 181.53 ms for
 the existing kernel route and 175.90 ms for historical HiCache. Traces do not
 assign a causal fraction of the unprofiled gap or establish first-layer readiness.
 KDA evaluation supports the independent kernel comparison below.
-The [frozen report](https://github.com/feichai0017/orbitkv/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/performance.md#sglang-restore-diagnosis)
+The [frozen report](https://github.com/OrbitInfra/OrbitKV/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/performance.md#sglang-restore-diagnosis)
 preserves different preparation orders, failed controls and native child/IPC
 shutdown limits. Full traces and reviews remain in [the archive](benchmark-evidence.md).
 
 ## Independent SGLang kernel pairs
 
-The [independent follow-up](https://github.com/feichai0017/orbitkv/pull/225)
+The [independent follow-up](https://github.com/OrbitInfra/OrbitKV/pull/225)
 at harness `4b6c7eba` uses the unchanged `37b48c50` native build, official
 SGLang 0.5.21 and immutable Qwen3-32B revision `9216db57`. One H20 runs BF16/raw,
 TP=1/PP=1, eager deterministic inference with 16,384 GPU KV tokens and 16 GiB
@@ -179,9 +179,9 @@ cohort. Full failures, per-cell clocks and provenance remain in
 
 | Question | Evidence and limits |
 | --- | --- |
-| Does external reuse beat recomputation? | The [historical matched vLLM comparison](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/single-node-performance.md#matched-vllm-end-to-end-comparison) records an advantage over HBM-eviction recomputation; native CPU offload remained faster in that workload. It does not establish a universal win over native KV caching or LMCache |
-| What changed in the copy/control path? | [Communication measurements](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/communication-performance.md) retain both the original regression and later idle-stream/plan-compaction improvements; [kernel work](kernel-optimization.md) separates correctness, measured shapes and production selection |
-| How do SSD and query budgets behave? | [SSD methodology](ssd-performance.md), [concurrent queries](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/concurrent-performance.md) and [recovery profiling](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/recovery-performance.md) describe bounded storage and restoration workloads |
+| Does external reuse beat recomputation? | The [historical matched vLLM comparison](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/single-node-performance.md#matched-vllm-end-to-end-comparison) records an advantage over HBM-eviction recomputation; native CPU offload remained faster in that workload. It does not establish a universal win over native KV caching or LMCache |
+| What changed in the copy/control path? | [Communication measurements](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/communication-performance.md) retain both the original regression and later idle-stream/plan-compaction improvements; [kernel work](kernel-optimization.md) separates correctness, measured shapes and production selection |
+| How do SSD and query budgets behave? | [SSD methodology](ssd-performance.md), [concurrent queries](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/concurrent-performance.md) and [recovery profiling](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/recovery-performance.md) describe bounded storage and restoration workloads |
 | What is proven across hosts? | [Shared-cache qualification](shared-cache-qualification.md) records scoped TCP/RDMA recovery and restart correctness; HA, broad topology and serving performance remain separate |
 | Is metadata pressure isolated? | [S2 status](completion-plan.md#s2--metadata-reliability-and-measured-capacity): sixteen-owner ordinary visibility passes, but formal DRAM/SSD isolation fails; support stays four owners |
 
@@ -192,7 +192,7 @@ and [benchmark evidence](benchmark-evidence.md) for archives and provenance.
 ## Reproduce a comparison
 
 Use the programs and workload definitions in
-[the benchmark harness](https://github.com/feichai0017/orbitkv/blob/main/benches/README.md).
+[the benchmark harness](https://github.com/OrbitInfra/OrbitKV/blob/main/benches/README.md).
 Write output to an explicit directory outside the checkout:
 
 ```bash

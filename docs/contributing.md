@@ -1,6 +1,6 @@
 # Contributing
 
-Start with [the repository guide](https://github.com/feichai0017/orbitkv/blob/main/AGENTS.md)
+Start with [the repository guide](https://github.com/OrbitInfra/OrbitKV/blob/main/AGENTS.md)
 and [the completion plan](completion-plan.md). The plan is the only execution
 queue; architecture pages describe ownership contracts. Deliver a coherent
 stage, then independently review its consumed path, gates and evidence.
@@ -33,7 +33,7 @@ For native CUDA builds, follow [runtime requirements](single-node.md) and use
 the CUDA feature matching the host. Run Cargo/native builds sequentially in one
 checkout: they restage Mooncake libraries that running processes may have mapped.
 
-Use the [Python gate matrix](https://github.com/feichai0017/orbitkv/blob/main/python/tests/README.md)
+Use the [Python gate matrix](https://github.com/OrbitInfra/OrbitKV/blob/main/python/tests/README.md)
 to choose units, integration, E2E, stress or installed-artifact checks. Default
 Python tests require no GPU, engine service or native build. Heavy gates have
 explicit triggers and remain unqualified when hardware is unavailable.

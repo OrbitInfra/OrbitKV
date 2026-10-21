@@ -27,7 +27,7 @@ export function repositoryMarkdown({ base, sourceRevision }) {
         } else if (inside(assets, path)) {
           node.url = `${base}/${relative(assets, path)}${target.search}${target.hash}`;
         } else if (inside(root, path)) {
-          node.url = `https://github.com/feichai0017/orbitkv/blob/${sourceRevision}/${relative(root, path)}${target.hash}`;
+          node.url = `https://github.com/OrbitInfra/OrbitKV/blob/${sourceRevision}/${relative(root, path)}${target.hash}`;
         }
       }
       for (const child of node.children ?? []) visit(child);

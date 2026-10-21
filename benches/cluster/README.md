@@ -19,9 +19,9 @@ and [compatibility](../../docs/compatibility.md) for support limits.
 
 Completed S2 capacity, isolation/observer and three-host campaign controllers,
 analysers and their dedicated tests are retired. Reproduce an old campaign from
-[its immutable source](https://github.com/feichai0017/orbitkv/tree/dc52461078bb22910ba6c783ecf0d9213599b10b/benches/cluster)
+[its immutable source](https://github.com/OrbitInfra/OrbitKV/tree/dc52461078bb22910ba6c783ecf0d9213599b10b/benches/cluster)
 and original artifact/freeze, not a current checkout. The
-[frozen plan](https://github.com/feichai0017/orbitkv/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/completion-plan.md)
+[frozen plan](https://github.com/OrbitInfra/OrbitKV/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/completion-plan.md)
 retains results and evidence locations, including failed qualifications.
 
 Current distributed correctness gates remain under `python/tests/integration/`

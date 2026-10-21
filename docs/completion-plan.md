@@ -34,7 +34,7 @@ The immediate product is dense TP=1/PP=1 caching on vLLM 0.31.0 and SGLang
 Finish one useful delivery at a time; do not turn each failed experiment into
 another permanent controller or parallel roadmap.
 
-1. **Maintainable product surface — delivered in [PR #289](https://github.com/feichai0017/orbitkv/pull/289) and [PR #295](https://github.com/feichai0017/orbitkv/pull/295).**
+1. **Maintainable product surface — delivered in [PR #289](https://github.com/OrbitInfra/OrbitKV/pull/289) and [PR #295](https://github.com/OrbitInfra/OrbitKV/pull/295).**
    Retire completed campaign-specific code and
    duplicate reports; keep reusable benchmarks and tests with a current consumer.
    Organize README, model recipes and website around installation, features,
@@ -76,7 +76,7 @@ See [distributed cache](distributed-cache.md) and [P2P deployment](p2p.md).
 The frozen five-percent isolation and fifty-millisecond visibility requirements
 remain unchanged. A process fault is not an independent host/power/network fault.
 Historical S2-only campaign programs are retired from the maintained tree;
-their [source and contracts](https://github.com/feichai0017/orbitkv/tree/dc52461078bb22910ba6c783ecf0d9213599b10b/benches/cluster)
+their [source and contracts](https://github.com/OrbitInfra/OrbitKV/tree/dc52461078bb22910ba6c783ecf0d9213599b10b/benches/cluster)
 remain available for reproduction. Existing integration tests and the reusable
 metadata benchmark continue to exercise the current implementation.
 
@@ -100,7 +100,7 @@ and [adapter contracts](adapters.md).
   termination proof exists; retain unresolved owners within explicit budgets.
 - [ ] Complete current-release installed adapter fault coverage for both engines.
 
-The Python TENT writable-buffer ownership repair in [PR #288](https://github.com/feichai0017/orbitkv/pull/288)
+The Python TENT writable-buffer ownership repair in [PR #288](https://github.com/OrbitInfra/OrbitKV/pull/288)
 has source/CPU and installed CPU-native fixture acceptance. It retains real
 buffer exports through failed cleanup; borrowed GPU backing and canonical
 CUDA/RDMA physical lifetime remain unqualified.
@@ -116,17 +116,17 @@ retention must be bounded and observable, and reclamation must eventually follow
 a valid proof. TTL, lease expiry and logical errors are not physical drain.
 
 Official vLLM 0.31.0 prepared-adapter DRAM/io_uring healthy pairs are
-accepted in [PR #290](https://github.com/feichai0017/orbitkv/pull/290).
+accepted in [PR #290](https://github.com/OrbitInfra/OrbitKV/pull/290).
 The selected SGLang 0.5.22 pair for each medium is independently accepted in
-[PR #295](https://github.com/feichai0017/orbitkv/pull/295): the released GPU-pool/linker
+[PR #295](https://github.com/OrbitInfra/OrbitKV/pull/295): the released GPU-pool/linker
 fixture restores all 2,621,440 bytes including sentinels, repays four original
 IPC credits and retires registration with normal process waits. Both sole
 ownership and an independent exporter hold pass; the SSD pair clears DRAM and
 requires reads from the ext4 NVMe file through io_uring. This is a normal
 prepared-adapter fixture, separate from model serving and fault reclamation.
-[PR #293](https://github.com/feichai0017/orbitkv/pull/293) retains the earlier
+[PR #293](https://github.com/OrbitInfra/OrbitKV/pull/293) retains the earlier
 0.5.21 results. The
-[immutable lifetime record](https://github.com/feichai0017/orbitkv/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
+[immutable lifetime record](https://github.com/OrbitInfra/OrbitKV/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
 preserves exact source/wheel/review/archive hashes and all failed freezes.
 Cancellation, page reuse and physical reclamation remain separate obligations.
 
@@ -169,7 +169,7 @@ Acceptance: exact restored bytes and output controls; equal inputs, budgets and
 coverage; independent matched repetitions and uncertainty; original benefit,
 regression and observation-overhead guards. Source built, fixture fast and model
 fast are different results. Keep the frozen detailed guards in
-[the accepted measurement contracts](https://github.com/feichai0017/orbitkv/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/completion-plan.md#s4--finish-communication-execution-and-demonstrate-gains).
+[the accepted measurement contracts](https://github.com/OrbitInfra/OrbitKV/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/completion-plan.md#s4--finish-communication-execution-and-demonstrate-gains).
 
 ## S5 — Released-engine integration and upstream contributions
 
@@ -291,7 +291,7 @@ unsupported.
 for user navigation while retaining OrbitKV's Rust owners and website identity.
 
 - [x] Consolidate the product documentation and retire completed campaign code
-  and duplicate reports in [PR #289](https://github.com/feichai0017/orbitkv/pull/289).
+  and duplicate reports in [PR #289](https://github.com/OrbitInfra/OrbitKV/pull/289).
   Feature/model recipes, current support limits, links and historical references
   have independent source/CPU review; runtime support is unchanged.
 - [ ] Build final Manager/engine images and wheels, preserve licenses/provenance,
@@ -317,9 +317,9 @@ gates. Raw results, traces, manifests and per-run reports stay outside Git.
 
 ## Historical evidence
 
-The [pre-cleanup plan](https://github.com/feichai0017/orbitkv/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/completion-plan.md)
+The [pre-cleanup plan](https://github.com/OrbitInfra/OrbitKV/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/completion-plan.md)
 preserves detailed accepted/failed runs, commits, artifact locations and frozen
 measurement contracts. It is an evidence reference, not another execution queue.
 Its S2 isolation failures, physical-lifetime limits and unqualified scopes remain
 unchanged. Earlier S1 consolidation is retained at
-[`ec3add9b`](https://github.com/feichai0017/orbitkv/tree/ec3add9bcaf91a0171685ba42b5ae8330076c397).
+[`ec3add9b`](https://github.com/OrbitInfra/OrbitKV/tree/ec3add9bcaf91a0171685ba42b5ae8330076c397).

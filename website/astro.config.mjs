@@ -4,10 +4,10 @@ import { repositoryMarkdown } from "./src/markdown.mjs";
 const sourceRevision =
   process.env.PUBLIC_SOURCE_REF || process.env.GITHUB_SHA || "main";
 
-const base = "/orbitkv";
+const base = "/OrbitKV";
 
 export default defineConfig({
-  site: "https://feichai0017.github.io",
+  site: "https://orbitinfra.github.io",
   base,
   output: "static",
   trailingSlash: "always",

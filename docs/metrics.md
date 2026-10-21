@@ -203,7 +203,7 @@ parent/child timings or logical bytes across those paths.
 This family and its shadow work are disabled by default. Enable them with
 `ORBITKV_COST_OBSERVATIONS=1` before Manager startup. Existing operational
 metrics remain enabled independently. See the
-[overhead gate](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#p41-final-evidence) before enabling cost
+[overhead gate](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#p41-final-evidence) before enabling cost
 observations in serving.
 Execution selection additionally requires `ORBITKV_COST_SELECTION=1`. It is
 currently limited to equal-coverage owners of one peer medium; it does not use

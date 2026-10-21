@@ -10,7 +10,7 @@ versioned evidence; passing a correctness gate does not establish a speedup.
 ## Native driver capture archive
 
 `/root/orbitkv-artifacts/s4-native-submission-gpu-20261014/` retains the native
-submission cohort. Its [frozen index](https://github.com/feichai0017/orbitkv/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#native-driver-capture-archive)
+submission cohort. Its [frozen index](https://github.com/OrbitInfra/OrbitKV/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#native-driver-capture-archive)
 records inputs, failed controls, hashes and clock limits. This is component
 observation evidence, not a serving or default qualification.
 
@@ -18,7 +18,7 @@ observation evidence, not a serving or default qualification.
 
 `/root/orbitkv-artifacts/s5-kernel-layout-qualification-20261013/` retains the
 reviewed SGLang 0.5.21 byte controls and four serial DMA/kernel process pairs.
-The [frozen index](https://github.com/feichai0017/orbitkv/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#sglang-independent-kernel-pair-archive)
+The [frozen index](https://github.com/OrbitInfra/OrbitKV/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#sglang-independent-kernel-pair-archive)
 contains complete provenance, checksums and lifetime limits;
 [performance](performance.md#independent-sglang-kernel-pairs) states the accepted scope.
 
@@ -26,7 +26,7 @@ contains complete provenance, checksums and lifetime limits;
 
 `/root/orbitkv-artifacts/s5-sglang-restore-profile-20261012/` retains profiler-off
 controls, diagnostic traces and unsuccessful preparations. Use the
-[frozen index](https://github.com/feichai0017/orbitkv/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#sglang-restore-diagnosis-archive)
+[frozen index](https://github.com/OrbitInfra/OrbitKV/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#sglang-restore-diagnosis-archive)
 for the original source, ordering, hashes and rejected cleanup attempt.
 
 ## Current RDMA component archive
@@ -34,7 +34,7 @@ for the original source, ordering, hashes and rejected cleanup attempt.
 `/root/orbitkv-artifacts/s5-manager-rdma-profile-20261012-r2/` retains the complete
 Manager-only cohort; `/root/orbitkv-artifacts/s4-s5-tent-rdma-profile-20261012/`
 retains the earlier incomplete campaign and GPU-pointer component data. Their
-[frozen index](https://github.com/feichai0017/orbitkv/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#current-rdma-component-archive)
+[frozen index](https://github.com/OrbitInfra/OrbitKV/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#current-rdma-component-archive)
 preserves individual runs, failed startup, reviews and checksums. These are
 private host archives, not public downloads, HA or fault-reclamation qualification.
 
@@ -45,7 +45,7 @@ one-line scheduler counterfactual and its independent review.
 `/root/orbitkv-artifacts/s4-sglang-official-admission-20261021/` retains the
 eight-cell official-release comparison, frozen contract, all raw requests,
 cleanup, complete wheel/model hashes and process-pair analysis. These private
-host archives are not public downloads. The [reviewed delivery](https://github.com/feichai0017/orbitkv/pull/294)
+host archives are not public downloads. The [reviewed delivery](https://github.com/OrbitInfra/OrbitKV/pull/294)
 and [performance summary](performance.md#sglang-concurrent-admission) state
 the benefit and failed regression guards; no default is selected.
 
@@ -182,7 +182,7 @@ GPUDirect RDMA; retain NIC counters, payload checks and negative route controls.
 
 Current first-READ diagnosis uses the owned Manager cells in
 `benches.distributed.rdma_profile` and the installed Rust client. The retired
-[CPU-mmap probe](https://github.com/feichai0017/orbitkv/blob/800a755fe88e119cd10b19c28c27e02d78d40d09/benches/distributed/tent_stage.py)
+[CPU-mmap probe](https://github.com/OrbitInfra/OrbitKV/blob/800a755fe88e119cd10b19c28c27e02d78d40d09/benches/distributed/tent_stage.py)
 uses an upstream 48-byte ABI, while the current production request is 88 bytes.
 Reproduce historical evidence with its frozen source and libraries; do not use
 that probe with a production runtime. Its original private-buffer timing does
@@ -213,7 +213,7 @@ isolated comparison should rebuild both the release baseline and only that
 three-file repair with identical compiler/configuration/dependencies. Verify
 all other shared libraries are identical, test slot adjacency and wraparound,
 and retain release cleanup ownership when adapting source context. The retired
-[comparison controller](https://github.com/feichai0017/orbitkv/blob/800a755fe88e119cd10b19c28c27e02d78d40d09/benches/distributed/tent_compare.py)
+[comparison controller](https://github.com/OrbitInfra/OrbitKV/blob/800a755fe88e119cd10b19c28c27e02d78d40d09/benches/distributed/tent_compare.py)
 is retained only at that immutable revision for historical reproduction. Source
 deltas, hashes, input readiness failures, valid smoke and formal results belong
 outside the checkout. Neither upstream's own
@@ -273,11 +273,11 @@ and actual serving controls; it cannot optimize an RPC or connection delay.
 ## Historical tracked evidence
 
 Formerly tracked collections remain at the immutable
-[September 29 snapshot](https://github.com/feichai0017/orbitkv/tree/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/benches/results),
-[September 21 snapshot](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results)
-and [recovery snapshot](https://github.com/feichai0017/orbitkv/tree/4712f780c900120719f178b2ea36c9e0ac7c135f/benches/results/20260922-recovery-baseline).
+[September 29 snapshot](https://github.com/OrbitInfra/OrbitKV/tree/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/benches/results),
+[September 21 snapshot](https://github.com/OrbitInfra/OrbitKV/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results)
+and [recovery snapshot](https://github.com/OrbitInfra/OrbitKV/tree/4712f780c900120719f178b2ea36c9e0ac7c135f/benches/results/20260922-recovery-baseline).
 Original tables and migration details are in the
-[frozen evidence index](https://github.com/feichai0017/orbitkv/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#historical-tracked-evidence).
+[frozen evidence index](https://github.com/OrbitInfra/OrbitKV/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#historical-tracked-evidence).
 Git history is unchanged. Website link tests require full history; shallow
 checkouts need `git fetch --unshallow` before `npm test`.
 
@@ -293,7 +293,7 @@ cd /root/orbitkv-artifacts/s1-evidence-20260929
 sha256sum --check SHA256SUMS
 ```
 
-The [frozen inventory and relocation record](https://github.com/feichai0017/orbitkv/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#local-archive-and-verification)
+The [frozen inventory and relocation record](https://github.com/OrbitInfra/OrbitKV/blob/81bf353a416189b1dd139a18b57c8578184ecda4/docs/benchmark-evidence.md#local-archive-and-verification)
 identifies the archived bytes, relocated symlinks and older missing raw logs.
 This private archive is not an off-host backup or public download. Publish new
 charts from durable versioned artifacts and qualify every new performance claim.

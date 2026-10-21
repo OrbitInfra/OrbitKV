@@ -91,7 +91,7 @@ One reviewed container profile needed a private empty `CUDA_MPS_PIPE_DIRECTORY`
 to avoid an inherited MPS-path initialization timeout. This is a recorded runtime
 diagnosis, not a general instruction to change host drivers or bypass GPU access.
 Validate actual CUDA compute and IPC in the selected process environment before
-launching. See the [immutable runtime evidence](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/deployment.md#h20-direct-cuda-runtime).
+launching. See the [immutable runtime evidence](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/deployment.md#h20-direct-cuda-runtime).
 
 ## Containers and Kubernetes
 
@@ -159,4 +159,4 @@ Keep the Manager alive across the relevant engine restart, compare output with a
 monolithic control and verify actual cache restore bytes. Qualify cancellation,
 preemption, peer loss, partial submit, late ACK and page reuse before broadening
 support. Native model output is not physical drain proof. Detailed historical
-commands remain in the [immutable deployment snapshot](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/deployment.md).
+commands remain in the [immutable deployment snapshot](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/deployment.md).

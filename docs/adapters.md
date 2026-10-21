@@ -44,7 +44,7 @@ non-submission. A `CancelledError` from submission or completion waiting keeps
 leases and GPU destinations held and propagates an error to the consumer.
 
 Historical per-cohort details and failures remain in the
-[accepted lifetime record](https://github.com/feichai0017/orbitkv/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#ownership-contract).
+[accepted lifetime record](https://github.com/OrbitInfra/OrbitKV/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#ownership-contract).
 Use the [completion plan](completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
 for current-release acceptance; earlier 0.5.21 results retain their original scope.
 
@@ -255,7 +255,7 @@ The [S5.2 evidence](completion-plan.md#s52--minimal-official-cache-backends)
 accepts normal prepared-adapter retirement on the selected release. It does not
 qualify crash reclamation or cancellation during DMA. The earlier model-process
 shutdown warnings and calibrated 0.5.21 measurements remain in the
-[immutable shutdown record](https://github.com/feichai0017/orbitkv/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#sglang-linker-and-current-internal-dependencies).
+[immutable shutdown record](https://github.com/OrbitInfra/OrbitKV/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#sglang-linker-and-current-internal-dependencies).
 
 These remaining targets are version-coupled dependencies, not stable public APIs.
 Replace them with consumed factory/lifecycle/component contracts and then delete

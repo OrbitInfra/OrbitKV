@@ -7,7 +7,7 @@ import test from "node:test";
 
 const dist = fileURLToPath(new URL("../dist/", import.meta.url));
 const repository = resolve(dist, "../..");
-const base = "https://feichai0017.github.io/orbitkv/";
+const base = "https://orbitinfra.github.io/OrbitKV/";
 const decode = (value) =>
   value.replaceAll("&amp;", "&").replaceAll("&quot;", '"');
 const files = globSync("**/*.html", { cwd: dist });
@@ -26,7 +26,7 @@ test("published pages have valid internal links, fragments and repository target
       const target = new URL(decode(attribute), current);
       if (target.origin === "https://github.com") {
         const match = target.pathname.match(
-          /^\/feichai0017\/orbitkv\/blob\/([^/]+)\/(.+)$/,
+          /^\/OrbitInfra\/OrbitKV\/blob\/([^/]+)\/(.+)$/,
         );
         const [, revision, path] = match ?? [];
         // Historical snapshots can contain evidence removed from the current tree.
@@ -48,13 +48,13 @@ test("published pages have valid internal links, fragments and repository target
         continue;
       }
       if (target.origin !== current.origin) continue;
-      if (!target.pathname.startsWith("/orbitkv/")) {
+      if (!target.pathname.startsWith("/OrbitKV/")) {
         failures.push(`${file}: URL outside site base ${target}`);
         continue;
       }
       let path = join(
         dist,
-        decodeURIComponent(target.pathname.slice("/orbitkv/".length)),
+        decodeURIComponent(target.pathname.slice("/OrbitKV/".length)),
       );
       if (existsSync(path) && statSync(path).isDirectory())
         path = join(path, "index.html");
@@ -83,7 +83,7 @@ test("search publishes every canonical document with an internal URL and its con
   assert.equal(pages.length, sources.length);
   assert.equal(new Set(pages.map((page) => page.url)).size, sources.length);
   for (const source of sources) {
-    const url = `/orbitkv/docs/${source.replace(/\.md$/, "")}/`;
+    const url = `/OrbitKV/docs/${source.replace(/\.md$/, "")}/`;
     const page = pages.find((page) => page.url === url);
     assert.ok(page, `Missing searchable document: ${source}`);
     assert.ok(
@@ -91,7 +91,7 @@ test("search publishes every canonical document with an internal URL and its con
       `Empty search content: ${source}`,
     );
     assert.ok(
-      existsSync(join(dist, url.slice("/orbitkv/".length), "index.html")),
+      existsSync(join(dist, url.slice("/OrbitKV/".length), "index.html")),
     );
   }
 });

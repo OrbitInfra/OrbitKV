@@ -138,6 +138,6 @@ Rust/Python integration tests. The reusable metadata benchmark is documented in
 
 Detailed historical protocols, measurements, failed controls and external
 artifact locations are preserved in the
-[immutable distributed report](https://github.com/feichai0017/orbitkv/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/distributed-cache.md).
+[immutable distributed report](https://github.com/OrbitInfra/OrbitKV/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/distributed-cache.md).
 The [completion plan](completion-plan.md#s2--metadata-reliability-and-measured-capacity)
 owns remaining qualification; the historical report is not another work queue.
