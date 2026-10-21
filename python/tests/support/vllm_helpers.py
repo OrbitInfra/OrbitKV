@@ -53,23 +53,6 @@ def e2e_max_tokens(model: str) -> int:
     return 8 if _linear_attention_kind(model) else 50
 
 
-def _detect_orbitkv_cargo_features() -> list[str]:
-    try:
-        import torch
-    except ImportError:
-        return []
-
-    cuda_version = getattr(torch.version, "cuda", None)
-    if not cuda_version:
-        return []
-
-    # Keep parity with the default feature set (cuda-12 + mooncake) so the e2e
-    # server build shares the cargo cache with maturin dev builds instead of
-    # invalidating it on every alternation.
-    major = cuda_version.split(".", maxsplit=1)[0]
-    return ["cuda-13", "mooncake"] if major == "13" else []
-
-
 class VLLMServer:
     """Context manager for vLLM server lifecycle."""
 
@@ -375,9 +358,7 @@ class CacheManager:
         self.devices = devices
         self.server_binary = server_binary or os.environ.get("ORBITKV_CACHE_MANAGER_BINARY")
         self.extra_args = extra_args
-        self.cargo_features = (
-            cargo_features if cargo_features is not None else _detect_orbitkv_cargo_features()
-        )
+        self.cargo_features = cargo_features if cargo_features is not None else []
         self.log_file = log_file
         self.process: subprocess.Popen | None = None
         self.log_handle = None

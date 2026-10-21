@@ -1,6 +1,6 @@
 ---
 name: version-bump
-description: Update OrbitKV package versions or prepare a release candidate while keeping Rust, Python, CUDA distributions and release tags consistent.
+description: Update OrbitKV package versions or prepare a release candidate while keeping Rust, Python, CUDA runtime and release tags consistent.
 ---
 
 # OrbitKV versions and release candidates
@@ -13,9 +13,9 @@ different operations. Existing session authorization still applies.
    `Cargo.toml` `[workspace.package]`, `python/pyproject.toml` `[project]` and
    `[tool.commitizen]` together. Refresh affected workspace entries in `Cargo.lock`
    without upgrading unrelated dependencies.
-2. Run `python3 scripts/check-versions.py --tag vVERSION`. Both `orbitkv-llm`
-   and `orbitkv-llm-cu13` must have the same version and retain their documented
-   engine/runtime constraints. Check the release matrix in
+2. Run `python3 scripts/check-versions.py --tag vVERSION`. The single
+   `orbitkv-llm` distribution targets CUDA 13 and must retain its documented
+   engine/runtime constraints. Check the ten-wheel release matrix in `docs/releases.md` and
    `docs/completion-plan.md`; an engine target becomes supported only after its
    upgrade gate passes. Keep license and bundled upstream provenance with artifacts.
 3. Build the candidate with `scripts/build-wheel.sh` or the manual Release

@@ -173,7 +173,8 @@ cargo build --release
 cargo test
 ```
 
-On CUDA 13 dev machines, pass `--no-default-features --features cuda-13,mooncake` to `cargo test`/`cargo clippy` (default `cuda-12` can fail with missing `libcudart` symbols).
+CUDA 13 and Mooncake are the default features. Use a CUDA 13 toolkit for native
+builds; CUDA 12 is unsupported. The single Python distribution is `orbitkv-llm`.
 
 Run Cargo builds/checks/Clippy and Mooncake runtime tests sequentially in one
 checkout. Native builds restage `.orbitkv/mooncake` shared libraries; overwriting

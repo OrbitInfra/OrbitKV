@@ -8,11 +8,12 @@ how to validate a candidate without uploading it to PyPI.
 
 | Distribution | Runtime | Release targets |
 | --- | --- | --- |
-| `orbitkv-llm` | CUDA 12 | Linux x86_64, CPython 3.10–3.14 |
-| `orbitkv-llm-cu13` | CUDA 13 | Linux x86_64 and aarch64, CPython 3.10–3.14 |
+| `orbitkv-llm` | CUDA 13 | Linux x86_64 and aarch64, CPython 3.10–3.14 |
 
-Install one CUDA variant per environment; both provide the `orbitkv` import and
-`orbitkv-cache-manager` command. Engine extras pin vLLM 0.31.0 or SGLang 0.5.22.
+One distribution provides the `orbitkv` import and `orbitkv-cache-manager`
+command. CUDA 12 is not a release target. There are ten wheels per release:
+five CPython versions on each of two architectures; pip selects the matching wheel.
+Engine extras pin vLLM 0.31.0 or SGLang 0.5.22.
 SGLang requires Python 3.11+; core OrbitKV retains Python 3.10+. The selected
 0.5.22 Qwen3-8B installed profile is recorded in [compatibility](compatibility.md).
 Use separate engine environments. Build-matrix coverage does not establish
@@ -23,7 +24,10 @@ engine release. See [S5.1](completion-plan.md#s51--release-and-interface-audit).
 The wheel contains the PyO3 extension, Manager executable, Mooncake libraries,
 engine plugins, type stubs, Apache-2.0 license and third-party attribution in
 `NOTICE`. The host supplies its NVIDIA
-driver and compatible PyTorch/CUDA environment. Tests, benchmarks and build
+driver and compatible PyTorch/CUDA 13 environment. CUDA 13 requires NVIDIA R580
+or newer; use a driver compatible with the selected toolkit's PTX/NVRTC output
+when runtime kernels are enabled. See [NVIDIA's compatibility requirements](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html).
+Tests, benchmarks and build
 caches are excluded from the package.
 
 GPU ANS encoding additionally needs the separately installed nvCOMP 5.3 runtime;
@@ -33,16 +37,17 @@ for dependencies, model-quality results and GPU workspace limits.
 
 ## Build a candidate
 
-From the repository root, select the Python interpreter and CUDA variant:
+From the repository root, select a Python interpreter with shared `libpython`
+(required by the embedded Manager) and use a CUDA 13 toolkit:
 
 ```bash
 git submodule update --init --recursive third-party/mooncake
 PYO3_PYTHON=/absolute/path/to/python3.11 \
-  ./scripts/build-wheel.sh --release --no-default-features --features cuda-13,mooncake
+  ./scripts/build-wheel.sh --release
 ```
 
-Omit the feature arguments for CUDA 12. The script builds and stages the
-Manager and Mooncake libraries, builds the extension for the selected Python,
+CUDA 13 and Mooncake are the default Cargo features. The script builds and stages
+the Manager and Mooncake libraries, builds the extension for the selected Python,
 audits every bundled ELF file with auditwheel, repairs its non-host dependencies,
 checks the package version/content, and imports the installed wheel in a fresh
 non-editable environment. The initial maturin output uses a Linux tag; only the
@@ -70,7 +75,7 @@ Mooncake libraries. `maturin build` alone does not stage the complete runtime.
 1. Run `python3 scripts/check-versions.py --tag v0.1.0`. Rust, Python,
    Commitizen and the proposed tag must agree.
 2. Trigger the **Release** workflow manually on the candidate branch. It builds
-   all 15 wheel targets and validates their versions and contents. Manual runs
+   all ten wheel targets and validates their versions and contents. Manual runs
    upload Actions artifacts only; they do not create a release or publish to PyPI.
 3. Install a candidate wheel into each engine environment. From outside the
    source checkout, check the installed import path, Manager help and health,
@@ -89,12 +94,34 @@ Mooncake libraries. `maturin build` alone does not stage the complete runtime.
 4. Review the final benchmark summaries and known limits. Publish only after
    these checks pass and the release is approved.
 
-Pushing a matching `v*` tag runs the same build/validation jobs and then publishes
-GitHub release assets and both PyPI distributions. The workflow requires the
-repository's `PYPI_API_TOKEN` to authorize both names. Preparing a candidate or
-running the manual workflow does not test that credential or reserve the names.
+## Configure PyPI publication
+
+Enable two-factor authentication on the PyPI account. Before the first upload,
+add a GitHub pending publisher under [PyPI account publishing](https://pypi.org/manage/account/publishing/):
+
+| Field | Value |
+| --- | --- |
+| PyPI project name | `orbitkv-llm` |
+| GitHub owner | `OrbitInfra` |
+| Repository name | `OrbitKV` |
+| Workflow filename | `release.yml` |
+| Environment name | `pypi` |
+
+The release job uses the GitHub `pypi` environment and OIDC Trusted Publishing;
+no PyPI API token is needed. A pending publisher creates the project on first
+successful upload, but does not reserve its name. See [PyPI's setup guide](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/).
+
+After candidate acceptance and release approval, pushing the matching `v0.1.0`
+tag runs the build/validation jobs and publishes GitHub assets and the single
+PyPI distribution. Manual workflow runs only build candidates; they do not
+exercise PyPI authorization. Once publication succeeds, install with
+`pip install orbitkv-llm==0.1.0` in the compatible runtime environment.
 
 ## Layer-readiness candidate qualification, 2026-09-29
+
+The following historical candidates used the earlier two-distribution matrix.
+Their filenames and hashes remain evidence for those builds, not qualification
+of the current single-distribution release candidate.
 
 [Release candidate run 36513923017](https://github.com/OrbitInfra/OrbitKV/actions/runs/36513923017)
 at `de451189` passes all 15 wheel targets and combined artifact validation. Its

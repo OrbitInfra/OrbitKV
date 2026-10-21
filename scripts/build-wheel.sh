@@ -12,11 +12,7 @@ export PYO3_PYTHON="$BUILD_PYTHON"
 VERSION="$("$BUILD_PYTHON" "$SCRIPT_DIR/check-versions.py")"
 mkdir -p "$PROJECT_ROOT/target/wheels"
 BUILD_DIR="$(mktemp -d "$PROJECT_ROOT/target/wheel-build.XXXXXX")"
-MANIFEST_BACKUP=""
 cleanup() {
-    if [[ -n "$MANIFEST_BACKUP" ]]; then
-        mv -f "$MANIFEST_BACKUP" "$PYTHON_DIR/pyproject.toml"
-    fi
     rm -rf "$BUILD_DIR"
 }
 trap cleanup EXIT
@@ -30,30 +26,8 @@ if [[ "${1:-}" == "--release" ]]; then
     shift
 fi
 
-# Remaining args are feature flags (e.g. --no-default-features --features cuda-13)
-EXTRA_ARGS=("$@")
-VARIANT="cu12"
-if [[ " ${EXTRA_ARGS[*]} " == *" cuda-13"* ]]; then
-    VARIANT="cu13"
-fi
-
-# PEP 621 package names are static. Build the CUDA 13 distribution from a
-# temporary manifest edit, then restore the developer's original manifest.
-if [[ "$VARIANT" == "cu13" ]]; then
-    MANIFEST_BACKUP="$(mktemp "$PYTHON_DIR/pyproject.toml.XXXXXX")"
-    cp -p "$PYTHON_DIR/pyproject.toml" "$MANIFEST_BACKUP"
-    "$BUILD_PYTHON" - "$PYTHON_DIR/pyproject.toml" <<'PY'
-from pathlib import Path
-import sys
-
-manifest = Path(sys.argv[1])
-source = manifest.read_text()
-old = 'name = "orbitkv-llm"'
-if source.count(old) != 1:
-    raise SystemExit("expected exactly one orbitkv-llm package name")
-manifest.write_text(source.replace(old, 'name = "orbitkv-llm-cu13"', 1))
-PY
-fi
+# Complete wheels always include CUDA 13 and TENT; callers may add Cargo features.
+EXTRA_ARGS=(--features cuda-13,mooncake "$@")
 
 echo "==> Building binaries ($PROFILE mode)..."
 cd "$PROJECT_ROOT"
@@ -69,11 +43,7 @@ done
 
 echo "==> Copying Mooncake runtime libraries..."
 rm -f "$PYTHON_DIR/orbitkv/libtransfer_engine.so"
-MOONCAKE_VARIANT="cpu"
-if [[ " ${EXTRA_ARGS[*]} " == *" cuda-12"* || " ${EXTRA_ARGS[*]} " == *" cuda-13"* || " ${EXTRA_ARGS[*]} " != *" --no-default-features "* ]]; then
-    MOONCAKE_VARIANT="cuda"
-fi
-MOONCAKE_LINK_DIR="$PROJECT_ROOT/.orbitkv/mooncake/$MOONCAKE_VARIANT/lib"
+MOONCAKE_LINK_DIR="$PROJECT_ROOT/.orbitkv/mooncake/cuda/lib"
 if [[ ! -d "$MOONCAKE_LINK_DIR" ]]; then
     echo "Mooncake native runtime directory not found: $MOONCAKE_LINK_DIR" >&2
     exit 1
@@ -113,7 +83,7 @@ fi
 WHEEL="$PROJECT_ROOT/target/wheels/$(basename "${REPAIRED[0]}")"
 mv "${REPAIRED[0]}" "$WHEEL"
 echo "==> Validating the repaired wheel..."
-"$BUILD_PYTHON" "$SCRIPT_DIR/check-wheel.py" "$WHEEL" --variant "$VARIANT" --version "$VERSION" --install-smoke
+"$BUILD_PYTHON" "$SCRIPT_DIR/check-wheel.py" "$WHEEL" --version "$VERSION" --install-smoke
 ls -lh "$WHEEL"
 echo ""
 echo "To install: pip install $WHEEL"

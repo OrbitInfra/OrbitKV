@@ -34,8 +34,7 @@ The former `--ssd-codec` and `--ssd-codec-budget` flags have been removed.
 
 ## GPU ANS
 
-ANS uses the nvCOMP 5.3 C ABI loaded by Rust. Install NVIDIA's runtime for the
-CUDA major version of your deployment, for example:
+ANS uses the nvCOMP 5.3 C ABI loaded by Rust. Install NVIDIA's CUDA 13 runtime:
 
 ```bash
 pip install nvidia-libnvcomp-cu13==5.3.0.16
@@ -43,7 +42,7 @@ export ORBITKV_NVCOMP_LIBRARY=/path/to/site-packages/nvidia/libnvcomp/lib64/libn
 orbitkv-cache-manager --pool-size 8gb --storage-codec ans
 ```
 
-CUDA 12 uses `nvidia-libnvcomp-cu12`; system installations may expose
+System installations may expose
 `libnvcomp.so.5` directly through the dynamic loader. A requested ANS policy fails
 startup if this dependency is missing or has an unsupported ABI. OrbitKV does
 not bundle NVIDIA's library or headers. See [NVIDIA installation instructions](https://docs.nvidia.com/cuda/nvcomp/installation.html).

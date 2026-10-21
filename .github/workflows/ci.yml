@@ -155,7 +155,7 @@ jobs:
       - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
-          cuda: '12.8.1'
+          cuda: '13.0.2'
           linux-local-args: '["--toolkit"]'
           method: 'network'
           sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
@@ -223,22 +223,13 @@ jobs:
         run: |
           uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest benches/tests
 
-  cargo-check-variant:
-    name: cargo check (${{ matrix.cuda-variant }})
+  cargo-check-native:
+    name: cargo check (CUDA 13)
     # Finish the short feedback waves before consuming the available runners
     # with CUDA builds, so no job expires while waiting for a runner.
     needs: [website-check, version-consistency-check]
     if: needs.version-consistency-check.outputs.native == 'true'
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - cuda-variant: cu12
-            cuda-version: '12.8.1'
-            cargo-features: ""
-          - cuda-variant: cu13
-            cuda-version: '13.0.2'
-            cargo-features: "--no-default-features --features cuda-13,mooncake"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -249,7 +240,7 @@ jobs:
       - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
-          cuda: ${{ matrix.cuda-version }}
+          cuda: '13.0.2'
           linux-local-args: '["--toolkit"]'
           method: 'network'
           sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
@@ -271,15 +262,15 @@ jobs:
         run: scripts/configure-rustc-wrapper.sh
       - name: Run cargo check
         run: |
-          cargo check -p orbitkv-core ${{ matrix.cargo-features }}
-          cargo check -p orbitkv-server ${{ matrix.cargo-features }} --all-targets
+          cargo check -p orbitkv-core
+          cargo check -p orbitkv-server --all-targets
         env:
           CUDA_PATH: /usr/local/cuda
 
   cargo-check:
     name: cargo check
     if: always()
-    needs: [cargo-check-variant, website-check, version-consistency-check]
+    needs: [cargo-check-native, website-check, version-consistency-check]
     runs-on: ubuntu-latest
     steps:
       - name: Check results
@@ -288,26 +279,17 @@ jobs:
             echo "prerequisite checks failed"
             exit 1
           fi
-          case "${{ needs.version-consistency-check.outputs.native }}:${{ needs.cargo-check-variant.result }}" in
+          case "${{ needs.version-consistency-check.outputs.native }}:${{ needs.cargo-check-native.result }}" in
             true:success) echo "native checks passed" ;;
             false:skipped) echo "documentation and Python harness changes: native checks not required" ;;
             *) echo "native checks failed or scope is unavailable"; exit 1 ;;
           esac
 
   build-wheel:
-    name: build Python 3.14 wheel (${{ matrix.cuda-variant }})
+    name: build Python 3.14 wheel (CUDA 13)
     needs: [cargo-check, version-consistency-check]
     if: needs.version-consistency-check.outputs.native == 'true'
     runs-on: ubuntu-24.04
-    strategy:
-      matrix:
-        include:
-          - cuda-variant: cu12
-            cuda-version: '12.8.1'
-            cargo-features: ""
-          - cuda-variant: cu13
-            cuda-version: '13.0.2'
-            cargo-features: "--no-default-features --features cuda-13,mooncake"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -330,7 +312,7 @@ jobs:
       - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
-          cuda: ${{ matrix.cuda-version }}
+          cuda: '13.0.2'
           linux-local-args: '["--toolkit"]'
           method: 'network'
           sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
@@ -359,13 +341,13 @@ jobs:
 
       - name: Build wheel
         run: |
-          ./scripts/build-wheel.sh --release ${{ matrix.cargo-features }}
+          ./scripts/build-wheel.sh --release
         env:
           CUDA_PATH: /usr/local/cuda
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: orbitkv-wheel-ci-${{ matrix.cuda-variant }}
+          name: orbitkv-wheel-ci
           path: target/wheels/*.whl
           retention-days: 1

@@ -68,10 +68,10 @@ engines do not automatically share interchangeable KV bytes.
 
 | Runtime | Distribution | Import |
 | --- | --- | --- |
-| CUDA 12 | `orbitkv-llm` | `orbitkv` |
-| CUDA 13 | `orbitkv-llm-cu13` | `orbitkv` |
+| CUDA 13 | `orbitkv-llm` | `orbitkv` |
 
-Install only one distribution per environment. Version 0.1.0 is being prepared
+CUDA 13 is the only release runtime; NVIDIA R580 or newer is required, with
+toolkit-compatible PTX/NVRTC support for runtime kernels. Version 0.1.0 is being prepared
 for release; build the complete wheel using the [quickstart](single-node.md).
 Upgrade native clients and Manager together. The wheel supplies native binaries;
 the host supplies compatible Python, CUDA and selected RDMA libraries, and the

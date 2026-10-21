@@ -294,6 +294,9 @@ for user navigation while retaining OrbitKV's Rust owners and website identity.
   and duplicate reports in [PR #289](https://github.com/OrbitInfra/OrbitKV/pull/289).
   Feature/model recipes, current support limits, links and historical references
   have independent source/CPU review; runtime support is unchanged.
+- [x] Consolidate the release build into one CUDA 13 `orbitkv-llm` distribution
+  and one PyPI Trusted Publishing job. The ten-wheel matrix covers CPython 3.10–3.14
+  on Linux x86_64/aarch64; final candidate qualification and publication remain open.
 - [ ] Build final Manager/engine images and wheels, preserve licenses/provenance,
   and qualify clean installed artifacts on claimed hosts and profiles.
 - [ ] Publish only within release authorization. The 0.1.0 package remains

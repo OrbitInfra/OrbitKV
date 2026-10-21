@@ -83,6 +83,6 @@ need the relevant engine correctness/restart gate. Run `benches/tests` when
 changing benchmark helpers. Put runtime outputs outside the checkout.
 
 Use `scripts/build-wheel.sh` for a complete installed artifact; `maturin develop`
-is a development build. See `docs/releases.md` for CUDA variants, bundled native
+is a development build. See `docs/releases.md` for the CUDA 13 runtime, bundled native
 dependencies and installed-package checks. Freeze native artifacts before GPU
 tests: Cargo can restage shared libraries used by live Managers.
