@@ -144,6 +144,9 @@ not require finishing every fault/topology combination first.
 - [x] Descriptive two-host Manager RDMA and GPU-pointer component measurements;
   they do not establish complete serving superiority.
 - [x] Bounded native observation and offline matched-pair validation implemented.
+- [ ] **Implemented; serving qualification open:** remove vLLM's obsolete
+  one-restore-per-step admission gate. Ready hits share the existing batch and
+  layer completion events; native page budgets and completion ownership remain.
 - [x] Diagnose SGLang 0.5.22 concurrent admission and compare its official
   equal-priority option across four independent process pairs. Shared-prefix
   recovery improves, but mixed-prefix regression guards fail; keep the option

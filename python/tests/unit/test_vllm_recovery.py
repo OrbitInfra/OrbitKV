@@ -292,7 +292,6 @@ def test_unselected_cache_releases_its_leases_without_a_destination_write(hybrid
         "_requests",
         "_pending_query_probes",
         "_pending_load_intents",
-        "_restores_awaiting_compute",
         "_pending_saves",
         "_held_requests",
         "_pinned_boundary_jobs",
