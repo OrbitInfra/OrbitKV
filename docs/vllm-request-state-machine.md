@@ -1,6 +1,6 @@
 # vLLM request and cache lifetimes
 
-This describes the vLLM 0.30.0 adapter and the current Cache Manager protocol.
+This describes the vLLM 0.31.0 V1 adapter and the current Cache Manager protocol.
 The engine owns request scheduling and GPU block allocation. OrbitKV owns
 external preparation, ready leases and copy completion; those lifetimes do not
 end just because a request is cancelled or a scheduler lookup is repeated.
@@ -9,39 +9,38 @@ The relevant code is the
 [adapter scheduler](../python/orbitkv/vllm/scheduler.py),
 [worker](../python/orbitkv/vllm/worker.py),
 [Rust manager client](../crates/orbitkv-channel/src/cache_client.rs) and
-[vLLM V1 scheduler](https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/v1/core/sched/scheduler.py).
+[vLLM V1 scheduler](https://github.com/vllm-project/vllm/blob/db9527a46873454610df6dbedf79a36d6bf1a7f6/vllm/v1/core/sched/scheduler.py).
 
 ## Scheduler admission
 
 vLLM first checks its own HBM prefix cache, then calls
 `get_num_new_matched_tokens(request, num_computed_tokens)`. An unresolved query
-returns `(None, False)` so the request can be retried. A ready query supplies
-the externally restorable token count and whether the load is asynchronous.
+returns `(None, False)` so the request can be retried. A ready query returns
+`(hit_tokens, False)`: restoration belongs to the same forward that consumes it.
 
 Only after `allocate_slots()` succeeds does vLLM call
 `update_state_after_alloc()`. The adapter checks that the proposed load matches
 the query's hash slice and leases, then creates a load intent with the allocated
-GPU destinations. For hybrid layouts, the legal restore boundary also depends
-on matching attention, window and recurrent state; see [state identity](state-identity.md).
+GPU destinations. The selected release profile requires one attention cache
+group; complete hybrid recovery remains open in [the completion plan](completion-plan.md).
 
 ```mermaid
 stateDiagram-v2
     [*] --> Waiting
     Waiting --> Waiting: query pending or allocation deferred
-    Waiting --> Restoring: external hit and GPU allocation succeed
+    Waiting --> Running: external hit and GPU allocation succeed
     Waiting --> Running: compute locally or use HBM
-    Restoring --> Waiting: completion reported and promoted
     Running --> Running: next prefill or decode step
     Running --> Waiting: preemption and later lookup
     Waiting --> Finished: cancellation
-    Restoring --> Finished: cancellation with delayed GPU release
     Running --> Finished: completion or cancellation
 ```
 
-`Restoring` represents vLLM's `WAITING_FOR_REMOTE_KVS`. vLLM uses this state for
-asynchronous external loads even when OrbitKV supplies bytes from same-host
-DRAM or SSD. It does not imply a cross-machine transfer. The diagram omits
-structured-output and streaming-input wait states.
+`Running` is a scheduler state, not proof that the GPU copy has finished. Layer
+events order the consuming forward after its restored bytes. Ordinary OrbitKV
+loads do not use `WAITING_FOR_REMOTE_KVS` or a later `finished_recving` promotion;
+native P/D is a separate loader. The diagram omits structured-output and
+streaming-input wait states.
 
 ## Query ownership and revisions
 
@@ -76,29 +75,27 @@ resources. Identical backing reads may share preparation, but separate engine
 GPU destinations still require their own restores. See
 [query budgets and demand planning](state-planning.md).
 
-## Restore completion is not compute admission
+## Batched restoration and compute admission
 
-After allocation, worker metadata carries the load intent. The worker starts a
-bounded restore through the manager and retains GPU destinations until completion
-is established. It reports completed requests through `finished_recving`; vLLM
-records them and promotes them on a later scheduler visit.
+After allocation, vLLM adds the request and its positive compute token count to
+the current step. Requests with no external suffix can join immediately. While
+load intents are pending, external lookup can also admit a native prefix hit
+with exactly one remaining block. Larger external suffixes and independent
+prefixes keep preparing but wait for metadata handoff. If a later allocation
+fails, vLLM stops admission without removing requests already scheduled; their restores still run.
+The unallocated request retains its query lease for a later lookup or cancellation.
 
-Promotion can be blocked by a different request at the front of the deferred
-queue. The [sustained workload](https://github.com/feichai0017/orbitkv/blob/251f463d8997eff783871ab2820da83a13a97196/docs/sustained-performance.md) reproduced a cold
-request needing 128 GPU blocks when only 127 were free, while a completed
-restore behind it held another 128. The scheduler stopped at the allocation
-failure before reaching the completed restore.
+Worker metadata carries every admitted load intent. One native restore batches
+these requests; per-layer CUDA events fence reads, including shared HBM pages
+used by another request in the same forward. The worker waits for full native
+restore completion before returning transfer completion. A native prefix match
+does not itself prove those pages have finished restoring. Metadata handoff
+clears the scheduler's load-intent dictionary; that is not physical completion.
 
-OrbitKV now records an admitted restore in `_restores_awaiting_compute`.
-Other lookups, including ready misses and prompts already covered by HBM,
-return `None` while this set is nonempty. Queries may continue bounded
-preparation. `build_connector_meta()` removes the request when its first
-positive compute allocation appears in `num_scheduled_tokens`.
-
-`finished_recving` alone does not open this gate. Request finish/cancellation
-removes the admission hold, while any save or copy ownership continues until
-its own safe completion. This conservative admission rule can reduce restore
-parallelism; a replacement needs a scheduler-progress proof and workload data.
+The [historical async-restore deadlock and admission gate](https://github.com/feichai0017/orbitkv/blob/a9befeec596bb9064d25d34f93d07fe59077809d/docs/vllm-request-state-machine.md#restore-completion-is-not-compute-admission)
+describe the earlier waiting/promotion path. The current adapter retains paced
+admission for independent prefixes while allowing single-block tails to batch;
+it no longer maintains a separate `_restores_awaiting_compute` set.
 
 ## Publish, preemption and cancellation
 
@@ -113,9 +110,11 @@ that depends on an old allocation before the engine can overwrite it. Async
 saves can delay block freeing through vLLM's `finished_sending` contract.
 
 Cancellation withdraws pending query interest and releases unconsumed ready
-leases. It cannot cancel submitted DMA by forgetting a handle. vLLM can delay
-freeing a cancelled restoring request until `finished_recving`; OrbitKV retains
-its corresponding source and destination holds until completion is known.
+leases. It cannot cancel submitted DMA by forgetting a handle. vLLM tracks
+scheduled work before freeing cancelled requests; the worker's full native
+restore wait precedes its model-runner result. Unknown completion retains the
+corresponding owners and fails the affected engine. Complete physical fault
+reclamation remains unqualified.
 
 ## Failure boundaries and remaining work
 

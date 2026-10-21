@@ -144,6 +144,12 @@ not require finishing every fault/topology combination first.
 - [x] Descriptive two-host Manager RDMA and GPU-pointer component measurements;
   they do not establish complete serving superiority.
 - [x] Bounded native observation and offline matched-pair validation implemented.
+- [x] Implement vLLM single-block external-tail batching after native prefix
+  matches, using existing load intents. Independent larger restores remain
+  paced; page budgets, query leases and layer completion ownership are retained.
+  Installed Qwen3-8B normal model/restart correctness is independently accepted.
+  [PR #298](https://github.com/feichai0017/orbitkv/pull/298) records the separate
+  serving comparison; promotion requires its declared benefit/regression guards.
 - [x] Diagnose SGLang 0.5.22 concurrent admission and compare its official
   equal-priority option across four independent process pairs. Shared-prefix
   recovery improves, but mixed-prefix regression guards fail; keep the option

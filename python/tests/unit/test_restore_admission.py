@@ -1,4 +1,4 @@
-"""A deferred lookup cannot strand a restore behind an allocation failure."""
+"""Shared-prefix tail restores batch without changing independent-prefix admission."""
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -9,7 +9,7 @@ from tests.support.unit_stubs import install_connector_unit_stubs
 
 install_connector_unit_stubs()
 
-from orbitkv import BlockHashes, QueryReady  # noqa: E402
+from orbitkv import BlockHashes, QueryLoading, QueryReady  # noqa: E402
 from orbitkv.vllm.config import ConnectorContext  # noqa: E402
 from orbitkv.vllm.scheduler import SchedulerAdapter  # noqa: E402
 
@@ -55,7 +55,6 @@ def test_enqueue_warms_only_legal_missing_prefix_without_creating_a_load(monkeyp
     client.query_prefetch.assert_not_called()
     assert not scheduler._pending_load_intents
     assert not scheduler._pending_query_probes
-    assert not scheduler._restores_awaiting_compute
     assert scheduler.request_finished(req, ()) == (False, None)
     client.cancel_query.assert_called_once_with("warm", "queued")
     assert not scheduler._queued_at
@@ -122,15 +121,14 @@ def test_owned_prefix_preparation_keeps_ordinary_lookup_and_page_lifetime(monkey
     scheduler.shutdown()
 
 
-def step(tokens=0):
+def step(*requests):
     return SimpleNamespace(
         scheduled_new_reqs=[
-            SimpleNamespace(req_id="restore", block_ids=([1, 2],), num_computed_tokens=31)
-        ]
-        if tokens
-        else [],
+            SimpleNamespace(req_id=rid, block_ids=(blocks,), num_computed_tokens=computed)
+            for rid, blocks, computed, _ in requests
+        ],
         scheduled_cached_reqs=SimpleNamespace(req_ids=[]),
-        num_scheduled_tokens={"restore": tokens} if tokens else {},
+        num_scheduled_tokens={rid: tokens for rid, _, _, tokens in requests},
         preempted_req_ids=set(),
     )
 
@@ -157,40 +155,91 @@ def restoring():
         get_block_ids=lambda: ([1, 2],),
     )
     scheduler.update_state_after_alloc(restoring, blocks, 31)
-    assert "restore" in scheduler.build_connector_meta(step()).load_intents
     yield scheduler, restoring
     scheduler.shutdown()
 
 
-@pytest.mark.parametrize("kind", ["hit", "miss", "short"])
-def test_lookup_waits_for_compute_but_prefetch_can_complete(restoring, kind):
+@pytest.mark.parametrize(
+    "tokens,computed,hits,expected",
+    [
+        pytest.param(32, 0, 2, None, id="independent-hit"),
+        pytest.param(32, 0, 0, None, id="independent-miss"),
+        pytest.param(48, 16, 2, None, id="multi-block-suffix"),
+        pytest.param(32, 16, 1, 15, id="tail-hit"),
+        pytest.param(32, 16, 0, 0, id="tail-miss"),
+        pytest.param(32, 16, None, None, id="tail-loading"),
+        pytest.param(7, 0, 0, 0, id="short"),
+        pytest.param(33, 32, 0, 0, id="hbm"),
+    ],
+)
+def test_restore_admission_batches_only_native_prefix_tails(
+    restoring, tokens, computed, hits, expected
+):
     scheduler, _ = restoring
-    waiting = request("waiting", 7 if kind == "short" else 32)
-    ready = QueryReady(2, b"next") if kind == "hit" else QueryReady(0, b"")
-    scheduler._ctx.client.query_prefetch.return_value = ready
-
-    assert scheduler.get_num_new_matched_tokens(waiting, 0) == (None, False)
-    calls = scheduler._ctx.client.query_prefetch.call_count
-    assert calls == (1 if kind == "short" else 2)
-
-    scheduler.update_connector_output(
-        SimpleNamespace(finished_sending=set(), finished_recving={"restore"})
+    waiting = request("waiting", tokens)
+    waiting.block_hashes[: computed // 16] = request("restore").block_hashes[: computed // 16]
+    scheduler._ctx.client.query_prefetch.return_value = (
+        QueryLoading() if hits is None else QueryReady(hits, b"next" if hits else b"")
     )
-    scheduler.build_connector_meta(step())
-    assert scheduler.get_num_new_matched_tokens(waiting, 0) == (None, False)
-    assert scheduler._ctx.client.query_prefetch.call_count == calls
+    assert scheduler.get_num_new_matched_tokens(waiting, computed) == (expected, False)
 
-    scheduler.build_connector_meta(step(tokens=1))
-    expected = (31, False) if kind == "hit" else (0, False)
-    assert scheduler.get_num_new_matched_tokens(waiting, 0) == expected
-    assert scheduler._ctx.client.query_prefetch.call_count == calls
+    scheduled = [("restore", [1, 2], 31, 1)]
+    if expected is not None:
+        blocks = [1, 2, 3] if computed == 32 else [1, 3] if computed == 16 else [3]
+        scheduler.update_state_after_alloc(
+            waiting, SimpleNamespace(get_block_ids=lambda: (blocks,)), expected
+        )
+        scheduled.append(("waiting", blocks, computed + expected, 1))
+    metadata = scheduler.build_connector_meta(step(*scheduled))
+    assert set(metadata.load_intents) == ({"restore", "waiting"} if expected else {"restore"})
+    assert metadata.load_intents["restore"].leases == (b"hold",)
+    assert metadata.load_intents["restore"].block_ids_by_group == ((1, 2),)
+    if expected:
+        assert metadata.load_intents["waiting"].leases == (b"next",)
+        assert metadata.load_intents["waiting"].block_ids_by_group == ((3,),)
+    assert not scheduler._pending_load_intents
+    if expected is None and hits is not None:
+        calls = scheduler._ctx.client.query_prefetch.call_count
+        assert scheduler.get_num_new_matched_tokens(waiting, computed) == (
+            min(hits * 16, tokens - computed - 1),
+            False,
+        )
+        assert scheduler._ctx.client.query_prefetch.call_count == calls
+
+
+def test_allocation_failure_keeps_only_the_unallocated_query_for_the_next_step(restoring):
+    scheduler, _ = restoring
+    waiting = request("waiting")
+    waiting.block_hashes[0] = request("restore").block_hashes[0]
+    client = scheduler._ctx.client
+    client.query_prefetch.return_value = QueryReady(1, b"next")
+    assert scheduler.get_num_new_matched_tokens(waiting, 16) == (15, False)
+
+    # A failed allocation has no update_state_after_alloc callback. The earlier
+    # synchronous restore is already scheduled and must still reach the worker.
+    metadata = scheduler.build_connector_meta(step(("restore", [1, 2], 31, 1)))
+    assert set(metadata.load_intents) == {"restore"}
+    assert scheduler._pending_query_probes["waiting"].leases == (b"next",)
+    client.release.assert_not_called()
+
+    assert scheduler.get_num_new_matched_tokens(waiting, 16) == (15, False)
+    assert client.query_prefetch.call_count == 2
+    scheduler.update_state_after_alloc(
+        waiting, SimpleNamespace(get_block_ids=lambda: ([1, 3],)), 15
+    )
+    metadata = scheduler.build_connector_meta(step(("waiting", [1, 3], 31, 1)))
+    assert set(metadata.load_intents) == {"waiting"}
+    assert not scheduler._pending_query_probes
 
 
 @pytest.mark.parametrize("pending_save", [False, True])
-def test_aborted_restore_unblocks_admission_without_releasing_save_hold(restoring, pending_save):
+def test_request_finish_preserves_the_submitted_restore_and_pending_save(restoring, pending_save):
     scheduler, restored = restoring
+    metadata = scheduler.build_connector_meta(step(("restore", [1, 2], 31, 1)))
     if pending_save:
         scheduler._pending_saves.add(restored.request_id)
     assert scheduler.request_finished(restored, ([1, 2],)) == (pending_save, None)
     assert scheduler.get_num_new_matched_tokens(request("short", 7), 0) == (0, False)
+    assert metadata.load_intents["restore"].leases == (b"hold",)
+    scheduler._ctx.client.release.assert_not_called()
     assert (restored.request_id in scheduler._held_requests) == pending_save

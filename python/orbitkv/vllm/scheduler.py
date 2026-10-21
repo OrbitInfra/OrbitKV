@@ -159,7 +159,6 @@ class SchedulerAdapter:
 
         # Load state
         self._pending_load_intents: dict[str, LoadIntent] = {}
-        self._restores_awaiting_compute: set[str] = set()
         self._prefetch_start_times: dict[str, float] = {}
         self._pending_query_probes: dict[str, _QueryProbe] = {}
 
@@ -328,7 +327,7 @@ class SchedulerAdapter:
                 client.cancel_query(self._ctx.instance_id, req_id)
             self._release_pending_query_probe(req_id)
             self._external_matched_blocks[req_id] = computed_blocks
-            return (None if self._restores_awaiting_compute else 0, False)
+            return (0, False)
 
         probe = self._pending_query_probes.get(req_id)
 
@@ -372,11 +371,10 @@ class SchedulerAdapter:
         lookup_us: float | None,
         reused: bool,
     ) -> tuple[int | None, bool]:
-        # vLLM stops traversing deferred requests when allocation fails. A
-        # newly ready lookup (even a miss) can otherwise block the completed
-        # restore behind it, whose GPU pages prevent that allocation. Keep
-        # prefetching, but admit another lookup only after the restore runs.
-        if self._restores_awaiting_compute:
+        # Pace independent prefixes while batching the final block of native hits.
+        if self._pending_load_intents and (
+            probe.computed_blocks == 0 or len(probe.query_hashes) != 1
+        ):
             return (None, False)
 
         # `_finish_cache_lookup` may release the probe, so snapshot what the
@@ -586,7 +584,6 @@ class SchedulerAdapter:
             self._pending_load_intents[req_id] = load_intent
             if load_intent.control_id:
                 self._query_controls[load_intent.control_id] = set()
-            self._restores_awaiting_compute.add(req_id)
             self._pending_query_probes.pop(req_id, None)
             logger.debug(
                 "[OrbitKVConnector] req=%s alloc: total_blocks=%d computed_blocks=%d "
@@ -610,10 +607,6 @@ class SchedulerAdapter:
                     engine="vllm",
                     elapsed_us=int((time.monotonic() - queued) * 1e6),
                 )
-        self._restores_awaiting_compute.difference_update(
-            req_id for req_id, tokens in scheduler_output.num_scheduled_tokens.items() if tokens > 0
-        )
-
         load_intents = self._pending_load_intents
         self._pending_load_intents = {}
 
@@ -1026,7 +1019,6 @@ class SchedulerAdapter:
         block_ids: tuple[list[int], ...],
     ) -> tuple[bool, dict | None]:
         req_id = request.request_id
-        self._restores_awaiting_compute.discard(req_id)
 
         # Check if there are pending saves for this request
         if req_id in self._pending_saves:
@@ -1258,7 +1250,6 @@ class SchedulerAdapter:
             self._requests
             or self._pending_query_probes
             or self._pending_load_intents
-            or self._restores_awaiting_compute
             or self._pending_saves
             or self._held_requests
             or self._pinned_boundary_jobs
