@@ -61,7 +61,7 @@ are part of each gate, not provided by pytest collection.
 | vLLM adapter/save/load/recovery | Official vLLM 0.31.0: `python -m pytest -m e2e tests/e2e/test_vllm_e2e_correctness.py --model /path/to/model --max-model-len 4096` |
 | SGLang linker/layout/plugin | Official SGLang 0.5.22: `python -m pytest -m e2e tests/e2e/test_sglang_direct_e2e.py --model /path/to/model` |
 | Shared-cache adapter or peer ownership | `pytest -m e2e tests/e2e/test_shared_cache.py -k vllm --model /path/to/model`; repeat with `-k sglang` in its environment |
-| Warm-hit concurrency | `pytest -m stress tests/stress/test_vllm_warm_hit_stress.py --model /path/to/model` |
+| Fixed-capacity vLLM preemption/cancel/reuse | `pytest -m stress tests/stress/test_vllm_warm_hit_stress.py --model /path/to/model` |
 | Native P/D composition | `tests/e2e/test_vllm_native_pd_e2e.py` or `test_sglang_pd_e2e.py`, with `-m e2e` and the [native P/D runtime](../../docs/pd.md) |
 
 The shared-cache serving gate uses two replicas/two Managers on one host over
