@@ -267,6 +267,7 @@ jobs:
           cargo check -p orbitkv-core
           cargo check -p orbitkv-core --features orbitte
           cargo check -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbitte
+          cargo check -p orbitkv-server --all-targets --no-default-features --features cuda-13
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib peer::orbitte::tests
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib peer::completion::tests
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib peer::completion::tests::unquiesced_transfer_retains_source_ticket_and_actual_buffer_owner -- --exact --ignored

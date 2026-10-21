@@ -12,9 +12,8 @@ workspace = true
 test-hooks = []
 default = ["cuda-13", "mooncake"]
 cuda-13 = ["cudarc/cuda-13000", "cudarc/nvrtc", "orbitkv-transfer?/cuda-13"]
-peer = []
-mooncake = ["peer", "dep:orbitkv-transfer"]
-orbitte = ["peer", "dep:orbit-te"]
+mooncake = ["dep:orbitkv-transfer"]
+orbitte = ["dep:orbit-te"]
 tracing = ["fastrace"]
 
 [dependencies]

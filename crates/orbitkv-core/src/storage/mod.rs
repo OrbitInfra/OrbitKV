@@ -17,7 +17,7 @@ use crate::memory::AllocationFootprintFn;
 use crate::memory::numa::NumaNode;
 use crate::memory::pool::{PinnedAllocation, PinnedAllocator};
 use crate::metrics::core_metrics;
-#[cfg(feature = "peer")]
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 use crate::peer::{provider::PeerTransport, read::PeerReader};
 use orbitkv_catalog::GlobalIndex;
 
@@ -45,7 +45,7 @@ pub(crate) struct Storage {
     pub(crate) reads: ReadCoordinator,
     pub(crate) writes: PublishQueue,
     pub(crate) ssd_store: Option<Arc<SsdStore>>,
-    #[cfg(feature = "peer")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     peer_transport: Option<Arc<PeerTransport>>,
     blockwise_alloc: bool,
     pub(crate) global_index: Option<Arc<GlobalIndex>>,
@@ -72,7 +72,7 @@ impl Storage {
         let value_size_hint = config.hint_value_size_bytes.filter(|size| *size > 0);
         let unit_hint = value_size_hint.and_then(|size| NonZeroU64::new(size as u64));
         let ssd_cache_config = config.ssd_cache_config;
-        #[cfg(feature = "peer")]
+        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
         let mooncake_nic_names = config.mooncake_nic_names;
         let blockwise_alloc = config.blockwise_alloc || ssd_cache_config.is_some();
         let transfer_lock_timeout = config.transfer_lock_timeout;
@@ -137,7 +137,7 @@ impl Storage {
 
         // Mooncake must be created after the allocator so it can register the
         // pinned pool. An empty rail filter lets Mooncake choose TCP fallback.
-        #[cfg(feature = "peer")]
+        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
         let peer_transport = if global_index.is_some() {
             let advertise = &config
                 .membership
@@ -158,7 +158,7 @@ impl Storage {
             None
         };
 
-        #[cfg(not(feature = "peer"))]
+        #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
         if global_index.is_some() {
             log::warn!(
                 "Catalog was configured, but this binary was built without the `mooncake` feature; remote transfer is disabled"
@@ -194,7 +194,7 @@ impl Storage {
             })
             .transpose()?;
         let engine = Arc::new({
-            #[cfg(feature = "peer")]
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
             let remote_fetch = peer_transport.as_ref().and_then(|transfer| {
                 let ms = global_index.as_ref()?;
                 Some(Arc::new(PeerReader::new(
@@ -211,16 +211,16 @@ impl Storage {
             let reads = ReadCoordinator::new(
                 dram.clone(),
                 ssd_store.clone(),
-                #[cfg(feature = "peer")]
+                #[cfg(any(feature = "mooncake", feature = "orbitte"))]
                 remote_fetch,
                 config.codec_budget,
             );
 
-            #[cfg(feature = "peer")]
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
             let endpoint = peer_transport
                 .as_ref()
                 .map(|transport| transport.transfer_endpoint().to_owned());
-            #[cfg(not(feature = "peer"))]
+            #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
             let endpoint = None;
             let exports = crate::peer::export::PeerExports::new(
                 dram.clone(),
@@ -242,7 +242,7 @@ impl Storage {
                 writes: PublishQueue::spawn(dram.clone(), ssd_store.clone())
                     .map_err(|error| error.to_string())?,
                 ssd_store,
-                #[cfg(feature = "peer")]
+                #[cfg(any(feature = "mooncake", feature = "orbitte"))]
                 peer_transport,
                 blockwise_alloc,
                 global_index,
@@ -460,19 +460,19 @@ impl Storage {
         (freed_blocks, freed_bytes, largest_free)
     }
 
-    #[cfg(feature = "peer")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     pub(crate) fn peer_transport(&self) -> Option<&Arc<PeerTransport>> {
         self.peer_transport.as_ref()
     }
 
-    #[cfg(feature = "peer")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     pub(crate) fn transfer_endpoint(&self) -> Option<&str> {
         self.peer_transport
             .as_ref()
             .map(|transport| transport.transfer_endpoint())
     }
 
-    #[cfg(feature = "peer")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     pub(crate) fn transfer_source_epoch(&self) -> Option<&str> {
         self.peer_transport
             .as_ref()

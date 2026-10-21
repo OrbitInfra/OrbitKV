@@ -624,33 +624,33 @@ impl OrbitKVEngine {
     }
 
     /// Returns true if the peer transfer engine is available.
-    #[cfg(feature = "peer")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     pub fn has_remote_transport(&self) -> bool {
         self.storage.peer_transport().is_some()
     }
 
     /// Returns true if the peer transfer engine is available.
-    #[cfg(not(feature = "peer"))]
+    #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
     pub fn has_remote_transport(&self) -> bool {
         false
     }
 
-    #[cfg(feature = "peer")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     pub fn transfer_endpoint(&self) -> Option<&str> {
         self.storage.transfer_endpoint()
     }
 
-    #[cfg(not(feature = "peer"))]
+    #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
     pub fn transfer_endpoint(&self) -> Option<&str> {
         None
     }
 
-    #[cfg(feature = "peer")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     pub fn transfer_source_epoch(&self) -> Option<&str> {
         self.storage.transfer_source_epoch()
     }
 
-    #[cfg(not(feature = "peer"))]
+    #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
     pub fn transfer_source_epoch(&self) -> Option<&str> {
         None
     }

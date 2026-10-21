@@ -958,8 +958,17 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
     cluster_a.shutdown().await;
     _target_server.shutdown().await;
     _source_server.shutdown().await;
-    assert!(engine_b.unregister_all_instances().is_empty());
-    assert!(engine_a.unregister_all_instances().is_empty());
+    engine_b
+        .unregister_instance_and_wait("inst-b")
+        .await
+        .unwrap();
+    engine_a
+        .unregister_instance_and_wait("inst-a")
+        .await
+        .unwrap();
+    assert!(engine_b.list_instance_ids().is_empty());
+    assert!(engine_a.list_instance_ids().is_empty());
+    _observer.shutdown().await;
     if backend == PeerTransferBackend::OrbitTeTcp {
         let artifact_root = std::env::var_os("ORBITKV_METADATA_ARTIFACT_DIR")
             .expect("explicit external peer evidence directory");

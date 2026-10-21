@@ -507,7 +507,7 @@ async fn host_routes_preserve_source_priority_permissions_and_complete_coverage(
                 assert!(
                     matches!(plan.target, ReadTarget::HostReady) == (mode == QueryMode::Prepare)
                 );
-                #[cfg(feature = "peer")]
+                #[cfg(any(feature = "mooncake", feature = "orbitte"))]
                 plan.rows[0].set_peers(vec![orbitkv_state::ReplicaLocation {
                     owner: orbitkv_state::CacheOwner {
                         endpoint: "source".into(),
@@ -521,12 +521,13 @@ async fn host_routes_preserve_source_priority_permissions_and_complete_coverage(
                     },
                 }]);
                 let route = plan.host_route(peer_available, allow_ssd, 0);
-                let expected_peer = cfg!(feature = "peer") && peer_available;
+                let expected_peer =
+                    cfg!(any(feature = "mooncake", feature = "orbitte")) && peer_available;
                 if mode == QueryMode::WaitForFullPrefix {
                     assert!(route.is_none(), "neither source covers the complete demand");
                 } else {
                     match route {
-                        #[cfg(feature = "peer")]
+                        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
                         Some(HostReadRoute::Peer(peer)) => {
                             assert!(expected_peer);
                             assert_eq!(peer.block_count(), 1);
@@ -553,7 +554,7 @@ async fn host_routes_preserve_source_priority_permissions_and_complete_coverage(
     }
 }
 
-#[cfg(feature = "peer")]
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 #[tokio::test]
 async fn peer_ssd_route_is_explicit_and_follows_local_ssd_priority() {
     use crate::QueryMode;
@@ -617,7 +618,7 @@ async fn peer_ssd_route_is_explicit_and_follows_local_ssd_priority() {
     assert_eq!(queued.len(), 0, "planning cannot stage either source");
 }
 
-#[cfg(feature = "peer")]
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 #[tokio::test]
 async fn cross_medium_selection_is_explicit_and_preserves_equal_coverage() {
     const CHILD: &str = "ORBITKV_TEST_CROSS_MEDIUM_ROUTE_CHILD";
@@ -949,7 +950,7 @@ async fn batched_host_reads_hold_selected_generations_and_reject_foreign_stores(
     );
 }
 
-#[cfg(feature = "peer")]
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 #[tokio::test]
 async fn peer_rejection_updates_request_evidence_without_discarding_ssd_versions() {
     use crate::QueryMode;

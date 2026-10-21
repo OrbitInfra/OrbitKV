@@ -1,5 +1,5 @@
 pub(crate) mod discover;
-#[cfg(feature = "peer")]
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 pub(crate) mod peer;
 pub(crate) mod read;
 pub(crate) mod replica;

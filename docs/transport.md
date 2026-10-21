@@ -658,8 +658,8 @@ The default remains `mooncake`. Build the standalone Rust payload path with:
 cargo build --locked -p orbitkv-server --no-default-features --features cuda-13,orbitte
 ```
 
-The common `peer` feature owns discovery, planning, authorization and completion;
-`mooncake` and `orbitte` provide payload transports. The standalone profile does
+Shared discovery, planning, authorization and completion compile when either
+`mooncake` or `orbitte` selects a payload transport. The standalone profile does
 not compile or load Mooncake. It still needs OrbitKV's ordinary CUDA/Python
 prerequisites; this is an experimental source profile, not an installed wheel
 or serving qualification. Select one provider across the tested cluster.
