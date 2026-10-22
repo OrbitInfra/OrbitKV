@@ -3,6 +3,25 @@ use std::time::Duration;
 
 use crate::SsdCacheConfig;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PeerTransferBackend {
+    #[default]
+    Mooncake,
+    OrbitTeTcp,
+}
+
+impl std::str::FromStr for PeerTransferBackend {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "mooncake" => Ok(Self::Mooncake),
+            "orbitte-tcp" => Ok(Self::OrbitTeTcp),
+            _ => Err("peer transfer backend must be mooncake or orbitte-tcp".into()),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct EngineConfig {
     /// Query-owned bytes across preparation, ready leases, and GPU loads.
@@ -25,6 +44,8 @@ pub struct EngineConfig {
     /// Optional Mooncake RDMA rail filter. Empty means that Mooncake selects
     /// the available transport, including TCP fallback.
     pub mooncake_nic_names: Vec<String>,
+    /// Explicit peer payload provider. OrbitTE TCP is an experimental profile.
+    pub peer_transfer_backend: PeerTransferBackend,
     /// Enable NUMA-aware memory allocation.
     pub enable_numa_affinity: bool,
     /// Allocate each block separately instead of contiguous batch allocation.
@@ -55,6 +76,7 @@ impl Default for EngineConfig {
             codec: crate::StorageCodec::None,
             codec_budget: 64 * 1024 * 1024,
             mooncake_nic_names: Vec::new(),
+            peer_transfer_backend: PeerTransferBackend::default(),
             enable_numa_affinity: true,
             blockwise_alloc: false,
             transfer_lock_timeout: Duration::from_secs(120),

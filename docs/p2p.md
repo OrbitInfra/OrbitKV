@@ -238,3 +238,13 @@ ORBITKV_CACHE_MANAGER_BINARY=/path/to/orbitkv-cache-manager \
 PYTHONPATH=. ../.venv/vllm-release/bin/python -m pytest -m integration \
   tests/integration/test_distributed_cache.py
 ```
+
+## OrbitTE TCP development profile
+
+The experimental `orbitte` build and explicit `--peer-transfer-backend orbitte-tcp`
+selection use the same inventory, source grants and generation-scoped release
+RPCs. The [transport profile](transport.md#experimental-orbitte-peer-tcp-profile)
+defines its 64 MiB READ/4,096-region limits and source/GPU gate commands. The
+standalone build excludes Mooncake. Default deployment recipes and published
+artifacts continue to use TENT; the OrbitTE path needs installed-artifact and
+serving qualification before it becomes a supported deployment recipe.

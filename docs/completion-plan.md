@@ -96,8 +96,19 @@ and [adapter contracts](adapters.md).
   unregister, cancellation, wait timeout and dropped batches cannot return its
   slot while OrbitTE still retains accepted work. The source build and explicit
   real-CUDA allocator gate are described in [transport](transport.md#experimental-orbitte-allocation-bridge).
-  Manager adoption, source-grant/mailbox integration, installed serving and
-  independent acceptance remain open; the default transport is still TENT.
+  The TCP peer consumer candidate follows below. Whole-pool registration,
+  transfer-mailbox integration and installed serving remain open; the default
+  transport is still TENT.
+- [x] Experimental OrbitTE TCP peer candidate: explicit provider selection,
+  allocation registrations retained by source tickets, grant-supplied epochs,
+  shared peer planning and gRPC generation completion. Cancellation keeps the
+  blocking owner; a locally unquiesced outcome retains ticket/buffers/admission.
+  See the [profile, limits and gates](transport.md#experimental-orbitte-peer-tcp-profile).
+  Independent source review and reruns passed for the same-host H20/CUDA 12.2
+  source-grant and embedded Manager GPU Save/Restore profile at `5a50d092`.
+  See [OrbitKV #304](https://github.com/OrbitInfra/OrbitKV/pull/304) for the
+  external evidence locations. Installed Manager/serving, CUDA 13 runtime,
+  physical cross-host and RDMA/device-DMA qualification remain open.
 - [ ] Carry allocation/page generations through source grants, destination
   ownership and actual engine page reuse. Session/registration epochs alone
   do not establish this contract.

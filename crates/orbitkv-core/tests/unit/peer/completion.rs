@@ -515,6 +515,7 @@ async fn cancellation_keeps_buffers_and_source_pin_until_blocking_transfer_finis
             .run_with_buffers(buffer, move || {
                 started.send(()).unwrap();
                 finished.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok(0)
             })
             .await
             .unwrap()
@@ -773,8 +774,11 @@ impl crate::peer::execute::SegmentFetcher for PipelineReader {
             .run_with_buffers(buffer, move || {
                 started.notify_one();
                 finished.recv_timeout(Duration::from_secs(10)).unwrap();
+                Ok(0)
             })
             .await
+            .unwrap()
+            .1
             .unwrap();
         Err(())
     }
@@ -909,4 +913,28 @@ async fn pipeline_failure_or_cancellation_releases_ready_and_lost_reply_grants()
             assert!(reader.buffer.lock().as_ref().unwrap().upgrade().is_none());
         }
     }
+}
+
+#[tokio::test]
+#[ignore = "process-isolated peer quarantine gate: execute as an exact filter so retained owners last until exit"]
+async fn unquiesced_transfer_retains_source_ticket_and_actual_buffer_owner() {
+    let fixture = Fixture::new().await;
+    let budget = TransferCompletions::default();
+    let (guard, _) = budget
+        .authorize(&fixture.segment(), Uuid::new_v4())
+        .await
+        .unwrap();
+    let buffer = Arc::new(vec![0x5au8; 4096]);
+    let observed = Arc::downgrade(&buffer);
+    let (returned, result) = guard
+        .run_with_buffers(buffer, || Err(PeerTransferError::Unquiesced))
+        .await
+        .unwrap();
+    assert!(returned.is_none());
+    assert!(matches!(result, Err(PeerTransferError::Unquiesced)));
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert!(observed.upgrade().is_some());
+    assert_eq!(fixture.source.releases.load(Ordering::SeqCst), 0);
+    assert_eq!(budget.slots.available_permits(), MAX_COMPLETIONS - 1);
+    assert_eq!(fixture.source.locks.accounting().0, 1);
 }

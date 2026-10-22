@@ -7,9 +7,7 @@ use orbitkv_transfer::{AUTO_MEMORY_LOCATION, MemoryRegistration, P2P_METADATA, T
 
 use crate::memory::pool::PinnedAllocator;
 
-const MAX_REGISTERED_POOLS: usize = 1024;
-const MAX_REGISTERED_BYTES: u64 = 1 << 40;
-static REGISTERED_POOLS: Mutex<(usize, u64)> = Mutex::new((0, 0));
+use super::provider::{MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, REGISTERED_POOLS};
 struct RetainedSource {
     _engine: Arc<TransferEngine>,
     _registrations: Vec<MemoryRegistration>,

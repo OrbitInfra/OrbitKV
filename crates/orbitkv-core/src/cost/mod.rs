@@ -15,10 +15,10 @@ const ALPHA: f64 = 0.2;
 
 static ENABLED: LazyLock<bool> =
     LazyLock::new(|| std::env::var("ORBITKV_COST_OBSERVATIONS").as_deref() == Ok("1"));
-#[cfg(feature = "mooncake")]
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 static SELECTION_ENABLED: LazyLock<bool> =
     LazyLock::new(|| std::env::var("ORBITKV_COST_SELECTION").as_deref() == Ok("1"));
-#[cfg(feature = "mooncake")]
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 static CROSS_MEDIUM_SELECTION_ENABLED: LazyLock<bool> =
     LazyLock::new(|| std::env::var("ORBITKV_CROSS_MEDIUM_SELECTION").as_deref() == Ok("1"));
 
@@ -26,22 +26,22 @@ pub(crate) fn enabled() -> bool {
     *ENABLED
 }
 
-#[cfg(feature = "mooncake")]
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 pub(crate) fn selection_enabled() -> bool {
     *ENABLED && *SELECTION_ENABLED
 }
 
-#[cfg(feature = "mooncake")]
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 pub(crate) fn cross_medium_selection_enabled() -> bool {
     selection_enabled() && *CROSS_MEDIUM_SELECTION_ENABLED
 }
 
-#[cfg(all(test, feature = "mooncake"))]
+#[cfg(all(test, any(feature = "mooncake", feature = "orbitte")))]
 pub(crate) fn observe_for_test(key: CostEstimateKey, seconds: f64, now: std::time::Instant) {
     estimates::ESTIMATES.lock().observe(key, seconds, now);
 }
 
-#[cfg(feature = "mooncake")]
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 mod decision;
 mod estimates;
 mod observation;
@@ -49,7 +49,7 @@ mod resource;
 mod resource_evidence;
 mod shadow;
 
-#[cfg(feature = "mooncake")]
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 pub(crate) use decision::{SelectionScope, select_route, shadow_routes};
 pub(crate) use observation::{Observation, Outcome, record_completion_observation};
 pub(crate) use orbitkv_state::ReplicaRepresentation as Representation;
@@ -112,15 +112,15 @@ pub(crate) enum CostObservationKind {
     SsdCufileRead,
     SsdCufileWrite,
     LocalSsdHostReady,
-    #[cfg(feature = "mooncake")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     RemoteRead,
-    #[cfg(feature = "mooncake")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     RemoteAuthorization,
-    #[cfg(feature = "mooncake")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     RemoteSsdAuthorization,
-    #[cfg(feature = "mooncake")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     PeerDramHostReady,
-    #[cfg(feature = "mooncake")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     PeerSsdHostReady,
     CacheRestore,
     // Caller-to-drain evidence cannot be pooled with Manager-preparation routes.
@@ -130,7 +130,7 @@ pub(crate) enum CostObservationKind {
 }
 
 impl CostObservationKind {
-    #[cfg(feature = "mooncake")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     fn is_decode_ready_route(self) -> bool {
         matches!(self, Self::CacheRestore | Self::PrefillToDecodeHandoff)
     }
@@ -163,11 +163,11 @@ impl CostObservationKind {
             | Self::SsdWriteBatch
             | Self::SsdCufileRead
             | Self::SsdCufileWrite => SampleBoundary::SubmittedToCompletion,
-            #[cfg(feature = "mooncake")]
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
             Self::RemoteRead | Self::RemoteAuthorization | Self::RemoteSsdAuthorization => {
                 SampleBoundary::SubmittedToCompletion
             }
-            #[cfg(feature = "mooncake")]
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
             Self::PeerDramHostReady | Self::PeerSsdHostReady => {
                 SampleBoundary::SubmittedToCompletion
             }
@@ -186,7 +186,7 @@ impl CostObservationKind {
                 Self::SsdUringRestore | Self::SsdCufileRestore,
                 ExecutionResource::SsdRestore { device, .. },
             ) => Some(CompletionTarget::engine_restore(device)),
-            #[cfg(feature = "mooncake")]
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
             (Self::LocalSsdHostReady | Self::PeerDramHostReady | Self::PeerSsdHostReady, _) => {
                 Some(CompletionTarget::host_ready())
             }
@@ -224,15 +224,15 @@ impl CostObservationKind {
             Self::SsdCufileRead => "ssd_cufile_read",
             Self::SsdCufileWrite => "ssd_cufile_write",
             Self::LocalSsdHostReady => "local_ssd_host_ready",
-            #[cfg(feature = "mooncake")]
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
             Self::RemoteRead => "remote_read",
-            #[cfg(feature = "mooncake")]
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
             Self::RemoteAuthorization => "remote_authorization",
-            #[cfg(feature = "mooncake")]
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
             Self::RemoteSsdAuthorization => "remote_ssd_authorization",
-            #[cfg(feature = "mooncake")]
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
             Self::PeerDramHostReady => "peer_dram_host_ready",
-            #[cfg(feature = "mooncake")]
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
             Self::PeerSsdHostReady => "peer_ssd_host_ready",
             Self::CacheRestore => "cache_restore",
             Self::EngineLocalRestore => "engine_local_restore",
@@ -267,7 +267,7 @@ impl CostEstimateKey {
             && self.with_observation_kind(other.kind) == other
     }
 
-    #[cfg(feature = "mooncake")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     fn route_comparable(self, other: Self) -> bool {
         self.completion.is_some()
             && self.completion == other.completion

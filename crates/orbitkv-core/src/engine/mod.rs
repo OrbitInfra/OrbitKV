@@ -623,34 +623,34 @@ impl OrbitKVEngine {
         self.storage.exports.expire()
     }
 
-    /// Returns true if the Mooncake remote transfer engine is available.
-    #[cfg(feature = "mooncake")]
+    /// Returns true if the peer transfer engine is available.
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     pub fn has_remote_transport(&self) -> bool {
-        self.storage.mooncake_transport().is_some()
+        self.storage.peer_transport().is_some()
     }
 
-    /// Returns true if the Mooncake remote transfer engine is available.
-    #[cfg(not(feature = "mooncake"))]
+    /// Returns true if the peer transfer engine is available.
+    #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
     pub fn has_remote_transport(&self) -> bool {
         false
     }
 
-    #[cfg(feature = "mooncake")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     pub fn transfer_endpoint(&self) -> Option<&str> {
         self.storage.transfer_endpoint()
     }
 
-    #[cfg(not(feature = "mooncake"))]
+    #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
     pub fn transfer_endpoint(&self) -> Option<&str> {
         None
     }
 
-    #[cfg(feature = "mooncake")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     pub fn transfer_source_epoch(&self) -> Option<&str> {
         self.storage.transfer_source_epoch()
     }
 
-    #[cfg(not(feature = "mooncake"))]
+    #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
     pub fn transfer_source_epoch(&self) -> Option<&str> {
         None
     }

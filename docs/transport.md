@@ -649,9 +649,82 @@ source/binary/runtime hashes, device identity, resource locks, bytes and cleanup
 in an external artifact directory; do not infer RDMA, GPU DMA or crash recovery
 from this TCP ownership gate.
 
+## Experimental OrbitTE peer TCP profile
+
+An opt-in `orbitte` build can select `--peer-transfer-backend orbitte-tcp`.
+The default remains `mooncake`. Build the standalone Rust payload path with:
+
+```sh
+cargo build --locked -p orbitkv-server --no-default-features --features cuda-13,orbitte
+```
+
+Shared discovery, planning, authorization and completion compile when either
+`mooncake` or `orbitte` selects a payload transport. The standalone profile does
+not compile or load Mooncake. It still needs OrbitKV's ordinary CUDA/Python
+prerequisites; this is an experimental source profile, not an installed wheel
+or serving qualification. Select one provider across the tested cluster.
+
+Manager still authorizes residency and holds generation-scoped gRPC tickets.
+The OrbitTE source registers the actual allocations of each accepted grant and
+keeps those explicit references with its window/slot/generation. Concurrent
+grants share canonical allocation views and registration references. Expiry
+retains the source. A completion for an older generation cannot retire a newer
+grant. In-flight OrbitTE handlers retain the backing even after logical unregister.
+
+The requester opens the `orbitte+tcp://IP:port` endpoint with the epoch returned
+by the source grant and uses it unchanged for READ. A refreshed descriptor cannot
+replace that authority. Provider mismatches fail before payload I/O. A blocking
+READ owner retains source tickets and actual destination allocations after caller
+cancellation. A locally unquiesced outcome quarantines both the ticket and buffers,
+keeping completion admission charged instead of sending a release RPC. Source
+shutdown fences admission even if requester drain fails; failed cleanup retains
+its engine and process pool budget.
+
+This first profile requires a concrete numeric advertised IP, has no RDMA NIC
+filter, and limits one READ to 64 MiB and 16,384 split descriptors (8 MiB each).
+An engine retains at most 4,096 unique allocation regions and at most its pool
+capacity. Providers share the existing process admission of 1,024 pools/1 TiB.
+The planner is not automatically resized for these limits: a source registration
+or READ exceeding them is rejected; a READ budget rejection occurs before payload
+I/O. Use bounded grants for this profile. Whole-pool MR caching, multirail,
+RDMA/device DMA, GDS and broader faults remain open.
+
+Transfer notifications and their generation mailbox remain a separate transfer
+API contract. Manager releases source grants through its existing gRPC completion
+owner. This profile does not turn a notification receipt into a physical drain proof.
+
+CPU CI runs real TCP epoch/restart and protocol controls, the existing ticket
+loss/retry/cancellation controls, and the unquiesced quarantine control in its
+own exact-filter process. Run the GPU gates explicitly with a compatible runtime:
+
+```sh
+cargo test --locked -p orbitkv-core --features orbitte --lib \
+  peer::export::tests::orbitte_grant_registrations_share_backing_and_fence_old_completion_generations \
+  -- --exact --ignored --test-threads=1
+ETCD_BIN=/path/to/etcd ORBITKV_METADATA_ARTIFACT_DIR=/var/tmp/orbitkv-peer-gate \
+  cargo test --locked -p orbitkv-server --features orbitte --lib \
+  cluster::tests::p2p_mooncake::p2p_orbitte_remote_fetch_roundtrip \
+  -- --exact --ignored --test-threads=1
+```
+
+The core gate uses the real pinned allocator, duplicate grants, slot generation
+reuse, eviction and actual TCP bytes. The server gate reuses the maintained
+workload with actual Manager gRPC services, etcd/inventory discovery, source
+budget/replay/fencing controls and GPU Save/Restore byte comparison. It awaits
+both service tasks and records test-owned etcd wait results outside the checkout.
+At implementation `5a50d092c651d28ff3f79f6de661c9da8120b2b3`, both H20
+source gates passed and were independently rerun with a private CUDA 12.2
+runtime. Source checks, protocol/ticket controls, exact artifact hashes, mapped
+libraries, GPU leases and owned native/supervisor/etcd reaping were checked.
+The retained failed first attempt and corrected runs are outside the checkout at
+`/root/orbitte-artifacts/peer-read-20261021/`; see [PR #304](https://github.com/OrbitInfra/OrbitKV/pull/304).
+This is a same-host embedded Manager source pilot. It does not qualify an
+installed Manager, serving, CUDA 13 runtime, physical cross-host Manager traffic,
+RDMA or device DMA.
+
 ## What OrbitKV reuses
 
-`orbitkv-transfer::TransferEngine` is a narrow wrapper over the pinned upstream
+The default `orbitkv-transfer::TransferEngine` is a narrow wrapper over the pinned upstream
 Mooncake TENT C ABI. There is no legacy runtime selector and no OrbitKV-owned verbs
 implementation. Authorized plans are lowered directly to Mooncake Segment
 addresses, BatchTransfer operations, and notifications.

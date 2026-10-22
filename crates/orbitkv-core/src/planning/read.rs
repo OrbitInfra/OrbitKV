@@ -4,15 +4,15 @@ use crate::QueryMode;
 use crate::block::StateKey;
 use crate::storage::ssd::SsdStore;
 
-#[cfg(feature = "mooncake")]
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 use super::peer::{FetchPlan, PeerSource};
 use super::replica::ReplicaSet;
 use super::ssd::SsdReadPlan;
-#[cfg(feature = "mooncake")]
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 use crate::cost::{
     CostEstimateKey, SelectionScope, cross_medium_selection_enabled, select_route, shadow_routes,
 };
-#[cfg(feature = "mooncake")]
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 use smallvec::SmallVec;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -25,14 +25,14 @@ pub(crate) enum ReadTarget {
 /// and transfer grants are acquired by the selected execution owner.
 pub(crate) enum HostReadRoute<'a> {
     Ssd(SsdReadPlan<'a>),
-    #[cfg(feature = "mooncake")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     Peer(FetchPlan<'a>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum HostReadSelection {
     Ssd,
-    #[cfg(feature = "mooncake")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     Peer {
         prefix: usize,
         source: PeerSource,
@@ -45,7 +45,7 @@ pub(crate) struct ReadPlan {
     pub(crate) rows: Vec<ReplicaSet>,
     pub(crate) target: ReadTarget,
     pub(crate) required: usize,
-    #[cfg(feature = "mooncake")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     pub(crate) wait_for_full_prefix: bool,
 }
 
@@ -61,7 +61,7 @@ impl ReadPlan {
         }
         Self {
             rows,
-            #[cfg(feature = "mooncake")]
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
             wait_for_full_prefix: mode == QueryMode::WaitForFullPrefix,
             target: if matches!(mode, QueryMode::Warmup | QueryMode::Prepare) {
                 ReadTarget::HostReady
@@ -82,17 +82,17 @@ impl ReadPlan {
         allow_ssd: bool,
         codec_budget: usize,
     ) -> Option<HostReadRoute<'_>> {
-        #[cfg(feature = "mooncake")]
+        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
         let peer_dram = if peer_available {
             let prefix = FetchPlan::prefix_len(&self.rows, PeerSource::Dram);
             (prefix > 0 && prefix >= self.required).then_some(prefix)
         } else {
             None
         };
-        #[cfg(not(feature = "mooncake"))]
+        #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
         let _ = peer_available;
 
-        #[cfg(feature = "mooncake")]
+        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
         let peer_ssd = if peer_available {
             let prefix = FetchPlan::prefix_len(&self.rows, PeerSource::Ssd);
             (prefix > 0 && prefix >= self.required).then_some(prefix)
@@ -101,7 +101,7 @@ impl ReadPlan {
         };
         let local_ssd = allow_ssd && self.ssd(crate::SsdReadPath::Uring, codec_budget).is_some();
 
-        #[cfg(feature = "mooncake")]
+        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
         let mut selected = peer_dram
             .map(|prefix| HostReadSelection::Peer {
                 prefix,
@@ -114,10 +114,10 @@ impl ReadPlan {
                     source: PeerSource::Ssd,
                 })
             });
-        #[cfg(not(feature = "mooncake"))]
+        #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
         let selected = local_ssd.then_some(HostReadSelection::Ssd);
 
-        #[cfg(feature = "mooncake")]
+        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
         if crate::cost::enabled()
             && let Some(default_selection) = selected
         {
@@ -134,14 +134,14 @@ impl ReadPlan {
             HostReadSelection::Ssd => self
                 .ssd(crate::SsdReadPath::Uring, codec_budget)
                 .map(HostReadRoute::Ssd),
-            #[cfg(feature = "mooncake")]
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
             HostReadSelection::Peer { prefix, source } => Some(HostReadRoute::Peer(
                 FetchPlan::from_prefix(&mut self.rows, prefix, source),
             )),
         }
     }
 
-    #[cfg(feature = "mooncake")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     fn evaluate_host_routes(
         &mut self,
         selected: HostReadSelection,

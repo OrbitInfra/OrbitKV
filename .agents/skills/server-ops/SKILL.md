@@ -65,7 +65,18 @@ Trace an incident through its owner:
 4. Inspect query, source export, SSD staging and GPU admission budgets using
    `docs/metrics.md`. Lease expiry or a deadline cannot establish native drain.
 
-Use native TENT for payloads and OrbitKV source-control RPCs. Do not revive
+Default deployments use native TENT payloads and OrbitKV source-control RPCs.
+An experimental `orbitte` build can explicitly select
+`--peer-transfer-backend orbitte-tcp`; read `docs/transport.md` for its 64 MiB
+READ/4,096-region limits, numeric advertised IP and no-RDMA-filter requirement.
+Its `orbitte+tcp://` endpoints must match the selected provider. Keep the
+source-grant epoch unchanged through metadata refresh and payload READ. Source
+registrations belong to the ticket generation; unquiesced work retains source
+tickets and destination buffers. The Manager uses gRPC completion, separately
+from the transfer notification mailbox. A source/H20 CUDA 12.2 pilot is not
+installed serving or CUDA 13 runtime support. Do not switch default deployments
+or infer RDMA/device-DMA qualification from the TCP candidate.
+Do not revive
 Catalog placement/lookup RPCs or change etcd's transport to fix a payload problem.
 Use test-owned processes for faults; preserve other workloads and collect logs
 outside the repo. Keep same-host TCP, physical two-host TCP and RDMA evidence

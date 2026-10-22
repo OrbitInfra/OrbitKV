@@ -15,6 +15,7 @@ use tonic::Status;
 use tonic::transport::{Channel, Endpoint};
 use uuid::Uuid;
 
+use super::provider::PeerTransferError;
 use crate::metrics::core_metrics;
 use crate::peer::export::TRANSFER_WINDOW_SLOTS;
 use crate::planning::peer::{FetchSegment, PeerSource};
@@ -378,15 +379,24 @@ pub(super) struct TransferLockGuard {
 }
 
 impl TransferLockGuard {
-    pub(super) async fn run_with_buffers<B: Send + 'static, R: Send + 'static>(
+    #[allow(
+        clippy::mem_forget,
+        reason = "an unquiesced backend must retain actual buffers, source ticket and admission"
+    )]
+    pub(super) async fn run_with_buffers<B: Send + 'static>(
         self,
         buffers: B,
-        transfer: impl FnOnce() -> R + Send + 'static,
-    ) -> Result<(B, R), tokio::task::JoinError> {
+        transfer: impl FnOnce() -> Result<usize, PeerTransferError> + Send + 'static,
+    ) -> Result<(Option<B>, Result<usize, PeerTransferError>), tokio::task::JoinError> {
         tokio::task::spawn_blocking(move || {
             let result = transfer();
+            if matches!(result, Err(PeerTransferError::Unquiesced)) {
+                warn!("Retaining source ticket and destination buffers after unquiesced peer READ");
+                std::mem::forget((self, buffers));
+                return (None, result);
+            }
             drop(self);
-            (buffers, result)
+            (Some(buffers), result)
         })
         .await
     }

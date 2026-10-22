@@ -1,4 +1,4 @@
-// Candidate discovery -> requester planning -> source authorization -> Mooncake READ.
+// Candidate discovery -> requester planning -> source authorization -> peer READ.
 
 use std::collections::HashMap;
 use std::ptr::NonNull;
@@ -7,7 +7,6 @@ use std::time::{Duration, Instant};
 
 use log::{info, warn};
 use orbitkv_proto::proto::engine::{QueryBlocksForTransferResponse, TransferBlockInfo};
-use orbitkv_transfer::{TransferOp, TransferSlice};
 
 use crate::memory::numa::NumaNode;
 
@@ -17,7 +16,7 @@ use super::completion::{TransferCompletions, TransferLockGuard};
 use super::execute::{
     AuthorizationError, AuthorizationMode, FetchResult, SegmentFetcher, execute_fetch_plan,
 };
-use super::transport::MooncakeTransport;
+use super::provider::{PeerReadSlice, PeerTransferError, PeerTransport};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
 use crate::cost::{
     CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
@@ -36,21 +35,21 @@ const MIN_TRANSFER_TIMEOUT: Duration = Duration::from_secs(10);
 /// Stop submitting work before the source marks the session overdue.
 const LOCK_TIMEOUT_MARGIN: Duration = Duration::from_secs(60);
 
-/// Upper bound for a single pinned-pool allocation while staging a Mooncake fetch.
+/// Upper bound for a single pinned-pool allocation while staging a Peer fetch.
 /// LRU reclaim must carve a contiguous hole of the requested size, so a
 /// whole-prefix slab can force eviction of far more bytes than the fetch needs.
 const FETCH_CHUNK_BYTES: u64 = 256 * 1024 * 1024;
 
-/// Mooncake remote block fetch backing store.
+/// Peer remote block fetch backing store.
 ///
 /// When all requested blocks are missing locally, queries Catalog for their
 /// location, picks the best remote node, and uses gRPC authorization plus a
-/// Mooncake READ to fetch them.
+/// peer READ to fetch them.
 pub(crate) struct PeerReader {
     global_index: Arc<GlobalIndex>,
     completions: Arc<TransferCompletions>,
     membership: Arc<orbitkv_catalog::MembershipView>,
-    transfer: Arc<MooncakeTransport>,
+    transfer: Arc<PeerTransport>,
     allocate_fn: AllocateFn,
 }
 
@@ -192,7 +191,9 @@ impl SegmentFetcher for PeerReader {
 
         // The guard moves into the blocking transfer with the destination buffers.
         // Cancelling this future cannot release either while the READ is running.
-        if !valid_transfer_authorization(&response, &segment.records) {
+        if !valid_transfer_authorization(&response, &segment.records)
+            || !self.transfer.accepts_endpoint(&response.transfer_endpoint)
+        {
             route_observation.finish(Outcome::Failed, None);
             warn!("Remote query to {remote_addr} returned invalid transfer authorization");
             drop(lock_guard);
@@ -232,7 +233,7 @@ impl SegmentFetcher for PeerReader {
         let remote_addr = &segment.owner.endpoint;
         let namespace = &segment.records[0].key.namespace;
 
-        // Mooncake READ all blocks + build SealedBlocks.
+        // peer READ all blocks + build SealedBlocks.
         let transfer_timeout = transfer_timeout_from_server(response.lock_timeout_secs);
         let blocks = response.blocks;
         let total_bytes: u64 = blocks
@@ -240,7 +241,7 @@ impl SegmentFetcher for PeerReader {
             .flat_map(|b| &b.slots)
             .map(|s| s.k_size + s.v_size)
             .sum();
-        let (result, transfer_timing) = match fetch_blocks_via_mooncake(
+        let (result, transfer_timing) = match fetch_blocks_via_peer(
             &self.transfer,
             &self.allocate_fn,
             namespace,
@@ -257,9 +258,8 @@ impl SegmentFetcher for PeerReader {
             Ok(r) => r,
             Err(e) => {
                 route_observation.finish(Outcome::Failed, None);
-                warn!("Mooncake transfer from {remote_addr} failed: {e}");
+                warn!("peer transfer from {remote_addr} failed: {e}");
                 self.transfer
-                    .engine()
                     .invalidate_segment(&response.transfer_endpoint);
                 core_metrics()
                     .remote_fetch_total
@@ -280,7 +280,7 @@ impl SegmentFetcher for PeerReader {
             0.0
         };
         info!(
-            "Mooncake fetch summary: req_id={req_id} remote={remote_addr} blocks={}/{} slots={} descs={} slabs={} bytes_mib={mb:.1} total_ms={elapsed_ms:.2} tp_mib_s={throughput_mib_s:.0}",
+            "Peer fetch summary: req_id={req_id} remote={remote_addr} blocks={}/{} slots={} descs={} slabs={} bytes_mib={mb:.1} total_ms={elapsed_ms:.2} tp_mib_s={throughput_mib_s:.0}",
             result.len(),
             segment.records.len(),
             transfer_timing.slot_count,
@@ -288,7 +288,7 @@ impl SegmentFetcher for PeerReader {
             transfer_timing.numa_slab_count,
         );
         info!(
-            "Mooncake fetch stages: req_id={req_id} remote={remote_addr} query_ms={:.2} prepared_wait_ms={:.2} build_transfer_tasks_ms={:.2} transfer_wait_ms={:.2} rebuild_ms={:.2}",
+            "Peer fetch stages: req_id={req_id} remote={remote_addr} query_ms={:.2} prepared_wait_ms={:.2} build_transfer_tasks_ms={:.2} transfer_wait_ms={:.2} rebuild_ms={:.2}",
             query_elapsed.as_secs_f64() * 1000.0,
             prepared_wait.as_secs_f64() * 1000.0,
             transfer_timing.build_transfer_tasks.as_secs_f64() * 1000.0,
@@ -301,15 +301,7 @@ impl SegmentFetcher for PeerReader {
         m.remote_fetch_duration_seconds
             .record(elapsed.as_secs_f64(), ok);
         m.remote_fetch_bytes.add(total_bytes, ok);
-        if let Ok(stats) = self.transfer.engine().nic_load_stats() {
-            for stat in stats {
-                let attributes = [KeyValue::new("nic", stat.device_name)];
-                m.tent_nic_inflight_bytes
-                    .record(stat.inflight_bytes, &attributes);
-                m.tent_nic_bandwidth_bytes_per_second
-                    .record(stat.ewma_bandwidth_bps, &attributes);
-            }
-        }
+        self.transfer.record_nic_load();
         for (stage, duration) in [
             ("prepared_wait", prepared_wait),
             ("allocation", transfer_timing.build_transfer_tasks),
@@ -328,12 +320,12 @@ impl SegmentFetcher for PeerReader {
 impl PeerReader {
     pub(crate) fn new(
         global_index: Arc<GlobalIndex>,
-        transfer: Arc<MooncakeTransport>,
+        transfer: Arc<PeerTransport>,
         allocate_fn: AllocateFn,
         membership: Arc<orbitkv_catalog::MembershipView>,
     ) -> Self {
         info!(
-            "Mooncake remote fetch enabled (advertise={})",
+            "Peer remote fetch enabled (advertise={})",
             membership.owner().endpoint
         );
         Self {
@@ -384,7 +376,7 @@ impl PeerReader {
             .remote_fetch_plan_completed_segments
             .record(result.completed_segments as u64, &[]);
         info!(
-            "Mooncake fetch plan: req_id={req_id} attempted_segments={} completed_segments={} status={:?} planned_blocks={} fetched_blocks={} total_ms={:.2}",
+            "Peer fetch plan: req_id={req_id} attempted_segments={} completed_segments={} status={:?} planned_blocks={} fetched_blocks={} total_ms={:.2}",
             result.attempts,
             result.completed_segments,
             result.status,
@@ -396,7 +388,7 @@ impl PeerReader {
     }
 }
 
-/// One fetched slot: its Mooncake-staged segments plus the NUMA node they sit on.
+/// One fetched slot: its peer-staged segments plus the NUMA node they sit on.
 /// The NUMA travels with the slot so a re-served block advertises real topology.
 type StagedSlot = (
     Vec<SegmentAlloc>,
@@ -406,13 +398,13 @@ type StagedSlot = (
 /// A staged block awaiting SealedBlock rebuild: its hash and per-slot allocations.
 type StagedBlock = (Vec<u8>, Vec<StagedSlot>);
 
-/// Allocate local memory, execute one Mooncake READ batch, and rebuild blocks.
+/// Allocate local memory, execute one peer READ batch, and rebuild blocks.
 #[allow(
     clippy::too_many_arguments,
     reason = "the peer incarnation scopes cost evidence"
 )]
-async fn fetch_blocks_via_mooncake(
-    transfer: &Arc<MooncakeTransport>,
+async fn fetch_blocks_via_peer(
+    transfer: &Arc<PeerTransport>,
     allocate_fn: &AllocateFn,
     namespace: &str,
     transfer_endpoint: &str,
@@ -440,9 +432,12 @@ async fn fetch_blocks_via_mooncake(
     let build_start = Instant::now();
 
     let (all_descs, mut timing) = {
-        let mut all_descs: Vec<TransferSlice> = Vec::new();
+        let mut all_descs: Vec<PeerReadSlice> = Vec::new();
 
         for block_info in blocks {
+            if block_info.slots.len() != destination_nodes.len() {
+                return Err("source grant slot count differs from destination topology".into());
+            }
             slot_count += block_info.slots.len();
             let mut slot_allocs = Vec::with_capacity(block_info.slots.len());
 
@@ -457,7 +452,8 @@ async fn fetch_blocks_via_mooncake(
                     if slot.k_ptr == 0 {
                         return Err("remote K ptr is null".to_string());
                     }
-                    all_descs.push(TransferSlice {
+                    all_descs.push(PeerReadSlice {
+                        allocation: Arc::clone(&alloc),
                         local: local_ptr,
                         remote_address: slot.k_ptr,
                         length: len,
@@ -470,11 +466,15 @@ async fn fetch_blocks_via_mooncake(
                 }
 
                 // V segment (split KV)
-                if slot.v_size > 0 && slot.v_ptr != 0 {
+                if slot.v_size > 0 {
+                    if slot.v_ptr == 0 {
+                        return Err("remote V ptr is null".into());
+                    }
                     let len = usize::try_from(slot.v_size)
                         .map_err(|_| format!("V size exceeds usize: {}", slot.v_size))?;
                     let (local_ptr, alloc) = slabs.alloc_segment(numa, len, "V")?;
-                    all_descs.push(TransferSlice {
+                    all_descs.push(PeerReadSlice {
+                        allocation: Arc::clone(&alloc),
                         local: local_ptr,
                         remote_address: slot.v_ptr,
                         length: len,
@@ -553,19 +553,18 @@ async fn fetch_blocks_via_mooncake(
         .run_with_buffers(block_allocs, move || {
             observation.admitted();
             observation.submitted();
-            let result = transfer.engine().submit_and_wait(
-                TransferOp::Read,
+            let result = transfer.read(
                 &transfer_endpoint,
                 &all_descs,
                 transfer_timeout,
-                Some(&native_source_epoch),
+                &native_source_epoch,
             );
             let (outcome, actual_bytes) = match &result {
                 Ok(bytes) if *bytes as u64 == stored_bytes => {
                     (Outcome::Completed, Some(*bytes as u64))
                 }
                 Ok(bytes) => (Outcome::Failed, Some(*bytes as u64)),
-                Err(orbitkv_transfer::TransferError::Timeout) => (Outcome::TimedOut, None),
+                Err(PeerTransferError::Timeout) => (Outcome::TimedOut, None),
                 Err(_) => (Outcome::Failed, None),
             };
             // The blocking owner outlives a cancelled caller. A timeout is only
@@ -574,8 +573,9 @@ async fn fetch_blocks_via_mooncake(
             result
         })
         .await
-        .map_err(|error| format!("Mooncake READ task failed: {error}"))?;
-    transferred.map_err(|error| format!("Mooncake READ failed: {error}"))?;
+        .map_err(|error| format!("peer READ task failed: {error}"))?;
+    transferred.map_err(|error| format!("peer READ failed: {error}"))?;
+    let block_allocs = block_allocs.ok_or("peer READ buffers remain retained")?;
     timing.mooncake_wait = wait_start.elapsed();
 
     // Build SealedBlocks from allocated memory

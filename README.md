@@ -36,8 +36,8 @@ Version 0.1.0 is not yet published; interfaces may change before 1.0.
   GPU eviction or an engine restart while the Manager stays alive.
 - **Share cache capacity:** connect multiple local engines to one Manager or
   fetch compatible peer replicas through Mooncake TENT TCP/RDMA.
-  An [experimental OrbitTE allocation bridge](docs/transport.md#experimental-orbitte-allocation-bridge)
-  preserves pinned slot ownership; Manager adoption remains open.
+  An opt-in [OrbitTE TCP development profile](docs/transport.md#experimental-orbitte-peer-tcp-profile)
+  connects the existing peer grants and pinned owners; installed serving remains unqualified.
 - **Rust ownership:** native cache and transfer owners manage byte budgets,
   reservations and completion; Python connects engine callbacks and layouts.
 - **Local discovery:** bounded inventory streams maintain covered indexes;

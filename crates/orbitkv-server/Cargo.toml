@@ -14,6 +14,7 @@ test-hooks = ["orbitkv-core/test-hooks"]
 default = ["cuda-13", "mooncake"]
 cuda-13 = ["orbitkv-core/cuda-13"]
 mooncake = ["orbitkv-core/mooncake"]
+orbitte = ["orbitkv-core/orbitte"]
 tracing = ["fastrace", "orbitkv-core/tracing"]
 
 [lib]
