@@ -811,10 +811,32 @@ ORBITKV_TEST_ORBITTE_RDMA_GID_INDEX=3 \
   -- --exact --ignored --test-threads=1
 ```
 
-Current supplied H20 nodes have driver 535.161.08 and cannot qualify that CUDA 13
-Manager path. Do not substitute a CUDA 12 runtime. Pinned Manager/GPU, installed
-serving and physical RNIC faults remain unqualified. The host gate and CPU ABI
-teardown controls cannot establish those profiles or complete TENT parity.
+The supplied H20 nodes combine kernel driver 535.161.08 with
+`cuda-compat-13-1` user-mode driver libraries 590.48.01. Kernel driver R535 alone
+does not rule out CUDA 13: NVIDIA's
+[forward-compatibility matrix](https://docs.nvidia.com/deploy/cuda-compatibility/forward-compatibility.html)
+allows this combination on supported data-center GPUs. Record actual mapped
+libraries and run each required contract; a CUDA compute probe alone does not
+qualify CUDA IPC, Manager operation or GDR. Do not substitute CUDA 12.
+
+At consumer `660f893d`, the A-node CUDA 13.1 source profile passes real pinned
+source-grant controls and embedded Manager GPU Save/Restore with both TCP and
+same-RNIC RDMA staging. Two embedded engines exercise actual etcd, inventory,
+gRPC source grants, exact epochs and payload bytes. Maps contain the installed
+`libcudart.so.13.1.80`, compatibility `libcuda.so.590.48.01` and, for RDMA,
+`libibverbs`/`libmlx5`, with no TENT. Source/service workers drain and owned
+native, supervisor and coordinator processes are reaped; the fixture kills
+its private etcd coordinator, so this is not graceful-etcd qualification.
+
+Reproduce that compatibility profile by prefixing the gate command with
+`LD_LIBRARY_PATH=/usr/local/cuda-13.1/compat:/usr/local/cuda-13.1/targets/x86_64-linux/lib`
+and selecting an exclusively leased GPU/RNIC. Library paths are deployment
+inputs, not a fallback selected by OrbitKV. Keep the external source/binary,
+loader, resource and independent-review evidence linked from the qualification PR.
+B-node GPU computation remains untested while its canonical GPU leases are busy.
+Installed serving, cross-process CUDA IPC, physical cross-host Manager/GPU,
+RNIC faults, GDR and full TENT parity remain open; same-host embedded engines
+do not establish those profiles.
 
 ## What OrbitKV reuses
 

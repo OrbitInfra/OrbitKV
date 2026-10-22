@@ -83,9 +83,15 @@ there is no TCP/TENT payload fallback. Staging/endpoint budgets are independent
 of source ticket and process pool charges. Requester-local drain does not prove
 remote source termination: remote cleanup errors retain the actual source
 backing and native budgets even after a gRPC ticket release. Current OrbitKV
-requires CUDA 13; preserve the old CUDA 12.2 records as historical only. A
-host-only registered-read gate cannot qualify pinned Manager/GPU, installed
-serving, GDR or physical RNIC failures. See `docs/transport.md` before selecting
+requires CUDA 13; preserve the old CUDA 12.2 records as historical only.
+Do not reject CUDA 13 from the kernel driver's R535 version alone: supported
+data-center GPUs can use NVIDIA's matching forward-compatibility package.
+Freeze mapped `libcuda` and `libcudart` paths/versions and test the actual contract.
+The A-node CUDA 13.1/compat590 source gates cover pinned source grants and
+same-host embedded Manager TCP/RDMA GPU Save/Restore. They do not qualify
+installed serving, cross-process CUDA IPC, physical cross-host Manager/GPU,
+GDR or physical RNIC failures. A host-only registered-read gate cannot establish
+the GPU profile either. See `docs/transport.md` before selecting
 or testing this candidate.
 Do not revive
 Catalog placement/lookup RPCs or change etcd's transport to fix a payload problem.

@@ -119,9 +119,15 @@ and [adapter contracts](adapters.md).
   both RoCE directions, fragmented bytes/guards, actual CQ counts, absent
   CUDA/TENT libraries and zero normal-close resource charges. See
   [OrbitKV #305](https://github.com/OrbitInfra/OrbitKV/pull/305) for frozen source,
-  binary and external review evidence. CUDA 13 Manager, installed serving, RNIC
-  faults, GDR, multirail and full TENT parity remain unqualified. Historical
-  CUDA 12.2 source pilots do not establish current CUDA 13 support.
+  binary and external review evidence. A-node CUDA 13.1 compatibility runs at
+  `660f893d` additionally pass pinned source grants and embedded Manager GPU
+  Save/Restore through TCP and same-RNIC RDMA staging. R535 with supported
+  compatibility libraries is not a CUDA 13 exclusion; see the
+  [runtime profile](transport.md#experimental-orbitte-peer-rdma-profile).
+  Installed serving, cross-process CUDA IPC, physical cross-host Manager/GPU,
+  RNIC faults, GDR, multirail and full TENT parity remain unqualified. B-node
+  compute remains untested while GPU leases are busy. Historical CUDA 12.2
+  pilots remain separate from this CUDA 13.1 source evidence.
 - [ ] Carry allocation/page generations through source grants, destination
   ownership and actual engine page reuse. Session/registration epochs alone
   do not establish this contract.
