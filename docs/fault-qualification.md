@@ -161,28 +161,33 @@ Without this option, the ordinary fault gate skips the cuFile-only cases.
 
 ## Concurrent Qwen3 serving
 
-The explicit stress gate uses Qwen3-8B with deterministic inference in each
-pinned engine. It restarts the engine while retaining the Manager, pauses SSD
-reads and abandons a streaming request while an unrelated request progresses,
-drops completion notifications, and kills the Manager during a GPU restore.
-It checks reference outputs, positive restore bytes, cancellation observations
-and final ownership counters. A restarted Manager starts cold; this is not an
-SSD index persistence test.
+The vLLM stress gate fixes the cache at 32 blocks of 64 tokens rather than
+assuming a GPU-memory percentage creates pressure. Four independent 512-token
+prefixes and 256-token outputs must cause actual scheduler preemption. It
+compares every complete output and generated token ID with the native engine,
+checks native HBM hits, restarts only the engine to force Manager recovery,
+and disconnects a stream after its first generated token during concurrent
+traffic. The engine must record the abort; subsequent requests must reproduce
+the native output and leave no live cache ownership.
 
 ```bash
 cd python
-ORBITKV_FAULT_TESTS=1 ORBITKV_PREPARE_REQUESTS=1 \
-ORBITKV_CACHE_MANAGER_BINARY=/absolute/path/to/test-hooks-manager \
+ORBITKV_CACHE_MANAGER_BINARY=/absolute/path/to/installed-manager \
 ../.venv/vllm-release/bin/python -m pytest -m stress \
-  tests/stress/test_recovery_faults.py -k vllm --model /workspace/models/qwen3-8b \
-  --basetemp=/var/tmp/orbitkv-bench/serving-fault-vllm
+  tests/stress/test_vllm_warm_hit_stress.py --model /workspace/models/qwen3-8b \
+  --basetemp=/var/tmp/orbitkv-bench/preemption-vllm
 ```
 
-Use the SGLang interpreter and `-k sglang` for its gate. Set
-`ORBITKV_PREPARE_REQUESTS=0` for ordinary demand. Keep the two GPU runs sequential.
-The workspace test directory retains every engine/Manager incarnation log and
-`fault-results.json`. Manager sockets use short temporary paths independently
-of the evidence directory.
+Use the matching official engine and installed wheel. Logs, prompts, complete
+responses and boundary metrics go to the external `--basetemp`. This is a DRAM,
+dense TP1/PP1 gate: cancellation after generation starts does not prove safe
+cancellation during physical DMA, SSD faults or crash reclamation. Run the
+separate native integration gates for injected faults.
+
+The earlier mixed-engine crash workload is retired: its launcher arguments no
+longer match the serving runtime, and its completion-publication pause did not
+prove an in-flight GPU copy. Historical source remains available at its
+[immutable revision](https://github.com/feichai0017/orbitkv/blob/a9befeec596bb9064d25d34f93d07fe59077809d/python/tests/stress/test_recovery_faults.py).
 
 Multi-rank serving, long-running injected-fault traffic, hardware hangs and remote
 failover have separate qualification gates. Logical framework page-generation
