@@ -91,6 +91,13 @@ and [adapter contracts](adapters.md).
   retained after failed unregister.
 - [x] Prepared Save handles, Rust batching, bounded producer admission and
   normal-path installed byte/engine controls within recorded profiles.
+- [x] Experimental `orbitte` allocation bridge: each canonical host view retains
+  the actual `PinnedAllocation` and access lock. The weak cache avoids a cycle;
+  unregister, cancellation, wait timeout and dropped batches cannot return its
+  slot while OrbitTE still retains accepted work. The source build and explicit
+  real-CUDA allocator gate are described in [transport](transport.md#experimental-orbitte-allocation-bridge).
+  Manager adoption, source-grant/mailbox integration, installed serving and
+  independent acceptance remain open; the default transport is still TENT.
 - [ ] Carry allocation/page generations through source grants, destination
   ownership and actual engine page reuse. Session/registration epochs alone
   do not establish this contract.

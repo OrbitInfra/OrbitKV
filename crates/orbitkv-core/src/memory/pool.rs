@@ -1,4 +1,3 @@
-use parking_lot::Mutex;
 use std::{
     collections::HashMap,
     num::NonZeroU64,
@@ -10,8 +9,12 @@ use std::{
     },
 };
 
+#[cfg(feature = "orbitte")]
+use std::sync::Weak;
+
 use bytesize::ByteSize;
 use log::{error, info, warn};
+use parking_lot::Mutex;
 
 use crate::memory::allocator::{Allocation, ScaledOffsetAllocator};
 use crate::memory::numa::{NumaNode, run_on_numa};
@@ -73,6 +76,8 @@ pub struct PinnedAllocation {
     ptr: NonNull<u8>,
     device_ptr: NonNull<u8>,
     pool: Arc<PinnedMemoryPool>,
+    #[cfg(feature = "orbitte")]
+    orbitte_memory: Mutex<Weak<orbit_te::HostMemory>>,
 }
 
 // SAFETY: PinnedAllocation points to CUDA pinned memory which is fixed in physical
@@ -82,6 +87,34 @@ unsafe impl Send for PinnedAllocation {}
 unsafe impl Sync for PinnedAllocation {}
 
 impl PinnedAllocation {
+    /// Shares this allocation and its access lock with OrbitTE registrations.
+    /// Retaining the returned memory keeps this exact allocator slot occupied,
+    /// even after the allocator, registration or batch handle is dropped.
+    ///
+    /// # Safety
+    /// Until the last returned memory, registration and admitted transfer releases
+    /// this allocation, coordinate all external CPU, CUDA and process accesses
+    /// with OrbitTE. No conflicting Rust references or unsynchronized device
+    /// accesses may remain. All OrbitTE aliases must be obtained through this
+    /// method so they share the same access lock.
+    #[cfg(feature = "orbitte")]
+    pub unsafe fn orbitte_memory(self: &Arc<Self>) -> orbit_te::Result<Arc<orbit_te::HostMemory>> {
+        let mut cached = self.orbitte_memory.lock();
+        if let Some(memory) = cached.upgrade() {
+            return Ok(memory);
+        }
+        let length =
+            usize::try_from(self.size_bytes()).map_err(|_| orbit_te::Error::InvalidRange)?;
+        // SAFETY: this Arc retains the actual allocation and its pinned pool;
+        // its Drop is the only path returning this slot to the allocator. The
+        // caller coordinates accesses outside the shared OrbitTE lock.
+        let memory = Arc::new(unsafe {
+            orbit_te::HostMemory::from_raw_parts(self.ptr, length, self.clone())?
+        });
+        *cached = Arc::downgrade(&memory);
+        Ok(memory)
+    }
+
     pub(crate) fn registration_id(&self) -> usize {
         Arc::as_ptr(&self.pool) as usize
     }
@@ -320,6 +353,8 @@ impl PinnedMemoryPool {
             ptr,
             device_ptr,
             pool: Arc::clone(self),
+            #[cfg(feature = "orbitte")]
+            orbitte_memory: Mutex::new(Weak::new()),
         })
     }
 
@@ -813,3 +848,7 @@ unsafe impl Sync for PinnedAllocator {}
 #[cfg(test)]
 #[path = "../../tests/unit/memory/pool.rs"]
 mod tests;
+
+#[cfg(all(test, feature = "orbitte"))]
+#[path = "../../tests/unit/memory/orbitte.rs"]
+mod orbitte_tests;
