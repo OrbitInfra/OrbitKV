@@ -723,7 +723,10 @@ RDMA or device DMA.
 
 ## Experimental OrbitTE peer RDMA profile
 
-Build the explicit single-rail host-staging candidate with GNU C/C++ compilers:
+Build the explicit single-rail host-staging candidate with GNU C/C++ compilers.
+CI fixes Ubuntu 24.04 with matching Clang/libclang 18 for `ibverbs-sys` binding
+generation; use `CLANG_PATH=/usr/bin/clang-18` and
+`LIBCLANG_PATH=/usr/lib/llvm-18/lib` for that parser profile.
 
 ```sh
 CC=gcc CXX=g++ cargo build --locked -p orbitkv-server --no-default-features \
@@ -784,6 +787,17 @@ verbs libraries, absent CUDA/TENT libraries and owned shutdown. The controller
 holds RNIC leases until native wait/reap. This exercises the production
 registered-read execution with ordinary host backing; it does not test the
 PinnedAllocator or Manager GPU path.
+
+Independent source/CPU review and physical host reruns pass at consumer
+`660f893d`: A-to-B with 4 KiB backing and B-to-A with 1 MiB backing, three
+fragmented READ CQ completions per requester, complete guards and unchanged
+unrequested bytes. Normal close returns all registrations/endpoints/staging to
+zero. Both processes map `libibverbs`/`libmlx5` and no CUDA/TENT; native children
+and supervisors exit and release their RNIC leases. The initial readiness-only
+failure is retained with successful runs. Frozen binary/source provenance,
+raw runs and independent review locations are linked from
+[OrbitKV #305](https://github.com/OrbitInfra/OrbitKV/pull/305) and
+[OrbitTE #12](https://github.com/OrbitInfra/OrbitTE/pull/12).
 
 The full Manager gate is separate and requires a working CUDA 13 runtime:
 
