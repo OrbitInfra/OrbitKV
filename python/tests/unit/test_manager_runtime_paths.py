@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import sysconfig
 import time
 from types import SimpleNamespace
 
@@ -14,6 +15,18 @@ from tests.support import cache_manager, runtime_checks
 from tests.support.cache_manager import CacheManagerProcess, manager_pythonpath
 from tests.support.paths import PYTHON_ROOT
 from tests.support.vllm_helpers import CacheManager, VLLMServer
+
+STDLIB_PATHS = tuple(
+    dict.fromkeys(
+        path
+        for path in (
+            sysconfig.get_path("stdlib"),
+            sysconfig.get_path("platstdlib"),
+            sysconfig.get_config_var("DESTSHARED"),
+        )
+        if path
+    )
+)
 
 
 @pytest.mark.parametrize("case", ["source", "installed", "foreign-package", "foreign-site"])
@@ -84,6 +97,7 @@ def test_manager_pythonpath_defaults_to_source_then_inherited_paths():
         None,
     )
     assert paths == (
+        *STDLIB_PATHS,
         str(PYTHON_ROOT),
         "/caller/python",
         "/installed/site",
@@ -97,7 +111,7 @@ def test_manager_pythonpath_installed_mode_excludes_source_and_inherited_paths()
         ["/installed/site", "/system/site"],
         ("/installed/site",),
     )
-    assert paths == ("/installed/site", "/system/site")
+    assert paths == (*STDLIB_PATHS, "/installed/site", "/system/site")
     assert str(PYTHON_ROOT) not in paths
 
 
@@ -137,15 +151,24 @@ def test_vllm_worker_keeps_installed_package_priority(monkeypatch):
 def test_strict_manager_start_records_actual_command_and_keeps_failed_record_owner(
     tmp_path, monkeypatch, write_failure, selected_package
 ):
+    legacy_site = tmp_path / "legacy-site"
+    legacy_site.mkdir()
+    (legacy_site / "enum.py").write_text("raise RuntimeError('site package shadows stdlib enum')")
+    get_path = sysconfig.get_path
+    monkeypatch.setattr(
+        cache_manager.sysconfig,
+        "get_path",
+        lambda name: str(legacy_site) if name == "purelib" else get_path(name),
+    )
     actual = tmp_path / "actual.json"
     binary = tmp_path / "cpu-manager"
     binary.write_text(
         f"#!{sys.executable}\n"
-        "import json,os,signal,sys\nfrom pathlib import Path\n"
+        "import enum,json,os,signal,sys\nfrom pathlib import Path\n"
         "def stop(*_):\n print('SIGTERM received, shutting down', flush=True)\n sys.exit(0)\n"
         "signal.signal(signal.SIGTERM, stop)\n"
         f"Path({str(actual)!r}).write_text(json.dumps({{'argv':sys.argv,'pid':os.getpid(),"
-        "'pythonpath':os.environ['PYTHONPATH'],"
+        "'enum_file':enum.__file__,'pythonpath':os.environ['PYTHONPATH'],"
         "'librarypath':os.environ['LD_LIBRARY_PATH']}))\n"
         "while True: signal.pause()\n"
     )
@@ -207,7 +230,11 @@ def test_strict_manager_start_records_actual_command_and_keeps_failed_record_own
             "/selected/cuda/compat",
             "/selected/cuda/lib",
         ]
-        assert observed["pythonpath"].split(os.pathsep)[0] == str(package_directory.parent)
+        assert observed["enum_file"] == str(cache_manager.Path(get_path("stdlib")) / "enum.py")
+        paths = observed["pythonpath"].split(os.pathsep)
+        assert paths[: len(STDLIB_PATHS)] == list(STDLIB_PATHS)
+        assert paths[len(STDLIB_PATHS)] == str(package_directory.parent)
+        assert str(legacy_site) in paths
         if not write_failure:
             executable = cache_manager.Path(f"/proc/{server.process.pid}/exe").resolve()
             raw = cache_manager.Path(f"/proc/{server.process.pid}/maps").read_text()

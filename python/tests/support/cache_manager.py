@@ -139,7 +139,14 @@ def manager_pythonpath(
         roots = [str(PYTHON_ROOT), *configured_paths]
     else:
         roots = list(runtime_python_paths)
-    return tuple(dict.fromkeys([*roots, *site_packages]))
+    paths = [
+        sysconfig.get_path("stdlib"),
+        sysconfig.get_path("platstdlib"),
+        sysconfig.get_config_var("DESTSHARED"),
+        *roots,
+        *site_packages,
+    ]
+    return tuple(dict.fromkeys(path for path in paths if path))
 
 
 def wait_for_server_ready(
@@ -450,8 +457,8 @@ class CacheManagerProcess:
             path
             for path in dict.fromkeys(
                 [
-                    sysconfig.get_path("purelib"),
                     *(path for path in sys.path if Path(path).name == "site-packages"),
+                    sysconfig.get_path("purelib"),
                 ]
             )
             if path

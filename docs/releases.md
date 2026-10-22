@@ -32,7 +32,12 @@ and transfer features. A compute probe alone does not qualify them. See
 [NVIDIA's forward-compatibility matrix](https://docs.nvidia.com/deploy/cuda-compatibility/forward-compatibility.html).
 The console preserves explicit `LD_LIBRARY_PATH` ordering and appends the
 interpreter's `libpython` directory, so a selected compatibility package keeps
-priority over system driver libraries. Check the Manager's actual loaded paths.
+priority over system driver libraries. Its Python search path keeps the
+interpreter's standard library before package roots, then the selected OrbitKV
+package and caller dependencies before automatically discovered site-packages.
+This prevents legacy site packages such as `enum34` from shadowing the standard
+library during console startup or embedded Python initialization. Check the
+Manager's actual loaded paths.
 Tests, benchmarks and build caches are excluded from the package.
 
 GPU ANS encoding additionally needs the separately installed nvCOMP 5.3 runtime;

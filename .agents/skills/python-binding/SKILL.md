@@ -85,7 +85,9 @@ changing benchmark helpers. Put runtime outputs outside the checkout.
 Use `scripts/build-wheel.sh` for a complete installed artifact; `maturin develop`
 is a development build. See `docs/releases.md` for the CUDA 13 runtime, bundled native
 dependencies and installed-package checks. Freeze native artifacts before GPU
-tests: Cargo can restage shared libraries used by live Managers.
+tests: Cargo can restage shared libraries used by live Managers. Preserve explicit
+CUDA library precedence, and keep the interpreter's standard library before the
+selected package/dependency roots in console and embedded-Python search paths.
 Optional complete-wheel builds may add `--features orbitte` or
 `--features orbitte-rdma`; both retain the default CUDA 13/TENT build and require
 explicit Manager provider selection. See `python/tests/release/test_installed_orbitte.py`
