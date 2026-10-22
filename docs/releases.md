@@ -75,9 +75,14 @@ python3 scripts/check-wheel.py target/wheels/*.whl --install-smoke --require-orb
 `--features orbitte` enables only the TCP candidate. Complete wheels still
 include CUDA 13 and TENT, and default to TENT; choose the experimental provider
 explicitly at Manager startup as described in [transport](transport.md#experimental-orbitte-peer-rdma-profile).
-These build options do not create a second Python distribution or establish
-installed GPU/RDMA qualification. The installed CLI smoke checks compiled RDMA
-arguments before any GPU access. CI builds both the default and optional RDMA
+These build options do not create a second Python distribution. The installed
+CLI smoke checks compiled RDMA arguments before any GPU access. Separate
+independent H20 byte/lifetime reruns qualify the CPython 3.11 single-runtime
+profile in [transport](transport.md#installed-client-and-manager-profile), with
+explicit Torch CUDA 13.0.96 selection. Its private unversioned runtime alias is
+needed because the Rust loader tries `libcudart.so` before Torch's `.so.13`.
+Building with a CUDA 13.1 compiler does not establish a loaded CUDA 13.1 runtime
+or qualify other installed environments. CI builds both the default and optional RDMA
 wheel, with separate artifacts and matching Clang/libclang 18 on Ubuntu 24.04.
 Use a wheel matching the target CPython ABI and audited glibc floor; the CI
 Python 3.14 artifact cannot qualify a Python 3.11 execution node.

@@ -107,8 +107,9 @@ and [adapter contracts](adapters.md).
   Independent source review and reruns passed for the same-host H20/CUDA 12.2
   source-grant and embedded Manager GPU Save/Restore profile at `5a50d092`.
   See [OrbitKV #304](https://github.com/OrbitInfra/OrbitKV/pull/304) for the
-  external evidence locations. Installed Manager/serving, CUDA 13 runtime,
-  physical cross-host and RDMA/device-DMA qualification remain open.
+  external evidence locations. That historical CUDA 12.2 pilot does not qualify
+  installed Manager/serving, CUDA 13, physical cross-host or RDMA/device DMA;
+  the later CUDA 13 and installed scopes follow below.
 - [x] Experimental OrbitTE RDMA source candidate: explicit single RNIC/port/GID,
   distinct payload namespace and no transport fallback. It shares the TCP
   candidate's allocation/grant/completion owners and uses the existing owned
@@ -124,8 +125,8 @@ and [adapter contracts](adapters.md).
   Save/Restore through TCP and same-RNIC RDMA staging. R535 with supported
   compatibility libraries is not a CUDA 13 exclusion; see the
   [runtime profile](transport.md#experimental-orbitte-peer-rdma-profile).
-  Installed serving, cross-process CUDA IPC, physical cross-host Manager/GPU,
-  RNIC faults, GDR, multirail and full TENT parity remain unqualified. B-node
+  Installed serving, physical cross-host Manager/GPU, RNIC faults, GDR, multirail
+  and full TENT parity remain unqualified; the installed IPC substage follows. B-node
   compute remains untested while GPU leases are busy. Historical CUDA 12.2
   pilots remain separate from this CUDA 13.1 source evidence.
 - [x] Optional complete-wheel feature forwarding for `orbitte` and `orbitte-rdma`.
@@ -133,9 +134,15 @@ and [adapter contracts](adapters.md).
   the installed console's compiled RNIC requirement. The maintained
   `test_installed_orbitte_peer_restores_cuda_ipc_bytes` gate covers matching
   installed client/Manager IPC registration/Publish, actual peer bytes and
-  original export-credit retirement. Its GPU/RDMA runtime acceptance remains
-  unqualified until independently reviewed; compilation and CLI smoke are not
-  that evidence. See [release builds](releases.md#build-a-candidate).
+  original export-credit retirement. Independent H20 reruns at `eb1cc90f` pass
+  installed TCP and same-RNIC RDMA: each restores 16,384 GPU bytes, repays four
+  original IPC slots, normally exits the client/Managers and reaps every owned
+  process with zero GPU residue. The private etcd fixture is killed and reaped;
+  this does not establish graceful-etcd shutdown. The CPython 3.11 wheel uses an explicitly unified Torch CUDA 13.0.96
+  runtime and compatibility driver 590.48.01 on R535; uniform installed CUDA
+  13.1, serving and cross-host Manager/GPU remain open. See the
+  [exact runtime profile](transport.md#installed-client-and-manager-profile)
+  and [release builds](releases.md#build-a-candidate).
 - [ ] Carry allocation/page generations through source grants, destination
   ownership and actual engine page reuse. Session/registration epochs alone
   do not establish this contract.
