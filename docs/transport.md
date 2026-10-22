@@ -799,7 +799,7 @@ raw runs and independent review locations are linked from
 [OrbitKV #305](https://github.com/OrbitInfra/OrbitKV/pull/305) and
 [OrbitTE #12](https://github.com/OrbitInfra/OrbitTE/pull/12).
 
-The full Manager gate is separate and requires a working CUDA 13 runtime:
+The embedded Manager GPU gate is separate and requires a working CUDA 13 runtime:
 
 ```sh
 ETCD_BIN=/path/to/etcd ORBITKV_METADATA_ARTIFACT_DIR=/external/manager-rdma \
@@ -832,7 +832,8 @@ Reproduce that compatibility profile by prefixing the gate command with
 `LD_LIBRARY_PATH=/usr/local/cuda-13.1/compat:/usr/local/cuda-13.1/targets/x86_64-linux/lib`
 and selecting an exclusively leased GPU/RNIC. Library paths are deployment
 inputs, not a fallback selected by OrbitKV. Keep the external source/binary,
-loader, resource and independent-review evidence linked from the qualification PR.
+loader, resource and independent-review evidence linked from
+[OrbitKV #306](https://github.com/OrbitInfra/OrbitKV/pull/306).
 B-node GPU computation remains untested while its canonical GPU leases are busy.
 Installed serving, cross-process CUDA IPC, physical cross-host Manager/GPU,
 RNIC faults, GDR and full TENT parity remain open; same-host embedded engines
