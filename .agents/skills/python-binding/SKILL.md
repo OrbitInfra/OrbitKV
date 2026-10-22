@@ -93,3 +93,12 @@ Optional complete-wheel builds may add `--features orbitte` or
 explicit Manager provider selection. See `python/tests/release/test_installed_orbitte.py`
 for the separate installed IPC/peer-byte gate; its DRAM restore uses the local
 client H2D owner and does not establish Manager IPC Restore or GDR.
+
+For installed OrbitTE qualification, use the explicit runtime profile in
+`docs/transport.md#installed-client-and-manager-profile`. Frozen `cudarc` tries
+unversioned `libcudart.so` first; versioned preload alone can still mix runtimes.
+Freeze the private ordinary alias, its target, all import-root absences and
+stdlib-extension ELF dependencies. CPU preflight includes the actual fixture's
+fresh console `--help` and complete loader-name order. Observe an already mapped
+runtime with `RTLD_NOLOAD`, retain all failed controls, and reject unexplained
+post-exit CUDA IPC producer warnings before accepting normal-path qualification.

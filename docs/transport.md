@@ -621,8 +621,10 @@ its returned handles. Accepted requests retain the allocation through logical
 cancellation, wait timeout, unregister and a detached batch until the backend
 proves local drain. This first bridge registers allocation ranges; it does not
 add a whole-pool MR cache or switch the Manager peer path. OrbitKV still owns
-source grants, allocation generations and completion-mailbox matching. Their
-OrbitTE consumption and installed serving qualification remain open.
+source grants, allocation generations and completion-mailbox matching.
+The peer profiles below consume source grants and generation-scoped gRPC
+completion. Transfer-notification mailbox integration and installed serving
+qualification remain open.
 
 Source CI checks the optional feature with the normal CUDA 13 build. Run the
 hardware gate explicitly on an isolated GPU with a compatible CUDA runtime:
@@ -835,9 +837,60 @@ inputs, not a fallback selected by OrbitKV. Keep the external source/binary,
 loader, resource and independent-review evidence linked from
 [OrbitKV #306](https://github.com/OrbitInfra/OrbitKV/pull/306).
 B-node GPU computation remains untested while its canonical GPU leases are busy.
-Installed serving, cross-process CUDA IPC, physical cross-host Manager/GPU,
-RNIC faults, GDR and full TENT parity remain open; same-host embedded engines
-do not establish those profiles.
+That embedded profile does not qualify installed CUDA IPC. The separate
+installed profile follows below. Installed serving, physical cross-host
+Manager/GPU, RNIC faults, GDR and full TENT parity remain open.
+
+### Installed client and Manager profile
+
+[PR #307](https://github.com/OrbitInfra/OrbitKV/pull/307), source `eb1cc90f`, adds
+complete optional wheels and a maintained two-Manager installed gate. Independent
+H20 reruns pass both TCP and same-RNIC RDMA using the complete CPython 3.11 wheel
+`36b491e1a0daa97d`, built from identical package inputs at `487beb85`. This
+profile uses kernel driver 535.161.08, compatibility driver 590.48.01, Torch
+2.13.0+cu130 and one explicitly selected CUDA 13.0.96 runtime. The compiler is
+CUDA 13.1; that does not make the loaded runtime CUDA 13.1.
+
+Each provider registers two clients through cross-process CUDA IPC, publishes
+source GPU pages, awaits the inventory fence and fetches through the selected
+OrbitTE payload provider. It restores 16,384 GPU bytes and checks every untouched
+page, exact Save/remote/H2D byte counters and source completion. Four original
+held IPC slots per case change from one to zero before normal Manager exit.
+All client/Manager runtime files match the frozen inputs, RDMA maps real
+verbs/mlx5, and neither provider maps TENT. The client, Managers, supervisors
+and outer waiters exit normally, canonical leases are released and GPU memory
+returns to zero. The private etcd fixture is killed and reaped; graceful-etcd
+shutdown is outside this acceptance. Producer-exit warnings reject the
+qualification.
+
+Runtime selection is an explicit deployment input. Frozen `cudarc` 0.19.8 tries
+`libcudart.so` before `libcudart.so.13`. Torch supplies the latter; a system
+unversioned library can therefore load a second runtime even with Torch's
+versioned file preloaded. This profile freezes a private directory containing a
+standard unversioned alias to the actual Torch runtime and places it first:
+
+```sh
+mkdir -m 700 /absolute/private/runtime
+ln -s /absolute/torch-site/nvidia/cu13/lib/libcudart.so.13 \
+  /absolute/private/runtime/libcudart.so
+export LD_LIBRARY_PATH=/absolute/private/runtime:/usr/local/cuda-13.1/compat${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+export LD_PRELOAD=/absolute/torch-site/nvidia/cu13/lib/libcudart.so.13
+```
+
+Freeze that directory, alias identity and target before launching. The gate
+requires exactly the selected CUDART file in every client/Manager mapping; its
+version observer uses `RTLD_NOLOAD` and checks that observation preserves the
+mapping set. Full loader-order CPU controls preserve the mixed-runtime negative
+cases. Failed startup, duplicate-evidence and mixed-runtime attempts remain
+archived with their verdicts. Raw runs, immutable wheel/source/loader manifests
+and independent review are outside the checkout at
+`/root/orbitte-artifacts/installed-rdma-20261022/`, indexed from PR #307.
+
+DRAM Restore uses the client's local H2D executor; CUDA IPC is exercised by
+registration and Publish. This scoped gate does not qualify Manager IPC Restore,
+inference serving, physical cross-host Manager/GPU, RNIC faults, GDR, multirail
+or complete TENT parity. A uniform installed CUDA 13.1 runtime remains open;
+the separately accepted CUDA 13.1 embedded/source profile above is unchanged.
 
 ## What OrbitKV reuses
 

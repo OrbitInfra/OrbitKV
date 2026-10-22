@@ -133,7 +133,11 @@ client's local H2D owner. This does not establish Manager IPC Restore, inference
 serving, GDR, physical cross-host traffic or fault reclamation.
 
 Use `support/installed_pytest.py` with a tests/benches-only harness and a matching
-non-editable installation. Run its `--probe` and `--collect-only` first, then
+non-editable installation. Run its `--probe` and `--collect-only` first. Also
+start the installed console through the same `CacheManagerProcess` fixture
+with `extra_args=("--help",)`, requiring exit zero and the compiled RNIC help;
+this covers a fresh console's Python search path without GPU initialization.
+Check the full frozen Rust library-name search order in CPU preflight, then
 select `-m release_smoke tests/release/test_installed_orbitte.py`.
 Set `ORBITKV_TEST_INSTALLED_ORBITTE=1`, `ETCD_BIN`,
 `ORBITKV_TEST_STRICT_SHUTDOWN=1` and `PYTHONNOUSERSITE=1`.
@@ -145,7 +149,13 @@ owned process exits; inherit their FDs with `ORBITKV_TEST_GPU_LOCK_FDS`.
 Freeze a private `ORBITKV_CHANNEL_CONFIG` root/prefix and precreated node/service
 directories for both Managers and clients. Freeze the installed files, Python
 search paths and actual mapped CUDA/compatibility/verbs libraries, and retain
-all raw results outside the checkout. Missing hardware evidence is unqualified.
+all raw results outside the checkout. Preserve absent import roots and actual
+stdlib-extension ELF dependencies, including libraries loaded by pytest. For
+the accepted H20 scope, use the
+[explicit single-runtime profile](../../docs/transport.md#installed-client-and-manager-profile).
+Require every real client/Manager mapping to match that file set, and inspect
+all post-exit logs for unexplained CUDA IPC producer warnings. Missing hardware
+evidence is unqualified.
 
 ### Two engines sharing one Manager
 
