@@ -789,9 +789,9 @@ registered-read execution with ordinary host backing; it does not test the
 PinnedAllocator or Manager GPU path.
 
 Independent source/CPU review and physical host reruns pass at consumer
-`660f893d`: A-to-B with 4 KiB backing and B-to-A with 1 MiB backing, three
-fragmented READ CQ completions per requester, complete guards and unchanged
-unrequested bytes. Normal close returns all registrations/endpoints/staging to
+`660f893d`: A-to-B with a 4 KiB payload region and B-to-A with a 1 MiB payload
+region, each with 64-byte guards at both ends and three fragmented READ CQ
+completions per requester. Guards and unrequested bytes remain unchanged. Normal close returns all registrations/endpoints/staging to
 zero. Both processes map `libibverbs`/`libmlx5` and no CUDA/TENT; native children
 and supervisors exit and release their RNIC leases. The initial readiness-only
 failure is retained with successful runs. Frozen binary/source provenance,
