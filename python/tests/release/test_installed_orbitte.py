@@ -116,7 +116,6 @@ def test_installed_orbitte_peer_restores_cuda_ipc_bytes(provider, tmp_path, monk
             contexts.append(context)
             processes.callback(retire, index, context)
             context.register_kv_caches()
-            server.record_runtime()
             handoff = directory / "original.credit-owner.json"
             handoff.write_text(
                 json.dumps(
