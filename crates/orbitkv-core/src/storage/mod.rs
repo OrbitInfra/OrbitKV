@@ -60,6 +60,12 @@ impl Storage {
         config: EngineConfig,
         numa_nodes: &[NumaNode],
     ) -> Result<Arc<Self>, String> {
+        #[cfg(not(feature = "orbitte-rdma"))]
+        if config.peer_transfer_backend == crate::PeerTransferBackend::OrbitTeRdma {
+            return Err(
+                "OrbitTE RDMA peer transport requires the orbitte-rdma build feature".into(),
+            );
+        }
         if config.codec_budget < 4096 || config.codec_budget > u32::MAX as usize {
             return Err("codec budget must be between 4 KiB and 4 GiB - 1".into());
         }

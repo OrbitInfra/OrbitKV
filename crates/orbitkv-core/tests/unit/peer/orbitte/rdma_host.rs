@@ -121,7 +121,7 @@ fn registered_host_rdma_peer() {
             )
             .unwrap();
         println!(
-            "ORBITTE_READY {} {} {} {}",
+            "\nORBITTE_READY {} {} {} {}",
             transport.endpoint,
             transport.epoch,
             memory.base_address(),
