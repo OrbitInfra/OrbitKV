@@ -24,8 +24,8 @@ def test_manager_launcher_executes_without_a_wrapper_process(tmp_path):
 
             signal.signal(signal.SIGTERM, lambda *args: sys.exit(23))
             Path(sys.argv[1]).write_text(str(os.getpid()))
-            Path(sys.argv[2]).write_text(sys.argv[3])
             Path(sys.argv[2] + ".env").write_text(os.environ["LD_LIBRARY_PATH"])
+            Path(sys.argv[2]).write_text(sys.argv[3])
             while True:
                 signal.pause()
             """)
