@@ -109,6 +109,19 @@ and [adapter contracts](adapters.md).
   See [OrbitKV #304](https://github.com/OrbitInfra/OrbitKV/pull/304) for the
   external evidence locations. Installed Manager/serving, CUDA 13 runtime,
   physical cross-host and RDMA/device-DMA qualification remain open.
+- [x] Experimental OrbitTE RDMA source candidate: explicit single RNIC/port/GID,
+  distinct payload namespace and no transport fallback. It shares the TCP
+  candidate's allocation/grant/completion owners and uses the existing owned
+  host-staging verbs path. See the [profile and separate gates](transport.md#experimental-orbitte-peer-rdma-profile).
+  The host-only two-node component gate exercises registered READ execution;
+  it is separate from pinned allocation and Manager GPU qualification. Independent
+  source/CPU review and two-host reruns pass at consumer `660f893d`, including
+  both RoCE directions, fragmented bytes/guards, actual CQ counts, absent
+  CUDA/TENT libraries and zero normal-close resource charges. See
+  [OrbitKV #305](https://github.com/OrbitInfra/OrbitKV/pull/305) for frozen source,
+  binary and external review evidence. CUDA 13 Manager, installed serving, RNIC
+  faults, GDR, multirail and full TENT parity remain unqualified. Historical
+  CUDA 12.2 source pilots do not establish current CUDA 13 support.
 - [ ] Carry allocation/page generations through source grants, destination
   ownership and actual engine page reuse. Session/registration epochs alone
   do not establish this contract.

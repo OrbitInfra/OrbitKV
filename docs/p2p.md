@@ -248,3 +248,8 @@ defines its 64 MiB READ/4,096-region limits and source/GPU gate commands. The
 standalone build excludes Mooncake. Default deployment recipes and published
 artifacts continue to use TENT; the OrbitTE path needs installed-artifact and
 serving qualification before it becomes a supported deployment recipe.
+
+An `orbitte-rdma` build can explicitly select the single-rail
+[OrbitTE RDMA staging candidate](transport.md#experimental-orbitte-peer-rdma-profile).
+It preserves grant epochs and generation completion; a host component pass does
+not qualify the complete CUDA 13 Manager/serving profile.

@@ -201,6 +201,26 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bindgen"
+version = "0.71.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f58bf3d7db68cfbac37cfc485a8d711e87e064c3d0fe0435b92f7a407f9d6b3"
+dependencies = [
+ "bitflags",
+ "cexpr",
+ "clang-sys",
+ "itertools 0.13.0",
+ "log",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "rustc-hash",
+ "shlex",
+ "syn",
+]
+
+[[package]]
+name = "bindgen"
 version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
@@ -1135,6 +1155,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibverbs-sys"
+version = "0.3.2+55.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8149ab8d940ea7e7073a24ba6e3ec6b0cc8ceab6ea3d562d60a21ca5cc23413a"
+dependencies = [
+ "bindgen 0.71.1",
+ "cmake",
+]
+
+[[package]]
 name = "iceoryx2"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1391,7 +1421,7 @@ version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4bd9121c8b67c4639bd3d0649855f78fdfc02fdb9f058ef860e105fcf91101c"
 dependencies = [
- "bindgen",
+ "bindgen 0.72.1",
  "cc",
  "iceoryx2-pal-posix",
  "libc",
@@ -1403,7 +1433,7 @@ version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2476d73922180693f0a2157668c450ef79ddadd26bc574e927aceac875ad0229"
 dependencies = [
- "bindgen",
+ "bindgen 0.72.1",
  "cc",
  "iceoryx2-pal-concurrency-sync",
  "iceoryx2-pal-configuration",
@@ -2034,6 +2064,10 @@ dependencies = [
 name = "orbit-te"
 version = "0.1.0-alpha.1"
 source = "git+https://github.com/OrbitInfra/OrbitTE?rev=02d64e552f94ef965eff32b35a55789018223439#02d64e552f94ef965eff32b35a55789018223439"
+dependencies = [
+ "ibverbs-sys",
+ "libc",
+]
 
 [[package]]
 name = "orbitkv-catalog"

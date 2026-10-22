@@ -14,6 +14,7 @@ default = ["cuda-13", "mooncake"]
 cuda-13 = ["cudarc/cuda-13000", "cudarc/nvrtc", "orbitkv-transfer?/cuda-13"]
 mooncake = ["dep:orbitkv-transfer"]
 orbitte = ["dep:orbit-te"]
+orbitte-rdma = ["orbitte", "orbit-te/rdma"]
 tracing = ["fastrace"]
 
 [dependencies]

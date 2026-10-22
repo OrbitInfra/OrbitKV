@@ -76,6 +76,17 @@ tickets and destination buffers. The Manager uses gRPC completion, separately
 from the transfer notification mailbox. A source/H20 CUDA 12.2 pilot is not
 installed serving or CUDA 13 runtime support. Do not switch default deployments
 or infer RDMA/device-DMA qualification from the TCP candidate.
+An experimental `orbitte-rdma` build separately selects `orbitte-rdma` with an
+explicit single `--orbitte-rdma-device`, port and GID index. Its
+`orbitte+rdma://` namespace fixes the payload to RC verbs with host staging;
+there is no TCP/TENT payload fallback. Staging/endpoint budgets are independent
+of source ticket and process pool charges. Requester-local drain does not prove
+remote source termination: remote cleanup errors retain the actual source
+backing and native budgets even after a gRPC ticket release. Current OrbitKV
+requires CUDA 13; preserve the old CUDA 12.2 records as historical only. A
+host-only registered-read gate cannot qualify pinned Manager/GPU, installed
+serving, GDR or physical RNIC failures. See `docs/transport.md` before selecting
+or testing this candidate.
 Do not revive
 Catalog placement/lookup RPCs or change etcd's transport to fix a payload problem.
 Use test-owned processes for faults; preserve other workloads and collect logs

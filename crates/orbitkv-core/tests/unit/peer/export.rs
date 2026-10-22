@@ -434,7 +434,16 @@ async fn orbitte_grant_registrations_share_backing_and_fence_old_completion_gene
     };
 
     let (mut exports, membership, inventory) = exports();
-    let source = Arc::new(OrbitTeTransport::new(1 << 20, "127.0.0.1:0").unwrap());
+    let source = Arc::new(
+        OrbitTeTransport::new(
+            1 << 20,
+            "127.0.0.1:0",
+            Transport::Tcp,
+            #[cfg(feature = "orbitte-rdma")]
+            None,
+        )
+        .unwrap(),
+    );
     exports.transport = Some(Arc::new(PeerTransport::OrbitTe(Arc::clone(&source))));
     let owner = membership.owner().incarnation;
     let (blocks, allocation) = shared_slab();
@@ -451,7 +460,7 @@ async fn orbitte_grant_registrations_share_backing_and_fence_old_completion_gene
     drop(exports.authorize(owner, first, &records).await.unwrap());
     drop(exports.authorize(owner, second, &records).await.unwrap());
     let client = TransferEngine::new(EngineConfig::default()).unwrap();
-    let endpoint = parse_endpoint(&source.endpoint).unwrap();
+    let endpoint = parse_endpoint(Transport::Tcp, &source.endpoint).unwrap();
     let epoch = source.epoch.parse().unwrap();
     assert_eq!(
         client
