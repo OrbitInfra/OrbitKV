@@ -22,6 +22,8 @@ test-hooks = ["orbitkv-channel/test-hooks"]
 default = ["cuda-13", "mooncake"]
 cuda-13 = ["orbitkv-core/cuda-13", "orbitkv-server/cuda-13", "orbitkv-transfer?/cuda-13"]
 mooncake = ["dep:orbitkv-transfer", "orbitkv-core/mooncake", "orbitkv-server/mooncake"]
+orbitte = ["orbitkv-core/orbitte", "orbitkv-server/orbitte"]
+orbitte-rdma = ["orbitte", "orbitkv-core/orbitte-rdma", "orbitkv-server/orbitte-rdma"]
 
 [dependencies]
 log.workspace = true

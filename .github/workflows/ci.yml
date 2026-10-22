@@ -306,7 +306,18 @@ jobs:
           esac
 
   build-wheel:
-    name: build Python 3.14 wheel (CUDA 13)
+    name: ${{ matrix.check-name }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - check-name: build Python 3.14 wheel (CUDA 13)
+            features: ""
+            artifact: orbitkv-wheel-ci
+          - check-name: build Python 3.14 wheel (CUDA 13, OrbitTE RDMA)
+            features: orbitte-rdma
+            artifact: orbitkv-wheel-ci-orbitte-rdma
     needs: [cargo-check, version-consistency-check]
     if: needs.version-consistency-check.outputs.native == 'true'
     runs-on: ubuntu-24.04
@@ -340,7 +351,7 @@ jobs:
       - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev patchelf
+          sudo apt-get install -y clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev patchelf
 
       - name: Install protocol compiler
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
@@ -361,13 +372,21 @@ jobs:
 
       - name: Build wheel
         run: |
-          ./scripts/build-wheel.sh --release
+          if [[ -n "$WHEEL_FEATURES" ]]; then
+            CC=gcc CXX=g++ ./scripts/build-wheel.sh --release --features "$WHEEL_FEATURES"
+            python scripts/check-wheel.py target/wheels/*.whl --install-smoke --require-orbitte-rdma
+          else
+            ./scripts/build-wheel.sh --release
+          fi
         env:
           CUDA_PATH: /usr/local/cuda
+          WHEEL_FEATURES: ${{ matrix.features }}
+          LIBCLANG_PATH: /usr/lib/llvm-18/lib
+          CLANG_PATH: /usr/bin/clang-18
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: orbitkv-wheel-ci
+          name: ${{ matrix.artifact }}
           path: target/wheels/*.whl
           retention-days: 1

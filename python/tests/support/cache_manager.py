@@ -139,7 +139,14 @@ def manager_pythonpath(
         roots = [str(PYTHON_ROOT), *configured_paths]
     else:
         roots = list(runtime_python_paths)
-    return tuple(dict.fromkeys([*roots, *site_packages]))
+    paths = [
+        sysconfig.get_path("stdlib"),
+        sysconfig.get_path("platstdlib"),
+        sysconfig.get_config_var("DESTSHARED"),
+        *roots,
+        *site_packages,
+    ]
+    return tuple(dict.fromkeys(path for path in paths if path))
 
 
 def wait_for_server_ready(
@@ -440,7 +447,9 @@ class CacheManagerProcess:
 
         # Add libpython to LD_LIBRARY_PATH if available
         if libdir := sysconfig.get_config_var("LIBDIR"):
-            env["LD_LIBRARY_PATH"] = f"{libdir}:{env.get('LD_LIBRARY_PATH', '')}"
+            env["LD_LIBRARY_PATH"] = os.pathsep.join(
+                path for path in (env.get("LD_LIBRARY_PATH", ""), libdir) if path
+            )
 
         # Set PYTHONPATH to include python package and venv site-packages
         configured_paths = [path for path in env.get("PYTHONPATH", "").split(":") if path]
@@ -448,8 +457,8 @@ class CacheManagerProcess:
             path
             for path in dict.fromkeys(
                 [
-                    sysconfig.get_path("purelib"),
                     *(path for path in sys.path if Path(path).name == "site-packages"),
+                    sysconfig.get_path("purelib"),
                 ]
             )
             if path

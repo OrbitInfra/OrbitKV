@@ -128,6 +128,14 @@ and [adapter contracts](adapters.md).
   RNIC faults, GDR, multirail and full TENT parity remain unqualified. B-node
   compute remains untested while GPU leases are busy. Historical CUDA 12.2
   pilots remain separate from this CUDA 13.1 source evidence.
+- [x] Optional complete-wheel feature forwarding for `orbitte` and `orbitte-rdma`.
+  The default wheel/provider stays CUDA 13 + TENT; optional RDMA wheel CI checks
+  the installed console's compiled RNIC requirement. The maintained
+  `test_installed_orbitte_peer_restores_cuda_ipc_bytes` gate covers matching
+  installed client/Manager IPC registration/Publish, actual peer bytes and
+  original export-credit retirement. Its GPU/RDMA runtime acceptance remains
+  unqualified until independently reviewed; compilation and CLI smoke are not
+  that evidence. See [release builds](releases.md#build-a-candidate).
 - [ ] Carry allocation/page generations through source grants, destination
   ownership and actual engine page reuse. Session/registration epochs alone
   do not establish this contract.

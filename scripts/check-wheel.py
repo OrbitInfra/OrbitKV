@@ -133,7 +133,7 @@ def check_wheel(path: Path, version: str | None = None) -> None:
     print(f"Wheel validated: {path.name} ({metadata['Version']})")
 
 
-def check_install(path: Path) -> None:
+def check_install(path: Path, require_orbitte_rdma: bool = False) -> None:
     distribution = "orbitkv-llm"
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
@@ -169,7 +169,21 @@ def check_install(path: Path) -> None:
             cwd=root,
             env=env,
         )
-    print(f"Isolated native import passed: {distribution}")
+        command = root / "venv/bin/orbitkv-cache-manager"
+        help_result = subprocess.run(
+            [str(command), "--help"], check=True, capture_output=True, text=True,
+            cwd=root, env=env,
+        )
+        if require_orbitte_rdma:
+            if "--orbitte-rdma-device" not in help_result.stdout:
+                raise ValueError("installed Manager is missing the OrbitTE RDMA build feature")
+            missing_device = subprocess.run(
+                [str(command), "--peer-transfer-backend", "orbitte-rdma"],
+                capture_output=True, text=True, cwd=root, env=env,
+            )
+            if missing_device.returncode != 2 or "--orbitte-rdma-device" not in missing_device.stderr:
+                raise ValueError("installed RDMA Manager did not require an explicit RNIC")
+    print(f"Isolated native import and Manager CLI passed: {distribution}")
 
 
 def main() -> int:
@@ -177,11 +191,14 @@ def main() -> int:
     parser.add_argument("wheel", type=Path)
     parser.add_argument("--version", help="Expected release version")
     parser.add_argument("--install-smoke", action="store_true")
+    parser.add_argument("--require-orbitte-rdma", action="store_true")
     args = parser.parse_args()
+    if args.require_orbitte_rdma and not args.install_smoke:
+        parser.error("--require-orbitte-rdma requires --install-smoke")
     try:
         check_wheel(args.wheel, args.version)
         if args.install_smoke:
-            check_install(args.wheel)
+            check_install(args.wheel, args.require_orbitte_rdma)
     except (OSError, subprocess.CalledProcessError, ValueError) as error:
         print(f"Wheel validation failed: {error}", file=sys.stderr)
         return 1

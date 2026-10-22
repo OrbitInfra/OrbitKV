@@ -24,11 +24,21 @@ engine release. See [S5.1](completion-plan.md#s51--release-and-interface-audit).
 The wheel contains the PyO3 extension, Manager executable, Mooncake libraries,
 engine plugins, type stubs, Apache-2.0 license and third-party attribution in
 `NOTICE`. The host supplies its NVIDIA
-driver and compatible PyTorch/CUDA 13 environment. CUDA 13 requires NVIDIA R580
-or newer; use a driver compatible with the selected toolkit's PTX/NVRTC output
-when runtime kernels are enabled. See [NVIDIA's compatibility requirements](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html).
-Tests, benchmarks and build
-caches are excluded from the package.
+driver and compatible PyTorch/CUDA 13 environment. CUDA 13 normally requires
+NVIDIA R580 or newer. Supported data-center GPUs can use NVIDIA's matching
+forward-compatibility package on selected older drivers, including R535; freeze
+the actual loaded driver/runtime libraries and qualify the consumed IPC, kernel
+and transfer features. A compute probe alone does not qualify them. See
+[NVIDIA's forward-compatibility matrix](https://docs.nvidia.com/deploy/cuda-compatibility/forward-compatibility.html).
+The console preserves explicit `LD_LIBRARY_PATH` ordering and appends the
+interpreter's `libpython` directory, so a selected compatibility package keeps
+priority over system driver libraries. Its Python search path keeps the
+interpreter's standard library before package roots, then the selected OrbitKV
+package and caller dependencies before automatically discovered site-packages.
+This prevents legacy site packages such as `enum34` from shadowing the standard
+library during console startup or embedded Python initialization. Check the
+Manager's actual loaded paths.
+Tests, benchmarks and build caches are excluded from the package.
 
 GPU ANS encoding additionally needs the separately installed nvCOMP 5.3 runtime;
 it is not bundled in the wheel. FP8 and TurboQuant kernels are compiled by NVRTC
@@ -53,6 +63,24 @@ checks the package version/content, and imports the installed wheel in a fresh
 non-editable environment. The initial maturin output uses a Linux tag; only the
 whole-wheel audit selects the final manylinux tag. Auditing the extension alone
 misses libraries loaded dynamically by TENT and the embedded-Python Manager.
+
+An experimental wheel can additionally compile OrbitTE TCP and RDMA:
+
+```bash
+CC=gcc CXX=g++ PYO3_PYTHON=/absolute/path/to/python3.11 \
+  ./scripts/build-wheel.sh --release --features orbitte-rdma --locked
+python3 scripts/check-wheel.py target/wheels/*.whl --install-smoke --require-orbitte-rdma
+```
+
+`--features orbitte` enables only the TCP candidate. Complete wheels still
+include CUDA 13 and TENT, and default to TENT; choose the experimental provider
+explicitly at Manager startup as described in [transport](transport.md#experimental-orbitte-peer-rdma-profile).
+These build options do not create a second Python distribution or establish
+installed GPU/RDMA qualification. The installed CLI smoke checks compiled RDMA
+arguments before any GPU access. CI builds both the default and optional RDMA
+wheel, with separate artifacts and matching Clang/libclang 18 on Ubuntu 24.04.
+Use a wheel matching the target CPython ABI and audited glibc floor; the CI
+Python 3.14 artifact cannot qualify a Python 3.11 execution node.
 
 CI builds on Ubuntu with protoc 27.5, `auditwheel==6.8.2`,
 `patchelf>=0.14.5`, maturin and wheel. Both release architectures use the same
