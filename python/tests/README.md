@@ -120,6 +120,33 @@ Follow [package releases](../../docs/releases.md) for the full artifact matrix,
 licenses, loader requirements and publication. A source test or CPU-native
 fixture does not qualify the final CUDA wheel.
 
+### Installed OrbitTE peer candidate
+
+Build a complete wheel with `--features orbitte` or `--features orbitte-rdma`
+as described in [release builds](../../docs/releases.md#build-a-candidate).
+`release/test_installed_orbitte.py` is a model-free two-Manager gate for that
+optional artifact. It compares all requested GPU bytes and untouched pages,
+checks actual remote-fetch and H2D byte counters, awaits the source inventory
+fence, and retains the original IPC counter descriptors through normal
+unregister. Registration and Publish cross CUDA IPC; DRAM Restore uses the
+client's local H2D owner. This does not establish Manager IPC Restore, inference
+serving, GDR, physical cross-host traffic or fault reclamation.
+
+Use `support/installed_pytest.py` with a tests/benches-only harness and a matching
+non-editable installation. Run its `--probe` and `--collect-only` first, then
+select `-m release_smoke tests/release/test_installed_orbitte.py`.
+Set `ORBITKV_TEST_INSTALLED_ORBITTE=1`, `ETCD_BIN`,
+`ORBITKV_TEST_STRICT_SHUTDOWN=1` and `PYTHONNOUSERSITE=1`.
+The RDMA case additionally requires `ORBITKV_TEST_ORBITTE_RDMA_DEVICE`,
+`ORBITKV_TEST_ORBITTE_RDMA_PORT` and `ORBITKV_TEST_ORBITTE_RDMA_GID_INDEX`;
+select only the TCP case when no RNIC lease is available.
+Hold the canonical GPU/RNIC and private-domain resource leases through all
+owned process exits; inherit their FDs with `ORBITKV_TEST_GPU_LOCK_FDS`.
+Freeze a private `ORBITKV_CHANNEL_CONFIG` root/prefix and precreated node/service
+directories for both Managers and clients. Freeze the installed files, Python
+search paths and actual mapped CUDA/compatibility/verbs libraries, and retain
+all raw results outside the checkout. Missing hardware evidence is unqualified.
+
 ### Two engines sharing one Manager
 
 Use `tests/release/test_shared_manager.py` with `-m release_smoke`,

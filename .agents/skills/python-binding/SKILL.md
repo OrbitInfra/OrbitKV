@@ -86,3 +86,8 @@ Use `scripts/build-wheel.sh` for a complete installed artifact; `maturin develop
 is a development build. See `docs/releases.md` for the CUDA 13 runtime, bundled native
 dependencies and installed-package checks. Freeze native artifacts before GPU
 tests: Cargo can restage shared libraries used by live Managers.
+Optional complete-wheel builds may add `--features orbitte` or
+`--features orbitte-rdma`; both retain the default CUDA 13/TENT build and require
+explicit Manager provider selection. See `python/tests/release/test_installed_orbitte.py`
+for the separate installed IPC/peer-byte gate; its DRAM restore uses the local
+client H2D owner and does not establish Manager IPC Restore or GDR.
