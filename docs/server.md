@@ -184,8 +184,15 @@ incarnations; it does not restore live leases or old cursors.
 
 ## Experimental peer payload selection
 
-`--peer-transfer-backend` accepts `mooncake` (default) or `orbitte-tcp`. The latter
+`--peer-transfer-backend` accepts `mooncake` (default), `orbitte-tcp` or
+`orbitte-rdma`. The TCP mode
 requires an `orbitte` build, a concrete numeric advertised IP and no `--nics`
 filter. See the [OrbitTE TCP profile](transport.md#experimental-orbitte-peer-tcp-profile)
 for its limits and explicit gates. This source candidate does not change the
 installed serving support matrix.
+
+The `orbitte-rdma` feature adds `--orbitte-rdma-device` (required for that mode),
+`--orbitte-rdma-port` and `--orbitte-rdma-gid-index`. It selects the single-rail
+host-staging profile without a TCP/native payload fallback; `--nics` remains
+Mooncake-specific. Read the [RDMA profile](transport.md#experimental-orbitte-peer-rdma-profile)
+for separate staging budgets and host versus CUDA 13 Manager qualification.

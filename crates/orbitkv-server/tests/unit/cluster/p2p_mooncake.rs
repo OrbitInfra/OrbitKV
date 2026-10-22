@@ -436,6 +436,30 @@ async fn p2p_orbitte_remote_fetch_roundtrip() {
     peer_remote_fetch_roundtrip(PeerTransferBackend::OrbitTeTcp).await;
 }
 
+#[cfg(feature = "orbitte-rdma")]
+#[tokio::test]
+#[ignore = "requires CUDA13, ETCD_BIN and explicit ORBITKV_TEST_ORBITTE_RDMA_DEVICE/PORT/GID_INDEX; actual Manager GPU path"]
+async fn p2p_orbitte_rdma_remote_fetch_roundtrip() {
+    peer_remote_fetch_roundtrip(PeerTransferBackend::OrbitTeRdma).await;
+}
+
+#[cfg(feature = "orbitte-rdma")]
+fn orbitte_rdma_config(backend: PeerTransferBackend) -> Option<orbitkv_core::OrbitTeRdmaConfig> {
+    (backend == PeerTransferBackend::OrbitTeRdma).then(|| orbitkv_core::OrbitTeRdmaConfig {
+        port: std::env::var("ORBITKV_TEST_ORBITTE_RDMA_PORT")
+            .unwrap()
+            .parse()
+            .unwrap(),
+        gid_index: std::env::var("ORBITKV_TEST_ORBITTE_RDMA_GID_INDEX")
+            .unwrap()
+            .parse()
+            .unwrap(),
+        ..orbitkv_core::OrbitTeRdmaConfig::new(
+            std::env::var("ORBITKV_TEST_ORBITTE_RDMA_DEVICE").unwrap(),
+        )
+    })
+}
+
 async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
     orbitkv_common::logging::init_stdout_colored("debug");
     let _cuda_ctx = CudaContext::new(0).expect("CUDA init");
@@ -458,6 +482,8 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
         global_index: Some(index_a),
         inventory: Some(inventory_a),
         peer_transfer_backend: backend,
+        #[cfg(feature = "orbitte-rdma")]
+        orbitte_rdma: orbitte_rdma_config(backend),
         enable_numa_affinity: backend == PeerTransferBackend::Mooncake,
         mooncake_nic_names: if backend == PeerTransferBackend::Mooncake {
             mooncake_nics()
@@ -610,8 +636,14 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
         granted.transfer_endpoint,
         engine_a.transfer_endpoint().unwrap()
     );
-    if backend == PeerTransferBackend::OrbitTeTcp {
-        assert!(granted.transfer_endpoint.starts_with("orbitte+tcp://"));
+    match backend {
+        PeerTransferBackend::OrbitTeTcp => {
+            assert!(granted.transfer_endpoint.starts_with("orbitte+tcp://"));
+        }
+        PeerTransferBackend::OrbitTeRdma => {
+            assert!(granted.transfer_endpoint.starts_with("orbitte+rdma://"));
+        }
+        PeerTransferBackend::Mooncake => {}
     }
     assert_eq!(engine_a.expire_transfer_locks(), 1);
     assert_eq!(engine_a.expire_transfer_locks(), 0);
@@ -702,6 +734,8 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
         global_index: Some(index_b),
         inventory: Some(inventory_b),
         peer_transfer_backend: backend,
+        #[cfg(feature = "orbitte-rdma")]
+        orbitte_rdma: orbitte_rdma_config(backend),
         enable_numa_affinity: backend == PeerTransferBackend::Mooncake,
         mooncake_nic_names: if backend == PeerTransferBackend::Mooncake {
             mooncake_nics()
@@ -969,7 +1003,10 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
     assert!(engine_b.list_instance_ids().is_empty());
     assert!(engine_a.list_instance_ids().is_empty());
     _observer.shutdown().await;
-    if backend == PeerTransferBackend::OrbitTeTcp {
+    if matches!(
+        backend,
+        PeerTransferBackend::OrbitTeTcp | PeerTransferBackend::OrbitTeRdma
+    ) {
         let artifact_root = std::env::var_os("ORBITKV_METADATA_ARTIFACT_DIR")
             .expect("explicit external peer evidence directory");
         std::fs::write(
@@ -978,7 +1015,7 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
         )
         .unwrap();
         println!(
-            "ORBITTE_PEER_GATES GPU Save/Restore bytes verified; source grants, generations and membership controls passed; peer service tasks drained"
+            "ORBITTE_PEER_GATES GPU Save/Restore bytes verified; source grants, generations and membership controls passed; peer service tasks drained; backend={backend:?}"
         );
     }
 }

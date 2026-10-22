@@ -59,7 +59,14 @@ impl PeerTransport {
         nics: &[String],
         allocator: Arc<PinnedAllocator>,
         advertise: &str,
+        #[cfg(feature = "orbitte-rdma")] rdma: Option<crate::OrbitTeRdmaConfig>,
     ) -> Result<Self, String> {
+        #[cfg(feature = "orbitte-rdma")]
+        if (backend == PeerTransferBackend::OrbitTeRdma) != rdma.is_some() {
+            return Err(
+                "OrbitTE RDMA requires an explicit configuration and orbitte-rdma selection".into(),
+            );
+        }
         match backend {
             PeerTransferBackend::Mooncake => {
                 #[cfg(feature = "mooncake")]
@@ -74,12 +81,36 @@ impl PeerTransport {
                     if !nics.is_empty() {
                         return Err("orbitte-tcp does not accept an RDMA NIC filter".into());
                     }
-                    super::orbitte::OrbitTeTransport::new(allocator.usage().1, advertise)
-                        .map(Arc::new)
-                        .map(Self::OrbitTe)
+                    super::orbitte::OrbitTeTransport::new(
+                        allocator.usage().1,
+                        advertise,
+                        orbit_te::Transport::Tcp,
+                        #[cfg(feature = "orbitte-rdma")]
+                        None,
+                    )
+                    .map(Arc::new)
+                    .map(Self::OrbitTe)
                 }
                 #[cfg(not(feature = "orbitte"))]
                 Err("OrbitTE TCP peer transport requires the orbitte build feature".into())
+            }
+            PeerTransferBackend::OrbitTeRdma => {
+                #[cfg(feature = "orbitte-rdma")]
+                {
+                    if !nics.is_empty() {
+                        return Err("orbitte-rdma uses its explicit device configuration, not a Mooncake NIC filter".into());
+                    }
+                    super::orbitte::OrbitTeTransport::new(
+                        allocator.usage().1,
+                        advertise,
+                        orbit_te::Transport::Rdma,
+                        rdma,
+                    )
+                    .map(Arc::new)
+                    .map(Self::OrbitTe)
+                }
+                #[cfg(not(feature = "orbitte-rdma"))]
+                Err("OrbitTE RDMA peer transport requires the orbitte-rdma build feature".into())
             }
         }
     }
@@ -107,7 +138,9 @@ impl PeerTransport {
             #[cfg(feature = "mooncake")]
             Self::Mooncake(_) => !endpoint.starts_with("orbitte+") && !endpoint.is_empty(),
             #[cfg(feature = "orbitte")]
-            Self::OrbitTe(_) => super::orbitte::parse_endpoint(endpoint).is_ok(),
+            Self::OrbitTe(transport) => {
+                super::orbitte::parse_endpoint(transport.payload, endpoint).is_ok()
+            }
         }
     }
 

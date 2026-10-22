@@ -8,6 +8,7 @@ pub enum PeerTransferBackend {
     #[default]
     Mooncake,
     OrbitTeTcp,
+    OrbitTeRdma,
 }
 
 impl std::str::FromStr for PeerTransferBackend {
@@ -17,7 +18,8 @@ impl std::str::FromStr for PeerTransferBackend {
         match value {
             "mooncake" => Ok(Self::Mooncake),
             "orbitte-tcp" => Ok(Self::OrbitTeTcp),
-            _ => Err("peer transfer backend must be mooncake or orbitte-tcp".into()),
+            "orbitte-rdma" => Ok(Self::OrbitTeRdma),
+            _ => Err("peer transfer backend must be mooncake, orbitte-tcp or orbitte-rdma".into()),
         }
     }
 }
@@ -44,8 +46,11 @@ pub struct EngineConfig {
     /// Optional Mooncake RDMA rail filter. Empty means that Mooncake selects
     /// the available transport, including TCP fallback.
     pub mooncake_nic_names: Vec<String>,
-    /// Explicit peer payload provider. OrbitTE TCP is an experimental profile.
+    /// Explicit peer payload provider. OrbitTE profiles are experimental.
     pub peer_transfer_backend: PeerTransferBackend,
+    /// Explicit single-rail staging configuration, consumed only by OrbitTE RDMA.
+    #[cfg(feature = "orbitte-rdma")]
+    pub orbitte_rdma: Option<crate::OrbitTeRdmaConfig>,
     /// Enable NUMA-aware memory allocation.
     pub enable_numa_affinity: bool,
     /// Allocate each block separately instead of contiguous batch allocation.
@@ -77,6 +82,8 @@ impl Default for EngineConfig {
             codec_budget: 64 * 1024 * 1024,
             mooncake_nic_names: Vec::new(),
             peer_transfer_backend: PeerTransferBackend::default(),
+            #[cfg(feature = "orbitte-rdma")]
+            orbitte_rdma: None,
             enable_numa_affinity: true,
             blockwise_alloc: false,
             transfer_lock_timeout: Duration::from_secs(120),

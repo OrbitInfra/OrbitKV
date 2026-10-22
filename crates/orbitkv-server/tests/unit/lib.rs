@@ -325,3 +325,47 @@ fn query_control_requires_loopback_before_runtime_initialization() {
         }
     }
 }
+
+#[cfg(feature = "orbitte-rdma")]
+#[test]
+fn orbitte_rdma_cli_requires_explicit_device_and_valid_port() {
+    let base = [
+        "orbitkv-cache-manager",
+        "--peer-transfer-backend",
+        "orbitte-rdma",
+    ];
+    assert!(Cli::try_parse_from(base).is_err());
+    assert!(
+        Cli::try_parse_from(base.into_iter().chain([
+            "--orbitte-rdma-device",
+            "mlx5_0",
+            "--orbitte-rdma-port",
+            "0"
+        ]))
+        .is_err()
+    );
+    assert!(
+        Cli::try_parse_from(["orbitkv-cache-manager", "--orbitte-rdma-gid-index", "3"]).is_err()
+    );
+    let cli = Cli::try_parse_from(base.into_iter().chain([
+        "--orbitte-rdma-device",
+        "mlx5_0",
+        "--orbitte-rdma-port",
+        "1",
+        "--orbitte-rdma-gid-index",
+        "3",
+    ]))
+    .unwrap();
+    assert_eq!(
+        cli.peer_transfer_backend,
+        orbitkv_core::PeerTransferBackend::OrbitTeRdma
+    );
+    assert_eq!(cli.orbitte_rdma_device.as_deref(), Some("mlx5_0"));
+    assert_eq!((cli.orbitte_rdma_port, cli.orbitte_rdma_gid_index), (1, 3));
+    assert_eq!(
+        Cli::try_parse_from(["orbitkv-cache-manager"])
+            .unwrap()
+            .peer_transfer_backend,
+        orbitkv_core::PeerTransferBackend::Mooncake
+    );
+}

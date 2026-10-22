@@ -210,9 +210,24 @@ pub struct Cli {
     #[arg(long, default_value_t = false)]
     pub blockwise_alloc: bool,
 
-    /// Peer payload provider; orbitte-tcp requires an orbitte-enabled build.
+    /// Peer payload provider; OrbitTE modes require their corresponding build feature.
     #[arg(long, default_value = "mooncake")]
     pub peer_transfer_backend: orbitkv_core::PeerTransferBackend,
+
+    /// Explicit single RNIC for the experimental OrbitTE RDMA staging profile.
+    #[cfg(feature = "orbitte-rdma")]
+    #[arg(long, value_parser = parse_nic_name, required_if_eq("peer_transfer_backend", "orbitte-rdma"))]
+    pub orbitte_rdma_device: Option<String>,
+
+    /// RNIC port for OrbitTE RDMA; select from the actual device topology.
+    #[cfg(feature = "orbitte-rdma")]
+    #[arg(long, default_value_t = 1, requires = "orbitte_rdma_device", value_parser = clap::value_parser!(u8).range(1..))]
+    pub orbitte_rdma_port: u8,
+
+    /// Routable GID index for OrbitTE RDMA; no automatic GID selection.
+    #[cfg(feature = "orbitte-rdma")]
+    #[arg(long, default_value_t = 0, requires = "orbitte_rdma_device")]
+    pub orbitte_rdma_gid_index: u8,
 
     /// Optional Mooncake RDMA rail filter (e.g. --nics mlx5_0,mlx5_1).
     /// Without it, Mooncake selects the available transport, including TCP.
@@ -729,6 +744,14 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         codec_budget: cli.storage_codec_budget,
         mooncake_nic_names: cli.nics.clone().unwrap_or_default(),
         peer_transfer_backend: cli.peer_transfer_backend,
+        #[cfg(feature = "orbitte-rdma")]
+        orbitte_rdma: cli.orbitte_rdma_device.clone().map(|device| {
+            orbitkv_core::OrbitTeRdmaConfig {
+                port: cli.orbitte_rdma_port,
+                gid_index: cli.orbitte_rdma_gid_index,
+                ..orbitkv_core::OrbitTeRdmaConfig::new(device)
+            }
+        }),
         enable_numa_affinity: !cli.disable_numa_affinity,
         blockwise_alloc: cli.blockwise_alloc,
         transfer_lock_timeout: Duration::from_secs(cli.transfer_lock_timeout_secs),

@@ -641,13 +641,12 @@ actual data connection without implementing a fake transfer engine. They are
 ignored by ordinary tests because a real GPU is required; an unavailable GPU
 leaves this gate unqualified.
 
-For a CUDA 12.2 driver pilot, an isolated test build can instead use
-`--no-default-features --features orbitte,cudarc/cuda-12020`, with the CUDA 12.2
-runtime selected in its process library path. That allocator-only profile is
-not CUDA 12 serving support or an installed Manager qualification. Keep exact
-source/binary/runtime hashes, device identity, resource locks, bytes and cleanup
-in an external artifact directory; do not infer RDMA, GPU DMA or crash recovery
-from this TCP ownership gate.
+Historical allocator pilots used a private CUDA 12.2 runtime. Their immutable
+source/artifact records are retained, but current OrbitKV builds require CUDA 13;
+CUDA 12 is unsupported. Run the current allocator gate on a CUDA 13-capable
+machine. Keep exact source/binary/runtime hashes, device identity, resource
+locks, bytes and cleanup outside the checkout; do not infer RDMA, GPU DMA or
+crash recovery from a TCP ownership gate.
 
 ## Experimental OrbitTE peer TCP profile
 
@@ -721,6 +720,87 @@ The retained failed first attempt and corrected runs are outside the checkout at
 This is a same-host embedded Manager source pilot. It does not qualify an
 installed Manager, serving, CUDA 13 runtime, physical cross-host Manager traffic,
 RDMA or device DMA.
+
+## Experimental OrbitTE peer RDMA profile
+
+Build the explicit single-rail host-staging candidate with GNU C/C++ compilers:
+
+```sh
+CC=gcc CXX=g++ cargo build --locked -p orbitkv-server --no-default-features \
+  --features cuda-13,orbitte-rdma
+```
+
+Select `--peer-transfer-backend orbitte-rdma --orbitte-rdma-device mlx5_0
+--orbitte-rdma-port 1 --orbitte-rdma-gid-index 3` alongside the ordinary
+membership/peer flags. Device/port/GID must match the actual RNIC and route;
+these values describe the supplied RoCE test profile, not device discovery.
+The device is required. The Mooncake `--nics` filter is rejected. Rust users
+set `EngineConfig.orbitte_rdma` with the re-exported `OrbitTeRdmaConfig`.
+The default provider remains TENT; the `orbitte` feature alone does not enable RDMA.
+
+The provider advertises `orbitte+rdma://IP:port` and fixes every payload request
+to `Transport::Rdma`. Metadata, descriptor bootstrap and DONE/ACK use TCP;
+payload bytes use RC verbs and private host staging. An unavailable device,
+source or build feature returns an error without selecting TCP or TENT payloads.
+Device availability is checked when the first native endpoint opens, not by
+successful metadata lookup. A TCP namespace cannot authorize this provider.
+The pinned allocation, grant epoch, registration references, cancellation owner
+and generation-scoped completion remain those described above.
+
+This is the existing OrbitTE staging path: a PD/CQ/QP/MR per slice, up to 64
+endpoints and 64 MiB staging per engine by default. These charges are separate
+from source tickets and the process pool budget. The TCP profile's 64 MiB READ,
+16,384-descriptor and 4,096-allocation limits still apply. READ commits after
+local CQ completion, successful local QP/MR destruction and the source ACK.
+No application/GPU pointer is registered with the RNIC; this is not GDR or
+zero-copy host registration. Endpoint reuse, multirail and pipelining remain open.
+
+Local `locally_drained` describes requester resources. A source native cleanup
+failure currently arrives as an ordinary remote backend error; it does not
+supply a source termination receipt. The source transfer engine independently
+retains its actual registered backing, admission, failed staging and budget,
+poisons new native admission and prevents a successful source close. A gRPC
+ticket release cannot override those owners. Local Unquiesced still retains
+the requester ticket and destination allocations. Native calls can exceed a
+Rust deadline; neither timeout nor watchdog action is physical drain evidence.
+
+The explicit host component gate builds with CUDA 13 but never initializes CUDA:
+
+```sh
+CC=gcc CXX=g++ cargo test --locked -p orbitkv-core --no-default-features \
+  --features cuda-13,orbitte-rdma --lib --no-run
+python3 /path/to/OrbitTE/tests/hardware/run.py \
+  --profile /external/orbitkv-host-profile.json \
+  --binary /external/core-test-binary --output /external/host-run-001
+```
+
+Use the maintained OrbitTE runner with `runner: "orbitkv-peer-host"`, explicit
+RNIC/port/GID, identity-pinned SSH nodes, both kinds `cpu` and transport `rdma`.
+It invokes the ignored exact test
+`peer::orbitte::tests::rdma_host::registered_host_rdma_peer`. Native assertions
+check fragmented registered READ bytes, all guards, old epochs, protocol mismatch,
+actual requester CQ counts, zero endpoint/staging/registration charges, mapped
+verbs libraries, absent CUDA/TENT libraries and owned shutdown. The controller
+holds RNIC leases until native wait/reap. This exercises the production
+registered-read execution with ordinary host backing; it does not test the
+PinnedAllocator or Manager GPU path.
+
+The full Manager gate is separate and requires a working CUDA 13 runtime:
+
+```sh
+ETCD_BIN=/path/to/etcd ORBITKV_METADATA_ARTIFACT_DIR=/external/manager-rdma \
+ORBITKV_TEST_ORBITTE_RDMA_DEVICE=mlx5_0 ORBITKV_TEST_ORBITTE_RDMA_PORT=1 \
+ORBITKV_TEST_ORBITTE_RDMA_GID_INDEX=3 \
+  cargo test --locked -p orbitkv-server --no-default-features \
+  --features cuda-13,orbitte-rdma --lib \
+  cluster::tests::p2p_mooncake::p2p_orbitte_rdma_remote_fetch_roundtrip \
+  -- --exact --ignored --test-threads=1
+```
+
+Current supplied H20 nodes have driver 535.161.08 and cannot qualify that CUDA 13
+Manager path. Do not substitute a CUDA 12 runtime. Pinned Manager/GPU, installed
+serving and physical RNIC faults remain unqualified. The host gate and CPU ABI
+teardown controls cannot establish those profiles or complete TENT parity.
 
 ## What OrbitKV reuses
 

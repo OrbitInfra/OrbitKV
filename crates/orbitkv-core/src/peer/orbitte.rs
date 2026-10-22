@@ -13,17 +13,22 @@ use super::provider::{
 };
 use crate::memory::pool::PinnedAllocation;
 
-const PREFIX: &str = "orbitte+tcp://";
+fn prefix(transport: Transport) -> &'static str {
+    match transport {
+        Transport::Tcp => "orbitte+tcp://",
+        Transport::Rdma => "orbitte+rdma://",
+    }
+}
 const MAX_READ_REQUESTS: usize = 16_384;
 const MAX_READ_BYTES: usize = 64 << 20;
 const SLICE_BYTES: usize = 8 << 20;
 
-pub(super) fn parse_endpoint(endpoint: &str) -> Result<SocketAddr, String> {
+pub(super) fn parse_endpoint(transport: Transport, endpoint: &str) -> Result<SocketAddr, String> {
     endpoint
-        .strip_prefix(PREFIX)
-        .ok_or("peer is not an OrbitTE TCP endpoint")?
+        .strip_prefix(prefix(transport))
+        .ok_or("peer OrbitTE payload protocol mismatch")?
         .parse()
-        .map_err(|error| format!("invalid OrbitTE TCP endpoint: {error}"))
+        .map_err(|error| format!("invalid OrbitTE endpoint: {error}"))
 }
 
 pub(crate) struct OrbitTeTransport {
@@ -31,6 +36,7 @@ pub(crate) struct OrbitTeTransport {
     pub(super) endpoint: String,
     pub(super) epoch: String,
     pool_bytes: u64,
+    pub(super) payload: Transport,
 }
 
 /// Explicit registration references plus the actual allocation and provider
@@ -62,7 +68,20 @@ impl Drop for RegistrationSet {
 }
 
 impl OrbitTeTransport {
-    pub(super) fn new(pool_bytes: u64, advertise: &str) -> Result<Self, String> {
+    pub(super) fn new(
+        pool_bytes: u64,
+        advertise: &str,
+        payload: Transport,
+        #[cfg(feature = "orbitte-rdma")] rdma: Option<crate::OrbitTeRdmaConfig>,
+    ) -> Result<Self, String> {
+        #[cfg(not(feature = "orbitte-rdma"))]
+        if payload == Transport::Rdma {
+            return Err("OrbitTE RDMA requires the orbitte-rdma build feature".into());
+        }
+        #[cfg(feature = "orbitte-rdma")]
+        if (payload == Transport::Rdma) != rdma.is_some() {
+            return Err("OrbitTE RDMA requires an explicit device configuration".into());
+        }
         let endpoint = advertise
             .strip_prefix("http://")
             .or_else(|| advertise.strip_prefix("https://"))
@@ -73,11 +92,13 @@ impl OrbitTeTransport {
         let host: IpAddr = host
             .trim_matches(['[', ']'])
             .parse()
-            .map_err(|_| "OrbitTE TCP requires a numeric advertised IP")?;
+            .map_err(|_| "OrbitTE requires a numeric advertised IP")?;
         if host.is_unspecified() {
-            return Err("OrbitTE TCP requires a concrete advertised IP".into());
+            return Err("OrbitTE requires a concrete advertised IP".into());
         }
         let config = EngineConfig {
+            #[cfg(feature = "orbitte-rdma")]
+            rdma,
             bind_addr: SocketAddr::new(host, 0),
             max_registered_regions: 4096,
             max_registered_bytes: usize::try_from(pool_bytes)
@@ -87,7 +108,7 @@ impl OrbitTeTransport {
         };
         let engine = Arc::new(TransferEngine::new(config).map_err(|error| error.to_string())?);
         let epoch = engine.source_epoch().to_string();
-        let endpoint = format!("{PREFIX}{}", engine.endpoint());
+        let endpoint = format!("{}{}", prefix(payload), engine.endpoint());
         {
             let mut budget = REGISTERED_POOLS
                 .lock()
@@ -107,6 +128,7 @@ impl OrbitTeTransport {
             endpoint,
             epoch,
             pool_bytes,
+            payload,
         })
     }
 
@@ -145,11 +167,9 @@ impl OrbitTeTransport {
         slices: &[PeerReadSlice],
         timeout: Duration,
     ) -> Result<usize, PeerTransferError> {
-        let started = Instant::now();
-        let endpoint = parse_endpoint(endpoint).map_err(PeerTransferError::Failed)?;
-        let epoch = expected_epoch
-            .parse()
-            .map_err(|error: Error| PeerTransferError::Failed(error.to_string()))?;
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .ok_or(PeerTransferError::Timeout)?;
         let mut requests = Vec::new();
         let mut total = 0usize;
         for slice in slices {
@@ -158,7 +178,7 @@ impl OrbitTeTransport {
                 .filter(|bytes| *bytes <= MAX_READ_BYTES)
                 .ok_or_else(|| {
                     PeerTransferError::Failed(
-                        "OrbitTE TCP READ exceeds the 64 MiB profile budget".into(),
+                        "OrbitTE READ exceeds the 64 MiB profile budget".into(),
                     )
                 })?;
             let count = slice.length.div_ceil(SLICE_BYTES);
@@ -168,7 +188,7 @@ impl OrbitTeTransport {
                 .is_none_or(|count| count > MAX_READ_REQUESTS)
             {
                 return Err(PeerTransferError::Failed(
-                    "OrbitTE TCP READ descriptor budget exhausted".into(),
+                    "OrbitTE READ descriptor budget exhausted".into(),
                 ));
             }
             slice
@@ -177,7 +197,7 @@ impl OrbitTeTransport {
                 .ok_or_else(|| PeerTransferError::Failed("remote READ address overflow".into()))?;
             for offset in (0..slice.length).step_by(SLICE_BYTES) {
                 requests.push(TransferRequest {
-                    transport: Transport::Tcp,
+                    transport: self.payload,
                     local_address: slice.local.as_ptr() as usize as u64 + offset as u64,
                     remote_address: slice.remote_address + offset as u64,
                     length: SLICE_BYTES.min(slice.length - offset),
@@ -190,9 +210,43 @@ impl OrbitTeTransport {
                 Permission::LocalOnly,
             )
             .map_err(PeerTransferError::Failed)?;
+        self.read_registered(endpoint, expected_epoch, &requests, deadline)
+    }
+
+    fn read_registered(
+        &self,
+        endpoint: &str,
+        expected_epoch: &str,
+        requests: &[TransferRequest],
+        deadline: Instant,
+    ) -> Result<usize, PeerTransferError> {
+        let endpoint = parse_endpoint(self.payload, endpoint).map_err(PeerTransferError::Failed)?;
+        let epoch = expected_epoch
+            .parse()
+            .map_err(|error: Error| PeerTransferError::Failed(error.to_string()))?;
+        if requests.len() > MAX_READ_REQUESTS {
+            return Err(PeerTransferError::Failed(
+                "OrbitTE READ descriptor budget exhausted".into(),
+            ));
+        }
+        let total = requests.iter().try_fold(0usize, |bytes, request| {
+            if request.transport != self.payload || request.length > SLICE_BYTES {
+                return Err(PeerTransferError::Failed(
+                    "OrbitTE READ payload selection or slice size mismatch".into(),
+                ));
+            }
+            bytes
+                .checked_add(request.length)
+                .filter(|bytes| *bytes <= MAX_READ_BYTES)
+                .ok_or_else(|| {
+                    PeerTransferError::Failed(
+                        "OrbitTE READ exceeds the 64 MiB profile budget".into(),
+                    )
+                })
+        })?;
         let remaining = || {
-            timeout
-                .checked_sub(started.elapsed())
+            deadline
+                .checked_duration_since(Instant::now())
                 .filter(|value| !value.is_zero())
                 .ok_or(PeerTransferError::Timeout)
         };
@@ -204,7 +258,7 @@ impl OrbitTeTransport {
             .map_err(transfer_error)?;
         let report = self
             .engine
-            .submit_and_wait(TransferOp::Read, &peer, &requests, remaining()?)
+            .submit_and_wait(TransferOp::Read, &peer, requests, remaining()?)
             .map_err(transfer_error)?;
         if !report.locally_drained {
             return Err(PeerTransferError::Unquiesced);
@@ -214,7 +268,7 @@ impl OrbitTeTransport {
         }
         if report.transferred_bytes != total {
             return Err(PeerTransferError::Failed(
-                "OrbitTE TCP READ returned incomplete bytes".into(),
+                "OrbitTE READ returned incomplete bytes".into(),
             ));
         }
         Ok(total)

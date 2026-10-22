@@ -15,6 +15,7 @@ default = ["cuda-13", "mooncake"]
 cuda-13 = ["orbitkv-core/cuda-13"]
 mooncake = ["orbitkv-core/mooncake"]
 orbitte = ["orbitkv-core/orbitte"]
+orbitte-rdma = ["orbitte", "orbitkv-core/orbitte-rdma"]
 tracing = ["fastrace", "orbitkv-core/tracing"]
 
 [lib]

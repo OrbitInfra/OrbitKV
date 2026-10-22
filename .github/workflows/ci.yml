@@ -183,6 +183,7 @@ jobs:
           cargo clippy -p orbitkv-server --all-targets --features test-hooks -- -D warnings
           cargo clippy -p orbitkv-core --all-targets --features orbitte -- -D warnings
           cargo clippy -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbitte -- -D warnings
+          CC=gcc CXX=g++ cargo clippy -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbitte-rdma -- -D warnings
 
   ruff-check:
     name: ruff check
@@ -267,6 +268,9 @@ jobs:
           cargo check -p orbitkv-core
           cargo check -p orbitkv-core --features orbitte
           cargo check -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbitte
+          CC=gcc CXX=g++ cargo check --locked -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbitte-rdma
+          CC=gcc CXX=g++ cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte-rdma --lib peer::orbitte::tests
+          CC=gcc CXX=g++ cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbitte-rdma --lib tests::orbitte_rdma_cli_requires_explicit_device_and_valid_port -- --exact
           cargo check -p orbitkv-server --all-targets --no-default-features --features cuda-13
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib peer::orbitte::tests
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib peer::completion::tests

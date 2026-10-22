@@ -150,6 +150,8 @@ impl Storage {
                 &mooncake_nic_names,
                 allocator.clone(),
                 advertise,
+                #[cfg(feature = "orbitte-rdma")]
+                config.orbitte_rdma.clone(),
             )
             .map(Arc::new)
             .map_err(|error| format!("Failed to initialise peer transfer engine: {error}"))?;
