@@ -145,7 +145,8 @@ def test_strict_manager_start_records_actual_command_and_keeps_failed_record_own
         "def stop(*_):\n print('SIGTERM received, shutting down', flush=True)\n sys.exit(0)\n"
         "signal.signal(signal.SIGTERM, stop)\n"
         f"Path({str(actual)!r}).write_text(json.dumps({{'argv':sys.argv,'pid':os.getpid(),"
-        "'pythonpath':os.environ['PYTHONPATH']}))\n"
+        "'pythonpath':os.environ['PYTHONPATH'],"
+        "'librarypath':os.environ['LD_LIBRARY_PATH']}))\n"
         "while True: signal.pause()\n"
     )
     binary.chmod(0o755)
@@ -155,6 +156,7 @@ def test_strict_manager_start_records_actual_command_and_keeps_failed_record_own
     monkeypatch.setenv("PYTHONNOUSERSITE", "1")
     monkeypatch.setenv("MC_FORCE_TCP", "1")
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-CPU-fixture")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/selected/cuda/compat:/selected/cuda/lib")
     package_directory = (
         PYTHON_ROOT / "orbitkv"
         if selected_package == "source"
@@ -201,6 +203,10 @@ def test_strict_manager_start_records_actual_command_and_keeps_failed_record_own
             time.sleep(0.01)
         observed = json.loads(actual.read_text())
         assert observed["pid"] == server.process.pid
+        assert observed["librarypath"].split(os.pathsep)[:2] == [
+            "/selected/cuda/compat",
+            "/selected/cuda/lib",
+        ]
         assert observed["pythonpath"].split(os.pathsep)[0] == str(package_directory.parent)
         if not write_failure:
             executable = cache_manager.Path(f"/proc/{server.process.pid}/exe").resolve()

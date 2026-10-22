@@ -20,7 +20,7 @@ from tests.support.cache_manager import CacheManagerProcess, ClientContext, find
 from tests.support.cluster import etcd_server
 from tests.support.installed_artifacts import distribution_snapshot
 from tests.support.ipc_credit import hold_counters, release_receipt
-from tests.support.runtime_checks import identity
+from tests.support.runtime_checks import capture_process_runtime, identity
 
 pytestmark = [pytest.mark.release_smoke, pytest.mark.gpu]
 
@@ -202,9 +202,30 @@ def test_installed_orbitte_peer_restores_cuda_ipc_bytes(provider, tmp_path, monk
             (tmp_path / str(index) / "manager-maps.txt").write_text(maps)
             assert str(package / "orbitkv-cache-manager-py") in maps
             assert "libcudart.so.13" in maps and "libcuda.so" in maps
+            marker = "OrbitTE peer payload initialized: "
+            endpoints = [
+                line.partition(marker)[2].strip()
+                for line in server.read_logs().splitlines()
+                if marker in line
+            ]
+            assert len(endpoints) == 1 and endpoints[0].startswith(
+                provider.replace("orbitte-", "orbitte+") + "://"
+            )
+            (tmp_path / str(index) / "peer-endpoint.json").write_text(
+                json.dumps({"provider": provider, "endpoint": endpoints[0]}) + "\n"
+            )
             assert "libtent" not in maps and "libmooncake" not in maps
             if provider == "orbitte-rdma":
                 assert "libibverbs" in maps and "libmlx5" in maps
+        (tmp_path / "client-runtime.json").write_text(
+            json.dumps(
+                capture_process_runtime(
+                    os.getpid(), report["client"]["start_ticks"], time.monotonic() + 30
+                ),
+                indent=2,
+            )
+            + "\n"
+        )
         report.update(
             payload_bytes=payload_bytes,
             inventory_fence=fence,

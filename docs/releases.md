@@ -30,8 +30,10 @@ forward-compatibility package on selected older drivers, including R535; freeze
 the actual loaded driver/runtime libraries and qualify the consumed IPC, kernel
 and transfer features. A compute probe alone does not qualify them. See
 [NVIDIA's forward-compatibility matrix](https://docs.nvidia.com/deploy/cuda-compatibility/forward-compatibility.html).
-Tests, benchmarks and build
-caches are excluded from the package.
+The console preserves explicit `LD_LIBRARY_PATH` ordering and appends the
+interpreter's `libpython` directory, so a selected compatibility package keeps
+priority over system driver libraries. Check the Manager's actual loaded paths.
+Tests, benchmarks and build caches are excluded from the package.
 
 GPU ANS encoding additionally needs the separately installed nvCOMP 5.3 runtime;
 it is not bundled in the wheel. FP8 and TurboQuant kernels are compiled by NVRTC

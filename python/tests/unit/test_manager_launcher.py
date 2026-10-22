@@ -25,6 +25,7 @@ def test_manager_launcher_executes_without_a_wrapper_process(tmp_path):
             signal.signal(signal.SIGTERM, lambda *args: sys.exit(23))
             Path(sys.argv[1]).write_text(str(os.getpid()))
             Path(sys.argv[2]).write_text(sys.argv[3])
+            Path(sys.argv[2] + ".env").write_text(os.environ["LD_LIBRARY_PATH"])
             while True:
                 signal.pause()
             """)
@@ -40,7 +41,11 @@ def test_manager_launcher_executes_without_a_wrapper_process(tmp_path):
         """)
     process = subprocess.Popen(
         [sys.executable, "-c", program, str(binary), str(pid_file), str(arguments), "literal $()"],
-        env=dict(os.environ, PYTHONPATH=str(PYTHON_ROOT)),
+        env=dict(
+            os.environ,
+            PYTHONPATH=str(PYTHON_ROOT),
+            LD_LIBRARY_PATH="/selected/cuda/compat:/selected/cuda/lib",
+        ),
         start_new_session=True,
     )
     try:
@@ -51,6 +56,10 @@ def test_manager_launcher_executes_without_a_wrapper_process(tmp_path):
             time.sleep(0.01)
         assert int(pid_file.read_text()) == process.pid
         assert arguments.read_text() == "literal $()"
+        assert (tmp_path / "arguments.env").read_text().split(os.pathsep)[:2] == [
+            "/selected/cuda/compat",
+            "/selected/cuda/lib",
+        ]
         process.send_signal(signal.SIGTERM)
         assert process.wait(timeout=5) == 23
     finally:

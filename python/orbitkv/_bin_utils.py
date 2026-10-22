@@ -58,7 +58,10 @@ def binary_env() -> dict[str, str]:
     """Return an environment that can load binaries linked to this Python."""
     env = os.environ.copy()
     libdir = sysconfig.get_config_var("LIBDIR")
-    _prepend_env_paths(env, "LD_LIBRARY_PATH", [libdir] if libdir else [])
+    if libdir:
+        env["LD_LIBRARY_PATH"] = os.pathsep.join(
+            path for path in (env.get("LD_LIBRARY_PATH", ""), libdir) if path
+        )
     _prepend_env_paths(
         env,
         "PYTHONPATH",

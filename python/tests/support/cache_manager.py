@@ -440,7 +440,9 @@ class CacheManagerProcess:
 
         # Add libpython to LD_LIBRARY_PATH if available
         if libdir := sysconfig.get_config_var("LIBDIR"):
-            env["LD_LIBRARY_PATH"] = f"{libdir}:{env.get('LD_LIBRARY_PATH', '')}"
+            env["LD_LIBRARY_PATH"] = os.pathsep.join(
+                path for path in (env.get("LD_LIBRARY_PATH", ""), libdir) if path
+            )
 
         # Set PYTHONPATH to include python package and venv site-packages
         configured_paths = [path for path in env.get("PYTHONPATH", "").split(":") if path]

@@ -123,6 +123,7 @@ impl OrbitTeTransport {
             budget.0 += 1;
             budget.1 = bytes;
         }
+        log::info!("OrbitTE peer payload initialized: {endpoint}");
         Ok(Self {
             engine,
             endpoint,
