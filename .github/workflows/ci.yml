@@ -232,7 +232,7 @@ jobs:
     # with CUDA builds, so no job expires while waiting for a runner.
     needs: [website-check, version-consistency-check]
     if: needs.version-consistency-check.outputs.native == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -250,7 +250,7 @@ jobs:
       - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev
+          sudo apt-get install -y cmake pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev
       - name: Install protocol compiler
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
         with:
@@ -259,6 +259,8 @@ jobs:
 
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
       - name: Validate sccache or select direct rustc
@@ -268,16 +270,19 @@ jobs:
           cargo check -p orbitkv-core
           cargo check -p orbitkv-core --features orbitte
           cargo check -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbitte
-          CC=gcc CXX=g++ cargo check --locked -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbitte-rdma
+          CC=gcc CXX=g++ cargo clippy --locked -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbitte-rdma -- -D warnings
           CC=gcc CXX=g++ cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte-rdma --lib peer::orbitte::tests
           CC=gcc CXX=g++ cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbitte-rdma --lib tests::orbitte_rdma_cli_requires_explicit_device_and_valid_port -- --exact
           cargo check -p orbitkv-server --all-targets --no-default-features --features cuda-13
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13 --lib storage::tests::unavailable_rdma_backend_is_rejected_before_pinned_allocation -- --exact
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib peer::orbitte::tests
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib peer::completion::tests
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib peer::completion::tests::unquiesced_transfer_retains_source_ticket_and_actual_buffer_owner -- --exact --ignored
           cargo check -p orbitkv-server --all-targets
         env:
           CUDA_PATH: /usr/local/cuda
+          LIBCLANG_PATH: /usr/lib/llvm-18/lib
+          CLANG_PATH: /usr/bin/clang-18
 
   cargo-check:
     name: cargo check
