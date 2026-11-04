@@ -35,6 +35,7 @@ impl GpuBuffer {
             unsafe { sys::cuMemcpyHtoD_v2(self.ptr, data.as_ptr() as *const c_void, self.len) },
             "cuMemcpyHtoD_v2",
         );
+        self.ctx.synchronize().expect("producer H2D completion");
     }
 
     pub fn copy_to_host(&self) -> Vec<u8> {
@@ -55,6 +56,7 @@ impl GpuBuffer {
             unsafe { sys::cuMemsetD8_v2(self.ptr, 0, self.len) },
             "cuMemsetD8_v2",
         );
+        self.ctx.synchronize().expect("producer memset completion");
     }
 }
 

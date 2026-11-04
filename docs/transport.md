@@ -809,7 +809,9 @@ owns how bytes reach it. Local GPU↔DRAM migration remains a separate step.
 OrbitTE receives **one `TransferRequest::file_vectored` per extent**, including
 its padding. It owns gather/scatter and storage staging; OrbitKV has no GPU
 layout slots or zero buffer. Imported tensors reuse their persistent engine
-registrations. The bounded codec input pool registers once per allocation;
+registrations. Direct Rust callers must supply those allocation owners to layer
+registration; pointer-only layouts cannot execute GPU file transfers. The bounded
+codec input pool registers once per allocation;
 encoded writes retain the actual codec arena until drain. The worker holds
 caller completion and admission as well as backing on unknown GPU drain, and
 fences subsequent work. DRAM representations still initialize their own padding

@@ -378,6 +378,7 @@ async fn shared_manager_reuses_only_matching_model_and_storage_identity() {
             1,
             TransferMode::Direct,
             page_first,
+            None,
         );
         let result = a
             .engine

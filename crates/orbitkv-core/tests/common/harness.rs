@@ -27,7 +27,7 @@ pub fn has_cuda_devices(n: usize) -> bool {
 // ---------------------------------------------------------------------------
 
 pub struct TestGpuData {
-    gpu: GpuBuffer,
+    gpu: Arc<GpuBuffer>,
     expected: Vec<u8>,
     pub block_size: usize,
 }
@@ -35,7 +35,7 @@ pub struct TestGpuData {
 impl TestGpuData {
     pub fn new(ctx: Arc<CudaContext>, num_blocks: usize, block_size: usize) -> Self {
         let total = num_blocks * block_size;
-        let gpu = GpuBuffer::alloc(ctx, total);
+        let gpu = Arc::new(GpuBuffer::alloc(ctx, total));
         let mut expected = vec![0u8; total];
         fill_test_pattern(&mut expected, block_size);
         gpu.copy_from_host(&expected);
@@ -58,7 +58,7 @@ impl TestGpuData {
         kv_stride: usize,
     ) -> Self {
         let alloc_size = (num_blocks - 1) * segment_size + kv_stride + segment_size;
-        let gpu = GpuBuffer::alloc(ctx, alloc_size);
+        let gpu = Arc::new(GpuBuffer::alloc(ctx, alloc_size));
         let mut expected = vec![0u8; alloc_size];
 
         // Fill K region and V region with the same block pattern.
@@ -280,6 +280,27 @@ impl TestEnvBuilder {
             })
             .collect();
 
+        ctx.bind_to_thread().expect("bind imported tensor context");
+        let allocation_owners = engine.transfer_backend().map(|backend| {
+            layers
+                .iter()
+                .map(|layer| {
+                    // SAFETY: the fixture retains actual allocation/context, producer copies
+                    // have drained, and caller completion coordinates subsequent aliases.
+                    unsafe {
+                        orbitkv_core::transfer_engine::CudaRegistration::new(
+                            Some(Arc::clone(&backend)),
+                            layer.data.ptr(),
+                            layer.data.total_size(),
+                            ctx.ordinal() as i32,
+                            layer.data.gpu.clone(),
+                        )
+                    }
+                    .expect("register fixture tensor with selected engine")
+                })
+                .collect::<Vec<_>>()
+        });
+
         let layer_infos: Vec<LayerInfo> = layers
             .iter()
             .zip(self.layers.iter())
@@ -312,6 +333,7 @@ impl TestEnvBuilder {
                 self.world_size,
                 self.transfer_mode,
                 self.page_first,
+                allocation_owners.as_deref(),
             );
         }
 
