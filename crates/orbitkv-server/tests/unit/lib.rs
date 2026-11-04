@@ -360,6 +360,15 @@ fn orbitte_rdma_cli_requires_explicit_device_and_valid_port() {
         cli.peer_transfer_backend,
         orbitkv_core::PeerTransferBackend::OrbitTeRdma
     );
+    assert!(!cli.orbitte_rdma_gpu_direct);
+    assert!(Cli::try_parse_from(["orbitkv-cache-manager", "--orbitte-rdma-gpu-direct"]).is_err());
+    let direct = Cli::try_parse_from(base.into_iter().chain([
+        "--orbitte-rdma-device",
+        "mlx5_0",
+        "--orbitte-rdma-gpu-direct",
+    ]))
+    .unwrap();
+    assert!(direct.orbitte_rdma_gpu_direct);
     assert_eq!(cli.orbitte_rdma_device.as_deref(), Some("mlx5_0"));
     assert_eq!((cli.orbitte_rdma_port, cli.orbitte_rdma_gid_index), (1, 3));
     assert_eq!(

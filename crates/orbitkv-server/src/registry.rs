@@ -1,8 +1,10 @@
+use orbitkv_core::transfer_engine::{CudaRegistration, TransferBackend};
 use orbitkv_proto::proto::engine::{CudaCreditDisposition, CudaIpcTensorRegistration};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
 #[derive(Debug, Clone)]
@@ -13,25 +15,17 @@ pub struct TensorMetadata {
     pub data_ptr: u64,
     pub size_bytes: usize,
     pub device_id: i32,
+    pub owner: Option<Arc<CudaRegistration>>,
 }
 
 struct LayerTensor {
-    #[allow(
-        dead_code,
-        reason = "holding the Python tensor keeps CUDA IPC memory mapped"
-    )]
-    tensor: Py<PyAny>,
+    _tensor: Arc<Py<PyAny>>,
     metadata: TensorMetadata,
     credit_identity: (Vec<u8>, u64),
 }
 
-// Note: No custom Drop impl needed for LayerTensor.
-// PyO3's Py<PyAny> will automatically:
-// 1. Acquire the GIL when dropped
-// 2. Decrement the Python object's reference count
-// 3. Let Python's garbage collector handle the actual cleanup
-// This is the correct way to release CUDA IPC tensors - the mapped memory
-// will be unmapped when the tensor's storage is garbage collected.
+// The last actual tensor owner releases the Python CUDA IPC storage credit.
+// Registry removal cannot unmap backing retained by a submitted engine READ.
 
 struct ContextState {
     device_id: i32,
@@ -96,6 +90,7 @@ impl CudaTensorRegistry {
         context_key: &ContextKey,
         layers: Vec<(String, CudaIpcTensorRegistration)>,
         disposition: &mut CudaCreditDisposition,
+        backend: Option<Arc<dyn TransferBackend>>,
     ) -> PyResult<Vec<TensorMetadata>> {
         *disposition = CudaCreditDisposition::Unknown;
         if self.contexts.contains_key(context_key) {
@@ -165,7 +160,37 @@ impl CudaTensorRegistry {
         let mut metadatas = Vec::with_capacity(layers.len());
         for (layer_name, registration) in layers {
             *disposition = CudaCreditDisposition::Unknown;
-            let layer_tensor = Self::materialize_tensor(device_id, device_uuid, &registration)?;
+            let mut layer_tensor = Self::materialize_tensor(device_id, device_uuid, &registration)?;
+            let base = layer_tensor.metadata.data_ptr - registration.view_offset_bytes;
+            let length = registration.storage_size_bytes as usize;
+            let shared = self
+                .contexts
+                .values()
+                .chain(std::iter::once(&context))
+                .filter(|context| context.device_id == device_id)
+                .flat_map(|context| context.tensors.values())
+                .filter_map(|tensor| tensor.metadata.owner.as_ref())
+                .find(|owner| owner.covers(base, length))
+                .cloned();
+            layer_tensor.metadata.owner = Some(match shared {
+                Some(owner) => owner,
+                None => {
+                    let cuda = cudarc::driver::CudaContext::new(device_id as usize)
+                        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+                    // SAFETY: the imported tensor retains this validated storage range;
+                    // native registration also owns its CUDA context through cleanup.
+                    unsafe {
+                        CudaRegistration::new(
+                            backend.clone(),
+                            base,
+                            length,
+                            device_id,
+                            Arc::new((Arc::clone(&layer_tensor._tensor), cuda)),
+                        )
+                    }
+                    .map_err(|error| PyValueError::new_err(error.to_string()))?
+                }
+            });
             let metadata = layer_tensor.metadata.clone();
 
             if context.device_id != metadata.device_id {
@@ -184,11 +209,11 @@ impl CudaTensorRegistry {
         Ok(metadatas)
     }
 
-    fn drop_context(&mut self, context_key: &ContextKey) -> usize {
+    fn drop_context(&mut self, context_key: &ContextKey) -> Result<usize, String> {
         self.release_contexts(vec![context_key.clone()])
     }
 
-    fn drop_instance(&mut self, instance_id: &str) -> usize {
+    fn drop_instance(&mut self, instance_id: &str) -> Result<usize, String> {
         let keys: Vec<ContextKey> = self
             .contexts
             .keys()
@@ -199,7 +224,7 @@ impl CudaTensorRegistry {
     }
 
     /// Clear all contexts and return the total number of tensors removed.
-    fn clear_and_count(&mut self) -> usize {
+    fn clear_and_count(&mut self) -> Result<usize, String> {
         let keys: Vec<ContextKey> = self.contexts.keys().cloned().collect();
         self.release_contexts(keys)
     }
@@ -213,7 +238,28 @@ impl CudaTensorRegistry {
     /// removed contexts actually hold live tensors. Dropping empty contexts is
     /// pure Rust, so an idle/empty registry never forces a CUDA device sync —
     /// which would block forever on a wedged GPU.
-    fn release_contexts(&mut self, keys: Vec<ContextKey>) -> usize {
+    fn release_contexts(&mut self, keys: Vec<ContextKey>) -> Result<usize, String> {
+        for context in keys.iter().filter_map(|key| self.contexts.get(key)) {
+            for tensor in context.tensors.values() {
+                if let Some(owner) = &tensor.metadata.owner {
+                    let shared = self
+                        .contexts
+                        .iter()
+                        .filter(|(key, _)| !keys.contains(key))
+                        .flat_map(|(_, context)| context.tensors.values())
+                        .any(|other| {
+                            other
+                                .metadata
+                                .owner
+                                .as_ref()
+                                .is_some_and(|other| Arc::ptr_eq(owner, other))
+                        });
+                    if !shared {
+                        owner.close().map_err(|error| error.to_string())?;
+                    }
+                }
+            }
+        }
         let tensor_count: usize = keys
             .iter()
             .filter_map(|key| self.contexts.get(key))
@@ -224,7 +270,7 @@ impl CudaTensorRegistry {
             for key in &keys {
                 self.contexts.remove(key);
             }
-            return 0;
+            return Ok(0);
         }
 
         // Remove contexts under the GIL so each `Py<PyAny>` is dropped (decref)
@@ -243,7 +289,7 @@ impl CudaTensorRegistry {
             let _ = cuda.call_method0("empty_cache");
         });
 
-        tensor_count
+        Ok(tensor_count)
     }
 
     fn materialize_tensor(
@@ -321,12 +367,13 @@ impl CudaTensorRegistry {
                 .and_then(|size| usize::try_from(size).ok())
                 .ok_or_else(|| PyValueError::new_err("CUDA registration view size overflow"))?;
             Ok(LayerTensor {
+                _tensor: Arc::new(tensor.unbind()),
                 credit_identity: (
                     registration.ref_counter_handle.clone(),
                     registration.ref_counter_offset,
                 ),
-                tensor: tensor.unbind(),
                 metadata: TensorMetadata {
+                    owner: None,
                     dtype: format!("torch.{}", registration.dtype),
                     shape,
                     strides,
@@ -352,20 +399,21 @@ enum RegistryCommand {
         context_key: ContextKey,
         /// Explicit tensor/storage exports for each layer in the batch.
         layers: Vec<(String, CudaIpcTensorRegistration)>,
+        backend: Option<Arc<dyn TransferBackend>>,
         // The `PyErr` is stringified on the actor thread (which holds the GIL),
         // so callers never need to touch the GIL to read an error message.
         reply: oneshot::Sender<Result<Vec<TensorMetadata>, ImportFailure>>,
     },
     DropInstance {
         instance_id: String,
-        reply: oneshot::Sender<usize>,
+        reply: oneshot::Sender<Result<usize, String>>,
     },
     DropContext {
         context_key: ContextKey,
-        reply: oneshot::Sender<usize>,
+        reply: oneshot::Sender<Result<usize, String>>,
     },
     Clear {
-        reply: oneshot::Sender<usize>,
+        reply: oneshot::Sender<Result<usize, String>>,
     },
 }
 
@@ -408,11 +456,13 @@ impl RegistryHandle {
         &self,
         context_key: ContextKey,
         layers: Vec<(String, CudaIpcTensorRegistration)>,
+        backend: Option<Arc<dyn TransferBackend>>,
     ) -> Result<Vec<TensorMetadata>, ImportFailure> {
         let (reply, rx) = oneshot::channel();
         self.dispatch(RegistryCommand::RegisterLayers {
             context_key,
             layers,
+            backend,
             reply,
         })
         .await;
@@ -421,7 +471,7 @@ impl RegistryHandle {
 
     /// Drop all CUDA tensors belonging to `instance_id`; returns the count
     /// released.
-    pub async fn drop_instance(&self, instance_id: String) -> usize {
+    pub async fn drop_instance(&self, instance_id: String) -> Result<usize, String> {
         let (reply, rx) = oneshot::channel();
         self.dispatch(RegistryCommand::DropInstance { instance_id, reply })
             .await;
@@ -429,7 +479,7 @@ impl RegistryHandle {
     }
 
     /// Drop exactly one context; returns the number of CUDA tensors released.
-    pub(crate) async fn drop_context(&self, context_key: ContextKey) -> usize {
+    pub(crate) async fn drop_context(&self, context_key: ContextKey) -> Result<usize, String> {
         let (reply, rx) = oneshot::channel();
         self.dispatch(RegistryCommand::DropContext { context_key, reply })
             .await;
@@ -437,7 +487,7 @@ impl RegistryHandle {
     }
 
     /// Drop every registered tensor; returns the count released.
-    pub async fn clear(&self) -> usize {
+    pub async fn clear(&self) -> Result<usize, String> {
         let (reply, rx) = oneshot::channel();
         self.dispatch(RegistryCommand::Clear { reply }).await;
         rx.await.expect("cuda-registry thread dropped reply")
@@ -459,11 +509,12 @@ fn registry_actor(mut registry: CudaTensorRegistry, mut rx: mpsc::Receiver<Regis
             RegistryCommand::RegisterLayers {
                 context_key,
                 layers,
+                backend,
                 reply,
             } => {
                 let mut disposition = CudaCreditDisposition::Unknown;
                 let result = registry
-                    .register_layers(&context_key, layers, &mut disposition)
+                    .register_layers(&context_key, layers, &mut disposition, backend)
                     // Stringify here, on the GIL-owning thread, so the gRPC
                     // handler never needs `Python::attach` just to read the message.
                     .map_err(|err| ImportFailure {

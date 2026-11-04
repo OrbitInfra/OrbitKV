@@ -74,7 +74,7 @@ fn drop_context_removes_only_that_context() {
     registry
         .contexts
         .insert(other.clone(), ContextState::new(1));
-    assert_eq!(registry.drop_context(&first), 0);
+    assert_eq!(registry.drop_context(&first).unwrap(), 0);
     assert!(!registry.contexts.contains_key(&first));
     assert!(registry.contexts.contains_key(&other));
 }
@@ -87,7 +87,12 @@ fn register_layers_rejects_existing_context_before_materializing() {
         .contexts
         .insert(context.clone(), ContextState::new(7));
     let err = registry
-        .register_layers(&context, Vec::new(), &mut CudaCreditDisposition::Unknown)
+        .register_layers(
+            &context,
+            Vec::new(),
+            &mut CudaCreditDisposition::Unknown,
+            None,
+        )
         .expect_err("existing context must be rejected");
     let message = Python::attach(|py| err.value(py).to_string());
     assert!(message.contains("already registered"));
@@ -109,13 +114,13 @@ fn drop_instance_does_not_select_a_nested_instance_name() {
             .contexts
             .insert(context.clone(), ContextState::new(0));
     }
-    assert_eq!(registry.drop_instance("a"), 0);
+    assert_eq!(registry.drop_instance("a").unwrap(), 0);
     assert!(!registry.contexts.contains_key(&contexts[0]));
     assert!(!registry.contexts.contains_key(&contexts[1]));
     for context in &contexts[2..] {
         assert!(registry.contexts.contains_key(context));
     }
-    assert_eq!(registry.drop_instance("a:b"), 0);
+    assert_eq!(registry.drop_instance("a:b").unwrap(), 0);
     assert!(!registry.contexts.contains_key(&contexts[2]));
     assert!(registry.contexts.contains_key(&contexts[3]));
     assert!(registry.contexts.contains_key(&contexts[4]));
@@ -124,7 +129,7 @@ fn drop_instance_does_not_select_a_nested_instance_name() {
         .contexts
         .insert(replacement.clone(), ContextState::new(9));
     assert_eq!(registry.contexts.get(&replacement).unwrap().device_id, 9);
-    assert_eq!(registry.clear_and_count(), 0);
+    assert_eq!(registry.clear_and_count().unwrap(), 0);
     assert!(registry.contexts.is_empty());
 }
 
@@ -139,13 +144,16 @@ async fn actor_cleanup_preserves_the_other_instances_registration() {
         .insert(other.clone(), ContextState::new(0));
     let actor = RegistryHandle::spawn(registry);
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
-        assert_eq!(actor.drop_instance("a".into()).await, 0);
-        let message = actor.register_layers(other, Vec::new()).await.unwrap_err();
+        assert_eq!(actor.drop_instance("a".into()).await.unwrap(), 0);
+        let message = actor
+            .register_layers(other, Vec::new(), None)
+            .await
+            .unwrap_err();
         assert!(
             message.message.contains("already registered"),
             "{message:?}"
         );
-        assert_eq!(actor.clear().await, 0);
+        assert_eq!(actor.clear().await.unwrap(), 0);
     })
     .await
     .expect("registry actor control is bounded");
@@ -161,6 +169,7 @@ fn explicit_invalid_exports_are_refused_before_device_discovery_or_import() {
             &context,
             vec![("kv".into(), invalid)],
             &mut CudaCreditDisposition::Unknown,
+            None,
         )
         .unwrap_err();
     let message = Python::attach(|py| error.value(py).to_string());
@@ -197,6 +206,7 @@ fn explicit_export_batch_cannot_mix_retained_owner_generations() {
             &context,
             vec![("k".into(), first), ("v".into(), second)],
             &mut CudaCreditDisposition::Unknown,
+            None,
         )
         .unwrap_err();
     let message = Python::attach(|py| error.value(py).to_string());
@@ -232,6 +242,7 @@ fn one_export_credit_cannot_create_two_importer_owners() {
             &context,
             vec![("k".into(), first.clone()), ("v".into(), first)],
             &mut CudaCreditDisposition::Unknown,
+            None,
         )
         .unwrap_err();
     let message = Python::attach(|py| error.value(py).to_string());
@@ -261,9 +272,47 @@ fn duplicate_credit_refusal_keeps_disposition_unknown() {
             .register_layers(
                 &context,
                 vec![("a".into(), tensor.clone()), ("b".into(), tensor)],
-                &mut disposition
+                &mut disposition,
+                None,
             )
             .is_err()
     );
     assert_eq!(disposition, CudaCreditDisposition::Unknown);
+}
+
+#[test]
+fn tensor_owner_survives_registry_removal() {
+    use std::sync::Arc;
+    // CPU ownership control: a Python object stands in for the imported tensor.
+    // CUDA IPC itself remains an installed gate.
+    let owner = pyo3::Python::attach(|py| Arc::new(py.None()));
+    let weak = Arc::downgrade(&owner);
+    let metadata = TensorMetadata {
+        dtype: "control".into(),
+        shape: vec![1],
+        strides: vec![1],
+        data_ptr: 4096,
+        size_bytes: 1,
+        device_id: 0,
+        // SAFETY: no-backend CPU fixture retains this marker without CUDA access.
+        owner: Some(unsafe { CudaRegistration::new(None, 4096, 1, 0, owner.clone()) }.unwrap()),
+    };
+    let retained = metadata.clone();
+    let mut registry = CudaTensorRegistry::empty();
+    let context_key = key("owner-control", 0, 0, "gpu");
+    let mut context = ContextState::new(0);
+    context.tensors.insert(
+        "layer".into(),
+        LayerTensor {
+            _tensor: owner,
+            metadata,
+            credit_identity: (vec![1], 0),
+        },
+    );
+    registry.contexts.insert(context_key.clone(), context);
+    // Exercise owner removal without calling Torch CUDA cache collection.
+    drop(registry.contexts.remove(&context_key));
+    assert!(weak.upgrade().is_some());
+    drop(retained);
+    assert!(weak.upgrade().is_none());
 }

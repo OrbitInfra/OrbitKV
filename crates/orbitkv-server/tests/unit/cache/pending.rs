@@ -131,6 +131,7 @@ fn manager_validates_complete_demand_and_never_leases_a_partial_selected_group()
             None,
             TransferMode::Direct,
             false,
+            None,
         )
         .unwrap();
     let present = vec![7; 32];

@@ -24,7 +24,6 @@ fn prefix(transport: Transport) -> &'static str {
 }
 const MAX_BATCH_REQUESTS: usize = 16_384;
 const MAX_BATCH_BYTES: usize = 64 << 20;
-const SLICE_BYTES: usize = 8 << 20;
 
 pub(super) fn parse_endpoint(transport: Transport, endpoint: &str) -> Result<SocketAddr, String> {
     endpoint
@@ -140,11 +139,13 @@ impl OrbitTeTransport {
             max_registered_regions: 4096,
             max_registered_bytes: usize::try_from(pool_bytes)
                 .map_err(|_| "pool exceeds addressable bytes")?
-                .checked_add(if storage.is_some() { 64 << 20 } else { 0 })
+                .checked_add(2 << 30) // Persistent GPU registrations share this headroom.
+                .and_then(|bytes| bytes.checked_add(if storage.is_some() { 64 << 20 } else { 0 }))
                 .ok_or("registration budget overflow")?,
             max_batch_requests: MAX_BATCH_REQUESTS,
             max_inflight_batches: 32,
             max_inflight_bytes: MAX_BATCH_BYTES,
+            max_transfer_bytes: MAX_BATCH_BYTES,
             max_allocated_batches: 32,
             max_allocated_requests: 32 * MAX_BATCH_REQUESTS,
             max_file_segments: if storage.is_some() { 256 } else { 0 },
@@ -217,26 +218,18 @@ impl OrbitTeTransport {
                 "transfer cancelled before submission",
             ));
         }
-        let mut requests = Vec::new();
-        for slice in slices {
-            if requests.len() + slice.length.div_ceil(SLICE_BYTES) > MAX_BATCH_REQUESTS {
-                return Err(TransferError::new(
-                    ErrorKind::ResourceExhausted,
-                    "transfer descriptor budget exhausted",
-                ));
-            }
-            for offset in (0..slice.length).step_by(SLICE_BYTES) {
-                requests.push(
-                    TransferRequest::new(
-                        transport,
-                        slice.local.as_ptr() as usize as u64 + offset as u64,
-                        slice.remote_address + offset as u64,
-                        SLICE_BYTES.min(slice.length - offset),
-                    )
-                    .with_deadline(deadline),
-                );
-            }
-        }
+        let requests: Vec<_> = slices
+            .iter()
+            .map(|slice| {
+                TransferRequest::new(
+                    transport,
+                    slice.local.as_ptr() as u64,
+                    slice.remote_address,
+                    slice.length,
+                )
+                .with_deadline(deadline)
+            })
+            .collect();
         let op = match operation {
             crate::transfer_engine::TransferOp::Read => TransferOp::Read,
             crate::transfer_engine::TransferOp::Write => TransferOp::Write,
@@ -475,7 +468,7 @@ impl TransferBackend for OrbitTeTransport {
         )]
         let peer = match &peer.inner {
             Segment::OrbitTe(peer) => peer,
-            #[cfg(feature = "mooncake")]
+            #[cfg(any(feature = "mooncake", test))]
             _ => {
                 return Err(TransferError::new(
                     ErrorKind::InvalidRequest,

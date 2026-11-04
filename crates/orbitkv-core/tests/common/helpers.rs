@@ -71,6 +71,7 @@ pub fn register_layers(
             None,
             transfer_mode,
             page_first,
+            None,
         )
         .expect("register_context_layer_batch");
 }

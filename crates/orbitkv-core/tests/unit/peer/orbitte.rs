@@ -21,7 +21,8 @@ fn cpu_tcp_backend_reads_and_writes_fragmented_bytes_and_drains() {
     };
     let source = make();
     let requester = make();
-    let original = (0..1024).map(|i| (i % 251) as u8).collect::<Vec<_>>();
+    let size = 18 << 20;
+    let original = (0..size).map(|i| (i % 251) as u8).collect::<Vec<_>>();
     let remote = source
         .engine
         .register_memory(
@@ -31,7 +32,7 @@ fn cpu_tcp_backend_reads_and_writes_fragmented_bytes_and_drains() {
         .unwrap();
     let local = requester
         .engine
-        .register_memory(vec![0xcc; 1024].into_boxed_slice(), Permission::LocalOnly)
+        .register_memory(vec![0xcc; size].into_boxed_slice(), Permission::LocalOnly)
         .unwrap();
     let backend: &dyn TransferBackend = requester.as_ref();
     let peer = backend
@@ -43,12 +44,13 @@ fn cpu_tcp_backend_reads_and_writes_fragmented_bytes_and_drains() {
         .unwrap();
     // The first two descriptors merge to one physical owner. Bytes must not be
     // summed through their overlapping per-task completion counters.
-    let slices =
-        [(13, 29, 128), (141, 157, 128), (700, 800, 100)].map(|(l, r, length)| TransferSlice {
+    let slices = [(13, 29, 128), (141, 157, 128), (700, 800, size - 900)].map(|(l, r, length)| {
+        TransferSlice {
             local: NonNull::new((local.base_address() + l) as *mut u8).unwrap(),
             remote_address: remote.base_address() + r,
             length,
-        });
+        }
+    });
     let cancel = Cancellation::default();
     // SAFETY: both registrations and backing remain owned and no access races.
     assert_eq!(
@@ -62,13 +64,13 @@ fn cpu_tcp_backend_reads_and_writes_fragmented_bytes_and_drains() {
             )
         }
         .unwrap(),
-        356
+        size - 644
     );
-    let mut got = vec![0; 1024];
+    let mut got = vec![0; size];
     local.read(0, &mut got).unwrap();
-    let mut expected = vec![0xcc; 1024];
+    let mut expected = vec![0xcc; size];
     expected[13..269].copy_from_slice(&original[29..285]);
-    expected[700..800].copy_from_slice(&original[800..900]);
+    expected[700..size - 200].copy_from_slice(&original[800..size - 100]);
     assert_eq!(got, expected);
     local.write(13, &[0x5a; 256]).unwrap();
     // SAFETY: READ has drained and the WRITE source is immutable until return.
@@ -213,10 +215,10 @@ fn transfer_rejects_descriptor_and_byte_budgets_before_payload_io() {
     let request = TransferSlice {
         local: std::ptr::NonNull::dangling(),
         remote_address: 1,
-        length: SLICE_BYTES,
+        length: 8 << 20,
     };
     let cases = [
-        (vec![request; MAX_BATCH_BYTES / SLICE_BYTES + 1], "64 MiB"),
+        (vec![request; MAX_BATCH_BYTES / (8 << 20) + 1], "64 MiB"),
         (
             vec![
                 TransferSlice {

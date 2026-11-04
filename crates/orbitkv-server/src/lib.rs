@@ -236,6 +236,12 @@ pub struct Cli {
     #[arg(long, default_value_t = 0, requires = "orbitte_rdma_device")]
     pub orbitte_rdma_gid_index: u8,
 
+    /// Use OrbitTE GPU Direct RDMA instead of engine-owned CUDA staging.
+    /// Requires an installed GDR-capable profile and MLX5_SCATTER_TO_CQE=0.
+    #[cfg(feature = "orbitte-rdma")]
+    #[arg(long, requires = "orbitte_rdma_device")]
+    pub orbitte_rdma_gpu_direct: bool,
+
     /// Optional Mooncake RDMA rail filter (e.g. --nics mlx5_0,mlx5_1).
     /// Without it, Mooncake selects the available transport, including TCP.
     #[arg(long, value_delimiter = ',', value_parser = parse_nic_name, num_args = 1..)]
@@ -764,6 +770,11 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         #[cfg(feature = "orbitte-rdma")]
         orbitte_rdma: cli.orbitte_rdma_device.clone().map(|device| {
             orbitkv_core::OrbitTeRdmaConfig {
+                cuda_memory: if cli.orbitte_rdma_gpu_direct {
+                    orbitkv_core::OrbitTeRdmaCudaMemory::Direct
+                } else {
+                    orbitkv_core::OrbitTeRdmaCudaMemory::Staged
+                },
                 port: Some(cli.orbitte_rdma_port),
                 gid_index: Some(cli.orbitte_rdma_gid_index),
                 ..orbitkv_core::OrbitTeRdmaConfig::new(device)

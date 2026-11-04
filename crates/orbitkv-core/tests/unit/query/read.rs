@@ -24,17 +24,25 @@ fn ready_result_rebuilds_prefix_in_requested_key_order() {
         Some(AttributionSource::Ssd),
         &[k1.clone(), k2.clone(), k3.clone()],
         vec![
-            (k2, Arc::clone(&b2)),
-            (k1, Arc::clone(&b1)),
-            (k3, Arc::clone(&b3)),
+            (k2, RestoreSource::Memory(Arc::clone(&b2))),
+            (k1, RestoreSource::Memory(Arc::clone(&b1))),
+            (k3, RestoreSource::Memory(Arc::clone(&b3))),
         ],
     );
 
     assert_eq!(result.ready_blocks.len(), 4);
-    assert!(Arc::ptr_eq(&result.ready_blocks[0], &local));
-    assert!(Arc::ptr_eq(&result.ready_blocks[1], &b1));
-    assert!(Arc::ptr_eq(&result.ready_blocks[2], &b2));
-    assert!(Arc::ptr_eq(&result.ready_blocks[3], &b3));
+    assert!(
+        matches!(&result.ready_blocks[0], RestoreSource::Memory(block) if Arc::ptr_eq(block, &local))
+    );
+    assert!(
+        matches!(&result.ready_blocks[1], RestoreSource::Memory(block) if Arc::ptr_eq(block, &b1))
+    );
+    assert!(
+        matches!(&result.ready_blocks[2], RestoreSource::Memory(block) if Arc::ptr_eq(block, &b2))
+    );
+    assert!(
+        matches!(&result.ready_blocks[3], RestoreSource::Memory(block) if Arc::ptr_eq(block, &b3))
+    );
     assert_eq!(result.missing, 0);
     assert_eq!(result.cache_inserts.len(), 3);
 }
@@ -52,11 +60,16 @@ fn ready_result_stops_at_first_missing_prefetch_key() {
         3,
         Some(AttributionSource::Ssd),
         &[k1.clone(), k2, k3.clone()],
-        vec![(k3, b3), (k1, Arc::clone(&b1))],
+        vec![
+            (k3, RestoreSource::Memory(b3)),
+            (k1, RestoreSource::Memory(Arc::clone(&b1))),
+        ],
     );
 
     assert_eq!(result.ready_blocks.len(), 1);
-    assert!(Arc::ptr_eq(&result.ready_blocks[0], &b1));
+    assert!(
+        matches!(&result.ready_blocks[0], RestoreSource::Memory(block) if Arc::ptr_eq(block, &b1))
+    );
     assert_eq!(result.missing, 2);
     assert_eq!(result.cache_inserts.len(), 2);
 }
@@ -65,14 +78,17 @@ fn ready_result_stops_at_first_missing_prefetch_key() {
 async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
     use crate::{SsdBackend, SsdCacheConfig, SsdReadPath};
 
-    for (read_path, mode, existing_permission, existing_node, share) in [
-        (None, QueryMode::Demand, true, NumaNode(1), true),
-        (None, QueryMode::Prepare, true, NumaNode(1), true),
+    for (read_path, mode, existing_permission, existing_node, existing_host, share) in [
+        (None, QueryMode::Demand, true, NumaNode(1), false, true),
+        (None, QueryMode::Demand, true, NumaNode(1), true, false),
+        (None, QueryMode::Prepare, true, NumaNode(1), true, true),
+        (None, QueryMode::Prepare, true, NumaNode(1), false, false),
         (
             Some(SsdReadPath::Cufile),
             QueryMode::Demand,
             true,
             NumaNode(1),
+            false,
             false,
         ),
         (
@@ -80,9 +96,10 @@ async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
             QueryMode::Prepare,
             false,
             NumaNode(1),
+            true,
             false,
         ),
-        (None, QueryMode::Prepare, true, NumaNode(0), false),
+        (None, QueryMode::Prepare, true, NumaNode(0), true, false),
     ] {
         let directory = tempfile::tempdir().unwrap();
         let store = crate::storage::ssd::SsdStore::new(
@@ -116,6 +133,7 @@ async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
                 wait_for_full_prefix: false,
                 allow_ssd_prefetch: existing_permission,
                 destination_nodes: vec![existing_node],
+                host_ready: existing_host,
             },
             Arc::downgrade(&shared),
         );
@@ -125,7 +143,7 @@ async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
             MaterializedRead {
                 source: Some(AttributionSource::Ssd),
                 cache_inserts: Vec::new(),
-                ready_blocks: vec![block()],
+                ready_blocks: vec![RestoreSource::Memory(block())],
                 missing: 0,
             }
         }));
@@ -151,4 +169,23 @@ async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
             assert_eq!(result.missing, 1);
         }
     }
+}
+
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[tokio::test]
+async fn peer_ready_prefix_never_becomes_a_dram_cache_insert() {
+    use crate::peer::restore::tests::{Control, source};
+    let result = build_ready_result(
+        vec![block()],
+        2,
+        Some(AttributionSource::Remote),
+        &[key(1)],
+        vec![(
+            key(1),
+            RestoreSource::Peer(source(Arc::new(Control::default()), vec![])),
+        )],
+    );
+    assert_eq!(result.ready_blocks.len(), 2);
+    assert!(matches!(result.ready_blocks[1], RestoreSource::Peer(_)));
+    assert!(result.cache_inserts.is_empty());
 }

@@ -446,6 +446,10 @@ async fn p2p_orbitte_rdma_remote_fetch_roundtrip() {
 #[cfg(feature = "orbitte-rdma")]
 fn orbitte_rdma_config(backend: PeerTransferBackend) -> Option<orbitkv_core::OrbitTeRdmaConfig> {
     (backend == PeerTransferBackend::OrbitTeRdma).then(|| orbitkv_core::OrbitTeRdmaConfig {
+        cuda_memory: match std::env::var("ORBITKV_TEST_ORBITTE_GPU_DIRECT").as_deref() {
+            Ok("1") => orbitkv_core::OrbitTeRdmaCudaMemory::Direct,
+            _ => orbitkv_core::OrbitTeRdmaCudaMemory::Staged,
+        },
         port: Some(
             std::env::var("ORBITKV_TEST_ORBITTE_RDMA_PORT")
                 .unwrap()
@@ -754,11 +758,11 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
     let _target_server =
         spawn_engine_server(Arc::clone(&engine_b), cluster_b.inventory(), port_b).await;
 
-    let gpu_b = GpuBuffer::alloc(TOTAL_SIZE);
+    let gpu_b = Arc::new(GpuBuffer::alloc(TOTAL_SIZE));
     gpu_b.zero();
 
     engine_b
-        .register_context_layer_batch(
+        .register_context_layer_batch_strided(
             "inst-b",
             NAMESPACE,
             DEVICE_ID,
@@ -773,8 +777,24 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
             &[BLOCK_SIZE],
             &[0],
             &[1],
+            None,
+            None,
+            None,
             TransferMode::Direct,
             false,
+            Some(&[{
+                // SAFETY: the target owns this entire GPU allocation and context.
+                unsafe {
+                    orbitkv_core::transfer_engine::CudaRegistration::new(
+                        engine_b.transfer_backend(),
+                        gpu_b.as_u64(),
+                        TOTAL_SIZE,
+                        DEVICE_ID,
+                        Arc::new((Arc::clone(&gpu_b), Arc::clone(&_cuda_ctx))),
+                    )
+                }
+                .unwrap()
+            }]),
         )
         .expect("register layer on engine B");
 
@@ -829,9 +849,58 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
         .expect("remote fetch timeout")
         .expect("remote fetch");
     assert_eq!(result.blocks.len(), NUM_BLOCKS);
+    assert!(
+        result
+            .blocks
+            .iter()
+            .all(|block| matches!(block, RestoreSource::Peer(_)))
+    );
     let lease = engine_b
         .create_query_lease("inst-b", result.blocks)
         .expect("lease");
+    let execution = engine_b
+        .restore(
+            "inst-b",
+            0,
+            DEVICE_ID,
+            &[vec![LAYER]],
+            &[(lease, vec![block_ids.iter().copied().map(Some).collect()])],
+        )
+        .unwrap();
+    assert!(matches!(execution, RestoreExecution::Managed(_)));
+    restore_and_wait(&engine_b, &gpu_b, LAYER, NUM_BLOCKS, execution).await;
+    assert_eq!(
+        gpu_b.copy_to_host(),
+        host_data,
+        "direct peer GPU restore bytes"
+    );
+    assert_eq!(
+        engine_b.cleanup_memory_cache().evicted_blocks,
+        0,
+        "GPU restore must not populate the DRAM tier"
+    );
+    // A separate cache-tier intent still materializes host bytes and advertises
+    // a DRAM replica. It remains usable after the source loses membership.
+    let resident = engine_b
+        .count_prefix_hit_blocks_with_prefetch(
+            "inst-b",
+            "populate-dram",
+            &delayed_hashes,
+            QueryMode::Prepare,
+        )
+        .await
+        .unwrap();
+    assert_eq!(resident.blocks.len(), NUM_BLOCKS);
+    assert!(
+        resident
+            .blocks
+            .iter()
+            .all(|block| matches!(block, RestoreSource::Memory(_)))
+    );
+    let lease = engine_b
+        .create_query_lease("inst-b", resident.blocks)
+        .unwrap();
+    gpu_b.zero();
 
     // ── 9b. Verify Engine B re-registered fetched blocks to global index ──
     // Mooncake-fetched blocks are now resident on B, so B must advertise them so
@@ -1318,6 +1387,17 @@ async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata
 #[tokio::test]
 #[ignore = "requires CUDA, io_uring, nvCOMP 5.3 and Mooncake; set MC_FORCE_TCP=1 for same-host TCP"]
 async fn encoded_peer_payloads_restore_the_same_gpu_image() {
+    encoded_peer_roundtrip(PeerTransferBackend::Mooncake).await;
+}
+
+#[cfg(feature = "orbitte")]
+#[tokio::test]
+#[ignore = "requires installed CUDA and nvCOMP 5.3 plus ETCD_BIN; OrbitTE TCP GPU byte gate"]
+async fn orbitte_encoded_peer_gpu_restore() {
+    encoded_peer_roundtrip(PeerTransferBackend::OrbitTeTcp).await;
+}
+
+async fn encoded_peer_roundtrip(backend: PeerTransferBackend) {
     use orbitkv_state::{AttentionRole, Scalar16, StorageFormat};
     let _cuda = CudaContext::new(0).unwrap();
     let coordinator = Etcd::start(1).await;
@@ -1347,6 +1427,7 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
                     16 << 20,
                     false,
                     EngineConfig {
+                        peer_transfer_backend: backend,
                         codec,
                         ssd_cache_config,
                         membership: Some(view),
@@ -1382,8 +1463,8 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
             spawn_engine_server(source.clone(), cluster_a.inventory(), port_a).await;
         let _target_server =
             spawn_engine_server(target.clone(), cluster_b.inventory(), port_b).await;
-        let gpu_source = GpuBuffer::alloc(8192);
-        let gpu_target = GpuBuffer::alloc(8192);
+        let gpu_source = Arc::new(GpuBuffer::alloc(8192));
+        let gpu_target = Arc::new(GpuBuffer::alloc(8192));
         gpu_source.copy_from_host(&[0xa0, 0x3f].repeat(4096));
         gpu_target.zero();
         for (engine, gpu, id) in [
@@ -1417,6 +1498,19 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
                     }]),
                     TransferMode::Direct,
                     false,
+                    Some(&[{
+                        // SAFETY: this installed gate retains actual GPU storage and context.
+                        unsafe {
+                            orbitkv_core::transfer_engine::CudaRegistration::new(
+                                engine.transfer_backend(),
+                                gpu.as_u64(),
+                                8192,
+                                0,
+                                Arc::new((Arc::clone(gpu), Arc::clone(&_cuda))),
+                            )
+                        }
+                        .unwrap()
+                    }]),
                 )
                 .unwrap();
         }
@@ -1460,8 +1554,8 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
             assert_eq!(result.blocks.len(), 1);
             if id == "target" {
                 assert!(
-                    matches!(&result.blocks[0], RestoreSource::Memory(_)),
-                    "{codec:?}: {read_path:?} must preserve remote DRAM recovery on a local SSD miss"
+                    matches!(&result.blocks[0], RestoreSource::Peer(_)),
+                    "{codec:?}: {read_path:?} must restore the remote payload directly to GPU on a local SSD miss"
                 );
             }
             assert!(

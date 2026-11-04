@@ -545,6 +545,12 @@ impl PreparedRestore {
                                 slot_id: layer.slot_id,
                                 offset: layer.host_offset,
                             },
+                            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+                            RestoreSource::Peer(source) => TransferPayload::Peer {
+                                source: source.clone(),
+                                slot_id: layer.slot_id,
+                                offset: layer.host_offset,
+                            },
                             RestoreSource::Ssd { lease, path, .. } => TransferPayload::Ssd {
                                 source: Arc::clone(lease),
                                 path: *path,
@@ -567,6 +573,7 @@ impl PreparedRestore {
             completion,
             reservations: self.reservations,
             codec_budget,
+            peer_bytes: 0,
             decode_ready_started,
             decode_ready_observation: Box::new(crate::cost::Observation::disabled()),
             decode_admission: None,

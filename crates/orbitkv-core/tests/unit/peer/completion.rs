@@ -734,6 +734,7 @@ struct PipelineReader {
 
 #[tonic::async_trait]
 impl crate::peer::execute::SegmentFetcher for PipelineReader {
+    type Block = Arc<SealedBlock>;
     type Grant = TransferLockGuard;
 
     async fn authorize_segment(

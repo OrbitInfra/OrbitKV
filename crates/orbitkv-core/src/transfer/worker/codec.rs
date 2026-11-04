@@ -456,7 +456,7 @@ pub(super) fn restore(
     let mut inputs = Vec::new();
     for layer in layers {
         for block in &layer.blocks {
-            if matches!(block.block, TransferPayload::Ssd { .. }) {
+            if block.block.is_external() {
                 continue;
             }
             let raw = block.block.raw();
@@ -508,6 +508,7 @@ pub(super) fn restore(
     if inputs.is_empty() {
         return Ok(0);
     }
+    let budget = runtime.codec_budget(budget);
     let _reservation = Reservation::new(budget, "decode");
     let stream = &runtime.stream;
     let mut owner = runtime.codec.borrow_mut();

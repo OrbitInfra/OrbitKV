@@ -401,9 +401,9 @@ fn input_window(
 }
 
 impl Decode {
-    fn begin(job: &mut Job, decoder: &Decoder) -> Result<Self, String> {
+    fn begin(job: &mut Job, decoder: &Decoder, runtime: &WorkerRuntime) -> Result<Self, String> {
         let budget = match &job.task {
-            Task::Load(task) => task.codec_budget,
+            Task::Load(task) => runtime.codec_budget(task.codec_budget),
             Task::Save(_) => return Err("encoded read attached to a save".into()),
         };
         let first = job.encoded.front().ok_or("missing encoded SSD read")?;
@@ -576,6 +576,9 @@ pub(in crate::transfer::worker) fn run(
                     closed = true;
                 }
                 Some(command) => {
+                    let Some(command) = super::super::prepare_peer(command, &runtime) else {
+                        continue;
+                    };
                     jobs.push_back(Job::new(next_id, command));
                     next_id += 1;
                 }
@@ -622,9 +625,10 @@ pub(in crate::transfer::worker) fn run(
             if closed {
                 drop(slots);
                 drop(decoder);
+                let result = runtime.drain_peer();
                 drop(runtime);
                 if let Some(reply) = drain {
-                    let _ = reply.send(Ok(()));
+                    let _ = reply.send(result);
                 }
                 return;
             }
@@ -713,7 +717,11 @@ pub(in crate::transfer::worker) fn run(
                         }
                     }
                 }
-                match Decode::begin(&mut job, decoder.as_ref().expect("decoder initialized")) {
+                match Decode::begin(
+                    &mut job,
+                    decoder.as_ref().expect("decoder initialized"),
+                    &runtime,
+                ) {
                     Ok(active) => decoding = Some(active),
                     Err(error) => job.fail(error),
                 }

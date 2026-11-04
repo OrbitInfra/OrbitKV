@@ -48,15 +48,15 @@ const FETCH_CHUNK_BYTES: u64 = 256 * 1024 * 1024;
 pub(crate) struct PeerReader {
     global_index: Arc<GlobalIndex>,
     completions: Arc<TransferCompletions>,
-    membership: Arc<orbitkv_catalog::MembershipView>,
-    transfer: Arc<dyn TransferBackend>,
+    pub(super) membership: Arc<orbitkv_catalog::MembershipView>,
+    pub(super) transfer: Arc<dyn TransferBackend>,
     allocate_fn: AllocateFn,
 }
 
 pub(super) struct AuthorizedSegment {
-    response: QueryBlocksForTransferResponse,
-    lock_guard: TransferLockGuard,
-    authorized_at: Instant,
+    pub(super) response: QueryBlocksForTransferResponse,
+    pub(super) lock_guard: TransferLockGuard,
+    pub(super) authorized_at: Instant,
     query_elapsed: Duration,
     resource: ExecutionResource,
     route_observation: Observation,
@@ -83,6 +83,7 @@ fn valid_transfer_authorization(
 #[tonic::async_trait]
 impl SegmentFetcher for PeerReader {
     type Grant = AuthorizedSegment;
+    type Block = Arc<SealedBlock>;
 
     async fn authorize_segment(
         &self,
@@ -816,7 +817,7 @@ struct TransferTiming {
 /// This is a submission budget, not proof of source lifetime: Mooncake drains
 /// already-submitted work even past the deadline, retaining source reservations.
 /// Orphan revocation and cross-host failure qualification remain open.
-fn transfer_timeout_from_server(lock_timeout_secs: u32) -> Duration {
+pub(super) fn transfer_timeout_from_server(lock_timeout_secs: u32) -> Duration {
     let server = Duration::from_secs(lock_timeout_secs as u64);
     server
         .saturating_sub(LOCK_TIMEOUT_MARGIN)

@@ -230,6 +230,12 @@ fn peer_owner_selection_is_opt_in_and_uses_matching_complete_route_evidence() {
         }
         let plan = FetchPlan::new(&mut rows, 2, PeerSource::Dram).unwrap();
         assert_eq!(plan.next_segment(0).unwrap().owner.endpoint, "z-measured");
+        let direct = plan.for_gpu_restore();
+        assert_eq!(
+            direct.next_segment(0).unwrap().owner.endpoint,
+            "a-stable",
+            "HostReady costs cannot rank a GPU restore"
+        );
         return;
     }
 

@@ -14,6 +14,7 @@ fn load_job() -> (Job, oneshot::Receiver<super::super::super::LoadOutcome>) {
                 layers: Vec::new(),
                 completion,
                 reservations: Vec::new(),
+                peer_bytes: 0,
                 codec_budget: 64 << 20,
                 decode_ready_started: Instant::now(),
                 decode_ready_observation: Box::new(Observation::disabled()),

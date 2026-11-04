@@ -318,6 +318,7 @@ async fn real_query_control_replays_claims_and_fences_replaced_registrations() {
                         None,
                         TransferMode::Direct,
                         false,
+                        None,
                     )
                     .unwrap();
             };

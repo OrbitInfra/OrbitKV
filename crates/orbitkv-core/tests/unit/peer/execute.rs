@@ -49,6 +49,7 @@ enum SegmentOutcome {
 
 #[tonic::async_trait]
 impl SegmentFetcher for Fetcher {
+    type Block = Arc<SealedBlock>;
     type Grant = Result<MaterializedBlocks, ()>;
 
     async fn authorize_segment(
@@ -182,6 +183,7 @@ struct PipelineFetcher {
 
 #[tonic::async_trait]
 impl SegmentFetcher for PipelineFetcher {
+    type Block = Arc<SealedBlock>;
     type Grant = Grant;
 
     async fn authorize_segment(

@@ -379,6 +379,13 @@ pub(super) struct TransferLockGuard {
 }
 
 impl TransferLockGuard {
+    #[cfg(test)]
+    pub(crate) fn test_detached() -> Self {
+        Self {
+            completion: None,
+            handle: tokio::runtime::Handle::current(),
+        }
+    }
     #[allow(
         clippy::mem_forget,
         reason = "an unquiesced backend must retain actual buffers, source ticket and admission"

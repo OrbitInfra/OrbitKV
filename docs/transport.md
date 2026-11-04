@@ -634,9 +634,10 @@ payload WR and cap initiator/responder READ depth at 16, clamped to the local
 HCA. The optional `rdma-adaptive` feature remains disabled.
 
 The OrbitTE profile bounds registrations to 4,096 regions and the configured
-pool bytes (plus 64 MiB for SSD GPU staging registrations when enabled), submissions to 16,384 descriptors and 64 MiB, and outstanding work
-to 32 batches and 64 MiB. Splitting into 8 MiB requests must also fit the
-descriptor budget. TENT retains its native batch/descriptor budgets and caps
+pool bytes plus 2 GiB for GPU READ registrations (and 64 MiB for SSD GPU staging
+when enabled), submissions to 16,384 descriptors and 64 MiB, and outstanding work
+to 32 batches and 64 MiB. Each descriptor may cover up to 64 MiB; transport
+slicing belongs to the engine. TENT retains its native batch/descriptor budgets and caps
 cached peer segments at 1,024. Process-wide registered owners retain their
 1,024-pool/1 TiB admission even after failed shutdown. The CUDA registration
 contract requires the actual allocation and CUDA context owner, completed
@@ -669,6 +670,86 @@ remain unqualified; historical results below apply only to their recorded pins.
 
 Local GPU↔DRAM copies retain OrbitKV's existing stream-ordered implementations.
 Their interface migration is tracked in the [completion plan](completion-plan.md).
+
+## Peer restore into GPU
+
+Demand and WaitForFullPrefix peer queries return immutable source descriptors and
+retain the authorization ticket; they allocate no requester pinned payloads.
+Restore binds the descriptors to the registered layer/page layout, including
+split K/V and sparse block destinations, and submits READs to the selected
+`TransferBackend`. Raw bytes land in the final GPU pages. Encoded bytes land in
+GPU codec input allocations; OrbitKV retains representation checks and GPU
+decode compute. Exact siblings go directly to their final pages. Peer ranges
+never enter OrbitKV's pinned-pool/H2D restore path.
+
+Prepare and Warmup explicitly populate the DRAM cache tier and retain their host
+READ destination. Query coalescing distinguishes this intent from GPU restore.
+A GPU restore does not create or advertise a DRAM replica. Authorization retries
+remain pre-submit only; a failed or uncertain submitted READ is not replayed.
+The source epoch still comes exclusively from its grant. Membership and the
+deadline are rechecked before each bounded GPU batch. Expired grants reject
+submission without replacing the source or disturbing the tensor registration.
+
+At import, the registry registers each GPU KV storage allocation with the
+selected engine once and lends that registration to its layer layouts. Views of
+the same imported storage share it. The registration owns the actual Python
+tensor and CUDA context; the native provider charges its existing registration
+allowance for the entire lifetime, including retained failures. Pointer-only
+Rust layouts still support local copies but reject peer restore.
+`register_context_layer_batch_strided` accepts persistent `CudaRegistration`
+owners for this path. Release fences new loans and unregisters only after active
+transfers drain and all importing contexts release the storage. Failed cleanup
+retains backing and charges without retrying unregister.
+
+The planner batches all destination ranges sharing a source grant, up to 64 MiB
+and 16,384 descriptors in one engine submission. Larger plans use bounded batches
+against the same registrations; OrbitKV performs no per-chunk registration or
+unregistration. OrbitTE receives those descriptors directly with a 64 MiB request
+ceiling; the engine owns transport slicing, multirail and pipelining. The existing
+128 admitted restores per device and source deadline remain unchanged.
+
+Encoded restores create one persistent GPU codec input pool per worker on first
+use, capped at the smaller of 64 MiB and half its codec budget. Later restores
+reuse its registration and decode before reusing its bytes. Remaining codec
+scratch accounts for this resident pool; a lower budget is rejected rather than
+reallocating under live work. Worker drain closes the pool after all transfers.
+Unknown drain or backend unwind retains source grants, tensor/input mappings,
+query/device admission and the completion sender. The worker is fenced and
+instance drain fails; no client receipt permits page reuse.
+
+OrbitTE owns bounded CUDA staging for TCP and, by default, RDMA.
+`--orbitte-rdma-gpu-direct` selects strict Direct CUDA registration and requires
+`MLX5_SCATTER_TO_CQE=0` before startup; failure never silently stages or replays.
+TENT uses its existing CUDA registration and READ API. No upstream API addition
+is needed for B; TENT's interruptible-open/drain limitation above remains.
+
+CPU controls drive the production planner, submission and lifetime owners with
+host backing: eight restores register once and never unregister before tensor
+release; an 18 MiB, two-range restore submits once with full byte and guard checks.
+They also cover input-pool reuse, batch limits, layouts/codec bounds, source
+fences, concurrent release, failed cleanup, unwinds and unknown drain. CI runs
+these under TENT, OrbitTE and both feature sets. These controls do not qualify
+CUDA/RDMA. `peer_gpu_restore` cost samples stay separate from H2D and HostReady.
+
+Installed GPU byte gates are written, compiled and **unrun**. With CUDA 13,
+`ETCD_BIN`, isolated test-owned peers and external artifact paths configured:
+
+```bash
+cargo test --locked -p orbitkv-server --lib cluster::tests::p2p_mooncake::p2p_mooncake_remote_fetch_roundtrip -- --exact --ignored --nocapture
+cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbitte --lib cluster::tests::p2p_mooncake::p2p_orbitte_remote_fetch_roundtrip -- --exact --ignored --nocapture
+cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbitte-rdma --lib cluster::tests::p2p_mooncake::p2p_orbitte_rdma_remote_fetch_roundtrip -- --exact --ignored --nocapture
+cargo test --locked -p orbitkv-server --lib cluster::tests::p2p_mooncake::encoded_peer_payloads_restore_the_same_gpu_image -- --exact --ignored --nocapture
+cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbitte --lib cluster::tests::p2p_mooncake::orbitte_encoded_peer_gpu_restore -- --exact --ignored --nocapture
+```
+
+The RDMA gate additionally requires `ORBITKV_TEST_ORBITTE_RDMA_DEVICE`,
+`ORBITKV_TEST_ORBITTE_RDMA_PORT`, and `ORBITKV_TEST_ORBITTE_RDMA_GID_INDEX`.
+Run it separately with `ORBITKV_TEST_ORBITTE_GPU_DIRECT=1` and
+`MLX5_SCATTER_TO_CQE=0` for the strict GDR profile. Encoded gates require nvCOMP
+5.3. Preserve native-route evidence and qualify physical cross-host operation
+separately. The raw gate verifies direct GPU bytes without DRAM cache insertion,
+then explicitly populates and restores the DRAM tier. The existing installed
+CUDA IPC peer gate remains required; no source/CPU result qualifies that boundary.
 
 ## SSD file transfers
 
@@ -715,9 +796,10 @@ initializer hard-disables `transports/io_uring/enable` and `transports/gds/enabl
 Its Rust wrapper only exposes epoch-validated peer transfers and no supported
 file configuration or file-drain contract. TENT therefore keeps the legacy SSD
 path under `auto`; explicit `transfer` fails with that gap. Remove the fallback
-when the TENT wrapper supplies file setup, transport selection and physical-drain
-receipts, both engines pass file byte/lifetime gates, and installed GPU/GDS
-profiles pass. The Mooncake version bump remains a separate change.
+in A3 when the fork supplies file setup, transport selection and physical-drain
+receipts. A2 separately consumes OrbitTE vectored host/GPU file ranges and deletes
+the OrbitKV gather/scatter slots. These are temporary implementations, not a
+long-term fallback. The Mooncake version bump remains a separate change.
 
 CI requires real Linux io_uring and real file bytes, with an explicitly labelled
 CPU host-registration shim. It covers sharded raw/encoded metadata, extent
@@ -815,14 +897,12 @@ keeping completion admission charged instead of sending a release RPC. Source
 shutdown fences admission even if requester drain fails; failed cleanup retains
 its engine and process pool budget.
 
-This first profile requires a concrete numeric advertised IP, has no RDMA NIC
-filter, and limits one READ to 64 MiB and 16,384 split descriptors (8 MiB each).
-An engine retains at most 4,096 unique allocation regions and at most its pool
-capacity. Providers share the existing process admission of 1,024 pools/1 TiB.
-The planner is not automatically resized for these limits: a source registration
-or READ exceeding them is rejected; a READ budget rejection occurs before payload
-I/O. Use bounded grants for this profile. Whole-pool MR caching, multirail,
-RDMA/device DMA, GDS and broader faults remain open.
+This TCP profile requires a concrete numeric advertised IP and has no RDMA NIC
+filter. It uses the [runtime registration and batch limits](#runtime-transfer-backend).
+A source registration or READ exceeding those limits is rejected before payload
+I/O; GPU restore plans partition larger requests into bounded batches without
+reregistering. Use bounded source grants. Whole-pool MR caching, multirail,
+RDMA/device DMA, GDS and broader faults remain outside this TCP profile.
 
 Transfer notifications and their generation mailbox remain a separate transfer
 API contract. Manager releases source grants through its existing gRPC completion

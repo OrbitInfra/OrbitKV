@@ -285,13 +285,17 @@ impl OrbitKVEngine {
             None,
             transfer_mode,
             page_first,
+            None,
         )
     }
 
     /// Like [`Self::register_context_layer_batch`] but with an explicit per-layer
     /// block stride, validated as part of the final cache geometry. When
     /// `block_stride_bytes_list` is `Some` it must match `layer_names` in length;
-    /// each entry overrides that layer's stride.
+    /// each entry overrides that layer's stride. `allocation_owners` retains the
+    /// persistent native registration, actual tensor/storage and CUDA context. Callers
+    /// must lend exclusive destination pages until the managed completion receipt.
+    /// Pointer-only registrations cannot execute direct peer GPU restores.
     ///
     /// `transfer_mode` selects the GPU worker pools' H2D/D2H backend for this
     /// instance. The pools are spawned per (instance, GPU) at registration, so
@@ -321,10 +325,16 @@ impl OrbitKVEngine {
         storage_formats: Option<&[orbitkv_state::StorageFormat]>,
         transfer_mode: TransferMode,
         page_first: bool,
+        allocation_owners: Option<&[Arc<crate::transfer_engine::CudaRegistration>]>,
     ) -> Result<[u8; 16], EngineError> {
         // Build all registrations
         let ssd_enabled = self.storage.is_ssd_enabled();
         let batch_size = layer_names.len();
+        if allocation_owners.is_some_and(|owners| owners.len() != batch_size) {
+            return Err(EngineError::InvalidArgument(
+                "GPU owner count differs from layers".into(),
+            ));
+        }
         if storage_formats.is_some_and(|formats| formats.len() != batch_size) {
             return Err(EngineError::InvalidArgument(
                 "storage format count differs from layers".into(),
@@ -385,6 +395,7 @@ impl OrbitKVEngine {
             }
             let mut layout = KVCacheLayout::bind(data_ptrs[i], size_bytes_list[i], geometry)
                 .map_err(|e| EngineError::InvalidArgument(format!("layer {layer_name}: {e}")))?;
+            layout.owner = allocation_owners.map(|owners| Arc::clone(&owners[i]));
             layout.storage_format = self
                 .storage
                 .codec
@@ -643,6 +654,18 @@ impl OrbitKVEngine {
     #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
     pub fn has_remote_transport(&self) -> bool {
         false
+    }
+
+    /// Shared byte engine used when importing persistent GPU allocations.
+    pub fn transfer_backend(&self) -> Option<Arc<dyn crate::transfer_engine::TransferBackend>> {
+        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+        {
+            self.storage.peer_transport().cloned()
+        }
+        #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
+        {
+            None
+        }
     }
 
     #[cfg(any(feature = "mooncake", feature = "orbitte"))]

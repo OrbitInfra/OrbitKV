@@ -386,7 +386,7 @@ impl TransferBackend for MooncakeTransport {
                 endpoint,
                 source_epoch,
             } => (endpoint, source_epoch),
-            #[cfg(feature = "orbitte")]
+            #[cfg(any(feature = "orbitte", test))]
             _ => {
                 return Err(TransferError::new(
                     ErrorKind::InvalidRequest,

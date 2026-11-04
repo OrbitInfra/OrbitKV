@@ -3,7 +3,7 @@
 #[cfg(any(feature = "mooncake", feature = "orbitte"))]
 mod completion;
 #[cfg(any(feature = "mooncake", feature = "orbitte"))]
-mod execute;
+pub(crate) mod execute;
 pub(crate) mod export;
 #[cfg(any(feature = "mooncake", feature = "orbitte"))]
 pub(crate) mod read;
@@ -12,3 +12,6 @@ pub(crate) mod transport;
 
 #[cfg(feature = "orbitte")]
 pub(crate) mod orbitte;
+
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+pub(crate) mod restore;
