@@ -167,9 +167,10 @@ impl CudaTensorRegistry {
                 .contexts
                 .values()
                 .chain(std::iter::once(&context))
+                .filter(|context| context.device_id == device_id)
                 .flat_map(|context| context.tensors.values())
                 .filter_map(|tensor| tensor.metadata.owner.as_ref())
-                .find(|owner| owner.device == device_id && owner.covers(base, length))
+                .find(|owner| owner.covers(base, length))
                 .cloned();
             layer_tensor.metadata.owner = Some(match shared {
                 Some(owner) => owner,

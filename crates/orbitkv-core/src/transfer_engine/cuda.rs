@@ -13,9 +13,9 @@ use parking_lot::RwLock;
 /// Persistent native registration and the actual CUDA allocation/context owner.
 /// Layouts share this owner; close fences and drains active transfer loans.
 pub struct CudaRegistration {
-    pub address: u64,
-    pub length: usize,
-    pub device: i32,
+    pub(crate) address: u64,
+    pub(crate) length: usize,
+    pub(crate) device: i32,
     native: RwLock<Option<(Arc<dyn TransferBackend>, Registration)>>,
     owner: Option<Arc<dyn Send + Sync>>,
     uncertain: AtomicBool,
@@ -25,6 +25,7 @@ impl std::fmt::Debug for CudaRegistration {
         f.debug_struct("CudaRegistration")
             .field("address", &self.address)
             .field("length", &self.length)
+            .field("device", &self.device)
             .finish_non_exhaustive()
     }
 }
