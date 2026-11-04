@@ -49,7 +49,7 @@ smallvec.workspace = true
 orbitkv-proto = { path = "../orbitkv-proto" }
 orbitkv-transfer = { path = "../orbitkv-transfer", default-features = false, optional = true }
 mea.workspace = true
-orbit-te = { git = "https://github.com/OrbitInfra/OrbitTE", rev = "6f544ff443974cf5b2b9da1905bf89494e6cbf58", default-features = false, optional = true }
+orbit-te = { git = "https://github.com/OrbitInfra/OrbitTE", rev = "df9ded09898217fd6d93bf02bb24d980c3e327a9", default-features = false, optional = true }
 
 [dev-dependencies]
 opentelemetry_sdk.workspace = true
