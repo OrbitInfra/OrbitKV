@@ -636,8 +636,7 @@ async fn cross_medium_selection_is_explicit_and_preserves_equal_coverage() {
             endpoint: "peer".into(),
             incarnation: uuid::Uuid::from_u128(44),
         };
-        let mut plan = ReadPlan::new(std::slice::from_ref(&key), QueryMode::Demand, Some(&store));
-        plan.rows[0].set_peers(vec![orbitkv_state::ReplicaLocation {
+        let replica = orbitkv_state::ReplicaLocation {
             owner: owner.clone(),
             sequence: 1,
             metadata: orbitkv_state::ReplicaMetadata {
@@ -645,7 +644,9 @@ async fn cross_medium_selection_is_explicit_and_preserves_equal_coverage() {
                 representation: orbitkv_state::ReplicaRepresentation::Raw,
                 stored_bytes: Some(SSD_ALIGNMENT as u64),
             },
-        }]);
+        };
+        let mut plan = ReadPlan::new(std::slice::from_ref(&key), QueryMode::Prepare, Some(&store));
+        plan.rows[0].set_peers(vec![replica.clone()]);
         let local_key = plan
             .ssd(SsdReadPath::Uring, 0)
             .unwrap()
@@ -666,10 +667,26 @@ async fn cross_medium_selection_is_explicit_and_preserves_equal_coverage() {
             let peer = FetchPlan::new(&mut plan.rows, 1, PeerSource::Dram).unwrap();
             assert_eq!(peer.complete_cost_estimate_key(), Some(peer_key));
         }
-        assert!(matches!(
-            plan.host_route(true, true, 0),
-            Some(HostReadRoute::Ssd(_))
-        ));
+        for (mode, host_ready) in [
+            (QueryMode::Prepare, true),
+            (QueryMode::Warmup, true),
+            (QueryMode::Demand, false),
+            (QueryMode::WaitForFullPrefix, false),
+        ] {
+            let mut plan = ReadPlan::new(std::slice::from_ref(&key), mode, Some(&store));
+            plan.rows[0].set_peers(vec![replica.clone()]);
+            if host_ready {
+                assert!(
+                    matches!(plan.host_route(true, true, 0), Some(HostReadRoute::Ssd(_))),
+                    "host fills must still select the measured faster SSD route"
+                );
+            } else {
+                assert!(
+                    matches!(plan.host_route(true, true, 0), Some(HostReadRoute::Peer(_))),
+                    "HostReady costs cannot rank peer GPU restore against local SSD"
+                );
+            }
+        }
         return;
     }
 

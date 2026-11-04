@@ -21,8 +21,8 @@ pub(crate) enum ReadTarget {
     EngineRestore,
 }
 
-/// A metadata-only route whose result is host-resident state. Source leases
-/// and transfer grants are acquired by the selected execution owner.
+/// A metadata-only acquisition route. The read target selects host residency
+/// or deferred engine restore; execution owns source leases and transfer grants.
 pub(crate) enum HostReadRoute<'a> {
     Ssd(SsdReadPlan<'a>),
     #[cfg(any(feature = "mooncake", feature = "orbitte"))]
