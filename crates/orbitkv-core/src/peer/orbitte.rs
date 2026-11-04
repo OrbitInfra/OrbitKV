@@ -141,6 +141,7 @@ impl OrbitTeTransport {
             hp_tcp: Default::default(),
             shm: Default::default(),
             nvlink: false,
+            mnnvl: None,
             remote_staging: false,
             ..EngineConfig::default()
         };

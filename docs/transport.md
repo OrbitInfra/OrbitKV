@@ -621,13 +621,17 @@ registration because the pinned C ABI has no per-range permission argument.
 OrbitKV source grants remain authoritative for peer access in both profiles.
 
 OrbitTE is pinned to
-[`6f544ff443974cf5b2b9da1905bf89494e6cbf58`](https://github.com/OrbitInfra/OrbitTE/commit/6f544ff443974cf5b2b9da1905bf89494e6cbf58).
+[`df9ded09898217fd6d93bf02bb24d980c3e327a9`](https://github.com/OrbitInfra/OrbitTE/commit/df9ded09898217fd6d93bf02bb24d980c3e327a9).
+Run the same OrbitKV build on both peers.
 Requests use `Transport::Unspec` with a one-route selector policy, an absolute
-deadline, and no automatic failover. HP-TCP, SHM, NVLink and remote CUDA staging
-are disabled. `orbitte` enables its CUDA registration API and `orbitte-rdma`
+deadline, and no automatic failover. HP-TCP, SHM, NVLink, MNNVL and remote CUDA
+staging are disabled, including when `MC_ENABLE_MNNVL` is set in the environment.
+`orbitte` enables its CUDA registration API and `orbitte-rdma`
 additionally enables RDMA. File transports (`io-uring`, `gds`) and native metrics
 are not enabled until a consumer needs them. Existing OrbitKV metrics remain
-the reporting surface.
+the reporting surface. The Manager inherits the RDMA defaults: signal every
+payload WR and cap initiator/responder READ depth at 16, clamped to the local
+HCA. The optional `rdma-adaptive` feature remains disabled.
 
 The OrbitTE profile bounds registrations to 4,096 regions and the configured
 pool bytes, submissions to 16,384 descriptors and 64 MiB, and outstanding work
@@ -649,12 +653,10 @@ retains engine/backing/admission. TENT still holds its blocking owner when the
 pinned C ABI cannot prove termination; its metadata open has no interruptible
 deadline API, so the wrapper checks the deadline before and after that call.
 
-OrbitTE pins registry `cudarc = 0.19.0`, which conflicts with OrbitKV's required
-regenerated bindings. OrbitKV therefore uses the exact upstream `v0.19.8` commit
-`e1ab1e59f441db6f0a5aef0d5a078696f802a166`, preserving its existing binding code
-while allowing separate dependency identities. Only raw addresses and retained
-owners cross the boundary. Remove this workaround when OrbitTE accepts a
-compatible `cudarc` release; OrbitTE source is not patched.
+OrbitKV and OrbitTE share registry `cudarc` 0.19.8 in `Cargo.lock`. OrbitTE's
+compatible dependency range accepts OrbitKV's regenerated bindings, so no
+separate Git dependency identity is needed. Only raw addresses and retained
+owners cross the boundary; OrbitTE source is not patched.
 
 The CPU gate `peer::orbitte::tests::cpu_tcp_backend_reads_and_writes_fragmented_bytes_and_drains`
 uses real TCP, two engines, fragmented/merged READ and WRITE, byte guards,
@@ -672,7 +674,7 @@ tracked only in the [completion plan](completion-plan.md).
 ## Experimental OrbitTE allocation bridge
 
 The opt-in `orbitkv-core/orbitte` feature pins
-[OrbitTE `6f544ff4`](https://github.com/OrbitInfra/OrbitTE/commit/6f544ff443974cf5b2b9da1905bf89494e6cbf58).
+[OrbitTE `df9ded0`](https://github.com/OrbitInfra/OrbitTE/commit/df9ded09898217fd6d93bf02bb24d980c3e327a9).
 `PinnedAllocation::orbitte_memory` returns a canonical `Arc<HostMemory>` retaining
 that exact allocation. A pool owner alone would keep the mapping alive while
 allowing a slot to be reused. The allocation holds only a weak cached view, so

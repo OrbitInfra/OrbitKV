@@ -69,8 +69,8 @@ Default deployments use native TENT payloads and OrbitKV source-control RPCs.
 Both providers can be compiled together and selected by `--peer-transfer-backend`;
 an unavailable provider now fails before Manager CUDA initialization. The shared
 `transfer_engine::TransferBackend` contract owns register/open/READ/WRITE/cancel/
-shutdown boundaries. OrbitTE `6f544ff4` uses a one-route Unspec policy with
-failover, HP-TCP and SHM disabled. Historical hardware results below do not
+shutdown boundaries. OrbitTE `df9ded0` uses a one-route Unspec policy with
+failover, HP-TCP, SHM and MNNVL disabled. Historical hardware results below do not
 qualify this new dependency revision. See `docs/transport.md#runtime-transfer-backend`.
 An experimental `orbitte` build can explicitly select
 `--peer-transfer-backend orbitte-tcp`; read `docs/transport.md` for its 64 MiB

@@ -198,7 +198,7 @@ The `orbitte-rdma` feature adds `--orbitte-rdma-device` (required for that mode)
 host-staging profile without a TCP/native payload fallback; `--nics` remains
 Mooncake-specific. Read the [RDMA profile](transport.md#experimental-orbitte-peer-rdma-profile)
 for separate staging budgets and host versus CUDA 13 Manager qualification.
-The current OrbitTE pin is `6f544ff443974cf5b2b9da1905bf89494e6cbf58`;
+The current OrbitTE pin is `df9ded09898217fd6d93bf02bb24d980c3e327a9`;
 historical hardware results below the [transport contract](transport.md#runtime-transfer-backend)
 do not qualify this revision. SSD and local CUDA copies retain their existing
 OrbitKV implementations in this first integration stage.
