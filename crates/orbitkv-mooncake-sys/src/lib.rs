@@ -16,8 +16,8 @@ use std::sync::LazyLock;
 
 use libloading::os::unix::{Library, RTLD_GLOBAL, RTLD_NOW};
 
-pub const SOURCE_VERSION: &str = "v0.3.13.post1+orbitkv.1";
-pub const SOURCE_REVISION: &str = "12cbf549b6351c800de0f94a480276d216b9a43b";
+pub const SOURCE_VERSION: &str = "v0.3.14+orbitkv.1";
+pub const SOURCE_REVISION: &str = "af13e06af174f27ba8782057b8a37afc7cddf8fd";
 #[cfg(feature = "cuda")]
 const WORKSPACE_RUNTIME_LIB_DIR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -237,6 +237,8 @@ unsafe fn load_api_from(directory: &Path) -> Result<Api, String> {
         .map_err(|error| error.to_string())?;
     let common = unsafe { Library::open(Some(directory.join("libmooncake_common.so")), flags) }
         .map_err(|error| error.to_string())?;
+    let metrics = unsafe { Library::open(Some(directory.join("libtent_metrics.so")), flags) }
+        .map_err(|error| error.to_string())?;
     let library = unsafe { Library::open(Some(directory.join("libtent_shared.so")), flags) }
         .map_err(|error| error.to_string())?;
 
@@ -264,7 +266,7 @@ unsafe fn load_api_from(directory: &Path) -> Result<Api, String> {
         free_notifications: unsafe { symbol(&library, b"tent_free_notifs\0")? },
         send_notification: unsafe { symbol(&library, b"tent_send_notifs\0")? },
         get_nic_load_stats: unsafe { symbol(&library, b"tent_get_nic_load_stats\0")? },
-        _dependencies: vec![asio, common],
+        _dependencies: vec![asio, common, metrics],
         _library: library,
     })
 }
@@ -334,13 +336,12 @@ pub unsafe fn local_ip_and_port(engine: NativeEngine, output: *mut c_char, len: 
     unsafe { (api().local_endpoint)(engine, output, len) }
 }
 
-pub unsafe fn open_segment(engine: NativeEngine, name: *const c_char) -> SegmentId {
-    let mut segment = 0;
-    if unsafe { (api().open_segment)(engine, &mut segment, name) } == 0 {
-        segment
-    } else {
-        INVALID_SEGMENT
-    }
+pub unsafe fn open_segment(
+    engine: NativeEngine,
+    segment: &mut SegmentId,
+    name: *const c_char,
+) -> c_int {
+    unsafe { (api().open_segment)(engine, segment, name) }
 }
 
 pub unsafe fn close_segment(engine: NativeEngine, segment: SegmentId) -> c_int {

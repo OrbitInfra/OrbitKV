@@ -96,8 +96,8 @@ and [adapter contracts](adapters.md).
   [runtime contract and CPU gates](transport.md#runtime-transfer-backend).
 - [x] OrbitTE SSD file-segment integration implemented for io_uring, CUDA staging
   and opt-in native-only GDS, preserving OrbitKV placement, extents and index
-  publication. TENT retains the configured legacy fallback pending its file
-  configuration/drain API. CPU file/lifetime gates are required in CI; GPU/GDS
+  publication. TENT retains the configured legacy fallback until A3 consumes its
+  file configuration/drain API. CPU file/lifetime gates are required in CI; GPU/GDS
   and installed qualification remain open. See [file contracts](transport.md#ssd-file-transfers).
 - [x] Peer restores now retain source grants until the selected engine completes
   remote→GPU READs. Raw ranges land in final pages; encoded payloads land in
@@ -105,21 +105,26 @@ and [adapter contracts](adapters.md).
   Imported tensors and codec pools keep persistent registrations; restores batch
   their layout ranges within native limits. Owners, completion and admission survive unknown
   drain. CPU controls are implemented; GPU/GDR and installed profiles remain
-  unqualified pending independent review and installed runs. See
+  unqualified pending installed runs. See
   [direct peer restore](transport.md#peer-restore-into-gpu).
-- [ ] Next, after peer-restore review: consume Mooncake
-  `orbitkv-integration-v0.3.14` at `af13e06a`, include `libtent_metrics.so`, rebuild
-  yalantinglibs at `45c6463` with CLI11, verify the 23 C signatures and map TENT
-  statuses 134/135/2 without retrying unknown effects.
+- [x] D implements the Mooncake submodule upgrade to
+  `orbitkv-integration-v0.3.14` at `af13e06a`, includes `libtent_metrics.so`, rebuilds
+  dependencies at yalantinglibs `45c6463` with CLI11, and preserves the 23 C
+  signatures. Status mappings 134/135/2 are implemented, but the upstream C
+  wrappers still erase these codes; see the [C API gap](transport.md#mooncake-findings).
+  Independent review and installed hardware qualification remain open.
 - [ ] A3 follows the submodule bump: consume its six file C functions through a
   **separate TENT file engine**, preserving the peer TCP source-drain contract;
   delete native SSD I/O plus `--ssd-io-engine legacy`.
-- [ ] A2 follows A3: bump OrbitTE to include #154 (`6cee3056`), consume
+- [ ] A2 follows A3: bump OrbitTE to current main including #154 (`6cee3056`) and
+  #156 (`5bca3a72`), consume
   `TransferRequest::file_vectored` and `EngineConfig::gds_enabled`, pass layout
   ranges directly and delete `storage/ssd/gpu.rs` gather/scatter owners.
-- [ ] C waits for the maintainer's OrbitTE S15b API. OrbitTE then owns local
-  stream-ordered copies; TENT keeps the existing Memcpy/Kernel implementation
-  behind the shared backend boundary. Do not port CUDA copies in this repository.
+- [ ] C follows A2: consume OrbitTE's `cuda::local_copy` API from #156, binding
+  one `LocalCopyEngine` per worker stream and retaining each submitted completion
+  until its bytes can be reused. See OrbitTE's `docs/local-copy.md`. TENT keeps
+  the existing Memcpy/Kernel implementation behind the shared backend boundary;
+  OrbitTE must never call those implementations.
 
 - [x] Explicit registration identity and failure propagation; retry ownership
   retained after failed unregister.

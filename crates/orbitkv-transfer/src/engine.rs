@@ -764,7 +764,10 @@ impl TransferEngine {
             return Err(MooncakeError::SegmentAdmissionExhausted);
         }
         let name = CString::new(remote_segment)?;
-        let segment = unsafe { native::open_segment(self.native, name.as_ptr()) };
+        let mut segment = native::INVALID_SEGMENT;
+        check("tent_open_segment", unsafe {
+            native::open_segment(self.native, &mut segment, name.as_ptr())
+        })?;
         if segment == native::INVALID_SEGMENT {
             return Err(MooncakeError::Operation {
                 operation: "tent_open_segment",

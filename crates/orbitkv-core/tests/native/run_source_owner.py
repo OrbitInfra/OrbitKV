@@ -35,7 +35,7 @@ def main() -> None:
     fixture = Path(__file__).parent
     bundle = output / "runtime"
     bundle.mkdir()
-    for name in ("libmooncake_common.so", "libasio.so"):
+    for name in ("libtent_metrics.so", "libmooncake_common.so", "libasio.so"):
         shutil.copy2(runtime / name, bundle / name)
     actual = bundle / "libtent_actual.so"
     shutil.copy2(runtime / "libtent_shared.so", actual)
@@ -163,7 +163,14 @@ def main() -> None:
             maps = maps_path.read_text() if maps_path.is_file() else ""
             expected = [
                 bundle / name
-                for name in ("libcudart.so", "libtent_shared.so", "libtent_actual.so")
+                for name in (
+                    "libcudart.so",
+                    "libtent_shared.so",
+                    "libtent_actual.so",
+                    "libtent_metrics.so",
+                    "libmooncake_common.so",
+                    "libasio.so",
+                )
             ]
             if scenario == "native-register-partial":
                 expected.append(registration_control)

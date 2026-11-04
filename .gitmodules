@@ -5,7 +5,7 @@
 [submodule "third-party/mooncake"]
 	path = third-party/mooncake
 	url = https://github.com/OrbitInfra/Mooncake.git
-	branch = orbitkv-integration
+	branch = orbitkv-integration-v0.3.14
 	shallow = true
 [submodule "third-party/vllm"]
 	path = third-party/vllm

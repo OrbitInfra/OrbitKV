@@ -7,7 +7,7 @@ The crate has three responsibilities:
 
 1. build the pinned Mooncake integration commit from `third-party/mooncake`;
 2. build the `tent_shared` target and stage `libtent_shared.so`,
-   `libmooncake_common.so`, and `libasio.so` in
+   `libtent_metrics.so`, `libmooncake_common.so`, and `libasio.so` in
    a relocatable runtime directory;
 3. load and expose the C ABI required by `orbitkv-transfer`.
 
@@ -29,18 +29,27 @@ later without changing cache or framework code.
 ## Native source
 
 - repository: [OrbitInfra/Mooncake](https://github.com/OrbitInfra/Mooncake)
-- branch: `orbitkv-integration`
-- pinned commit: `12cbf549b6351c800de0f94a480276d216b9a43b`
-- upstream base: `v0.3.13.post1`, `719735896c86b56fabec6cf3e825fb2ea640597a`
+- branch: `orbitkv-integration-v0.3.14`
+- pinned commit: `af13e06af174f27ba8782057b8a37afc7cddf8fd`
+- upstream base: `v0.3.14`, `e1ea5d31bb5e46ff2df9f90e7c2fbaf52fcdee8c`
 
 The gitlink selects an immutable integration commit; builds never resolve a moving
 branch head. The fork carries the previously consumed TCP copy/context,
 worker ownership, source drain/epoch and registration ownership fixes as ordinary
 commits. Cargo copies this source into its private build directory and invokes
 CMake directly. It does not apply patches or rewrite the submodule.
-See the [integration branch guide](https://github.com/OrbitInfra/Mooncake/blob/12cbf549b6351c800de0f94a480276d216b9a43b/ORBITKV_INTEGRATION.md)
-for upstream origins and the update policy. The initial native source is identical
-to the old patched build; this migration grants no new hardware qualification.
+See the [integration branch guide](https://github.com/OrbitInfra/Mooncake/blob/af13e06af174f27ba8782057b8a37afc7cddf8fd/ORBITKV_INTEGRATION.md)
+for upstream origins and the update policy. The v0.3.14 port preserves those
+ownership contracts and the 23 consumed C function signatures. This upgrade
+grants no new hardware qualification.
+
+Install the CLI11 development headers (`libcli11-dev`) with the other native
+dependencies. The fork pins yalantinglibs to
+`45c6463c0afbcc46262e373effa30635be3846a0` (upstream #5132). When upgrading an
+existing checkout, run `cargo clean -p orbitkv-mooncake-sys` before rebuilding
+to discard native CMake and dependency caches from the earlier `7801bc9` pin.
+`libtent_metrics.so` is required even with `WITH_METRICS=OFF` and runtime metrics
+disabled; every staged and installed bundle must contain all four libraries.
 
 `tent_close_source` closes a whole engine permanently: status 0 is CPU/TCP
 handler drain, 1 remains owned, 2 has an unsupported physical path, and negative
@@ -55,7 +64,7 @@ it with a restarted source's value. Rust preflight refreshes TENT metadata befor
 batch allocation. The wire/ABI requires matching bundles and is unreleased.
 
 To use compatible prebuilt libraries instead of invoking CMake, set
-`ORBITKV_MOONCAKE_LIB_DIR` to a directory containing the three TENT runtime
+`ORBITKV_MOONCAKE_LIB_DIR` to a directory containing the four TENT runtime
 shared objects. A directory containing only `libtransfer_engine.so` is rejected.
 Record the integration commit and artifact hashes for an override; a compatible
 symbol set alone does not establish its source provenance or runtime qualification.

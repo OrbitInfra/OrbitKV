@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn runtime_requires_all_four_libraries_and_consumed_symbols() {
+    let source = Path::new(WORKSPACE_RUNTIME_LIB_DIR);
+    let loaded = unsafe { load_api_from(source) };
+    assert!(loaded.is_ok(), "{:?}", loaded.err());
+    let incomplete =
+        env::temp_dir().join(format!("orbitkv-tent-three-libs-{}", std::process::id()));
+    std::fs::create_dir(&incomplete).unwrap();
+    for name in ["libtent_shared.so", "libmooncake_common.so", "libasio.so"] {
+        std::fs::copy(source.join(name), incomplete.join(name)).unwrap();
+    }
+    assert!(unsafe { load_api_from(&incomplete) }.is_err());
+    std::fs::remove_dir_all(incomplete).unwrap();
+}
+
+#[test]
 fn tent_c_abi_layouts_match_the_pinned_header() {
     assert_eq!(std::mem::size_of::<TransferRequest>(), 88);
     assert_eq!(std::mem::align_of::<TransferRequest>(), 8);

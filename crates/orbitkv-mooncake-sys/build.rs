@@ -3,8 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const RUNTIME_LIBRARIES: [(&str, &str); 3] = [
+const RUNTIME_LIBRARIES: [(&str, &str); 4] = [
     ("tent/src/libtent_shared.so", "libtent_shared.so"),
+    ("tent/src/metrics/libtent_metrics.so", "libtent_metrics.so"),
     (
         "mooncake-common-src/libmooncake_common.so",
         "libmooncake_common.so",

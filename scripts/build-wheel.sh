@@ -48,7 +48,7 @@ if [[ ! -d "$MOONCAKE_LINK_DIR" ]]; then
     echo "Mooncake native runtime directory not found: $MOONCAKE_LINK_DIR" >&2
     exit 1
 fi
-for lib in libtent_shared.so libmooncake_common.so libasio.so; do
+for lib in libtent_shared.so libtent_metrics.so libmooncake_common.so libasio.so; do
     cp "$MOONCAKE_LINK_DIR/$lib" "$PYTHON_DIR/orbitkv/$lib"
 done
 for bin in orbitkv-cache-manager-py; do

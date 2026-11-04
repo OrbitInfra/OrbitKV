@@ -67,6 +67,7 @@ strip = true
 include = [
     "orbitkv/orbitkv-cache-manager-py",
     "orbitkv/libtent_shared.so",
+    "orbitkv/libtent_metrics.so",
     "orbitkv/libmooncake_common.so",
     "orbitkv/libasio.so",
 ]

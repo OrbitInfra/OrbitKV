@@ -72,7 +72,12 @@ def main() -> None:
     binary = output / "unregister-error-owner"
     libraries = [
         runtime / name
-        for name in ("libtent_shared.so", "libmooncake_common.so", "libasio.so")
+        for name in (
+            "libtent_shared.so",
+            "libtent_metrics.so",
+            "libmooncake_common.so",
+            "libasio.so",
+        )
     ]
     frozen = {str(path): sha(path) for path in libraries}
     compiler = shutil.which(args.compiler)

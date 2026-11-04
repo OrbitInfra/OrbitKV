@@ -63,6 +63,7 @@ def test_official_engines_share_manager(tier, model, tmp_path, request, orbitkv_
     for relative in (
         "orbitkv-cache-manager-py",
         "libtent_shared.so",
+        "libtent_metrics.so",
         "libmooncake_common.so",
         "libasio.so",
     ):

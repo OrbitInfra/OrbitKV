@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     clang \
     curl \
     git \
+    libcli11-dev \
     libssl-dev \
     pkg-config \
     protobuf-compiler \

@@ -78,7 +78,12 @@ def main() -> None:
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "runtime": {
             name: hashlib.sha256((runtime / name).read_bytes()).hexdigest()
-            for name in ["libtent_shared.so", "libmooncake_common.so", "libasio.so"]
+            for name in [
+                "libtent_shared.so",
+                "libtent_metrics.so",
+                "libmooncake_common.so",
+                "libasio.so",
+            ]
         },
         "scope": "CPU controlled Platform copy Status -> TCP handlers -> C ABI; no GPU/fault drain qualification",
     }

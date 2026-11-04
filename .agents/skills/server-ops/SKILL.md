@@ -66,6 +66,11 @@ Trace an incident through its owner:
    `docs/metrics.md`. Lease expiry or a deadline cannot establish native drain.
 
 Default deployments use native TENT payloads and OrbitKV source-control RPCs.
+TENT v0.3.14 at `af13e06a` requires all four runtime libraries, including
+`libtent_metrics.so` even with metrics disabled. The C wrappers still collapse
+RPC status codes to `-1`; do not infer a provably unsent request from that value.
+The backend maps an exposed 135 to `Unquiesced`, 134 to `Unavailable` and 2 to
+`ResourceExhausted`; failed work still requires a physical drain receipt.
 Both providers can be compiled together and selected by `--peer-transfer-backend`;
 an unavailable provider now fails before Manager CUDA initialization. The shared
 `transfer_engine::TransferBackend` contract owns register/open/READ/WRITE/cancel/

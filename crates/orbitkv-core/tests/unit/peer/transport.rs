@@ -1,6 +1,31 @@
 use super::*;
 
 #[test]
+fn tent_rpc_errors_preserve_delivery_certainty_before_epoch_mapping() {
+    for operation in [
+        "tent_open_segment",
+        "validateSourceEpochBeforeSubmit",
+        "tent_submit",
+    ] {
+        for (status, expected) in [
+            (134, ErrorKind::Unavailable),
+            (135, ErrorKind::Unquiesced),
+            (2, ErrorKind::ResourceExhausted),
+        ] {
+            let error =
+                tent_error(orbitkv_transfer::TransferError::Operation { operation, status });
+            assert_eq!(error.kind, expected, "{operation}: {status}");
+            if status == 135 {
+                assert!(matches!(
+                    crate::transfer_engine::PeerTransferError::from(error),
+                    crate::transfer_engine::PeerTransferError::Unquiesced
+                ));
+            }
+        }
+    }
+}
+
+#[test]
 #[ignore = "requires CUDA and Mooncake TCP; run after all native builds"]
 fn registration_preserves_pool_without_cuda_source_termination() {
     let pool = Arc::new(PinnedAllocator::new_global(1 << 20, 1, false, None));
