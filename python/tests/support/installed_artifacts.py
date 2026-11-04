@@ -18,7 +18,12 @@ ENGINE_COMMITS = {
     "vllm": "db9527a46873454610df6dbedf79a36d6bf1a7f6",
     "sglang": "baa9befa381511cd4d56f83980951e5a45fffc6d",
 }
-NATIVE_LIBRARIES = {"libtent_shared.so", "libmooncake_common.so", "libasio.so"}
+NATIVE_LIBRARIES = {
+    "libtent_shared.so",
+    "libtent_metrics.so",
+    "libmooncake_common.so",
+    "libasio.so",
+}
 EXECUTABLE_PACKAGE_FILES = {"orbitkv": ("orbitkv-cache-manager-py",)}
 
 

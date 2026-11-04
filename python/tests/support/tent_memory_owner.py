@@ -74,9 +74,12 @@ def tcp_payload(native, extension, case):
         maps = {
             line.split()[-1]
             for line in Path("/proc/self/maps").read_text().splitlines()
-            if any(name in line for name in ["libtent_shared", "libmooncake_common", "libasio"])
+            if any(
+                name in line
+                for name in ["libtent_shared", "libtent_metrics", "libmooncake_common", "libasio"]
+            )
         }
-        assert len(maps) == 3, maps
+        assert len(maps) == 4, maps
         assert all("site-packages" in Path(path).parts for path in maps), maps
         sender.unregister_memory([attempted[0]])
         receiver.unregister_memory([attempted[1]])

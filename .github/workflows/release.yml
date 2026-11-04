@@ -60,7 +60,7 @@ jobs:
         run: |
           sudo apt-get update
           # Explicitly select glog's headers over the runner's LLVM libunwind variant.
-          sudo apt-get install -y libunwind-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev patchelf
+          sudo apt-get install -y libunwind-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libcli11-dev libboost-dev patchelf
 
       - name: Install protocol compiler
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
@@ -130,6 +130,7 @@ jobs:
             libgflags-dev \
             libcurl4-openssl-dev \
             ninja-build \
+            libcli11-dev \
             libboost-dev \
             patchelf \
             pkg-config

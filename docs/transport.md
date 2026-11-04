@@ -595,15 +595,38 @@ custom TCP socket daemon, exchanges JSON metadata and QP/MR information, and
 then uses the selected data transport. Larger deployments may instead publish
 Segment metadata through etcd, Redis, or HTTP.
 
-OrbitKV pins [OrbitInfra/Mooncake](https://github.com/OrbitInfra/Mooncake/tree/12cbf549b6351c800de0f94a480276d216b9a43b)
-integration commit `12cbf549b6351c800de0f94a480276d216b9a43b`, based on upstream
-`v0.3.13.post1`, and builds the TENT `tent_shared` target in
+OrbitKV pins [OrbitInfra/Mooncake](https://github.com/OrbitInfra/Mooncake/tree/af13e06af174f27ba8782057b8a37afc7cddf8fd)
+integration commit `af13e06af174f27ba8782057b8a37afc7cddf8fd`, based on upstream
+`v0.3.14`, and builds the TENT `tent_shared` target in
 `orbitkv-mooncake-sys` without applying build-time patches. Native
 loading first checks `ORBITKV_MOONCAKE_LIB_DIR`, then the executable or Python
 extension directory, then the local `.orbitkv/mooncake/{cuda|cpu}/lib` build cache. Wheels
-bundle `libtent_shared.so`, `libmooncake_common.so`, and `libasio.so`; the legacy
+bundle `libtent_shared.so`, `libtent_metrics.so`, `libmooncake_common.so`, and
+`libasio.so`; the legacy
 `libtransfer_engine.so` is removed from staged runtimes. System
 RDMA/CUDA libraries remain deployment prerequisites.
+
+The v0.3.14 build requires CLI11 headers (`libcli11-dev`) and yalantinglibs
+`45c6463c0afbcc46262e373effa30635be3846a0` (upstream #5132). Discard the old
+native dependency cache with `cargo clean -p orbitkv-mooncake-sys` before the
+first rebuild. Metrics may stay disabled, but `libtent_metrics.so` must still
+ship. The 23 consumed C function signatures and their Rust layouts are unchanged.
+
+The TENT backend maps native status 134 (`RpcConnectionError`) to `Unavailable`:
+the RPC was provably not sent. Status 135 (`RpcUnknownEffect`) maps to
+`Unquiesced` and must never authorize replay or owner release. Status 2
+(`TooManyRequests`) maps to `ResourceExhausted`. These operation error codes are
+distinct from `tent_close_source`'s dedicated drain-receipt values.
+
+**C API gap at this pin:** `tent_open_segment`, `tent_validate_remote_epoch`,
+`tent_submit` and `tent_submit_notif` collapse native failures to `-1`, so the
+three typed RPC statuses cannot yet reach the Rust mappings through them.
+The fork must preserve the native status code in those returns (and expose the
+cause of asynchronous task failures) without treating it as a drain receipt.
+OrbitKV keeps its conservative failed-batch retention and disables automatic
+failover; the fork also suppresses replay after uncertain RPC dispatch. The
+six new file C functions are present upstream but are consumed in A3 through
+a separate TENT file engine, keeping the peer source-drain contract intact.
 
 ## Runtime transfer backend
 

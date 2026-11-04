@@ -382,19 +382,19 @@ fn grant_epoch_rejects_first_read_after_same_endpoint_restart() {
 
 #[test]
 fn logical_failures_wait_for_actual_completion_and_preserve_first_error() {
-    for operation in [
-        "deadline",
-        "tent_submit",
-        "getTransferStatus",
-        "tent_cancel_task",
+    for (operation, status) in [
+        ("deadline", -23),
+        ("tent_submit", -23),
+        ("tent_submit", 134),
+        ("tent_submit", 135),
+        ("tent_submit", 2),
+        ("getTransferStatus", -23),
+        ("tent_cancel_task", -23),
     ] {
         let polls = std::cell::Cell::new(0);
         let cancellations = std::cell::Cell::new(0);
         let frees = std::cell::Cell::new(0);
-        let failure = || MooncakeError::Operation {
-            operation,
-            status: -23,
-        };
+        let failure = || MooncakeError::Operation { operation, status };
         let result = drain_batch(
             2,
             Duration::ZERO,
@@ -451,7 +451,7 @@ fn logical_failures_wait_for_actual_completion_and_preserve_first_error() {
             assert!(matches!(result, Err(MooncakeError::Timeout)));
         } else {
             assert!(
-                matches!(result, Err(MooncakeError::Operation { operation: cause, status: -23 }) if cause == operation)
+                matches!(result, Err(MooncakeError::Operation { operation: cause, status: code }) if cause == operation && code == status)
             );
         }
     }

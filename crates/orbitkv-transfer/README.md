@@ -32,11 +32,11 @@ The public Rust API is deliberately small:
   failure signals.
 
 The `third-party/mooncake` submodule pins the OrbitInfra integration branch,
-based on upstream `v0.3.13.post1`; see [native source provenance](../orbitkv-mooncake-sys/README.md#native-source).
+based on upstream `v0.3.14`; see [native source provenance](../orbitkv-mooncake-sys/README.md#native-source).
 `orbitkv-mooncake-sys` builds and stages
-`libtent_shared.so`,
+`libtent_shared.so`, `libtent_metrics.so`,
 `libmooncake_common.so`, and `libasio.so`; the libraries use an `$ORIGIN`
-runpath so the three files can be bundled together in a wheel or container.
+runpath so the four files can be bundled together in a wheel or container.
 The sys crate is the only raw C ABI boundary. This crate contains the
 OrbitKV-facing safe types, segment cache, batch draining, timeout semantics,
 and notification API.

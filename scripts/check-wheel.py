@@ -31,6 +31,7 @@ def check_wheel(path: Path, version: str | None = None) -> None:
         "orbitkv/sglang/layout.py",
         "orbitkv/orbitkv-cache-manager-py",
         "orbitkv/libtent_shared.so",
+        "orbitkv/libtent_metrics.so",
         "orbitkv/libmooncake_common.so",
         "orbitkv/libasio.so",
     }
@@ -171,18 +172,33 @@ def check_install(path: Path, require_orbitte_rdma: bool = False) -> None:
         )
         command = root / "venv/bin/orbitkv-cache-manager"
         help_result = subprocess.run(
-            [str(command), "--help"], check=True, capture_output=True, text=True,
-            cwd=root, env=env,
+            [str(command), "--help"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=root,
+            env=env,
         )
         if require_orbitte_rdma:
             if "--orbitte-rdma-device" not in help_result.stdout:
-                raise ValueError("installed Manager is missing the OrbitTE RDMA build feature")
+                raise ValueError(
+                    "installed Manager is missing the OrbitTE RDMA build feature"
+                )
             missing_device = subprocess.run(
                 [str(command), "--peer-transfer-backend", "orbitte-rdma"],
-                capture_output=True, text=True, cwd=root, env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+                cwd=root,
+                env=env,
             )
-            if missing_device.returncode != 2 or "--orbitte-rdma-device" not in missing_device.stderr:
-                raise ValueError("installed RDMA Manager did not require an explicit RNIC")
+            if (
+                missing_device.returncode != 2
+                or "--orbitte-rdma-device" not in missing_device.stderr
+            ):
+                raise ValueError(
+                    "installed RDMA Manager did not require an explicit RNIC"
+                )
     print(f"Isolated native import and Manager CLI passed: {distribution}")
 
 

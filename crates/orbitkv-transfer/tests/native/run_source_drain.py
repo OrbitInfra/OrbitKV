@@ -131,6 +131,7 @@ def main() -> None:
                     str((runtime / name).resolve(strict=True))
                     for name in (
                         "libtent_shared.so",
+                        "libtent_metrics.so",
                         "libmooncake_common.so",
                         "libasio.so",
                     )

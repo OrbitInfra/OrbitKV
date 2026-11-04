@@ -462,6 +462,11 @@ fn tent_error(error: orbitkv_transfer::TransferError) -> TransferError {
         E::BatchAdmissionExhausted | E::SegmentAdmissionExhausted => ErrorKind::ResourceExhausted,
         E::NativeRuntime(_) | E::Create => ErrorKind::Unavailable,
         E::InvalidString(_) => ErrorKind::InvalidRequest,
+        // RPC errors take precedence over the operation's application error.
+        // Only 134 proves the request was not sent; 135 never permits replay.
+        E::Operation { status: 134, .. } => ErrorKind::Unavailable,
+        E::Operation { status: 135, .. } => ErrorKind::Unquiesced,
+        E::Operation { status: 2, .. } => ErrorKind::ResourceExhausted,
         E::Operation {
             operation: "validateSourceEpochBeforeSubmit",
             ..
