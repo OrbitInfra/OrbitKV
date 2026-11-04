@@ -636,8 +636,8 @@ HCA. The optional `rdma-adaptive` feature remains disabled.
 The OrbitTE profile bounds registrations to 4,096 regions and the configured
 pool bytes plus 2 GiB for GPU READ registrations (and 64 MiB for SSD GPU staging
 when enabled), submissions to 16,384 descriptors and 64 MiB, and outstanding work
-to 32 batches and 64 MiB. Splitting into 8 MiB requests must also fit the
-descriptor budget. TENT retains its native batch/descriptor budgets and caps
+to 32 batches and 64 MiB. Each descriptor may cover up to 64 MiB; transport
+slicing belongs to the engine. TENT retains its native batch/descriptor budgets and caps
 cached peer segments at 1,024. Process-wide registered owners retain their
 1,024-pool/1 TiB admission even after failed shutdown. The CUDA registration
 contract requires the actual allocation and CUDA context owner, completed
@@ -897,14 +897,12 @@ keeping completion admission charged instead of sending a release RPC. Source
 shutdown fences admission even if requester drain fails; failed cleanup retains
 its engine and process pool budget.
 
-This first profile requires a concrete numeric advertised IP, has no RDMA NIC
-filter, and limits one READ to 64 MiB and 16,384 split descriptors (8 MiB each).
-An engine retains at most 4,096 unique allocation regions and at most its pool
-capacity. Providers share the existing process admission of 1,024 pools/1 TiB.
-The planner is not automatically resized for these limits: a source registration
-or READ exceeding them is rejected; a READ budget rejection occurs before payload
-I/O. Use bounded grants for this profile. Whole-pool MR caching, multirail,
-RDMA/device DMA, GDS and broader faults remain open.
+This TCP profile requires a concrete numeric advertised IP and has no RDMA NIC
+filter. It uses the [runtime registration and batch limits](#runtime-transfer-backend).
+A source registration or READ exceeding those limits is rejected before payload
+I/O; GPU restore plans partition larger requests into bounded batches without
+reregistering. Use bounded source grants. Whole-pool MR caching, multirail,
+RDMA/device DMA, GDS and broader faults remain outside this TCP profile.
 
 Transfer notifications and their generation mailbox remain a separate transfer
 API contract. Manager releases source grants through its existing gRPC completion
