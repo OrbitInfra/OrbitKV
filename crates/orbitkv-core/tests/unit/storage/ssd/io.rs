@@ -454,7 +454,7 @@ mod engine {
                     allocation.as_non_null().as_ptr(),
                     0xa5,
                     allocation.size_bytes() as usize,
-                )
+                );
             };
         }
         assert_eq!(
@@ -616,18 +616,16 @@ mod engine {
         ) -> Result<usize, TransferError> {
             self.calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if self.short || self.kind.is_none() {
-                // SAFETY: this forwards the unchanged, registered descriptors and owners.
-                unsafe {
-                    Arc::clone(&self.real)
-                        .transfer_file(operation, file, transport, transfer, deadline, cancel)
+            match (self.short, self.kind) {
+                (false, Some(kind)) => Err(TransferError::new(kind, "injected transfer receipt")),
+                _ => {
+                    // SAFETY: this forwards the unchanged, registered descriptors and owners.
+                    unsafe {
+                        Arc::clone(&self.real)
+                            .transfer_file(operation, file, transport, transfer, deadline, cancel)
+                    }
+                    .map(|bytes| if self.short { bytes / 2 } else { bytes })
                 }
-                .map(|bytes| if self.short { bytes / 2 } else { bytes })
-            } else {
-                Err(TransferError::new(
-                    self.kind.unwrap(),
-                    "injected transfer receipt",
-                ))
             }
         }
     }

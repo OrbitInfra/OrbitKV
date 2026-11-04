@@ -1,16 +1,18 @@
 use super::*;
 
 fn supported_backends() -> Vec<Backend> {
-    let mut backends = vec![Backend::Scalar];
+    let backends = vec![Backend::Scalar];
     #[cfg(target_arch = "x86_64")]
-    {
+    let backends = {
+        let mut backends = backends;
         if std::arch::is_x86_feature_detected!("avx2") {
             backends.push(Backend::Avx2);
         }
         if std::arch::is_x86_feature_detected!("avx512f") {
             backends.push(Backend::Avx512);
         }
-    }
+        backends
+    };
     backends
 }
 
