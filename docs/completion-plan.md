@@ -94,8 +94,11 @@ and [adapter contracts](adapters.md).
   this pin remain open. The prior profile results below do not qualify this
   upgrade. See the
   [runtime contract and CPU gates](transport.md#runtime-transfer-backend).
-- [ ] After independent PR 1b acceptance: route SSD bytes through file segments,
-  retaining OrbitKV placement/index ownership and documenting TENT API gaps.
+- [x] OrbitTE SSD file-segment integration implemented for io_uring, CUDA staging
+  and opt-in native-only GDS, preserving OrbitKV placement, extents and index
+  publication. TENT retains the configured legacy fallback pending its file
+  configuration/drain API. CPU file/lifetime gates are required in CI; GPU/GDS
+  and installed qualification remain open. See [file contracts](transport.md#ssd-file-transfers).
 - [ ] After independent PR 2 acceptance: put existing local CUDA copies behind
   the shared interface and report OrbitTE's missing stream/strided-copy API.
 - [ ] After independent PR 3 acceptance and fork availability: consume Mooncake

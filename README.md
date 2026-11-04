@@ -30,6 +30,10 @@ Qwen3-8B dense TP=1/PP=1 DRAM or io_uring recovery and check the
 [support matrix](docs/compatibility.md) before extending the deployment.
 Version 0.1.0 is not yet published; interfaces may change before 1.0.
 
+The experimental OrbitTE backend also moves SSD bytes through file segments;
+TENT retains its configured SSD fallback. See [SSD transfer contracts](docs/transport.md#ssd-file-transfers)
+for CPU gates and the unqualified GPU/GDS scope.
+
 ## Features
 
 - **Reuse beyond HBM:** save prefixes in DRAM and optional SSD; restore after

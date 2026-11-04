@@ -10,9 +10,9 @@ use orbit_te::{
 
 use crate::memory::pool::PinnedAllocation;
 use crate::transfer_engine::{
-    Cancellation, ErrorKind, MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, PeerSegment,
-    REGISTERED_POOLS, Registration, RegistrationInner, Segment, TransferBackend, TransferError,
-    TransferSlice, remaining, validate_slices,
+    Cancellation, ErrorKind, FileSegment, FileTransport, MAX_REGISTERED_BYTES,
+    MAX_REGISTERED_POOLS, PeerSegment, REGISTERED_POOLS, Registration, RegistrationInner, Segment,
+    TransferBackend, TransferError, TransferSlice, remaining, validate_slices,
 };
 
 fn prefix(transport: Transport) -> &'static str {
@@ -39,6 +39,7 @@ pub(crate) struct OrbitTeTransport {
     pub(super) endpoint: String,
     pub(super) epoch: String,
     pool_bytes: u64,
+    files_enabled: bool,
     pub(super) payload: Transport,
 }
 
@@ -87,6 +88,7 @@ impl OrbitTeTransport {
         pool_bytes: u64,
         advertise: &str,
         payload: Transport,
+        storage: Option<&crate::SsdCacheConfig>,
         #[cfg(feature = "orbitte-rdma")] rdma: Option<crate::OrbitTeRdmaConfig>,
     ) -> Result<Self, String> {
         if !matches!(payload, Transport::Tcp | Transport::Rdma) {
@@ -114,27 +116,45 @@ impl OrbitTeTransport {
         if host.is_unspecified() {
             return Err("OrbitTE requires a concrete advertised IP".into());
         }
+        let mut policy = vec![orbit_te::SelectionPolicy {
+            transports: vec![payload],
+            ..Default::default()
+        }];
+        if storage.is_some() {
+            policy.push(orbit_te::SelectionPolicy {
+                name: "ssd".into(),
+                segment_type: orbit_te::SegmentType::File,
+                transports: vec![Transport::IoUring, Transport::Gds],
+                ..Default::default()
+            });
+        }
+        if storage.is_some_and(|s| s.backend == crate::SsdBackend::Cufile)
+            && !cfg!(feature = "orbitte-gds")
+        {
+            return Err("OrbitTE cuFile requires the orbitte-gds build feature".into());
+        }
         let config = EngineConfig {
             #[cfg(feature = "orbitte-rdma")]
             rdma,
             bind_addr: SocketAddr::new(host, 0),
             max_registered_regions: 4096,
             max_registered_bytes: usize::try_from(pool_bytes)
-                .map_err(|_| "pool exceeds addressable bytes")?,
+                .map_err(|_| "pool exceeds addressable bytes")?
+                .checked_add(if storage.is_some() { 64 << 20 } else { 0 })
+                .ok_or("registration budget overflow")?,
             max_batch_requests: MAX_BATCH_REQUESTS,
             max_inflight_batches: 32,
             max_inflight_bytes: MAX_BATCH_BYTES,
             max_allocated_batches: 32,
             max_allocated_requests: 32 * MAX_BATCH_REQUESTS,
-            max_file_segments: 0,
+            max_file_segments: if storage.is_some() { 256 } else { 0 },
+            #[cfg(feature = "orbitte-gds")]
+            gds_require_native: true,
             max_failover_attempts: 0,
             enable_auto_failover_on_poll: false,
             tcp: payload == Transport::Tcp,
             selector: Some(orbit_te::TransportSelectorConfig {
-                policy: vec![orbit_te::SelectionPolicy {
-                    transports: vec![payload],
-                    ..Default::default()
-                }],
+                policy,
                 ..Default::default()
             }),
             // No implicit expansion of the qualified payload namespace.
@@ -146,6 +166,14 @@ impl OrbitTeTransport {
             ..EngineConfig::default()
         };
         let engine = Arc::new(TransferEngine::new(config).map_err(|error| error.to_string())?);
+        #[cfg(feature = "orbitte-gds")]
+        if storage.is_some_and(|s| s.backend == crate::SsdBackend::Cufile)
+            && !engine.stats().map_err(|e| e.to_string())?.gds.available
+        {
+            return Err(
+                "OrbitTE GDS/cuFile is unavailable or compatibility mode is enabled".into(),
+            );
+        }
         let epoch = engine.source_epoch().to_string();
         let endpoint = format!("{}{}", prefix(payload), engine.endpoint());
         {
@@ -168,8 +196,131 @@ impl OrbitTeTransport {
             endpoint,
             epoch,
             pool_bytes,
+            files_enabled: storage.is_some(),
             payload,
         })
+    }
+
+    fn transfer_target(
+        &self,
+        operation: crate::transfer_engine::TransferOp,
+        target: orbit_te::TransferTarget<'_>,
+        transport: Transport,
+        slices: &[TransferSlice],
+        deadline: Instant,
+        cancellation: &Cancellation,
+    ) -> Result<usize, TransferError> {
+        let total = validate_profile(slices)?;
+        if cancellation.is_cancelled() {
+            return Err(TransferError::new(
+                ErrorKind::Cancelled,
+                "transfer cancelled before submission",
+            ));
+        }
+        let mut requests = Vec::new();
+        for slice in slices {
+            if requests.len() + slice.length.div_ceil(SLICE_BYTES) > MAX_BATCH_REQUESTS {
+                return Err(TransferError::new(
+                    ErrorKind::ResourceExhausted,
+                    "transfer descriptor budget exhausted",
+                ));
+            }
+            for offset in (0..slice.length).step_by(SLICE_BYTES) {
+                requests.push(
+                    TransferRequest::new(
+                        transport,
+                        slice.local.as_ptr() as usize as u64 + offset as u64,
+                        slice.remote_address + offset as u64,
+                        SLICE_BYTES.min(slice.length - offset),
+                    )
+                    .with_deadline(deadline),
+                );
+            }
+        }
+        let op = match operation {
+            crate::transfer_engine::TransferOp::Read => TransferOp::Read,
+            crate::transfer_engine::TransferOp::Write => TransferOp::Write,
+        };
+        let mut batch = self
+            .engine
+            .submit_async(op, target, &requests, None, remaining(deadline)?)
+            .map_err(transfer_error)?;
+        let mut cancelled = false;
+        loop {
+            if cancellation.is_cancelled() && !cancelled {
+                // Unsupported running cancellation still requires drain; queued
+                // physical owners have received cancellation before this returns.
+                let _ = batch.cancel_all();
+                cancelled = true;
+            }
+            let status = batch
+                .status()
+                .map_err(|e| TransferError::new(ErrorKind::Unquiesced, e.to_string()))?;
+            if status.is_terminal() {
+                if !status.locally_drained {
+                    return Err(TransferError::new(
+                        ErrorKind::Unquiesced,
+                        "OrbitTE physical owners remain active",
+                    ));
+                }
+                let submissions = batch
+                    .submissions()
+                    .map_err(|e| TransferError::new(ErrorKind::Unquiesced, e.to_string()))?;
+                // Per-task bytes can alias a merged physical owner. Only the
+                // submission report is additive across public descriptors.
+                let bytes = submissions
+                    .iter()
+                    .map(|report| report.transferred_bytes)
+                    .sum::<usize>();
+                let failure = submissions
+                    .iter()
+                    .find_map(|report| report.failure.as_ref())
+                    .map(|failure| {
+                        if failure.remote_effect == orbit_te::RemoteEffect::Unknown {
+                            TransferError::new(
+                                ErrorKind::Unquiesced,
+                                "OrbitTE remote WRITE effect is unknown",
+                            )
+                        } else {
+                            transfer_error_ref(&failure.error)
+                        }
+                    });
+                batch
+                    .free()
+                    .map_err(|e| TransferError::new(ErrorKind::Unquiesced, e.to_string()))?;
+                if let Some(error) = failure {
+                    return Err(error);
+                }
+                if cancelled {
+                    return Err(TransferError::new(
+                        ErrorKind::Cancelled,
+                        "transfer cancelled after drain",
+                    ));
+                }
+                if bytes != total {
+                    return Err(TransferError::new(
+                        ErrorKind::Backend,
+                        "OrbitTE returned incomplete bytes",
+                    ));
+                }
+                return Ok(bytes);
+            }
+            let Ok(wait) = remaining(deadline) else {
+                let _ = batch.cancel_all();
+                // The batch owns accepted work after handle drop; the caller
+                // must retain registrations, source grants and actual buffers.
+                return Err(TransferError::new(
+                    ErrorKind::Unquiesced,
+                    "OrbitTE deadline expired before physical drain",
+                ));
+            };
+            match batch.wait(wait.min(Duration::from_millis(5))) {
+                Ok(_) | Err(Error::Timeout) => {}
+                Err(error) => {
+                    return Err(TransferError::new(ErrorKind::Unquiesced, error.to_string()));
+                }
+            }
+        }
     }
 
     pub(super) fn register<'a>(
@@ -308,7 +459,7 @@ impl TransferBackend for OrbitTeTransport {
         deadline: Instant,
         cancellation: &Cancellation,
     ) -> Result<usize, TransferError> {
-        let total = validate_profile(slices)?;
+        validate_profile(slices)?;
         if peer.owner_epoch != self.epoch {
             return Err(TransferError::new(
                 ErrorKind::InvalidRequest,
@@ -332,116 +483,85 @@ impl TransferBackend for OrbitTeTransport {
                 ));
             }
         };
-        if cancellation.is_cancelled() {
+        self.transfer_target(
+            operation,
+            peer.into(),
+            Transport::Unspec,
+            slices,
+            deadline,
+            cancellation,
+        )
+    }
+
+    fn open_file(&self, path: &std::path::Path) -> Result<FileSegment, TransferError> {
+        if !self.files_enabled {
             return Err(TransferError::new(
-                ErrorKind::Cancelled,
-                "transfer cancelled before submission",
+                ErrorKind::Unavailable,
+                "OrbitTE file admission is disabled",
             ));
         }
-        let mut requests = Vec::new();
-        for slice in slices {
-            if requests.len() + slice.length.div_ceil(SLICE_BYTES) > MAX_BATCH_REQUESTS {
-                return Err(TransferError::new(
-                    ErrorKind::ResourceExhausted,
-                    "transfer descriptor budget exhausted",
-                ));
-            }
-            for offset in (0..slice.length).step_by(SLICE_BYTES) {
-                requests.push(
-                    TransferRequest::new(
-                        Transport::Unspec,
-                        slice.local.as_ptr() as usize as u64 + offset as u64,
-                        slice.remote_address + offset as u64,
-                        SLICE_BYTES.min(slice.length - offset),
-                    )
-                    .with_deadline(deadline),
-                );
-            }
-        }
-        let op = match operation {
-            crate::transfer_engine::TransferOp::Read => TransferOp::Read,
-            crate::transfer_engine::TransferOp::Write => TransferOp::Write,
-        };
-        let mut batch = self
+        let path = path.to_str().ok_or_else(|| {
+            TransferError::new(ErrorKind::InvalidRequest, "file path must be UTF-8")
+        })?;
+        let inner = self
             .engine
-            .submit_async(op, peer, &requests, None, remaining(deadline)?)
+            .open_file_segment(&format!("file://{path}"), Permission::RemoteReadWrite)
             .map_err(transfer_error)?;
-        let mut cancelled = false;
-        loop {
-            if cancellation.is_cancelled() && !cancelled {
-                // Unsupported running cancellation still requires drain; queued
-                // physical owners have received cancellation before this returns.
-                let _ = batch.cancel_all();
-                cancelled = true;
-            }
-            let status = batch
-                .status()
-                .map_err(|e| TransferError::new(ErrorKind::Unquiesced, e.to_string()))?;
-            if status.is_terminal() {
-                if !status.locally_drained {
-                    return Err(TransferError::new(
-                        ErrorKind::Unquiesced,
-                        "OrbitTE physical owners remain active",
-                    ));
-                }
-                let submissions = batch
-                    .submissions()
-                    .map_err(|e| TransferError::new(ErrorKind::Unquiesced, e.to_string()))?;
-                // Per-task bytes can alias a merged physical owner. Only the
-                // submission report is additive across public descriptors.
-                let bytes = submissions
-                    .iter()
-                    .map(|report| report.transferred_bytes)
-                    .sum::<usize>();
-                let failure = submissions
-                    .iter()
-                    .find_map(|report| report.failure.as_ref())
-                    .map(|failure| {
-                        if failure.remote_effect == orbit_te::RemoteEffect::Unknown {
-                            TransferError::new(
-                                ErrorKind::Unquiesced,
-                                "OrbitTE remote WRITE effect is unknown",
-                            )
-                        } else {
-                            transfer_error_ref(&failure.error)
-                        }
-                    });
-                batch
-                    .free()
-                    .map_err(|e| TransferError::new(ErrorKind::Unquiesced, e.to_string()))?;
-                if let Some(error) = failure {
-                    return Err(error);
-                }
-                if cancelled {
-                    return Err(TransferError::new(
-                        ErrorKind::Cancelled,
-                        "transfer cancelled after drain",
-                    ));
-                }
-                if bytes != total {
-                    return Err(TransferError::new(
-                        ErrorKind::Backend,
-                        "OrbitTE returned incomplete bytes",
-                    ));
-                }
-                return Ok(bytes);
-            }
-            let Ok(wait) = remaining(deadline) else {
-                let _ = batch.cancel_all();
-                // The batch owns accepted work after handle drop; the caller
-                // must retain registrations, source grants and actual buffers.
-                return Err(TransferError::new(
-                    ErrorKind::Unquiesced,
-                    "OrbitTE deadline expired before physical drain",
-                ));
-            };
-            match batch.wait(wait.min(Duration::from_millis(5))) {
-                Ok(_) | Err(Error::Timeout) => {}
-                Err(error) => {
-                    return Err(TransferError::new(ErrorKind::Unquiesced, error.to_string()));
-                }
+        match self.engine.file_segment_info(&inner) {
+            Ok(info) => Ok(FileSegment {
+                owner_epoch: self.epoch.clone(),
+                length: info.length,
+                inner,
+            }),
+            Err(error) => {
+                let _ = self.engine.close_file_segment(&inner, Duration::ZERO);
+                Err(transfer_error(error))
             }
         }
+    }
+
+    fn close_file(&self, file: &FileSegment, deadline: Instant) -> Result<(), TransferError> {
+        if file.owner_epoch != self.epoch {
+            return Err(TransferError::new(
+                ErrorKind::InvalidRequest,
+                "foreign file segment",
+            ));
+        }
+        self.engine
+            .close_file_segment(
+                &file.inner,
+                deadline.saturating_duration_since(Instant::now()),
+            )
+            .map_err(transfer_error)
+    }
+
+    unsafe fn transfer_file(
+        &self,
+        operation: crate::transfer_engine::TransferOp,
+        file: &FileSegment,
+        transport: FileTransport,
+        slices: &[TransferSlice],
+        deadline: Instant,
+        cancellation: &Cancellation,
+    ) -> Result<usize, TransferError> {
+        if file.owner_epoch != self.epoch {
+            return Err(TransferError::new(
+                ErrorKind::InvalidRequest,
+                "foreign file segment",
+            ));
+        }
+        let transport = match transport {
+            FileTransport::IoUring => Transport::IoUring,
+            FileTransport::Gds => Transport::Gds,
+        };
+        self.transfer_target(
+            operation,
+            (&file.inner).into(),
+            transport,
+            slices,
+            deadline,
+            cancellation,
+        )
     }
 
     fn shutdown(&self, deadline: Instant) -> Result<(), TransferError> {

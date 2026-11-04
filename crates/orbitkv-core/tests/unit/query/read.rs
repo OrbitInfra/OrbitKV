@@ -97,6 +97,7 @@ async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
             Arc::new(|bytes, _| Some(bytes)),
             false,
             None,
+            None,
         )
         .unwrap();
         let cache = Arc::new(DramStore::new(4096, false, None, None, 0));

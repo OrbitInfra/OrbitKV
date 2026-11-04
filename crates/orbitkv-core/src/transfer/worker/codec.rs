@@ -1,3 +1,4 @@
+use crate::storage::ssd::gpu::GpuSlot;
 use std::{
     num::NonZeroU64,
     sync::Arc,
@@ -21,7 +22,7 @@ use crate::{
     memory::numa::NumaNode,
     metrics::core_metrics,
     storage::Storage,
-    storage::ssd::cufile::{CopyRange, GpuSlot, plan_writes},
+    storage::ssd::cufile::{CopyRange, plan_writes},
     transfer::{finish_gpu_transfer, layout::BlockCopies},
 };
 
@@ -426,7 +427,7 @@ fn write_gpu(
         while crate::test_faults::active("cufile_write") {
             std::thread::sleep(Duration::from_micros(50));
         }
-        if let Err(error) = slot.submit(Arc::clone(lease.file()), batch, true) {
+        if let Err(error) = slot.submit(Arc::clone(lease.file()), batch, true, lease.clone()) {
             *owner = None;
             return Err(EngineError::Storage(error));
         }

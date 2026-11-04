@@ -133,3 +133,29 @@ fn partial_export_failure_rolls_back_and_reports_staging_failure() {
     ));
     assert_eq!(locks.accounting(), (0, 0));
 }
+
+#[test]
+fn unknown_file_drain_keeps_export_reservation_after_logical_failure() {
+    let (locks, ticket, reservation) = staging_reservation(1);
+    let (done_tx, done_rx) = oneshot::channel();
+    let context = Arc::new(BatchContext::new(
+        1,
+        done_tx,
+        Observation::disabled(),
+        Vec::new(),
+        Some(reservation),
+    ));
+    // Model the file owner's unknown receipt. Production retains this Arc along
+    // with the actual backing and extent; this control admits no native work.
+    context.unquiesced.store(true, Ordering::Release);
+    context.complete_one(StateKey::new("unknown-export".into(), vec![0]), None);
+    assert!(matches!(
+        done_rx.try_recv(),
+        Ok(Err(PeerError::StagingFailed))
+    ));
+    assert!(context.reservation.lock().is_some());
+    assert_eq!(locks.release(ticket), Ok(0));
+    assert_eq!(locks.accounting(), (1, 1));
+    drop(context);
+    assert_eq!(locks.accounting(), (0, 0));
+}

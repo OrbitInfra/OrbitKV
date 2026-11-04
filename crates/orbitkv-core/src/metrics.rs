@@ -131,6 +131,7 @@ pub(crate) struct CoreMetrics {
     pub ssd_write_bytes: Counter<u64>,
     pub ssd_write_duration_seconds: Histogram<f64>,
     pub ssd_write_failures: Counter<u64>,
+    pub ssd_engine_retained_operations: Counter<u64>,
     pub ssd_write_throughput_bytes_per_second: Histogram<f64>,
     pub ssd_write_queue_pending: UpDownCounter<i64>,
     pub ssd_write_queue_full: Counter<u64>,
@@ -589,6 +590,7 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .with_description("Per-block SSD write submission and completion latency; concurrent operations overlap")
                 .with_boundaries(duration_seconds_boundaries())
                 .build(),
+            ssd_engine_retained_operations: meter.u64_counter("orbitkv_ssd_engine_retained_operations").with_description("File operations retaining backing, extents and admission after unknown drain or cleanup").build(),
             ssd_write_failures: meter
                 .u64_counter("orbitkv_ssd_write_failures")
                 .with_description("SSD write failures")

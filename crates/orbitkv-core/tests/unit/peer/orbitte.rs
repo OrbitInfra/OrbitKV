@@ -12,6 +12,7 @@ fn cpu_tcp_backend_reads_and_writes_fragmented_bytes_and_drains() {
                 4096,
                 "127.0.0.1:0",
                 Transport::Tcp,
+                None,
                 #[cfg(feature = "orbitte-rdma")]
                 None,
             )
@@ -150,6 +151,7 @@ fn peer_protocol_and_granted_epoch_are_preserved_across_source_restart() {
             4096,
             "127.0.0.1:0",
             Transport::Tcp,
+            None,
             #[cfg(feature = "orbitte-rdma")]
             None,
         )
@@ -194,6 +196,7 @@ fn transfer_rejects_descriptor_and_byte_budgets_before_payload_io() {
         4096,
         "127.0.0.1:0",
         Transport::Tcp,
+        None,
         #[cfg(feature = "orbitte-rdma")]
         None,
     )
@@ -248,7 +251,7 @@ fn transfer_rejects_descriptor_and_byte_budgets_before_payload_io() {
 #[test]
 fn rdma_selection_requires_its_build_feature() {
     assert!(matches!(
-        OrbitTeTransport::new(4096, "127.0.0.1:0", Transport::Rdma),
+        OrbitTeTransport::new(4096, "127.0.0.1:0", Transport::Rdma, None),
         Err(reason) if reason.contains("orbitte-rdma build feature")
     ));
 }
@@ -264,6 +267,7 @@ fn unavailable_rdma_never_copies_through_tcp() {
         4096,
         "127.0.0.1:0",
         Transport::Rdma,
+        None,
         Some(crate::OrbitTeRdmaConfig::new("orbitkv-test-absent")),
     )
     .unwrap();
@@ -326,12 +330,13 @@ fn unavailable_rdma_never_copies_through_tcp() {
 #[cfg(feature = "orbitte-rdma")]
 #[test]
 fn rdma_configuration_and_payload_namespaces_are_explicit() {
-    assert!(OrbitTeTransport::new(4096, "127.0.0.1:0", Transport::Rdma, None).is_err());
+    assert!(OrbitTeTransport::new(4096, "127.0.0.1:0", Transport::Rdma, None, None).is_err());
     assert!(
         OrbitTeTransport::new(
             4096,
             "127.0.0.1:0",
             Transport::Tcp,
+            None,
             Some(crate::OrbitTeRdmaConfig::new("orbitkv-test-absent"))
         )
         .is_err()
@@ -343,6 +348,7 @@ fn rdma_configuration_and_payload_namespaces_are_explicit() {
             4096,
             "127.0.0.1:0",
             Transport::Rdma,
+            None,
             Some(crate::OrbitTeRdmaConfig::new("orbitkv-test-absent")),
         )
         .unwrap(),

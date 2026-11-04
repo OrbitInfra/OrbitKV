@@ -239,7 +239,7 @@ pub(crate) struct IoBatch {
 }
 
 impl IoBatch {
-    fn validate(&self) -> Result<(), String> {
+    pub(super) fn validate(&self) -> Result<(), String> {
         let end = self
             .file_offset
             .checked_add(self.bytes as u64)

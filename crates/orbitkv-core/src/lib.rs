@@ -19,7 +19,6 @@ mod planning;
 mod query;
 mod storage;
 pub mod transfer;
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 pub mod transfer_engine;
 
 pub use block::{
@@ -54,8 +53,8 @@ pub use storage::inventory::{
 pub use storage::ssd::metadata::SlotMeta;
 pub use storage::ssd::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,
-    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdReadLease, SsdReadPath,
-    SsdWritePolicy,
+    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdIoEngine, SsdReadLease,
+    SsdReadPath, SsdWritePolicy,
 };
 pub use trace::{set_trace_sample_rate, should_sample};
 pub use transfer::TransferMode;

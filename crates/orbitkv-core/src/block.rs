@@ -225,6 +225,13 @@ impl RawBlock {
         Ok(())
     }
 
+    pub(crate) fn allocations(&self) -> impl Iterator<Item = &Arc<PinnedAllocation>> {
+        self.segments
+            .as_slice()
+            .iter()
+            .map(|segment| &segment._allocation)
+    }
+
     /// Number of segments.
     pub(crate) fn num_segments(&self) -> usize {
         self.segments.as_slice().len()
@@ -465,7 +472,6 @@ impl SealedBlock {
         })
     }
 
-    #[cfg(feature = "orbitte")]
     pub(crate) fn allocations(&self) -> impl Iterator<Item = &Arc<PinnedAllocation>> {
         self.slots.iter().flat_map(|slot| {
             slot.segments

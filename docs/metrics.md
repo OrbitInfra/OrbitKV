@@ -499,6 +499,7 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
 - **orbitkv_ssd_gpu_read_fallbacks_total** (Counter) - Automatically selected cuFile restores changed to io_uring before submission because another instance owns this CUDA device's persistent staging. Explicit cuFile routes do not increment this counter or switch paths.
 - **orbitkv_ssd_pinned_write_skips_total** (Counter) - Reservations rejected to
   protect an active SSD read or write. See [GPU storage recovery](gds.md).
+- **orbitkv_ssd_engine_retained_operations_total** (Counter) - File operations retaining registrations, backing, extents and admission after uncertain drain or cleanup. These owners remain charged until process exit.
 - **orbitkv_ssd_write_bytes_total** (Counter) - Bytes written to SSD cache
 - **orbitkv_ssd_write_duration_seconds** (Histogram) - Per-block io_uring write submission
   and completion latency; cuFile writes use their own duration histogram. Concurrent block writes overlap; summing these
