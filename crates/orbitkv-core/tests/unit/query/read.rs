@@ -76,7 +76,7 @@ fn ready_result_stops_at_first_missing_prefetch_key() {
 
 #[tokio::test]
 async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
-    use crate::{SsdBackend, SsdCacheConfig, SsdReadPath};
+    use crate::SsdReadPath;
 
     for (read_path, mode, existing_permission, existing_node, existing_host, share) in [
         (None, QueryMode::Demand, true, NumaNode(1), false, true),
@@ -101,22 +101,7 @@ async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
         ),
         (None, QueryMode::Prepare, true, NumaNode(0), true, false),
     ] {
-        let directory = tempfile::tempdir().unwrap();
-        let store = crate::storage::ssd::SsdStore::new(
-            SsdCacheConfig {
-                cache_paths: vec![directory.path().join("cache.bin")],
-                capacity_bytes: 4096,
-                backend: SsdBackend::Uring,
-                read_path,
-                ..Default::default()
-            },
-            Arc::new(|_, _| None),
-            Arc::new(|bytes, _| Some(bytes)),
-            false,
-            None,
-            None,
-        )
-        .unwrap();
+        let (store, _queued) = crate::storage::ssd::tests::query_store(read_path);
         let cache = Arc::new(DramStore::new(4096, false, None, None, 0));
         let scheduler = ReadCoordinator::new(
             cache.clone(),

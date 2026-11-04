@@ -41,7 +41,7 @@ fn complete_write_batch(
         && let Some(batch) = batches.pop_front()
     {
         // FuturesOrdered returns writes in submission order. Completion follows
-        // every ring commit; the physical io_uring owner counts actual bytes.
+        // every ring commit; the file engine counts actual bytes.
         batch.observation.finish(batch.outcome, None);
         return batch
             .diagnostic
@@ -141,7 +141,7 @@ pub(super) async fn ssd_writer_loop(
                 let task = pending.pop_front().unwrap();
                 // Only the newest dequeued batch can still have pending tasks.
                 // This composite starts service at worker admission; low-level
-                // submission and CQE service are measured separately by uring.
+                // file submission and completion are observed by the engine boundary.
                 if let Some(batch) = batches.back_mut() {
                     batch.observation.submitted();
                 }

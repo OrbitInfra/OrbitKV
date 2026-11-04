@@ -72,7 +72,7 @@ impl SsdIndexEntry {
                 // Input assembly is 4096-aligned. One segment additionally needs
                 // descriptors, a CRC reduction and the codec arena's base alignment.
                 meta.stored_bytes
-                    .checked_next_multiple_of(super::cufile::ALIGNMENT)
+                    .checked_next_multiple_of(super::layout::ALIGNMENT)
                     .and_then(|bytes| bytes.checked_add(8192))
                     .is_some_and(|bytes| bytes <= budget)
             })

@@ -168,15 +168,10 @@ pub struct Cli {
     #[arg(long, default_value = "all")]
     pub ssd_write_policy: orbitkv_core::SsdWritePolicy,
 
-    /// SSD I/O: auto tries native cuFile and falls back to uring; explicit cufile follows NVIDIA configuration.
+    /// Selected engine SSD transport: auto uses CUDA staging/io_uring; cufile requires native GDS.
     /// Hardware path selection does not establish a performance advantage; qualify native GDS separately.
     #[arg(long, default_value = "auto", requires = "ssd_cache_path")]
     pub ssd_backend: orbitkv_core::SsdBackend,
-
-    /// SSD byte mover: auto uses OrbitTE when selected, retaining TENT's legacy fallback.
-    /// transfer requires file support; legacy explicitly selects OrbitKV's temporary I/O path.
-    #[arg(long, default_value = "auto", requires = "ssd_cache_path")]
-    pub ssd_io_engine: orbitkv_core::SsdIoEngine,
 
     /// Pin SSD demand data and use this read route independently of write/backend selection.
     /// An unavailable explicit route returns a cache miss; it never silently switches routes.
@@ -617,10 +612,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     if !cli.ssd_cache_path.is_empty() {
         orbitkv_core::SsdCacheConfig {
             backend: cli.ssd_backend,
-            io_engine: cli.ssd_io_engine,
             ..Default::default()
         }
-        .use_transfer_engine(cli.peer_transfer_backend)?;
+        .validate_transfer_engine(cli.peer_transfer_backend)?;
     }
     let query_control_address = cli.query_control_address()?;
     orbitkv_common::logging::init_stdout_colored(&cli.log_level);
@@ -703,7 +697,6 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             write_queue_depth: cli.ssd_write_queue_depth,
             write_policy: cli.ssd_write_policy,
             backend: cli.ssd_backend,
-            io_engine: cli.ssd_io_engine,
             read_path: cli.ssd_read_path,
             prefetch_queue_depth: cli.ssd_prefetch_queue_depth,
             write_inflight: cli.ssd_write_inflight,

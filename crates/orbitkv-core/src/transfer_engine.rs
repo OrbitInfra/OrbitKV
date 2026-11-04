@@ -130,11 +130,38 @@ pub enum FileTransport {
 
 /// Engine-local file handle. The SSD owner keeps the original fd and extents.
 pub struct FileSegment {
-    #[cfg(feature = "orbitte")]
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     pub(crate) owner_epoch: String,
     pub length: u64,
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    pub(crate) inner: FileSegmentInner,
+}
+
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[derive(Clone)]
+pub(crate) enum FileSegmentInner {
+    #[cfg(feature = "mooncake")]
+    Tent(Arc<orbitkv_transfer::files::FileSegment>),
     #[cfg(feature = "orbitte")]
-    pub(crate) inner: orbit_te::FileSegment,
+    OrbitTe(orbit_te::FileSegment),
+}
+
+pub(crate) enum FileMemory {
+    Pinned(Vec<Arc<PinnedAllocation>>),
+    Cuda {
+        address: u64,
+        length: usize,
+        context: Arc<cudarc::driver::CudaContext>,
+        _owner: Arc<dyn Send + Sync>,
+    },
+}
+
+/// Actual file-transfer backing, immutable layout and the SSD owner's lease.
+/// Native callbacks may retain this owner, including after a dropped receiver.
+pub struct FileTransfer {
+    pub(crate) slices: Vec<TransferSlice>,
+    pub(crate) memory: FileMemory,
+    pub(crate) _lease: Arc<dyn Send + Sync>,
 }
 
 /// Retains registration, engine and actual backing. Failed cleanup retains all
@@ -178,16 +205,16 @@ pub trait TransferBackend: Send + Sync {
     }
 
     /// # Safety
-    /// The registration, actual backing and immutable/read-exclusive extents
-    /// must remain owned until drain. `remote_address` is a file byte offset.
-    /// Unquiesced requires retaining all of them; never replay a failed WRITE.
+    /// The supplied owner keeps actual backing and immutable/read-exclusive
+    /// extents. The backend owns any file registrations. `remote_address` is a
+    /// file byte offset. Unquiesced retains all owners; never replay a failed WRITE.
     /// Every other result proves local drain, including a pre-admission rejection.
     unsafe fn transfer_file(
-        &self,
+        self: Arc<Self>,
         _operation: TransferOp,
         _file: &FileSegment,
         _transport: FileTransport,
-        _slices: &[TransferSlice],
+        _transfer: Arc<FileTransfer>,
         _deadline: Instant,
         _cancellation: &Cancellation,
     ) -> Result<usize, TransferError> {
@@ -385,9 +412,6 @@ pub(crate) fn create_transfer_backend(
     #[cfg(feature = "orbitte-rdma")] rdma: Option<crate::OrbitTeRdmaConfig>,
 ) -> Result<Arc<dyn TransferBackend>, String> {
     backend.validate_compiled()?;
-    if storage.is_some() && backend == PeerTransferBackend::Mooncake {
-        return Err("TENT file transport configuration is not exposed".into());
-    }
     #[cfg(feature = "orbitte-rdma")]
     if (backend == PeerTransferBackend::OrbitTeRdma) != rdma.is_some() {
         return Err(
@@ -397,7 +421,7 @@ pub(crate) fn create_transfer_backend(
     match backend {
         #[cfg(feature = "mooncake")]
         PeerTransferBackend::Mooncake => Ok(Arc::new(
-            crate::peer::transport::MooncakeTransport::new(nics, allocator, advertise)?,
+            crate::peer::transport::MooncakeTransport::new(nics, allocator, advertise, storage)?,
         )),
         #[cfg(feature = "orbitte")]
         PeerTransferBackend::OrbitTeTcp | PeerTransferBackend::OrbitTeRdma => {

@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::mem::ManuallyDrop;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -10,9 +11,10 @@ use orbit_te::{
 
 use crate::memory::pool::PinnedAllocation;
 use crate::transfer_engine::{
-    Cancellation, ErrorKind, FileSegment, FileTransport, MAX_REGISTERED_BYTES,
-    MAX_REGISTERED_POOLS, PeerSegment, REGISTERED_POOLS, Registration, RegistrationInner, Segment,
-    TransferBackend, TransferError, TransferSlice, remaining, validate_slices,
+    Cancellation, ErrorKind, FileMemory, FileSegment, FileSegmentInner, FileTransfer,
+    FileTransport, MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, PeerSegment, REGISTERED_POOLS,
+    Registration, RegistrationInner, Segment, TransferBackend, TransferError, TransferSlice,
+    remaining, validate_slices,
 };
 
 fn prefix(transport: Transport) -> &'static str {
@@ -504,7 +506,7 @@ impl TransferBackend for OrbitTeTransport {
             Ok(info) => Ok(FileSegment {
                 owner_epoch: self.epoch.clone(),
                 length: info.length,
-                inner,
+                inner: FileSegmentInner::OrbitTe(inner),
             }),
             Err(error) => {
                 let _ = self.engine.close_file_segment(&inner, Duration::ZERO);
@@ -520,20 +522,30 @@ impl TransferBackend for OrbitTeTransport {
                 "foreign file segment",
             ));
         }
+        #[cfg(feature = "mooncake")]
+        let FileSegmentInner::OrbitTe(inner) = &file.inner else {
+            return Err(TransferError::new(
+                ErrorKind::InvalidRequest,
+                "foreign file provider",
+            ));
+        };
+        #[cfg(not(feature = "mooncake"))]
+        let FileSegmentInner::OrbitTe(inner) = &file.inner;
         self.engine
-            .close_file_segment(
-                &file.inner,
-                deadline.saturating_duration_since(Instant::now()),
-            )
+            .close_file_segment(inner, deadline.saturating_duration_since(Instant::now()))
             .map_err(transfer_error)
     }
 
+    #[allow(
+        clippy::mem_forget,
+        reason = "file backing, registrations and extent leases survive unknown drain or cleanup"
+    )]
     unsafe fn transfer_file(
-        &self,
+        self: Arc<Self>,
         operation: crate::transfer_engine::TransferOp,
         file: &FileSegment,
         transport: FileTransport,
-        slices: &[TransferSlice],
+        transfer: Arc<FileTransfer>,
         deadline: Instant,
         cancellation: &Cancellation,
     ) -> Result<usize, TransferError> {
@@ -543,18 +555,84 @@ impl TransferBackend for OrbitTeTransport {
                 "foreign file segment",
             ));
         }
-        let transport = match transport {
-            FileTransport::IoUring => Transport::IoUring,
-            FileTransport::Gds => Transport::Gds,
+        #[cfg(feature = "mooncake")]
+        let FileSegmentInner::OrbitTe(inner) = &file.inner else {
+            return Err(TransferError::new(
+                ErrorKind::InvalidRequest,
+                "foreign file provider",
+            ));
         };
-        self.transfer_target(
+        #[cfg(not(feature = "mooncake"))]
+        let FileSegmentInner::OrbitTe(inner) = &file.inner;
+        remaining(deadline)?;
+        if cancellation.is_cancelled() {
+            return Err(TransferError::new(
+                ErrorKind::Cancelled,
+                "file transfer cancelled before admission",
+            ));
+        }
+        let registration = match &transfer.memory {
+            FileMemory::Pinned(allocations) => Arc::clone(&self)
+                .register_pinned(allocations, crate::transfer_engine::Permission::LocalOnly),
+            FileMemory::Cuda {
+                address,
+                length,
+                context,
+                _owner: owner,
+            } => {
+                context
+                    .bind_to_thread()
+                    .map_err(|error| TransferError::new(ErrorKind::Backend, error.to_string()))?;
+                // SAFETY: FileTransfer retains this exact allocation/context and producer readiness.
+                unsafe {
+                    Arc::clone(&self).register_cuda(
+                        *address,
+                        *length,
+                        context.ordinal() as i32,
+                        Arc::clone(owner),
+                        crate::transfer_engine::Permission::LocalOnly,
+                    )
+                }
+            }
+        };
+        let mut registration = ManuallyDrop::new(match registration {
+            Ok(registration) => registration,
+            Err(error) => {
+                if error.kind == ErrorKind::Unquiesced {
+                    std::mem::forget(transfer);
+                }
+                return Err(error);
+            }
+        });
+        let mut result = self.transfer_target(
             operation,
-            (&file.inner).into(),
-            transport,
-            slices,
+            inner.into(),
+            match transport {
+                FileTransport::IoUring => Transport::IoUring,
+                FileTransport::Gds => Transport::Gds,
+            },
+            &transfer.slices,
             deadline,
             cancellation,
-        )
+        );
+        if !matches!(&result, Err(error) if error.kind == ErrorKind::Unquiesced) {
+            // SAFETY: every other transfer result proves physical drain or rejection.
+            if let Err(error) =
+                unsafe { TransferBackend::unregister(self.as_ref(), &mut registration) }
+            {
+                result = Err(TransferError::new(
+                    ErrorKind::Unquiesced,
+                    format!("file registration cleanup failed: {error}"),
+                ));
+            }
+        }
+        if matches!(&result, Err(error) if error.kind == ErrorKind::Unquiesced) {
+            std::mem::forget(transfer);
+        } else {
+            // SAFETY: transfer drain and explicit registration cleanup both succeeded.
+            unsafe { ManuallyDrop::drop(&mut registration) };
+        }
+        result
     }
 
     fn shutdown(&self, deadline: Instant) -> Result<(), TransferError> {

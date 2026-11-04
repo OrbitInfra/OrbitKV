@@ -10,8 +10,8 @@ use crate::codec::gpu::{DecodeError, MAX_BATCH_SEGMENTS};
 use crate::cost::{Observation, Outcome};
 use crate::metrics::core_metrics;
 use crate::storage::ssd::WriteLease;
-use crate::storage::ssd::cufile::{IoBatch, STAGING_SLOTS};
 use crate::storage::ssd::gpu::{GpuFile, GpuSlot};
+use crate::storage::ssd::layout::{IoBatch, STAGING_SLOTS};
 
 use super::decode::{DecodeCommand, DecodeRange, DecodeReply};
 use crate::transfer::finish_gpu_transfer;
@@ -433,7 +433,7 @@ impl Decode {
             .iter()
             .zip(&self.offsets)
             .map(|(read, &offset)| {
-                Ok(crate::storage::ssd::cufile::CopyRange {
+                Ok(crate::storage::ssd::layout::CopyRange {
                     file_offset: read.file_offset,
                     device: base
                         .checked_add(offset as u64)
@@ -442,7 +442,7 @@ impl Decode {
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let batches = crate::storage::ssd::cufile::plan_reads(copies)?;
+        let batches = crate::storage::ssd::layout::plan_reads(copies)?;
         self.remaining = batches.len();
         for batch in batches {
             job.work.push_back(Work {

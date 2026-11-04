@@ -125,7 +125,12 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
 ):
     import torch
 
-    from orbitkv import BlockHashes, CacheManagerClient, QueryReady, SaveNotSubmittedError
+    from orbitkv import (
+        BlockHashes,
+        CacheManagerClient,
+        QueryReady,
+        SaveNotSubmittedError,
+    )
 
     if not torch.cuda.is_available():
         pytest.fail("Installed byte qualification requires a working CUDA GPU")
@@ -278,7 +283,7 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                 "orbitkv_load_bytes_total",
                 "orbitkv_ssd_write_bytes_total",
                 "orbitkv_ssd_prefetch_bytes_total",
-                "orbitkv_ssd_uring_read_operations_total",
+                "orbitkv_ssd_engine_read_batches_total",
             )
             io_before_rejection = {name: before.get(name) for name in io_names}
             assert io_before_rejection["orbitkv_save_bytes_total"] >= 16384
@@ -331,7 +336,7 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
                 name: io_before.get(name)
                 for name in (
                     "orbitkv_ssd_prefetch_bytes_total",
-                    "orbitkv_ssd_uring_read_operations_total",
+                    "orbitkv_ssd_engine_read_batches_total",
                 )
             }
             deadline = time.monotonic() + 30
@@ -366,9 +371,9 @@ def test_installed_pending_save_has_exact_payload_and_normal_release(
             if channel_server.ssd_cache_path is not None:
                 for name in (
                     "orbitkv_ssd_prefetch_bytes_total",
-                    "orbitkv_ssd_uring_read_operations_total",
+                    "orbitkv_ssd_engine_read_batches_total",
                 ):
-                    assert name in after, f"Missing actual io_uring read metric: {name}"
+                    assert name in after, f"Missing completed engine file read metric: {name}"
                     assert (
                         after[name] > 0
                         if read_before[name] is None

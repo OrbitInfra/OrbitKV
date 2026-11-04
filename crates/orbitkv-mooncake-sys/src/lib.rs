@@ -16,8 +16,10 @@ use std::sync::LazyLock;
 
 use libloading::os::unix::{Library, RTLD_GLOBAL, RTLD_NOW};
 
+pub mod files;
+
 pub const SOURCE_VERSION: &str = "v0.3.14+orbitkv.1";
-pub const SOURCE_REVISION: &str = "af13e06af174f27ba8782057b8a37afc7cddf8fd";
+pub const SOURCE_REVISION: &str = "85c270db5ad7b9a8a91a851e4a4c7ef684939760";
 #[cfg(feature = "cuda")]
 const WORKSPACE_RUNTIME_LIB_DIR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -134,6 +136,8 @@ type SubmitWithNotify = unsafe extern "C" fn(
 type TransferStatusFn =
     unsafe extern "C" fn(NativeEngine, BatchId, usize, *mut TransferStatus) -> c_int;
 type BatchStatusFn = unsafe extern "C" fn(NativeEngine, BatchId, *mut TransferStatus) -> c_int;
+type TerminalResultFn =
+    unsafe extern "C" fn(NativeEngine, BatchId, usize, *mut c_int, *mut c_int) -> c_int;
 type CancelTask = unsafe extern "C" fn(NativeEngine, BatchId, usize) -> c_int;
 type FreeBatch = unsafe extern "C" fn(NativeEngine, BatchId) -> c_int;
 type ReceiveNotifications = unsafe extern "C" fn(NativeEngine, *mut NotificationInfo) -> c_int;
@@ -162,12 +166,14 @@ struct Api {
     submit_with_notify: SubmitWithNotify,
     transfer_status: TransferStatusFn,
     batch_status: BatchStatusFn,
+    terminal_result: TerminalResultFn,
     cancel_task: CancelTask,
     free_batch: FreeBatch,
     receive_notifications: ReceiveNotifications,
     free_notifications: FreeNotifications,
     send_notification: SendNotification,
     get_nic_load_stats: GetNicLoadStats,
+    files: Result<files::FileApi, String>,
 }
 
 static API: LazyLock<Result<Api, String>> = LazyLock::new(load_api);
@@ -260,12 +266,15 @@ unsafe fn load_api_from(directory: &Path) -> Result<Api, String> {
         submit_with_notify: unsafe { symbol(&library, b"tent_submit_notif\0")? },
         transfer_status: unsafe { symbol(&library, b"tent_task_status\0")? },
         batch_status: unsafe { symbol(&library, b"tent_overall_status\0")? },
+        terminal_result: unsafe { symbol(&library, b"tent_terminal_result\0")? },
         cancel_task: unsafe { symbol(&library, b"tent_cancel_task\0")? },
         free_batch: unsafe { symbol(&library, b"tent_free_batch\0")? },
         receive_notifications: unsafe { symbol(&library, b"tent_recv_notifs\0")? },
         free_notifications: unsafe { symbol(&library, b"tent_free_notifs\0")? },
         send_notification: unsafe { symbol(&library, b"tent_send_notifs\0")? },
         get_nic_load_stats: unsafe { symbol(&library, b"tent_get_nic_load_stats\0")? },
+        // Old peer-only controls do not consume the additive file ABI.
+        files: unsafe { files::FileApi::load(&library) },
         _dependencies: vec![asio, common, metrics],
         _library: library,
     })
@@ -485,3 +494,17 @@ pub unsafe fn nic_load_stats(
 #[cfg(test)]
 #[path = "../tests/unit/lib.rs"]
 mod tests;
+
+/// Observes cached logical effect evidence; never proves physical drain.
+/// # Safety
+/// The caller keeps the engine and admitted batch alive during the query.
+pub unsafe fn terminal_result(
+    engine: NativeEngine,
+    batch: BatchId,
+    task: usize,
+) -> (i32, i32, bool) {
+    let (mut code, mut known) = (135, 0);
+    // SAFETY: outputs are valid and the caller retains engine/batch ownership.
+    let status = unsafe { (api().terminal_result)(engine, batch, task, &mut code, &mut known) };
+    (status, code, status == 0 && known == 1)
+}

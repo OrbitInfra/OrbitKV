@@ -114,18 +114,22 @@ The current read owner distributes scalar I/O over 15 read queues for one file;
 merging reduces that active fanout. Lost parallelism and extra preparation work
 remain hypotheses until bounded attribution separates them.
 
-The production counter `orbitkv_ssd_uring_read_operations_total` distinguishes
-queued READV SQEs from reader batches and physical device commands.
+The historical counter `orbitkv_ssd_uring_read_operations_total` distinguished
+queued READV SQEs from reader batches and physical device commands. A3 replaces
+it with completed engine file READ batches; those counts are not comparable.
 `benches.transfer.communication` persists existing stage snapshots before/after each
-cohort, outside the measured request loop, and requires positive READV evidence
-for new SSD experiments. It retains SSD prefetch duration alongside equal
+cohort, outside the measured request loop. Current SSD experiments require
+positive engine READ completion evidence and equal stored/GPU bytes; obtain
+physical SQE/device counts from the engine or kernel separately. It retains SSD prefetch duration alongside equal
 stored/GPU bytes. Full contract, source, wheel hashes, rejection decisions,
 raw timings and controls: `/root/orbitkv-artifacts/s4-readv-kda-20261008/`,
 with the A100 mirror at `/workspace/orbitkv-perf-20261008/`.
 
 ## Reader thread fanout evaluation (2026-10-08)
 
-**Rejected; the default remains 16 total io_uring threads.** The existing owner
+**Rejected on the tested native SSD implementation (16 total io_uring threads).**
+A3 replaces that byte mover with engine file I/O; these measurements do not qualify
+the new implementation. The tested owner
 already submits independent host-reader batches concurrently. A single-file
 candidate reduces only read queues from 15 to seven, preserving scalar READV,
 queue depth, byte budgets and completion ownership. All 14 real SSD tests and

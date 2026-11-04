@@ -30,8 +30,7 @@ pub enum SsdWritePolicy {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum SsdBackend {
     #[default]
-    /// OrbitTE uses CUDA staging through io_uring. The legacy fallback tries
-    /// native cuFile on supported mounts, then host io_uring.
+    /// The selected transfer engine uses CUDA staging through io_uring.
     Auto,
     Uring,
     /// Read/write through bounded GPU staging; fragmented saves seal in DRAM.
@@ -39,37 +38,27 @@ pub enum SsdBackend {
     Cufile,
 }
 
-/// Temporary migration switch. Auto uses OrbitTE file segments when selected;
-/// TENT keeps the native fallback until its wrapper exposes safe file I/O.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum SsdIoEngine {
-    #[default]
-    Auto,
-    Transfer,
-    Legacy,
-}
-
-impl std::str::FromStr for SsdIoEngine {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "auto" => Ok(Self::Auto),
-            "transfer" => Ok(Self::Transfer),
-            "legacy" => Ok(Self::Legacy),
-            _ => Err("SSD I/O engine must be auto, transfer or legacy".into()),
-        }
-    }
-}
-
 impl SsdCacheConfig {
-    pub fn use_transfer_engine(&self, backend: crate::PeerTransferBackend) -> Result<bool, String> {
-        match (self.io_engine, backend) {
-            (SsdIoEngine::Legacy, _) | (SsdIoEngine::Auto, crate::PeerTransferBackend::Mooncake) => Ok(false),
-            (SsdIoEngine::Transfer, crate::PeerTransferBackend::Mooncake) => Err("TENT's wrapper disables IOURING/GDS and has no file transfer/drain API; select --ssd-io-engine legacy".into()),
-            _ if self.backend == SsdBackend::Cufile && !cfg!(feature = "orbitte-gds") => Err("OrbitTE cuFile requires the orbitte-gds build feature".into()),
-            _ => { backend.validate_compiled()?; Ok(true) },
+    pub fn validate_transfer_engine(
+        &self,
+        backend: crate::PeerTransferBackend,
+    ) -> Result<(), String> {
+        backend.validate_compiled()?;
+        if self.backend == SsdBackend::Cufile {
+            if backend == crate::PeerTransferBackend::Mooncake {
+                if !cfg!(feature = "cuda-13") {
+                    return Err("TENT GDS requires a CUDA-enabled native runtime".into());
+                }
+                if self.cache_paths.len().saturating_mul(self.shards.get()) > 128 {
+                    return Err(
+                        "TENT GDS allows at most 128 shards (256 IOURING/GDS file handles)".into(),
+                    );
+                }
+            } else if !cfg!(feature = "orbitte-gds") {
+                return Err("OrbitTE cuFile requires the orbitte-gds build feature".into());
+            }
         }
+        Ok(())
     }
 }
 
@@ -145,7 +134,6 @@ pub struct SsdCacheConfig {
     /// Max concurrent block prefetches.
     pub prefetch_inflight: usize,
     pub backend: SsdBackend,
-    pub io_engine: SsdIoEngine,
     /// Explicit demand route for matched qualification. None preserves the
     /// existing selection; preparation still materializes DRAM via io_uring.
     pub read_path: Option<SsdReadPath>,
@@ -163,7 +151,6 @@ impl Default for SsdCacheConfig {
             write_inflight: DEFAULT_SSD_WRITE_INFLIGHT,
             prefetch_inflight: DEFAULT_SSD_PREFETCH_INFLIGHT,
             backend: SsdBackend::Auto,
-            io_engine: SsdIoEngine::Auto,
             read_path: None,
         }
     }

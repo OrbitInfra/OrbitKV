@@ -22,7 +22,7 @@ use crate::{
     memory::numa::NumaNode,
     metrics::core_metrics,
     storage::Storage,
-    storage::ssd::cufile::{CopyRange, plan_writes},
+    storage::ssd::layout::{CopyRange, plan_writes},
     transfer::{finish_gpu_transfer, layout::BlockCopies},
 };
 

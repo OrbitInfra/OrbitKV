@@ -33,6 +33,8 @@ tent_engine_t engine(uint16_t port = 0) {
            {"transports/nvlink/enable", "false"},
            {"transports/shm/enable", "false"},
            {"transports/mnnvl/enable", "false"},
+           {"transports/io_uring/enable", "false"},
+           {"transports/gds/enable", "false"},
            {"enable_runtime_queue", "false"},
            {"enable_auto_failover_on_poll", "false"},
            {"transports/tcp/max_concurrent_tasks", "1"},

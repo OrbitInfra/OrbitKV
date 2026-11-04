@@ -46,8 +46,8 @@ orbitkv-cache-manager \
 To enable SSD, add `--ssd-cache-path /data/orbitkv/cache.bin` and
 `--ssd-cache-capacity 100gb`. Set capacity explicitly; the omitted default is
 `512gb`. The file is recreated at startup and is not persistent across Manager
-restarts. Automatic selection tries cuFile and uses io_uring when unavailable;
-no cuFile service or engine-side backend selection is needed. Explicit `uring`
+restarts. The selected transfer engine owns all file I/O; `auto` uses io_uring
+and engine-owned CUDA staging. No separate cuFile service is needed. Explicit `uring`
 and `cufile` overrides are for controlled diagnosis; cuFile initialization does
 not prove native GDS. See [storage eligibility and routes](gds.md).
 

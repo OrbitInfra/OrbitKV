@@ -162,7 +162,7 @@ jobs:
       - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libcli11-dev libboost-dev patchelf
+          sudo apt-get install -y cmake pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libcli11-dev liburing-dev libboost-dev patchelf
       - name: Install protocol compiler
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
         with:
@@ -253,7 +253,7 @@ jobs:
       - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libcli11-dev libboost-dev patchelf
+          sudo apt-get install -y cmake pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libcli11-dev liburing-dev libboost-dev patchelf
       - name: Install protocol compiler
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
         with:
@@ -308,10 +308,16 @@ jobs:
         run: |
           CC=gcc CXX=g++ cargo clippy --locked -p orbitkv-server -p orbitkv-core --all-targets --no-default-features --features cuda-13,orbitte-gds -- -D warnings
           # CUDA host-registration is a CPU fixture; io_uring and file bytes are real.
-          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte-gds --lib storage::ssd::io::tests::orbitte -- --ignored --test-threads=1
-          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ROOT=/dev/shm cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib storage::ssd::io::tests::orbitte -- --ignored --test-threads=1
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=orbitte cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte-gds --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=orbitte ORBITKV_SSD_TEST_ROOT=/dev/shm cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=tent cargo test --locked -p orbitkv-core --no-default-features --features mooncake,cudarc/cuda-13000,cudarc/nvrtc --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=tent ORBITKV_SSD_TEST_ROOT=/dev/shm cargo test --locked -p orbitkv-core --no-default-features --features mooncake,cudarc/cuda-13000,cudarc/nvrtc --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
+          # Both selections must work in the same binary, with separate file owners.
+          for engine in tent orbitte; do
+            LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE="$engine" cargo test --locked -p orbitkv-core --no-default-features --features mooncake,orbitte,cudarc/cuda-13000,cudarc/nvrtc --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
+          done
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --lib storage::ssd:: -- --test-threads=1
-          cargo test --locked -p orbitkv-server --lib tests::ssd_engine_switch_is_explicit_and_tent_requires_legacy_file_io -- --exact
+          cargo test --locked -p orbitkv-server --lib tests::ssd_uses_selected_engine_and_rejects_removed_legacy_switch -- --exact
         env:
           CUDA_PATH: /usr/local/cuda
           LIBCLANG_PATH: /usr/lib/llvm-18/lib
@@ -381,7 +387,7 @@ jobs:
       - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libcli11-dev libboost-dev patchelf
+          sudo apt-get install -y clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libcli11-dev liburing-dev libboost-dev patchelf
 
       - name: Install protocol compiler
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3

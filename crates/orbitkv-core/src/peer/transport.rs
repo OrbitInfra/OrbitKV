@@ -7,7 +7,8 @@ use orbitkv_transfer::{AUTO_MEMORY_LOCATION, MemoryRegistration, P2P_METADATA, T
 
 use crate::memory::pool::PinnedAllocator;
 use crate::transfer_engine::{
-    Cancellation, ErrorKind, MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, PeerSegment, Permission,
+    Cancellation, ErrorKind, FileMemory, FileSegment, FileSegmentInner, FileTransfer,
+    FileTransport, MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, PeerSegment, Permission,
     REGISTERED_POOLS, Registration, RegistrationInner, Segment, TransferBackend, TransferError,
     TransferOp, TransferSlice, remaining, validate_slices,
 };
@@ -41,6 +42,7 @@ pub(crate) struct MooncakeTransport {
     pool: Option<Arc<PinnedAllocator>>,
     registered_bytes: u64,
     transfer_endpoint: String,
+    files: Option<Arc<orbitkv_transfer::files::FileEngine>>,
 }
 
 impl MooncakeTransport {
@@ -48,6 +50,7 @@ impl MooncakeTransport {
         nic_names: &[String],
         allocator: Arc<PinnedAllocator>,
         advertise_addr: &str,
+        storage: Option<&crate::SsdCacheConfig>,
     ) -> Result<Self, String> {
         LazyLock::force(&SOURCE_METRICS);
         let t0 = Instant::now();
@@ -87,6 +90,7 @@ impl MooncakeTransport {
             pool: Some(allocator),
             registered_bytes,
             transfer_endpoint,
+            files: None,
         };
         for (ptr, len) in regions {
             transport.registrations.push(
@@ -96,6 +100,15 @@ impl MooncakeTransport {
                         .register_memory_owned(ptr, len, AUTO_MEMORY_LOCATION)
                 }
                 .map_err(|e| e.to_string())?,
+            );
+        }
+
+        if let Some(storage) = storage {
+            transport.files = Some(
+                orbitkv_transfer::files::FileEngine::new(
+                    storage.backend == crate::SsdBackend::Cufile,
+                )
+                .map_err(|error| format!("TENT file engine unavailable: {error}"))?,
             );
         }
 
@@ -221,6 +234,109 @@ impl TransferBackend for MooncakeTransport {
     }
     fn accepts_endpoint(&self, endpoint: &str) -> bool {
         !endpoint.starts_with("orbitte+") && !endpoint.is_empty()
+    }
+
+    fn open_file(&self, path: &Path) -> Result<FileSegment, TransferError> {
+        let files = self.files.as_ref().ok_or_else(|| {
+            TransferError::new(ErrorKind::Unavailable, "TENT file admission is disabled")
+        })?;
+        let file = files.open(path).map_err(tent_error)?;
+        Ok(FileSegment {
+            owner_epoch: self.source_epoch().into(),
+            length: file.length,
+            inner: FileSegmentInner::Tent(file),
+        })
+    }
+
+    fn close_file(&self, file: &FileSegment, deadline: Instant) -> Result<(), TransferError> {
+        if file.owner_epoch != self.source_epoch() {
+            return Err(TransferError::new(
+                ErrorKind::InvalidRequest,
+                "foreign file segment",
+            ));
+        }
+        #[cfg(feature = "orbitte")]
+        let FileSegmentInner::Tent(file) = &file.inner else {
+            return Err(TransferError::new(
+                ErrorKind::InvalidRequest,
+                "foreign file provider",
+            ));
+        };
+        #[cfg(not(feature = "orbitte"))]
+        let FileSegmentInner::Tent(file) = &file.inner;
+        file.close(deadline).map_err(tent_error)
+    }
+
+    unsafe fn transfer_file(
+        self: Arc<Self>,
+        operation: TransferOp,
+        file: &FileSegment,
+        transport: FileTransport,
+        transfer: Arc<FileTransfer>,
+        deadline: Instant,
+        cancellation: &Cancellation,
+    ) -> Result<usize, TransferError> {
+        if file.owner_epoch != self.source_epoch() {
+            return Err(TransferError::new(
+                ErrorKind::InvalidRequest,
+                "foreign file segment",
+            ));
+        }
+        #[cfg(feature = "orbitte")]
+        let FileSegmentInner::Tent(file) = &file.inner else {
+            return Err(TransferError::new(
+                ErrorKind::InvalidRequest,
+                "foreign file provider",
+            ));
+        };
+        #[cfg(not(feature = "orbitte"))]
+        let FileSegmentInner::Tent(file) = &file.inner;
+        let transport = match (&transfer.memory, transport) {
+            (FileMemory::Cuda { context, .. }, transport) => {
+                context
+                    .bind_to_thread()
+                    .map_err(|error| TransferError::new(ErrorKind::Backend, error.to_string()))?;
+                if transport == FileTransport::Gds {
+                    orbitkv_transfer::files::FileTransport::Gds(context.clone())
+                } else {
+                    orbitkv_transfer::files::FileTransport::IoUring
+                }
+            }
+            (FileMemory::Pinned(_), FileTransport::IoUring) => {
+                orbitkv_transfer::files::FileTransport::IoUring
+            }
+            _ => {
+                return Err(TransferError::new(
+                    ErrorKind::InvalidRequest,
+                    "native GDS requires CUDA memory",
+                ));
+            }
+        };
+        let slices = transfer
+            .slices
+            .iter()
+            .map(|slice| orbitkv_transfer::TransferSlice {
+                local: slice.local,
+                remote_address: slice.remote_address,
+                length: slice.length,
+            })
+            .collect::<Vec<_>>();
+        // SAFETY: FileTransfer owns backing, context and extent/admission leases.
+        // The native file owner retains this exact Arc until physical drain.
+        unsafe {
+            file.transfer(
+                match operation {
+                    TransferOp::Read => orbitkv_transfer::TransferOp::Read,
+                    TransferOp::Write => orbitkv_transfer::TransferOp::Write,
+                },
+                transport,
+                &slices,
+                transfer,
+                deadline,
+                cancellation.flag(),
+            )
+        }
+        .map_err(tent_error)
     }
 
     fn register_pinned(
@@ -432,6 +548,9 @@ impl TransferBackend for MooncakeTransport {
         Ok(bytes)
     }
     fn shutdown(&self, deadline: Instant) -> Result<(), TransferError> {
+        if let Some(files) = &self.files {
+            files.shutdown(deadline).map_err(tent_error)?;
+        }
         self.engine
             .close_source(deadline.saturating_duration_since(Instant::now()))
             .map_err(|e| TransferError::new(ErrorKind::Unquiesced, e.to_string()))
@@ -457,6 +576,16 @@ impl TransferBackend for MooncakeTransport {
 fn tent_error(error: orbitkv_transfer::TransferError) -> TransferError {
     use orbitkv_transfer::TransferError as E;
     let kind = match error {
+        E::File { status, .. } => match status {
+            1 => ErrorKind::InvalidRequest,
+            2 | 3 => ErrorKind::Unavailable,
+            6 => ErrorKind::Cancelled,
+            7 => ErrorKind::Timeout,
+            8 => ErrorKind::Unquiesced,
+            9 => ErrorKind::ResourceExhausted,
+            10 => ErrorKind::PermissionDenied,
+            _ => ErrorKind::Backend,
+        },
         E::Timeout => ErrorKind::Timeout,
         E::Cancelled => ErrorKind::Cancelled,
         E::BatchAdmissionExhausted | E::SegmentAdmissionExhausted => ErrorKind::ResourceExhausted,
@@ -464,9 +593,9 @@ fn tent_error(error: orbitkv_transfer::TransferError) -> TransferError {
         E::InvalidString(_) => ErrorKind::InvalidRequest,
         // RPC errors take precedence over the operation's application error.
         // Only 134 proves the request was not sent; 135 never permits replay.
-        E::Operation { status: 134, .. } => ErrorKind::Unavailable,
-        E::Operation { status: 135, .. } => ErrorKind::Unquiesced,
-        E::Operation { status: 2, .. } => ErrorKind::ResourceExhausted,
+        E::Operation { status: -134, .. } => ErrorKind::Unavailable,
+        E::Operation { status: -135, .. } => ErrorKind::Unquiesced,
+        E::Operation { status: -2, .. } => ErrorKind::ResourceExhausted,
         E::Operation {
             operation: "validateSourceEpochBeforeSubmit",
             ..

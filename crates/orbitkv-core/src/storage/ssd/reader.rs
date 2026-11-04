@@ -201,7 +201,7 @@ impl BatchContext {
                 } else {
                     Outcome::Completed
                 };
-                // io_uring owns physical byte accounting. This composite also
+                // The file engine owns byte accounting. This composite also
                 // includes allocation, queueing, validation and reconstruction.
                 observation.finish(outcome, None);
             }

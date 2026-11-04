@@ -8,14 +8,14 @@ fn tent_rpc_errors_preserve_delivery_certainty_before_epoch_mapping() {
         "tent_submit",
     ] {
         for (status, expected) in [
-            (134, ErrorKind::Unavailable),
-            (135, ErrorKind::Unquiesced),
-            (2, ErrorKind::ResourceExhausted),
+            (-134, ErrorKind::Unavailable),
+            (-135, ErrorKind::Unquiesced),
+            (-2, ErrorKind::ResourceExhausted),
         ] {
             let error =
                 tent_error(orbitkv_transfer::TransferError::Operation { operation, status });
             assert_eq!(error.kind, expected, "{operation}: {status}");
-            if status == 135 {
+            if status == -135 {
                 assert!(matches!(
                     crate::transfer_engine::PeerTransferError::from(error),
                     crate::transfer_engine::PeerTransferError::Unquiesced
@@ -30,7 +30,7 @@ fn tent_rpc_errors_preserve_delivery_certainty_before_epoch_mapping() {
 fn registration_preserves_pool_without_cuda_source_termination() {
     let pool = Arc::new(PinnedAllocator::new_global(1 << 20, 1, false, None));
     let memory = Arc::downgrade(&pool);
-    let transport = MooncakeTransport::new(&[], pool.clone(), "127.0.0.1:0").unwrap();
+    let transport = MooncakeTransport::new(&[], pool.clone(), "127.0.0.1:0", None).unwrap();
     drop(pool);
     assert!(
         memory.upgrade().is_some(),
@@ -71,7 +71,7 @@ fn actual_source_owner_preserves_partial_and_unproven_resources() {
     let shards = if scenario == "partial" { 2 } else { 1 };
     let pool = Arc::new(PinnedAllocator::new_global(1 << 20, shards, false, None));
     let memory = Arc::downgrade(&pool);
-    let result = MooncakeTransport::new(&[], pool.clone(), "127.0.0.1:0");
+    let result = MooncakeTransport::new(&[], pool.clone(), "127.0.0.1:0", None);
     let engine = result
         .as_ref()
         .ok()

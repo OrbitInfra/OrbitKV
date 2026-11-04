@@ -66,21 +66,20 @@ Trace an incident through its owner:
    `docs/metrics.md`. Lease expiry or a deadline cannot establish native drain.
 
 Default deployments use native TENT payloads and OrbitKV source-control RPCs.
-TENT v0.3.14 at `af13e06a` requires all four runtime libraries, including
-`libtent_metrics.so` even with metrics disabled. The C wrappers still collapse
-RPC status codes to `-1`; do not infer a provably unsent request from that value.
-The backend maps an exposed 135 to `Unquiesced`, 134 to `Unavailable` and 2 to
-`ResourceExhausted`; failed work still requires a physical drain receipt.
-Both providers can be compiled together and selected by `--peer-transfer-backend`;
-an unavailable provider now fails before Manager CUDA initialization. The shared
-`transfer_engine::TransferBackend` contract owns register/open/READ/WRITE/cancel/
-shutdown boundaries. SSD `--ssd-io-engine auto` uses the selected OrbitTE engine
-for file bytes and TENT's temporary native fallback. `transfer` rejects the
-current TENT file API gap; `legacy` explicitly selects the fallback. OrbitTE
-`auto` storage uses CUDA staging/io_uring, while `cufile` requires `orbitte-gds`
-and native-only configuration. Uncertain file work retains backing, extents and
-one of 32 per-store operation permits; never replay it. GPU/GDS remains
-unqualified. See `docs/transport.md#ssd-file-transfers`.
+TENT v0.3.14 at `85c270db` requires all four runtime libraries, including
+`libtent_metrics.so` even with metrics disabled. Generic C errors propagate
+negative native codes: -135 maps to `Unquiesced`, -134 to `Unavailable`, and -2
+to `ResourceExhausted`. The asynchronous terminal query gives logical evidence
+only. Source/file drain uses independent contracts; never release or replay on
+logical status alone. Both providers can be compiled together and selected by
+`--peer-transfer-backend`; an unavailable provider fails before CUDA initialization.
+The shared backend owns registration, peer/file transfer and shutdown. SSD always
+uses engine file segments. TENT owns a separate file engine with liburing support;
+its peer engine keeps file transports disabled. `--ssd-io-engine` is removed.
+`auto` storage uses engine CUDA staging/io_uring. `cufile` is native-only GDS:
+OrbitTE requires `orbitte-gds`, and TENT requires a native build with cuFile SDK
+support. Uncertain work retains backing, extents and one of 32 operation permits.
+GPU/GDS remains unqualified. See `docs/transport.md#ssd-file-transfers`.
 OrbitTE `df9ded0` uses a one-route Unspec peer policy with
 failover, HP-TCP, SHM and MNNVL disabled. Historical hardware results below do not
 qualify this new dependency revision. See `docs/transport.md#runtime-transfer-backend`.

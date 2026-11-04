@@ -380,40 +380,24 @@ fn orbitte_rdma_cli_requires_explicit_device_and_valid_port() {
 }
 
 #[test]
-fn ssd_engine_switch_is_explicit_and_tent_requires_legacy_file_io() {
-    use orbitkv_core::{PeerTransferBackend, SsdCacheConfig, SsdIoEngine};
-    for (value, expected) in [
-        ("auto", SsdIoEngine::Auto),
-        ("transfer", SsdIoEngine::Transfer),
-        ("legacy", SsdIoEngine::Legacy),
-    ] {
-        let cli = Cli::try_parse_from([
-            "orbitkv-cache-manager",
-            "--ssd-cache-path",
-            "/tmp/engine-test",
-            "--ssd-io-engine",
-            value,
-        ])
-        .unwrap();
-        assert_eq!(cli.ssd_io_engine, expected);
-        let config = SsdCacheConfig {
-            io_engine: expected,
-            ..Default::default()
-        };
-        let result = config.use_transfer_engine(PeerTransferBackend::Mooncake);
-        assert_eq!(result.is_err(), expected == SsdIoEngine::Transfer);
-        if let Ok(enabled) = result {
-            assert!(!enabled);
-        }
-    }
-    assert!(
-        Cli::try_parse_from([
-            "orbitkv-cache-manager",
-            "--ssd-cache-path",
-            "/tmp/engine-test",
-            "--ssd-io-engine",
-            "invalid"
-        ])
-        .is_err()
+fn ssd_uses_selected_engine_and_rejects_removed_legacy_switch() {
+    use orbitkv_core::{PeerTransferBackend, SsdCacheConfig};
+    assert_eq!(
+        SsdCacheConfig::default()
+            .validate_transfer_engine(PeerTransferBackend::Mooncake)
+            .is_ok(),
+        cfg!(feature = "mooncake")
     );
+    for value in ["auto", "transfer", "legacy"] {
+        assert!(
+            Cli::try_parse_from([
+                "orbitkv-cache-manager",
+                "--ssd-cache-path",
+                "/tmp/engine-test",
+                "--ssd-io-engine",
+                value,
+            ])
+            .is_err()
+        );
+    }
 }

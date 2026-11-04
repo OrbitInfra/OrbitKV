@@ -481,19 +481,19 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
 
 ### SSD Cache Metrics
 
-- **orbitkv_ssd_backend_fallbacks_total** (Counter) - Automatic cuFile admission
-  disabled after initialization or operation failure. The default policy uses
-  io_uring thereafter; an explicit cuFile read route does not silently change.
+- **orbitkv_ssd_backend_fallbacks_total** (Counter) - Automatic GPU-layout admission
+  disabled after an operation failure. The default policy uses
+  engine host materialization thereafter; an explicit cuFile read route does not silently change.
   Logs record the reason.
-- **orbitkv_ssd_cufile_write_bytes_total** (Counter) - Physical cuFile write bytes, including padding.
+- **orbitkv_ssd_cufile_write_bytes_total** (Counter) - Completed GPU file-route bytes, including padding; the historical name does not imply native cuFile/GDS.
 - **orbitkv_ssd_cufile_write_seconds** (Histogram) - Async submission-to-completion latency, including GPU gather and polling; excludes waiting for a slot.
 - **orbitkv_ssd_cufile_write_failures_total** (Counter) - Failed or short GPU-backed writes.
-- **orbitkv_ssd_cufile_read_bytes_total** (Counter) - Physical cuFile read bytes,
-  including aligned edges. Does not distinguish native GDS from CPU compatibility.
+- **orbitkv_ssd_cufile_read_bytes_total** (Counter) - Completed GPU file-route bytes,
+  including aligned edges. The historical name covers engine CUDA staging and GDS.
 - **orbitkv_ssd_cufile_read_seconds** (Histogram) - Async submission-to-completion latency, including GPU scatter and polling; excludes waiting for a slot.
 - **orbitkv_ssd_cufile_read_failures_total** (Counter) - Failed or short cuFile reads.
 - **orbitkv_ssd_read_pinned_bytes** (Gauge) - SSD extents owned by restore leases.
-- **orbitkv_ssd_gpu_staging_bytes** (Gauge) - Registered GPU storage staging memory.
+- **orbitkv_ssd_gpu_staging_bytes** (Gauge) - OrbitKV GPU layout-slot memory, separate from engine-owned staging.
 - **orbitkv_ssd_cufile_inflight_batches** (Gauge) - Occupied staging slots until I/O and scatter completion, at most two per instance/device.
 - **orbitkv_ssd_gpu_write_fallbacks_total** (Counter) - Write jobs using host publication after the eight-job GPU write admission limit is reached.
 - **orbitkv_ssd_gpu_read_fallbacks_total** (Counter) - Automatically selected cuFile restores changed to io_uring before submission because another instance owns this CUDA device's persistent staging. Explicit cuFile routes do not increment this counter or switch paths.
@@ -506,11 +506,10 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
   durations does not measure wall-clock flush time.
 - **orbitkv_ssd_prefetch_bytes_total** (Counter) - Successfully read and
   validated SSD bytes, including reads an engine may not subsequently consume.
-- **orbitkv_ssd_uring_read_operations_total** (Counter) - READV SQEs successfully
-  queued by the existing io_uring shards. Counts software I/O requests, including
-  ones that later fail; it does not count logical blocks, reader batches or NVMe
-  device commands. cuFile reads are separate. Compare with stored read bytes,
-  failures and GPU load bytes before interpreting a reduction.
+- **orbitkv_ssd_engine_read_batches_total** (Counter) - Successful, physically
+  drained engine file READ batches with exact byte counts. Replaces the removed
+  OrbitKV `ssd_uring_read_operations` SQE counter. It does not measure engine
+  slicing/merging, kernel SQEs or NVMe commands; historical counts are not comparable.
 - **orbitkv_ssd_prefetch_success_total** (Counter) - Successful SSD prefetches
 - **orbitkv_ssd_prefetch_failures_total** (Counter) - Failed SSD prefetches
 - **orbitkv_ssd_prefetch_duration_seconds** (Histogram) - Prefix prefetch or

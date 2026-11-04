@@ -17,14 +17,13 @@ use crate::memory::pool::PinnedAllocation;
 use crate::metrics::core_metrics;
 
 mod config;
-pub(crate) mod cufile;
 mod files;
 pub(crate) mod gpu;
 pub(crate) mod index;
 mod io;
+pub(crate) mod layout;
 pub(crate) mod metadata;
 mod reader;
-mod uring;
 mod writer;
 
 use super::MaterializedBlocks;
@@ -32,8 +31,7 @@ use crate::memory::{AllocateFn, AllocationFootprintFn};
 pub(crate) use config::SSD_ALIGNMENT;
 pub use config::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,
-    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdIoEngine, SsdReadPath,
-    SsdWritePolicy,
+    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdReadPath, SsdWritePolicy,
 };
 use gpu::GpuFile;
 use index::{SsdIndexEntry, SsdRingBuffer};
@@ -287,7 +285,7 @@ impl SsdStore {
         allocation_footprint_fn: AllocationFootprintFn,
         is_numa: bool,
         inventory: Option<Arc<crate::storage::inventory::ResidencyInventory>>,
-        transfer: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
+        transfer: Arc<dyn crate::transfer_engine::TransferBackend>,
     ) -> std::io::Result<Arc<Self>> {
         use std::fs::OpenOptions;
 
@@ -313,13 +311,13 @@ impl SsdStore {
         }
         let try_gpu = config.backend != SsdBackend::Uring
             && (config.backend == SsdBackend::Cufile
-                || config.capacity_bytes / total_shards.max(1) as u64 >= cufile::ALIGNMENT as u64);
+                || config.capacity_bytes / total_shards.max(1) as u64 >= layout::ALIGNMENT as u64);
         let gpu_io = Arc::new(GpuIo {
             automatic: config.backend == SsdBackend::Auto,
             enabled: AtomicBool::new(try_gpu),
         });
         let alignment = if try_gpu {
-            cufile::ALIGNMENT
+            layout::ALIGNMENT
         } else {
             SSD_ALIGNMENT
         };
@@ -332,30 +330,23 @@ impl SsdStore {
             &mut OpenOptions::new(),
         )?;
         let files = files.into_iter().map(Arc::new).collect::<Vec<_>>();
-        let io = Arc::new(SsdIo::new(&files, transfer, uring::UringConfig::default())?);
+        let io = Arc::new(SsdIo::new(&files, transfer)?);
         let cufile_files = if try_gpu {
-            let registered = files
-                .iter()
-                .enumerate()
-                .map(|(shard, file)| {
-                    GpuFile::new(
-                        file.try_clone()?,
-                        Arc::clone(&gpu_io),
-                        io.engine_file(shard),
-                        config.backend,
-                    )
-                    .map(Arc::new)
-                    .map_err(std::io::Error::other)
+            (0..files.len())
+                .map(|shard| {
+                    Ok(Arc::new(GpuFile {
+                        file: io
+                            .engine_file(shard)
+                            .ok_or_else(|| std::io::Error::other("missing engine file"))?,
+                        transport: if config.backend == SsdBackend::Cufile {
+                            crate::transfer_engine::FileTransport::Gds
+                        } else {
+                            crate::transfer_engine::FileTransport::IoUring
+                        },
+                        gpu_io: Arc::clone(&gpu_io),
+                    }))
                 })
-                .collect::<std::io::Result<Vec<_>>>();
-            match registered {
-                Ok(files) => files,
-                Err(error) if gpu_io.automatic => {
-                    gpu_io.failed(&error.to_string());
-                    Vec::new()
-                }
-                Err(error) => return Err(error),
-            }
+                .collect::<std::io::Result<Vec<_>>>()?
         } else {
             Vec::new()
         };
@@ -363,7 +354,7 @@ impl SsdStore {
             files::reserve_cache_space(&files, shard_capacity)?;
         }
         let ring_alignment = if gpu_io.available() {
-            cufile::ALIGNMENT
+            layout::ALIGNMENT
         } else {
             SSD_ALIGNMENT
         };
@@ -786,4 +777,4 @@ impl SsdStore {
 
 #[cfg(test)]
 #[path = "../../../tests/unit/storage/ssd/mod.rs"]
-mod tests;
+pub(crate) mod tests;
