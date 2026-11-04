@@ -102,8 +102,8 @@ fn registered_host_rdma_peer() {
         &env::var("ORBITKV_ORBITTE_BIND").unwrap(),
         Transport::Rdma,
         Some(crate::OrbitTeRdmaConfig {
-            port,
-            gid_index,
+            port: Some(port),
+            gid_index: Some(gid_index),
             ..crate::OrbitTeRdmaConfig::new(device)
         }),
     )
@@ -164,11 +164,13 @@ fn registered_host_rdma_peer() {
     let entries = regions(payload);
     let requests: Vec<_> = entries
         .iter()
-        .map(|(local, remote, length)| TransferRequest {
-            transport: Transport::Rdma,
-            local_address: memory.base_address() + *local as u64,
-            remote_address: address + *remote as u64,
-            length: *length,
+        .map(|(local, remote, length)| {
+            TransferRequest::new(
+                Transport::Rdma,
+                memory.base_address() + *local as u64,
+                address + *remote as u64,
+                *length,
+            )
         })
         .collect();
     let wrong_payload = endpoint.replacen(prefix(Transport::Rdma), prefix(Transport::Tcp), 1);

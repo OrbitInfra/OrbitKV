@@ -11,6 +11,4 @@ pub(crate) mod read;
 pub(crate) mod transport;
 
 #[cfg(feature = "orbitte")]
-mod orbitte;
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
-pub(crate) mod provider;
+pub(crate) mod orbitte;

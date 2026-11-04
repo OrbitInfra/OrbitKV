@@ -428,7 +428,6 @@ async fn export_rejects_invalid_evidence_before_reserving_resources() {
 #[ignore = "OrbitTE source registration hardware gate: requires a real CUDA pinned allocator"]
 async fn orbitte_grant_registrations_share_backing_and_fence_old_completion_generations() {
     use crate::peer::orbitte::{OrbitTeTransport, parse_endpoint};
-    use crate::peer::provider::PeerTransport;
     use orbit_te::{
         EngineConfig, Permission, TransferEngine, TransferOp, TransferRequest, Transport,
     };
@@ -444,7 +443,7 @@ async fn orbitte_grant_registrations_share_backing_and_fence_old_completion_gene
         )
         .unwrap(),
     );
-    exports.transport = Some(Arc::new(PeerTransport::OrbitTe(Arc::clone(&source))));
+    exports.transport = Some(source.clone());
     let owner = membership.owner().incarnation;
     let (blocks, allocation) = shared_slab();
     let weak = Arc::downgrade(&allocation);
@@ -492,12 +491,12 @@ async fn orbitte_grant_registrations_share_backing_and_fence_old_completion_gene
         .submit_and_wait(
             TransferOp::Read,
             &peer,
-            &[TransferRequest {
-                transport: Transport::Tcp,
-                local_address: local.base_address(),
-                remote_address: address,
-                length: 64,
-            }],
+            &[TransferRequest::new(
+                Transport::Tcp,
+                local.base_address(),
+                address,
+                64,
+            )],
             Duration::from_secs(2),
         )
         .unwrap();

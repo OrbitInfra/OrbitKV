@@ -185,7 +185,9 @@ incarnations; it does not restore live leases or old cursors.
 ## Experimental peer payload selection
 
 `--peer-transfer-backend` accepts `mooncake` (default), `orbitte-tcp` or
-`orbitte-rdma`. The TCP mode
+`orbitte-rdma`. `mooncake` names the TENT implementation. These are runtime
+choices: `cargo build -p orbitkv-server --features orbitte-rdma` includes both
+providers. An unavailable selection fails before CUDA initialization. The TCP mode
 requires an `orbitte` build, a concrete numeric advertised IP and no `--nics`
 filter. See the [OrbitTE TCP profile](transport.md#experimental-orbitte-peer-tcp-profile)
 for its limits and explicit gates. This source candidate does not change the
@@ -196,3 +198,7 @@ The `orbitte-rdma` feature adds `--orbitte-rdma-device` (required for that mode)
 host-staging profile without a TCP/native payload fallback; `--nics` remains
 Mooncake-specific. Read the [RDMA profile](transport.md#experimental-orbitte-peer-rdma-profile)
 for separate staging budgets and host versus CUDA 13 Manager qualification.
+The current OrbitTE pin is `6f544ff443974cf5b2b9da1905bf89494e6cbf58`;
+historical hardware results below the [transport contract](transport.md#runtime-transfer-backend)
+do not qualify this revision. SSD and local CUDA copies retain their existing
+OrbitKV implementations in this first integration stage.

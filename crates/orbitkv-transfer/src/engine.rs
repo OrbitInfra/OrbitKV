@@ -23,6 +23,7 @@ use crate::types::{
 
 static ENGINE_CREATE_LOCK: Mutex<()> = Mutex::new(());
 const MAX_NATIVE_BATCHES: usize = 1024;
+const MAX_PEER_SEGMENTS: usize = 1024;
 const MAX_NATIVE_REQUEST_BYTES: usize = 32 * 1024 * 1024;
 
 struct TransferMetrics {
@@ -293,7 +294,7 @@ impl TransferEngine {
             || epoch[32] != 0
             || epoch[..32]
                 .iter()
-                .any(|c| !matches!(*c as u8, b'0'..=b'9' | b'a'..=b'f'))
+                .any(|c| !matches!(c.to_ne_bytes()[0], b'0'..=b'9' | b'a'..=b'f'))
         {
             return Err(MooncakeError::Operation {
                 operation: "closeSourceReceipt",
@@ -392,6 +393,7 @@ impl TransferEngine {
             timeout,
             None,
             expected_source_epoch,
+            None,
         )
     }
 
@@ -411,9 +413,44 @@ impl TransferEngine {
             timeout,
             Some(notification),
             expected_source_epoch,
+            None,
         )
     }
 
+    /// Open metadata under the caller's authoritative epoch. The pinned native
+    /// C ABI does not expose an interruptible metadata-open deadline.
+    pub fn prepare_segment(&self, remote_segment: &str, expected_source_epoch: &str) -> Result<()> {
+        let epoch = source_epoch_bytes(expected_source_epoch)?;
+        let segment = self.open_segment(remote_segment)?;
+        check("validateSourceEpochBeforeSubmit", unsafe {
+            native::validate_remote_epoch(self.native, segment, &epoch)
+        })
+    }
+
+    pub fn submit_and_wait_cancellable(
+        &self,
+        operation: TransferOp,
+        remote_segment: &str,
+        slices: &[TransferSlice],
+        timeout: Duration,
+        expected_source_epoch: Option<&str>,
+        cancellation: &std::sync::atomic::AtomicBool,
+    ) -> Result<usize> {
+        self.submit_and_wait_inner(
+            operation,
+            remote_segment,
+            slices,
+            timeout,
+            None,
+            expected_source_epoch,
+            Some(cancellation),
+        )
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the batch owner consumes deadline, cancellation and notification together"
+    )]
     fn submit_and_wait_inner(
         &self,
         operation: TransferOp,
@@ -422,7 +459,16 @@ impl TransferEngine {
         timeout: Duration,
         notification: Option<&Notification>,
         expected_source_epoch: Option<&str>,
+        cancellation: Option<&std::sync::atomic::AtomicBool>,
     ) -> Result<usize> {
+        let cancelled =
+            || cancellation.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire));
+        if cancelled() {
+            return Err(MooncakeError::Cancelled);
+        }
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .ok_or(MooncakeError::Timeout)?;
         if slices.is_empty() {
             return Ok(0);
         }
@@ -450,6 +496,12 @@ impl TransferEngine {
             check("validateSourceEpochBeforeSubmit", unsafe {
                 native::validate_remote_epoch(self.native, segment, &expected_epoch)
             })?;
+        }
+        if cancelled() {
+            return Err(MooncakeError::Cancelled);
+        }
+        if Instant::now() >= deadline {
+            return Err(MooncakeError::Timeout);
         }
         let mut requests = slices
             .iter()
@@ -485,7 +537,7 @@ impl TransferEngine {
             };
             drain_batch(
                 slices.len(),
-                timeout,
+                deadline.saturating_duration_since(Instant::now()),
                 submitted,
                 |task| {
                     let mut status = native::TransferStatus {
@@ -526,6 +578,7 @@ impl TransferEngine {
                         native_status_name(state),
                     );
                 },
+                cancelled,
             )
         })
     }
@@ -707,6 +760,9 @@ impl TransferEngine {
         if let Some(segment) = segments.get(remote_segment) {
             return Ok(*segment);
         }
+        if segments.len() >= MAX_PEER_SEGMENTS {
+            return Err(MooncakeError::SegmentAdmissionExhausted);
+        }
         let name = CString::new(remote_segment)?;
         let segment = unsafe { native::open_segment(self.native, name.as_ptr()) };
         if segment == native::INVALID_SEGMENT {
@@ -755,7 +811,10 @@ fn fixed_c_string(value: &[c_char]) -> String {
         .iter()
         .position(|byte| *byte == 0)
         .unwrap_or(value.len());
-    let bytes: Vec<_> = value[..length].iter().map(|byte| *byte as u8).collect();
+    let bytes: Vec<_> = value[..length]
+        .iter()
+        .map(|byte| byte.to_ne_bytes()[0])
+        .collect();
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
@@ -875,6 +934,7 @@ fn drain_batch(
     mut completed_bytes: impl FnMut() -> Result<usize>,
     mut free: impl FnMut() -> bool,
     mut retain: impl FnMut(usize, i32, Option<&MooncakeError>),
+    mut cancelled: impl FnMut() -> bool,
 ) -> Result<usize> {
     let started = Instant::now();
     let mut completed = vec![false; tasks];
@@ -884,6 +944,9 @@ fn drain_batch(
     let mut cancel_sent = vec![false; tasks];
     let mut retention_reported = false;
     loop {
+        if cancelled() {
+            failure.get_or_insert(MooncakeError::Cancelled);
+        }
         if !timed_out && started.elapsed() >= timeout {
             timed_out = true;
         }

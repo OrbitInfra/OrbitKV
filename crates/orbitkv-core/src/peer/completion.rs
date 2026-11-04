@@ -15,10 +15,10 @@ use tonic::Status;
 use tonic::transport::{Channel, Endpoint};
 use uuid::Uuid;
 
-use super::provider::PeerTransferError;
 use crate::metrics::core_metrics;
 use crate::peer::export::TRANSFER_WINDOW_SLOTS;
 use crate::planning::peer::{FetchSegment, PeerSource};
+use crate::transfer_engine::PeerTransferError;
 
 const MAX_COMPLETIONS: usize = 1024;
 const CACHED_PEERS: usize = 64;

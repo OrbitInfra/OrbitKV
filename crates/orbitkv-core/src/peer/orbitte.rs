@@ -8,19 +8,22 @@ use orbit_te::{
     Transport,
 };
 
-use super::provider::{
-    MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, PeerReadSlice, PeerTransferError, REGISTERED_POOLS,
-};
 use crate::memory::pool::PinnedAllocation;
+use crate::transfer_engine::{
+    Cancellation, ErrorKind, MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, PeerSegment,
+    REGISTERED_POOLS, Registration, RegistrationInner, Segment, TransferBackend, TransferError,
+    TransferSlice, remaining, validate_slices,
+};
 
 fn prefix(transport: Transport) -> &'static str {
     match transport {
         Transport::Tcp => "orbitte+tcp://",
         Transport::Rdma => "orbitte+rdma://",
+        _ => "orbitte+unsupported://",
     }
 }
-const MAX_READ_REQUESTS: usize = 16_384;
-const MAX_READ_BYTES: usize = 64 << 20;
+const MAX_BATCH_REQUESTS: usize = 16_384;
+const MAX_BATCH_BYTES: usize = 64 << 20;
 const SLICE_BYTES: usize = 8 << 20;
 
 pub(super) fn parse_endpoint(transport: Transport, endpoint: &str) -> Result<SocketAddr, String> {
@@ -41,9 +44,24 @@ pub(crate) struct OrbitTeTransport {
 
 /// Explicit registration references plus the actual allocation and provider
 /// lifetime. Source tickets and requester READ owners hold these together.
-pub(super) struct RegistrationSet {
+pub(crate) struct RegistrationSet {
     transport: Arc<OrbitTeTransport>,
     regions: Vec<RegisteredMemory>,
+    cleanup_failed: bool,
+}
+
+impl RegistrationSet {
+    fn unregister(&mut self) -> Result<(), TransferError> {
+        if self.cleanup_failed {
+            return Err(TransferError::new(
+                ErrorKind::Unquiesced,
+                "OrbitTE registration cleanup remains retained",
+            ));
+        }
+        let result = self.transport.unregister(&mut self.regions);
+        self.cleanup_failed = result.is_err();
+        result
+    }
 }
 
 impl Drop for RegistrationSet {
@@ -52,28 +70,28 @@ impl Drop for RegistrationSet {
         reason = "failed unregister must retain the actual backing and charged engine admission"
     )]
     fn drop(&mut self) {
-        for region in &self.regions {
-            if let Err(error) = self.transport.engine.unregister_memory(region) {
-                log::error!(
-                    "Retaining OrbitTE registration ownership after unregister failed: {error}"
-                );
-                std::mem::forget((
-                    Arc::clone(&self.transport),
-                    std::mem::take(&mut self.regions),
-                ));
-                return;
-            }
+        if let Err(error) = self.unregister() {
+            log::error!(
+                "Retaining OrbitTE registration ownership after unregister failed: {error}"
+            );
+            std::mem::forget((
+                Arc::clone(&self.transport),
+                std::mem::take(&mut self.regions),
+            ));
         }
     }
 }
 
 impl OrbitTeTransport {
-    pub(super) fn new(
+    pub(crate) fn new(
         pool_bytes: u64,
         advertise: &str,
         payload: Transport,
         #[cfg(feature = "orbitte-rdma")] rdma: Option<crate::OrbitTeRdmaConfig>,
     ) -> Result<Self, String> {
+        if !matches!(payload, Transport::Tcp | Transport::Rdma) {
+            return Err("unsupported OrbitTE peer payload".into());
+        }
         #[cfg(not(feature = "orbitte-rdma"))]
         if payload == Transport::Rdma {
             return Err("OrbitTE RDMA requires the orbitte-rdma build feature".into());
@@ -103,7 +121,27 @@ impl OrbitTeTransport {
             max_registered_regions: 4096,
             max_registered_bytes: usize::try_from(pool_bytes)
                 .map_err(|_| "pool exceeds addressable bytes")?,
-            max_batch_requests: MAX_READ_REQUESTS,
+            max_batch_requests: MAX_BATCH_REQUESTS,
+            max_inflight_batches: 32,
+            max_inflight_bytes: MAX_BATCH_BYTES,
+            max_allocated_batches: 32,
+            max_allocated_requests: 32 * MAX_BATCH_REQUESTS,
+            max_file_segments: 0,
+            max_failover_attempts: 0,
+            enable_auto_failover_on_poll: false,
+            tcp: payload == Transport::Tcp,
+            selector: Some(orbit_te::TransportSelectorConfig {
+                policy: vec![orbit_te::SelectionPolicy {
+                    transports: vec![payload],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            // No implicit expansion of the qualified payload namespace.
+            hp_tcp: Default::default(),
+            shm: Default::default(),
+            nvlink: false,
+            remote_staging: false,
             ..EngineConfig::default()
         };
         let engine = Arc::new(TransferEngine::new(config).map_err(|error| error.to_string())?);
@@ -137,7 +175,7 @@ impl OrbitTeTransport {
         self: &Arc<Self>,
         allocations: impl Iterator<Item = &'a Arc<PinnedAllocation>>,
         permission: Permission,
-    ) -> Result<RegistrationSet, String> {
+    ) -> Result<RegistrationSet, TransferError> {
         let mut seen = HashSet::new();
         let ranges = allocations
             .filter(|allocation| seen.insert(Arc::as_ptr(allocation) as usize))
@@ -145,143 +183,323 @@ impl OrbitTeTransport {
                 // SAFETY: sealed source blocks are immutable. Requester ranges
                 // are newly allocated and handed exclusively to the READ owner.
                 // All aliases use the allocation's canonical shared access lock.
-                let memory =
-                    unsafe { allocation.orbitte_memory() }.map_err(|error| error.to_string())?;
+                let memory = unsafe { allocation.orbitte_memory() }.map_err(transfer_error)?;
                 let length = memory.len();
                 Ok((memory, 0, length))
             })
-            .collect::<Result<Vec<_>, String>>()?;
+            .collect::<Result<Vec<_>, TransferError>>()?;
         let regions = self
             .engine
             .register_host_memory_batch(&ranges, permission)
-            .map_err(|error| error.to_string())?;
+            .map_err(transfer_error)?;
         Ok(RegistrationSet {
             transport: Arc::clone(self),
             regions,
+            cleanup_failed: false,
         })
     }
 
-    pub(super) fn read(
-        self: &Arc<Self>,
-        endpoint: &str,
-        expected_epoch: &str,
-        slices: &[PeerReadSlice],
-        timeout: Duration,
-    ) -> Result<usize, PeerTransferError> {
-        let deadline = Instant::now()
-            .checked_add(timeout)
-            .ok_or(PeerTransferError::Timeout)?;
-        let mut requests = Vec::new();
-        let mut total = 0usize;
-        for slice in slices {
-            total = total
-                .checked_add(slice.length)
-                .filter(|bytes| *bytes <= MAX_READ_BYTES)
-                .ok_or_else(|| {
-                    PeerTransferError::Failed(
-                        "OrbitTE READ exceeds the 64 MiB profile budget".into(),
-                    )
-                })?;
-            let count = slice.length.div_ceil(SLICE_BYTES);
-            if requests
-                .len()
-                .checked_add(count)
-                .is_none_or(|count| count > MAX_READ_REQUESTS)
-            {
-                return Err(PeerTransferError::Failed(
-                    "OrbitTE READ descriptor budget exhausted".into(),
-                ));
-            }
-            slice
-                .remote_address
-                .checked_add(slice.length as u64)
-                .ok_or_else(|| PeerTransferError::Failed("remote READ address overflow".into()))?;
-            for offset in (0..slice.length).step_by(SLICE_BYTES) {
-                requests.push(TransferRequest {
-                    transport: self.payload,
-                    local_address: slice.local.as_ptr() as usize as u64 + offset as u64,
-                    remote_address: slice.remote_address + offset as u64,
-                    length: SLICE_BYTES.min(slice.length - offset),
-                });
-            }
+    fn unregister(&self, regions: &mut Vec<RegisteredMemory>) -> Result<(), TransferError> {
+        while let Some(region) = regions.last() {
+            self.engine
+                .unregister_memory(region)
+                .map_err(transfer_error)?;
+            regions.pop();
         }
-        let _registrations = self
-            .register(
-                slices.iter().map(|slice| &slice.allocation),
-                Permission::LocalOnly,
-            )
-            .map_err(PeerTransferError::Failed)?;
-        self.read_registered(endpoint, expected_epoch, &requests, deadline)
-    }
-
-    fn read_registered(
-        &self,
-        endpoint: &str,
-        expected_epoch: &str,
-        requests: &[TransferRequest],
-        deadline: Instant,
-    ) -> Result<usize, PeerTransferError> {
-        let endpoint = parse_endpoint(self.payload, endpoint).map_err(PeerTransferError::Failed)?;
-        let epoch = expected_epoch
-            .parse()
-            .map_err(|error: Error| PeerTransferError::Failed(error.to_string()))?;
-        if requests.len() > MAX_READ_REQUESTS {
-            return Err(PeerTransferError::Failed(
-                "OrbitTE READ descriptor budget exhausted".into(),
-            ));
-        }
-        let total = requests.iter().try_fold(0usize, |bytes, request| {
-            if request.transport != self.payload || request.length > SLICE_BYTES {
-                return Err(PeerTransferError::Failed(
-                    "OrbitTE READ payload selection or slice size mismatch".into(),
-                ));
-            }
-            bytes
-                .checked_add(request.length)
-                .filter(|bytes| *bytes <= MAX_READ_BYTES)
-                .ok_or_else(|| {
-                    PeerTransferError::Failed(
-                        "OrbitTE READ exceeds the 64 MiB profile budget".into(),
-                    )
-                })
-        })?;
-        let remaining = || {
-            deadline
-                .checked_duration_since(Instant::now())
-                .filter(|value| !value.is_zero())
-                .ok_or(PeerTransferError::Timeout)
-        };
-        // Never learn authority from a refreshed descriptor. The source grant
-        // supplies the exact epoch used for both metadata open and payload READ.
-        let peer = self
-            .engine
-            .open_segment(endpoint, epoch, remaining()?)
-            .map_err(transfer_error)?;
-        let report = self
-            .engine
-            .submit_and_wait(TransferOp::Read, &peer, requests, remaining()?)
-            .map_err(transfer_error)?;
-        if !report.locally_drained {
-            return Err(PeerTransferError::Unquiesced);
-        }
-        if let Some(failure) = report.failure {
-            return Err(transfer_error(failure.error));
-        }
-        if report.transferred_bytes != total {
-            return Err(PeerTransferError::Failed(
-                "OrbitTE READ returned incomplete bytes".into(),
-            ));
-        }
-        Ok(total)
+        Ok(())
     }
 }
 
-fn transfer_error(error: Error) -> PeerTransferError {
-    match error {
-        Error::Timeout => PeerTransferError::Timeout,
-        Error::Unquiesced { .. } => PeerTransferError::Unquiesced,
-        error => PeerTransferError::Failed(error.to_string()),
+impl TransferBackend for OrbitTeTransport {
+    fn transfer_endpoint(&self) -> &str {
+        &self.endpoint
     }
+    fn source_epoch(&self) -> &str {
+        &self.epoch
+    }
+    fn accepts_endpoint(&self, endpoint: &str) -> bool {
+        parse_endpoint(self.payload, endpoint).is_ok()
+    }
+
+    fn register_pinned(
+        self: Arc<Self>,
+        allocations: &[Arc<PinnedAllocation>],
+        permission: crate::transfer_engine::Permission,
+    ) -> Result<Registration, TransferError> {
+        self.register(allocations.iter(), permission.into())
+            .map(|registration| Registration {
+                inner: RegistrationInner::OrbitTe(registration),
+            })
+    }
+
+    unsafe fn register_cuda(
+        self: Arc<Self>,
+        address: u64,
+        length: usize,
+        device: i32,
+        owner: Arc<dyn Send + Sync>,
+        permission: crate::transfer_engine::Permission,
+    ) -> Result<Registration, TransferError> {
+        // SAFETY: the caller retains the allocation/context and coordinates aliases.
+        let memory = Arc::new(
+            unsafe { orbit_te::cuda::CudaMemory::from_raw_parts(address, length, owner) }
+                .map_err(transfer_error)?,
+        );
+        if !matches!(memory.location(0, length).map_err(transfer_error)?.location,
+            orbit_te::MemoryLocation::Cuda { device: actual, .. } if actual == device)
+        {
+            return Err(TransferError::new(
+                ErrorKind::InvalidRequest,
+                "CUDA device does not match the retained allocation",
+            ));
+        }
+        let regions = self
+            .engine
+            .register_cuda_memory_batch(&[(memory, 0, length)], permission.into())
+            .map_err(transfer_error)?;
+        Ok(Registration {
+            inner: RegistrationInner::OrbitTe(RegistrationSet {
+                transport: self,
+                regions,
+                cleanup_failed: false,
+            }),
+        })
+    }
+
+    unsafe fn unregister(&self, registration: &mut Registration) -> Result<(), TransferError> {
+        match &mut registration.inner {
+            RegistrationInner::OrbitTe(registration)
+                if registration.transport.epoch == self.epoch =>
+            {
+                registration.unregister()
+            }
+            _ => Err(TransferError::new(
+                ErrorKind::InvalidRequest,
+                "foreign registration",
+            )),
+        }
+    }
+
+    fn open_peer(
+        &self,
+        endpoint: &str,
+        expected_epoch: &str,
+        deadline: Instant,
+    ) -> Result<PeerSegment, TransferError> {
+        let endpoint = parse_endpoint(self.payload, endpoint)
+            .map_err(|e| TransferError::new(ErrorKind::InvalidRequest, e))?;
+        let epoch = expected_epoch.parse().map_err(transfer_error)?;
+        let peer = self
+            .engine
+            .open_segment(endpoint, epoch, remaining(deadline)?)
+            .map_err(transfer_error)?;
+        Ok(PeerSegment {
+            owner_epoch: self.epoch.clone(),
+            inner: Segment::OrbitTe(peer),
+        })
+    }
+
+    unsafe fn transfer(
+        &self,
+        operation: crate::transfer_engine::TransferOp,
+        peer: &PeerSegment,
+        slices: &[TransferSlice],
+        deadline: Instant,
+        cancellation: &Cancellation,
+    ) -> Result<usize, TransferError> {
+        let total = validate_profile(slices)?;
+        if peer.owner_epoch != self.epoch {
+            return Err(TransferError::new(
+                ErrorKind::InvalidRequest,
+                "foreign peer segment",
+            ));
+        }
+        #[cfg_attr(
+            not(feature = "mooncake"),
+            allow(
+                clippy::infallible_destructuring_match,
+                reason = "single-provider builds have one segment variant"
+            )
+        )]
+        let peer = match &peer.inner {
+            Segment::OrbitTe(peer) => peer,
+            #[cfg(feature = "mooncake")]
+            _ => {
+                return Err(TransferError::new(
+                    ErrorKind::InvalidRequest,
+                    "foreign peer protocol",
+                ));
+            }
+        };
+        if cancellation.is_cancelled() {
+            return Err(TransferError::new(
+                ErrorKind::Cancelled,
+                "transfer cancelled before submission",
+            ));
+        }
+        let mut requests = Vec::new();
+        for slice in slices {
+            if requests.len() + slice.length.div_ceil(SLICE_BYTES) > MAX_BATCH_REQUESTS {
+                return Err(TransferError::new(
+                    ErrorKind::ResourceExhausted,
+                    "transfer descriptor budget exhausted",
+                ));
+            }
+            for offset in (0..slice.length).step_by(SLICE_BYTES) {
+                requests.push(
+                    TransferRequest::new(
+                        Transport::Unspec,
+                        slice.local.as_ptr() as usize as u64 + offset as u64,
+                        slice.remote_address + offset as u64,
+                        SLICE_BYTES.min(slice.length - offset),
+                    )
+                    .with_deadline(deadline),
+                );
+            }
+        }
+        let op = match operation {
+            crate::transfer_engine::TransferOp::Read => TransferOp::Read,
+            crate::transfer_engine::TransferOp::Write => TransferOp::Write,
+        };
+        let mut batch = self
+            .engine
+            .submit_async(op, peer, &requests, None, remaining(deadline)?)
+            .map_err(transfer_error)?;
+        let mut cancelled = false;
+        loop {
+            if cancellation.is_cancelled() && !cancelled {
+                // Unsupported running cancellation still requires drain; queued
+                // physical owners have received cancellation before this returns.
+                let _ = batch.cancel_all();
+                cancelled = true;
+            }
+            let status = batch
+                .status()
+                .map_err(|e| TransferError::new(ErrorKind::Unquiesced, e.to_string()))?;
+            if status.is_terminal() {
+                if !status.locally_drained {
+                    return Err(TransferError::new(
+                        ErrorKind::Unquiesced,
+                        "OrbitTE physical owners remain active",
+                    ));
+                }
+                let submissions = batch
+                    .submissions()
+                    .map_err(|e| TransferError::new(ErrorKind::Unquiesced, e.to_string()))?;
+                // Per-task bytes can alias a merged physical owner. Only the
+                // submission report is additive across public descriptors.
+                let bytes = submissions
+                    .iter()
+                    .map(|report| report.transferred_bytes)
+                    .sum::<usize>();
+                let failure = submissions
+                    .iter()
+                    .find_map(|report| report.failure.as_ref())
+                    .map(|failure| {
+                        if failure.remote_effect == orbit_te::RemoteEffect::Unknown {
+                            TransferError::new(
+                                ErrorKind::Unquiesced,
+                                "OrbitTE remote WRITE effect is unknown",
+                            )
+                        } else {
+                            transfer_error_ref(&failure.error)
+                        }
+                    });
+                batch
+                    .free()
+                    .map_err(|e| TransferError::new(ErrorKind::Unquiesced, e.to_string()))?;
+                if let Some(error) = failure {
+                    return Err(error);
+                }
+                if cancelled {
+                    return Err(TransferError::new(
+                        ErrorKind::Cancelled,
+                        "transfer cancelled after drain",
+                    ));
+                }
+                if bytes != total {
+                    return Err(TransferError::new(
+                        ErrorKind::Backend,
+                        "OrbitTE returned incomplete bytes",
+                    ));
+                }
+                return Ok(bytes);
+            }
+            let Ok(wait) = remaining(deadline) else {
+                let _ = batch.cancel_all();
+                // The batch owns accepted work after handle drop; the caller
+                // must retain registrations, source grants and actual buffers.
+                return Err(TransferError::new(
+                    ErrorKind::Unquiesced,
+                    "OrbitTE deadline expired before physical drain",
+                ));
+            };
+            match batch.wait(wait.min(Duration::from_millis(5))) {
+                Ok(_) | Err(Error::Timeout) => {}
+                Err(error) => {
+                    return Err(TransferError::new(ErrorKind::Unquiesced, error.to_string()));
+                }
+            }
+        }
+    }
+
+    fn shutdown(&self, deadline: Instant) -> Result<(), TransferError> {
+        self.engine
+            .close(deadline.saturating_duration_since(Instant::now()))
+            .map_err(transfer_error)
+    }
+    fn invalidate_segment(&self, _endpoint: &str) {}
+    fn record_nic_load(&self) {}
+}
+
+impl From<crate::transfer_engine::Permission> for Permission {
+    fn from(permission: crate::transfer_engine::Permission) -> Self {
+        match permission {
+            crate::transfer_engine::Permission::LocalOnly => Self::LocalOnly,
+            crate::transfer_engine::Permission::RemoteRead => Self::RemoteRead,
+            crate::transfer_engine::Permission::RemoteReadWrite => Self::RemoteReadWrite,
+        }
+    }
+}
+fn validate_profile(slices: &[TransferSlice]) -> Result<usize, TransferError> {
+    if slices.len() > MAX_BATCH_REQUESTS {
+        return Err(TransferError::new(
+            ErrorKind::ResourceExhausted,
+            "transfer descriptor budget exhausted",
+        ));
+    }
+    let total = validate_slices(slices)?;
+    if total > MAX_BATCH_BYTES {
+        return Err(TransferError::new(
+            ErrorKind::ResourceExhausted,
+            "transfer exceeds the 64 MiB profile budget",
+        ));
+    }
+    Ok(total)
+}
+
+fn transfer_error_ref(error: &Error) -> TransferError {
+    let kind = match error {
+        Error::Timeout | Error::DeadlineInfeasible => ErrorKind::Timeout,
+        Error::Cancelled => ErrorKind::Cancelled,
+        Error::Unquiesced { .. } | Error::BatchBusy => ErrorKind::Unquiesced,
+        Error::EpochMismatch => ErrorKind::EpochMismatch,
+        Error::PermissionDenied => ErrorKind::PermissionDenied,
+        Error::ResourceExhausted => ErrorKind::ResourceExhausted,
+        Error::Unavailable(_) | Error::SourceClosed | Error::RequesterClosed => {
+            ErrorKind::Unavailable
+        }
+        Error::InvalidRange
+        | Error::ForeignRegistration
+        | Error::RegionNotFound
+        | Error::RegistrationConflict
+        | Error::Protocol(_) => ErrorKind::InvalidRequest,
+        _ => ErrorKind::Backend,
+    };
+    TransferError::new(kind, error.to_string())
+}
+fn transfer_error(error: Error) -> TransferError {
+    transfer_error_ref(&error)
 }
 
 impl Drop for OrbitTeTransport {
@@ -291,13 +509,7 @@ impl Drop for OrbitTeTransport {
     )]
     fn drop(&mut self) {
         let deadline = Instant::now() + Duration::from_secs(5);
-        let source = self
-            .engine
-            .close_source(deadline.saturating_duration_since(Instant::now()));
-        let requester = self
-            .engine
-            .close_requester(deadline.saturating_duration_since(Instant::now()));
-        let drained = source.and(requester);
+        let drained = self.shutdown(deadline);
         if let Err(error) = drained {
             log::error!(
                 "Retaining OrbitTE engine and {} source pool budget bytes after drain failed: {error}",

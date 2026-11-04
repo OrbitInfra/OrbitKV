@@ -118,6 +118,14 @@ impl OrbitKVEngine {
         use_hugepages: bool,
         storage_config: crate::EngineConfig,
     ) -> Result<Self, EngineError> {
+        if storage_config.global_index.is_some()
+            || storage_config.peer_transfer_backend != crate::PeerTransferBackend::Mooncake
+        {
+            storage_config
+                .peer_transfer_backend
+                .validate_compiled()
+                .map_err(EngineError::InvalidArgument)?;
+        }
         let topology = Arc::new(NumaTopology::detect());
         topology.log_summary();
 

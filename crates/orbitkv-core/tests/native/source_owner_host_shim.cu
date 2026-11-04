@@ -1,7 +1,15 @@
 // CPU ownership control only. No CUDA registration or device operation occurs.
 #include <atomic>
 #include <chrono>
+#ifdef ORBITKV_CPU_HOST_CONTROL
+#include <cstddef>
+// Match only the three runtime ABI functions below. This build is a CPU
+// ownership control and must never be used as a CUDA qualification artifact.
+using cudaError_t = int;
+constexpr cudaError_t cudaSuccess = 0;
+#else
 #include <cuda_runtime_api.h>
+#endif
 
 static std::atomic<unsigned long long> registered{0}, unregistered{0};
 static std::atomic<unsigned long long> unregister_ns{0};

@@ -24,6 +24,24 @@ impl std::str::FromStr for PeerTransferBackend {
     }
 }
 
+impl PeerTransferBackend {
+    /// Reject unavailable providers before CUDA or pinned-pool initialization.
+    pub fn validate_compiled(self) -> Result<(), String> {
+        let (compiled, feature) = match self {
+            Self::Mooncake => (cfg!(feature = "mooncake"), "mooncake"),
+            Self::OrbitTeTcp => (cfg!(feature = "orbitte"), "orbitte"),
+            Self::OrbitTeRdma => (cfg!(feature = "orbitte-rdma"), "orbitte-rdma"),
+        };
+        if compiled {
+            Ok(())
+        } else {
+            Err(format!(
+                "selected peer transfer backend requires the {feature} build feature"
+            ))
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct EngineConfig {
     /// Query-owned bytes across preparation, ready leases, and GPU loads.

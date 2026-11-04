@@ -29,7 +29,7 @@ async fn mooncake_initialization_failure_is_returned_to_caller() {
 
 #[cfg(not(feature = "mooncake"))]
 #[tokio::test]
-async fn remote_transfer_config_is_ignored_without_feature() {
+async fn uncompiled_remote_transfer_config_is_rejected() {
     let membership = test_membership();
     let config = crate::EngineConfig {
         mooncake_nic_names: vec!["mlx5_0".to_string()],
@@ -45,10 +45,11 @@ async fn remote_transfer_config_is_ignored_without_feature() {
         ..crate::EngineConfig::default()
     };
 
-    let engine = OrbitKVEngine::new_with_config(1 << 20, false, config)
-        .expect("a build without Mooncake should ignore remote transfer config");
-
-    assert!(!engine.has_remote_transport());
+    let error = OrbitKVEngine::new_with_config(1 << 20, false, config)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.contains("mooncake build feature"), "{error}");
 }
 
 fn test_membership() -> std::sync::Arc<orbitkv_catalog::MembershipView> {

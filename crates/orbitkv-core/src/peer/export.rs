@@ -57,7 +57,7 @@ pub struct PeerExports {
     endpoint: Option<String>,
     locks: TransferLockManager,
     #[cfg(feature = "orbitte")]
-    transport: Option<Arc<super::provider::PeerTransport>>,
+    transport: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
 }
 
 impl PeerExports {
@@ -66,7 +66,9 @@ impl PeerExports {
         ssd: Option<Arc<crate::storage::ssd::SsdStore>>,
         membership: Option<Arc<orbitkv_catalog::MembershipView>>,
         endpoint: Option<String>,
-        #[cfg(feature = "orbitte")] transport: Option<Arc<super::provider::PeerTransport>>,
+        #[cfg(feature = "orbitte")] transport: Option<
+            Arc<dyn crate::transfer_engine::TransferBackend>,
+        >,
         timeout: Duration,
         budget_bytes: u64,
     ) -> Self {
@@ -167,17 +169,18 @@ impl PeerExports {
         ticket: TransferTicket,
         blocks: &[(StateKey, Arc<SealedBlock>)],
     ) -> Result<(), PeerError> {
-        let Some(super::provider::PeerTransport::OrbitTe(transport)) = self.transport.as_deref()
-        else {
+        let Some(transport) = self.transport.as_ref() else {
             return Ok(());
         };
-        let result = transport
-            .register(
-                blocks.iter().flat_map(|(_, block)| block.allocations()),
-                orbit_te::Permission::RemoteRead,
-            )
+        let allocations = blocks
+            .iter()
+            .flat_map(|(_, block)| block.allocations())
+            .cloned()
+            .collect::<Vec<_>>();
+        let result = Arc::clone(transport)
+            .register_pinned(&allocations, crate::transfer_engine::Permission::RemoteRead)
             .map_err(|error| {
-                warn!("OrbitTE source registration rejected: {error}");
+                warn!("Source registration rejected: {error}");
                 PeerError::BudgetExhausted
             })
             .and_then(|registration| {
@@ -225,7 +228,7 @@ struct TransferSession {
     reserved_bytes: u64,
     expired: bool,
     #[cfg(feature = "orbitte")]
-    registration: Option<super::orbitte::RegistrationSet>,
+    registration: Option<crate::transfer_engine::Registration>,
 }
 
 enum TransferState {

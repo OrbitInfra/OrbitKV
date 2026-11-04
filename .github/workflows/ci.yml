@@ -286,6 +286,19 @@ jobs:
           CUDA_PATH: /usr/local/cuda
           LIBCLANG_PATH: /usr/lib/llvm-18/lib
           CLANG_PATH: /usr/bin/clang-18
+      - name: Peer backend CPU ownership and TCP byte gates
+        run: |
+          mkdir -p "$RUNNER_TEMP/orbitkv-cpu-host-control"
+          c++ -std=c++20 -shared -fPIC -DORBITKV_CPU_HOST_CONTROL -x c++ crates/orbitkv-core/tests/native/source_owner_host_shim.cu -o "$RUNNER_TEMP/orbitkv-cpu-host-control/libcudart.so"
+          # The shim exercises host ownership only; it is not CUDA evidence.
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib peer::
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --lib peer::
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --features orbitte --lib peer::
+          cargo test --locked -p orbitkv-transfer --no-default-features --lib
+        env:
+          CUDA_PATH: /usr/local/cuda
+          LIBCLANG_PATH: /usr/lib/llvm-18/lib
+          CLANG_PATH: /usr/bin/clang-18
 
   cargo-check:
     name: cargo check

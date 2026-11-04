@@ -6,8 +6,12 @@ use log::{error, info};
 use orbitkv_transfer::{AUTO_MEMORY_LOCATION, MemoryRegistration, P2P_METADATA, TransferEngine};
 
 use crate::memory::pool::PinnedAllocator;
+use crate::transfer_engine::{
+    Cancellation, ErrorKind, MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, PeerSegment, Permission,
+    REGISTERED_POOLS, Registration, RegistrationInner, Segment, TransferBackend, TransferError,
+    TransferOp, TransferSlice, remaining, validate_slices,
+};
 
-use super::provider::{MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, REGISTERED_POOLS};
 struct RetainedSource {
     _engine: Arc<TransferEngine>,
     _registrations: Vec<MemoryRegistration>,
@@ -40,14 +44,6 @@ pub(crate) struct MooncakeTransport {
 }
 
 impl MooncakeTransport {
-    pub(crate) fn engine(&self) -> &TransferEngine {
-        &self.engine
-    }
-
-    pub(crate) fn transfer_endpoint(&self) -> &str {
-        &self.transfer_endpoint
-    }
-
     pub(crate) fn new(
         nic_names: &[String],
         allocator: Arc<PinnedAllocator>,
@@ -166,6 +162,317 @@ fn host_from_endpoint(endpoint: &str) -> Result<String, String> {
         .map(|(host, _)| host.trim_matches(['[', ']']).to_string())
         .filter(|host| !host.is_empty())
         .ok_or_else(|| format!("invalid advertise address: {endpoint}"))
+}
+
+pub(crate) struct TentRegistration {
+    transport: Arc<MooncakeTransport>,
+    native: Option<MemoryRegistration>,
+    owner: Option<Arc<dyn Send + Sync>>,
+    charged_bytes: Option<u64>,
+    cleanup_failed: bool,
+}
+impl TentRegistration {
+    fn unregister(&mut self) -> Result<(), crate::transfer_engine::TransferError> {
+        if self.cleanup_failed {
+            return Err(TransferError::new(
+                ErrorKind::Unquiesced,
+                "TENT registration cleanup remains retained",
+            ));
+        }
+        if let Some(native) = &mut self.native
+            && let Err(error) = native.try_unregister()
+        {
+            self.cleanup_failed = true;
+            return Err(tent_error(error));
+        }
+        self.native = None;
+        self.owner = None;
+        if let Some(bytes) = self.charged_bytes.take() {
+            let mut budget = REGISTERED_POOLS.lock().unwrap_or_else(|e| e.into_inner());
+            budget.0 -= 1;
+            budget.1 -= bytes;
+        }
+        Ok(())
+    }
+}
+impl Drop for TentRegistration {
+    #[allow(
+        clippy::mem_forget,
+        reason = "failed unregister retains native token and actual backing without a retry"
+    )]
+    fn drop(&mut self) {
+        if let Err(error) = self.unregister() {
+            log::error!("Retaining TENT registration and backing: {error}");
+            std::mem::forget((
+                Arc::clone(&self.transport),
+                self.native.take(),
+                self.owner.take(),
+            ));
+        }
+    }
+}
+
+impl TransferBackend for MooncakeTransport {
+    fn transfer_endpoint(&self) -> &str {
+        &self.transfer_endpoint
+    }
+    fn source_epoch(&self) -> &str {
+        self.engine.source_epoch()
+    }
+    fn accepts_endpoint(&self, endpoint: &str) -> bool {
+        !endpoint.starts_with("orbitte+") && !endpoint.is_empty()
+    }
+
+    fn register_pinned(
+        self: Arc<Self>,
+        allocations: &[Arc<crate::memory::pool::PinnedAllocation>],
+        _permission: Permission,
+    ) -> Result<Registration, TransferError> {
+        let regions = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| TransferError::new(ErrorKind::Unavailable, "TENT pool closed"))?
+            .memory_regions();
+        for allocation in allocations {
+            let address = allocation.as_non_null().as_ptr() as usize;
+            let end = address
+                .checked_add(allocation.size_bytes() as usize)
+                .ok_or_else(|| {
+                    TransferError::new(ErrorKind::InvalidRequest, "allocation overflow")
+                })?;
+            if !regions.iter().any(|(ptr, len)| {
+                address >= ptr.as_ptr() as usize && end <= ptr.as_ptr() as usize + len
+            }) {
+                return Err(TransferError::new(
+                    ErrorKind::InvalidRequest,
+                    "allocation is outside the registered TENT pool",
+                ));
+            }
+        }
+        Ok(Registration {
+            inner: RegistrationInner::Tent(TentRegistration {
+                transport: self,
+                native: None,
+                owner: Some(Arc::new(allocations.to_vec())),
+                charged_bytes: None,
+                cleanup_failed: false,
+            }),
+        })
+    }
+
+    #[allow(
+        clippy::mem_forget,
+        reason = "partial native registration errors retain backing and bounded admission"
+    )]
+    unsafe fn register_cuda(
+        self: Arc<Self>,
+        address: u64,
+        length: usize,
+        device: i32,
+        owner: Arc<dyn Send + Sync>,
+        _permission: Permission,
+    ) -> Result<Registration, TransferError> {
+        let ptr = usize::try_from(address)
+            .ok()
+            .and_then(|a| std::ptr::NonNull::new(a as *mut u8))
+            .filter(|_| length != 0 && address.checked_add(length as u64).is_some() && device >= 0)
+            .ok_or_else(|| TransferError::new(ErrorKind::InvalidRequest, "invalid CUDA region"))?;
+        {
+            let mut budget = REGISTERED_POOLS.lock().unwrap_or_else(|e| e.into_inner());
+            let bytes = budget
+                .1
+                .checked_add(length as u64)
+                .filter(|b| *b <= MAX_REGISTERED_BYTES)
+                .filter(|_| budget.0 < MAX_REGISTERED_POOLS)
+                .ok_or_else(|| {
+                    TransferError::new(
+                        ErrorKind::ResourceExhausted,
+                        "registered CUDA memory budget exhausted",
+                    )
+                })?;
+            budget.0 += 1;
+            budget.1 = bytes;
+        }
+        let mut registration = TentRegistration {
+            transport: self,
+            native: None,
+            owner: Some(owner),
+            charged_bytes: Some(length as u64),
+            cleanup_failed: false,
+        };
+        // SAFETY: actual allocation/context ownership is installed before native registration.
+        match unsafe {
+            registration.transport.engine.register_memory_owned(
+                ptr,
+                length,
+                &format!("cuda:{device}"),
+            )
+        } {
+            Ok(native) => {
+                registration.native = Some(native);
+                Ok(Registration {
+                    inner: RegistrationInner::Tent(registration),
+                })
+            }
+            Err(error) => {
+                std::mem::forget(registration);
+                Err(tent_error(error))
+            }
+        }
+    }
+
+    unsafe fn unregister(&self, registration: &mut Registration) -> Result<(), TransferError> {
+        match &mut registration.inner {
+            RegistrationInner::Tent(registration)
+                if std::ptr::eq(registration.transport.as_ref(), self) =>
+            {
+                registration.unregister()
+            }
+            _ => Err(TransferError::new(
+                ErrorKind::InvalidRequest,
+                "foreign registration",
+            )),
+        }
+    }
+    fn open_peer(
+        &self,
+        endpoint: &str,
+        expected_epoch: &str,
+        deadline: Instant,
+    ) -> Result<PeerSegment, TransferError> {
+        if !self.accepts_endpoint(endpoint) {
+            return Err(TransferError::new(
+                ErrorKind::InvalidRequest,
+                "peer payload protocol mismatch",
+            ));
+        }
+        remaining(deadline)?;
+        self.engine
+            .prepare_segment(endpoint, expected_epoch)
+            .map_err(tent_error)?;
+        remaining(deadline)?;
+        Ok(PeerSegment {
+            owner_epoch: self.source_epoch().to_owned(),
+            inner: Segment::Tent {
+                endpoint: endpoint.to_owned(),
+                source_epoch: expected_epoch.to_owned(),
+            },
+        })
+    }
+    unsafe fn transfer(
+        &self,
+        operation: TransferOp,
+        peer: &PeerSegment,
+        slices: &[TransferSlice],
+        deadline: Instant,
+        cancellation: &Cancellation,
+    ) -> Result<usize, TransferError> {
+        let total = validate_slices(slices)?;
+        if peer.owner_epoch != self.source_epoch() {
+            return Err(TransferError::new(
+                ErrorKind::InvalidRequest,
+                "foreign peer segment",
+            ));
+        }
+        #[cfg_attr(
+            not(feature = "orbitte"),
+            allow(
+                clippy::infallible_destructuring_match,
+                reason = "single-provider builds have one segment variant"
+            )
+        )]
+        let (endpoint, source_epoch) = match &peer.inner {
+            Segment::Tent {
+                endpoint,
+                source_epoch,
+            } => (endpoint, source_epoch),
+            #[cfg(feature = "orbitte")]
+            _ => {
+                return Err(TransferError::new(
+                    ErrorKind::InvalidRequest,
+                    "foreign peer protocol",
+                ));
+            }
+        };
+        if cancellation.is_cancelled() {
+            return Err(TransferError::new(
+                ErrorKind::Cancelled,
+                "transfer cancelled before submission",
+            ));
+        }
+        let native = slices
+            .iter()
+            .map(|s| orbitkv_transfer::TransferSlice {
+                local: s.local,
+                remote_address: s.remote_address,
+                length: s.length,
+            })
+            .collect::<Vec<_>>();
+        let op = match operation {
+            TransferOp::Read => orbitkv_transfer::TransferOp::Read,
+            TransferOp::Write => orbitkv_transfer::TransferOp::Write,
+        };
+        let bytes = self
+            .engine
+            .submit_and_wait_cancellable(
+                op,
+                endpoint,
+                &native,
+                remaining(deadline)?,
+                Some(source_epoch),
+                cancellation.flag(),
+            )
+            .map_err(tent_error)?;
+        if bytes != total {
+            return Err(TransferError::new(
+                ErrorKind::Backend,
+                "TENT returned incomplete bytes",
+            ));
+        }
+        Ok(bytes)
+    }
+    fn shutdown(&self, deadline: Instant) -> Result<(), TransferError> {
+        self.engine
+            .close_source(deadline.saturating_duration_since(Instant::now()))
+            .map_err(|e| TransferError::new(ErrorKind::Unquiesced, e.to_string()))
+    }
+    fn invalidate_segment(&self, endpoint: &str) {
+        self.engine.invalidate_segment(endpoint);
+    }
+    fn record_nic_load(&self) {
+        if let Ok(stats) = self.engine.nic_load_stats() {
+            let metrics = crate::metrics::core_metrics();
+            for stat in stats {
+                let attributes = [opentelemetry::KeyValue::new("nic", stat.device_name)];
+                metrics
+                    .tent_nic_inflight_bytes
+                    .record(stat.inflight_bytes, &attributes);
+                metrics
+                    .tent_nic_bandwidth_bytes_per_second
+                    .record(stat.ewma_bandwidth_bps, &attributes);
+            }
+        }
+    }
+}
+fn tent_error(error: orbitkv_transfer::TransferError) -> TransferError {
+    use orbitkv_transfer::TransferError as E;
+    let kind = match error {
+        E::Timeout => ErrorKind::Timeout,
+        E::Cancelled => ErrorKind::Cancelled,
+        E::BatchAdmissionExhausted | E::SegmentAdmissionExhausted => ErrorKind::ResourceExhausted,
+        E::NativeRuntime(_) | E::Create => ErrorKind::Unavailable,
+        E::InvalidString(_) => ErrorKind::InvalidRequest,
+        E::Operation {
+            operation: "validateSourceEpochBeforeSubmit",
+            ..
+        } => ErrorKind::EpochMismatch,
+        E::Operation {
+            operation: "invalidSourceEpoch",
+            ..
+        } => ErrorKind::InvalidRequest,
+        _ => ErrorKind::Backend,
+    };
+    TransferError::new(kind, error.to_string())
 }
 
 #[cfg(test)]

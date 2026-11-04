@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 mod cache;
 mod check_cuda_version;
 mod cluster;
@@ -600,6 +602,7 @@ fn init_metrics(
 /// Main entry point for the Cache Manager.
 pub fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
+    cli.peer_transfer_backend.validate_compiled()?;
     let query_control_address = cli.query_control_address()?;
     orbitkv_common::logging::init_stdout_colored(&cli.log_level);
     info!(
@@ -747,8 +750,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         #[cfg(feature = "orbitte-rdma")]
         orbitte_rdma: cli.orbitte_rdma_device.clone().map(|device| {
             orbitkv_core::OrbitTeRdmaConfig {
-                port: cli.orbitte_rdma_port,
-                gid_index: cli.orbitte_rdma_gid_index,
+                port: Some(cli.orbitte_rdma_port),
+                gid_index: Some(cli.orbitte_rdma_gid_index),
                 ..orbitkv_core::OrbitTeRdmaConfig::new(device)
             }
         }),
