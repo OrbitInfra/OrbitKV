@@ -854,7 +854,9 @@ queues/leases and publishes metadata; file bytes move through the selected
 engine. All-padded extents are legal and need no consumer-owned buffer.
 
 CI requires real Linux io_uring and real file bytes, with an explicitly labelled
-CPU host-registration shim. It covers sharded raw/encoded metadata, extent
+CPU host-registration shim. Its TENT source-drain control requires `MC_FORCE_TCP=1`
+so an RDMA device on the runner cannot change that CPU/TCP profile; the separate
+file engine still uses io_uring. It covers sharded raw/encoded metadata, extent
 leases, padded/odd-sized vectors above 4 MiB, all-padding extents, explicit GDS
 padding rejection, alignment and truncated-file errors, cancellation before submission,
 detached completion, and retained owners after injected uncertainty. TENT callback

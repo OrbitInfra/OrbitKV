@@ -321,6 +321,9 @@ jobs:
           cargo test --locked -p orbitkv-core --lib transfer::worker::ssd:: -- --test-threads=1
           cargo test --locked -p orbitkv-server --lib tests::ssd_uses_selected_engine_and_rejects_removed_legacy_switch -- --exact
         env:
+          # The separate TENT file engine still uses io_uring; its peer engine's
+          # source-drain receipt is deliberately limited to the CPU/TCP profile.
+          MC_FORCE_TCP: "1"
           CUDA_PATH: /usr/local/cuda
           LIBCLANG_PATH: /usr/lib/llvm-18/lib
           CLANG_PATH: /usr/bin/clang-18

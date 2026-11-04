@@ -74,6 +74,13 @@ mod engine {
             Ok("1"),
             "run this real-file gate explicitly with ORBITKV_REQUIRE_ENGINE_SSD=1 and the CPU host-registration fixture"
         );
+        if selected_backend() == crate::PeerTransferBackend::Mooncake {
+            assert_eq!(
+                std::env::var("MC_FORCE_TCP").as_deref(),
+                Ok("1"),
+                "the CPU/TCP source-drain control requires MC_FORCE_TCP=1 even on runners with RDMA devices"
+            );
+        }
         Storage::new_with_config(
             16 << 20,
             false,
