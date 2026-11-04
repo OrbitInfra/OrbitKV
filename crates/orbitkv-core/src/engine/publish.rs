@@ -14,7 +14,7 @@ use crate::memory::pool::PinnedAllocation;
 use crate::metrics::core_metrics;
 use crate::storage::publish::{RawSaveBatch, RawSaveLayer};
 use crate::storage::ssd::SsdStore;
-use crate::storage::ssd::cufile::{CopyRange, plan_writes};
+use crate::storage::ssd::layout::{CopyRange, plan_writes};
 use crate::transfer::layout::{BlockCopies, KVCacheLayout};
 use crate::transfer::worker::ssd::GpuWrite;
 use crate::transfer::worker::{LayerTransferData, SaveGroup, TransferBlock, TransferPayload};

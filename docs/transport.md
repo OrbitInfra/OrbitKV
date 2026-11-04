@@ -595,8 +595,8 @@ custom TCP socket daemon, exchanges JSON metadata and QP/MR information, and
 then uses the selected data transport. Larger deployments may instead publish
 Segment metadata through etcd, Redis, or HTTP.
 
-OrbitKV pins [OrbitInfra/Mooncake](https://github.com/OrbitInfra/Mooncake/tree/af13e06af174f27ba8782057b8a37afc7cddf8fd)
-integration commit `af13e06af174f27ba8782057b8a37afc7cddf8fd`, based on upstream
+OrbitKV pins [OrbitInfra/Mooncake](https://github.com/OrbitInfra/Mooncake/tree/85c270db5ad7b9a8a91a851e4a4c7ef684939760)
+integration commit `85c270db5ad7b9a8a91a851e4a4c7ef684939760`, based on upstream
 `v0.3.14`, and builds the TENT `tent_shared` target in
 `orbitkv-mooncake-sys` without applying build-time patches. Native
 loading first checks `ORBITKV_MOONCAKE_LIB_DIR`, then the executable or Python
@@ -612,21 +612,20 @@ native dependency cache with `cargo clean -p orbitkv-mooncake-sys` before the
 first rebuild. Metrics may stay disabled, but `libtent_metrics.so` must still
 ship. The 23 consumed C function signatures and their Rust layouts are unchanged.
 
-The TENT backend maps native status 134 (`RpcConnectionError`) to `Unavailable`:
-the RPC was provably not sent. Status 135 (`RpcUnknownEffect`) maps to
-`Unquiesced` and must never authorize replay or owner release. Status 2
-(`TooManyRequests`) maps to `ResourceExhausted`. These operation error codes are
-distinct from `tent_close_source`'s dedicated drain-receipt values.
+The fork's generic integer-returning C wrappers now preserve negative native
+codes: `-134` (`RpcConnectionError`) maps to `Unavailable` and proves the RPC
+was not sent; `-135` (`RpcUnknownEffect`) maps to `Unquiesced`; `-2`
+(`TooManyRequests`) maps to `ResourceExhausted`. File results use their separate,
+positive `TENT_FILE_*` codes. `tent_close_source` also keeps its dedicated
+physical-drain convention; its status 2 never means capacity exhaustion.
 
-**C API gap at this pin:** `tent_open_segment`, `tent_validate_remote_epoch`,
-`tent_submit` and `tent_submit_notif` collapse native failures to `-1`, so the
-three typed RPC statuses cannot yet reach the Rust mappings through them.
-The fork must preserve the native status code in those returns (and expose the
-cause of asynchronous task failures) without treating it as a drain receipt.
-OrbitKV keeps its conservative failed-batch retention and disables automatic
-failover; the fork also suppresses replay after uncertain RPC dispatch. The
-six new file C functions are present upstream but are consumed in A3 through
-a separate TENT file engine, keeping the peer source-drain contract intact.
+`tent_terminal_result` exposes cached asynchronous native code and effect certainty.
+OrbitKV records that evidence when retaining a failed peer batch. This call does
+not progress or drain a transfer. Even a known logical outcome cannot release
+owners or authorize replay of an entire batch with successful siblings. The
+existing conservative failed-batch retention and disabled failover remain.
+The original 23 C signatures are unchanged; this integration additionally consumes
+the terminal query and six file functions through a separate TENT file engine.
 
 ## Runtime transfer backend
 
@@ -780,12 +779,15 @@ SSD flush waits for logical write outcomes. It does not promise fsync durability
 or prove physical drain of failed operations. Only complete successful writes
 become index-visible.
 
-With an OrbitTE transfer backend, `--ssd-io-engine auto` (the default) routes
-DRAM↔SSD through the same engine's `open_file_segment` and io_uring. A standalone
-Manager creates that engine even without cluster membership. `--ssd-io-engine
-transfer` requires engine file support; `legacy` explicitly selects the temporary
-OrbitKV io_uring/cuFile implementation. Selection happens before opening the
-cache. Failure after submission never switches engines or replays a WRITE.
+Every SSD byte transfer goes through the selected backend. OrbitTE uses its
+file segments; TENT uses `tent_create_engine_with_files`, `tent_file_open`,
+`tent_file_submit`, `tent_file_drain`, `tent_file_release_batch` and
+`tent_file_close`. TENT's file engine is separate from its peer engine, where
+file transports remain disabled to preserve the CPU/TCP source-drain contract.
+Standalone SSD creates the selected backend even without cluster membership.
+The native OrbitKV io_uring/cuFile owners and `--ssd-io-engine` switch are removed.
+Missing engine file support fails initialization. Failure after submission never
+switches engines or replays a WRITE.
 
 OrbitKV still creates/truncates and sizes the shards, owns placement, eviction,
 logical ring extents, encoding metadata and index publication. The engine sees
@@ -793,50 +795,60 @@ only byte ranges. Its file name refers to the retained inode through
 `/proc/self/fd`, so replacement of a path cannot redirect an admitted transfer.
 Offsets are byte offsets from file base zero. Host descriptors preserve the
 512-byte O_DIRECT contract; GPU plans retain 4 KiB alignment and existing gather,
-scatter and decode semantics. OrbitTE selects a direct fd when the filesystem
+scatter and decode semantics. Each engine selects a direct fd when the filesystem
 supports it, otherwise its documented buffered path (including tmpfs).
 
-For OrbitTE, `--ssd-backend uring` uses host materialization; `auto` additionally
-uses the existing bounded GPU slots with OrbitTE's CUDA staging plus io_uring.
-`cufile` requires `orbitte-gds` and a native-only cuFile configuration; unavailable
-GDS fails startup. There is no GDS-to-io_uring replay. GPU gather must complete
-before file submission, and scatter follows a physical engine receipt. The
-legacy `cufile` read-route spelling still selects GPU staging; the configured
-engine determines how those bytes reach the file.
+For either backend, `--ssd-backend uring` uses host materialization; `auto`
+additionally uses the bounded GPU layout slots with engine-owned CUDA staging
+and io_uring. `cufile` requests native-only GDS. OrbitTE requires `orbitte-gds`;
+TENT requires a native CUDA build with the cuFile headers and library detected by
+CMake. The default wheel toolchain does not install the GDS SDK; that TENT profile
+requires a source-built runtime and fails clearly when unavailable. GDS never
+replays failed I/O through io_uring. GPU gather finishes before file submission,
+and scatter follows a physical engine receipt. The `cufile` read-route spelling
+selects a GPU destination; the engine owns how bytes reach it.
 
 Each store admits at most 32 file operations, including queued and retained work.
 Each operation is capped at 64 MiB and 16,384 descriptors, with a 30-second
 submission deadline. GPU slots remain 4 MiB, two per admitted worker; engine
-registration and staging limits remain separate. There are at most 256 shards;
+registration and staging limits remain separate. There are at most 256 shards (128 with TENT GDS, which reserves two handles per shard);
 SSD queue/inflight settings must be 1–1,024. Unknown drain or failed unregister
 retains the exact fd, engine, registration, backing, extent lease and admission
 slot until process exit. A failed WRITE stays unpublished and cannot be evicted
 or overwritten. `orbitkv_ssd_engine_retained_operations_total` records such
 retention. A failed or short READ never becomes a cache hit.
 
-The TENT C ABI has generic segment open/close calls, but OrbitKV's current
-initializer hard-disables `transports/io_uring/enable` and `transports/gds/enable`.
-Its Rust wrapper only exposes epoch-validated peer transfers and no supported
-file configuration or file-drain contract. TENT therefore keeps the legacy SSD
-path under `auto`; explicit `transfer` fails with that gap. Remove the fallback
-in A3 when the fork supplies file setup, transport selection and physical-drain
-receipts. A2 separately consumes OrbitTE vectored host/GPU file ranges and deletes
-the OrbitKV gather/scatter slots. These are temporary implementations, not a
-long-term fallback. The Mooncake version bump remains a separate change.
+The TENT wrapper passes actual backing and extent owners through native retain/
+release callbacks, without registering file buffers on the peer engine. Only
+`drained == 1`, followed by successful batch release, permits owner destruction.
+Cancel, deadline, a dropped receiver and logical terminal status do not. Failed
+cleanup is never retried. A retained file or receipt prevents successful shutdown.
+TENT maps adjacent layout ranges into one native vectored request; noncontiguous
+file intervals use separate bounded requests without byte repacking. Its rings
+have depth 32; CUDA pinned staging is four 16 MiB slots. The native engine also
+bounds file handles, batch receipts and staged allocations.
+
+OrbitKV retains the existing `storage/ssd/gpu.rs` gather/scatter layout slots
+until A2 consumes OrbitTE vectored requests. Reader/writer code now only plans
+layouts, manages queues/leases and publishes metadata; all byte I/O belongs to
+the selected engine. Local copy ownership moves behind the backend in C.
 
 CI requires real Linux io_uring and real file bytes, with an explicitly labelled
 CPU host-registration shim. It covers sharded raw/encoded metadata, extent
-leases, alignment and truncation rejection, cancellation before submission,
-detached completion, and retained owners after injected uncertainty/cleanup
-failure. The latter are ownership controls, not simulated storage qualification.
-The same file gate runs on the runner filesystem and tmpfs. GPU/CUDA staging,
+leases, alignment and truncated-file errors, cancellation before submission,
+detached completion, and retained owners after injected uncertainty. TENT callback
+controls also cover short receipts, failed release/close and shutdown retention. The latter are ownership controls, not simulated storage qualification.
+The same file gate runs for both engines on the runner filesystem and tmpfs. GPU/CUDA staging,
 GDS and installed serving remain unqualified. Source GPU byte gates are written
-in `crates/orbitkv-core/tests/orbitte_ssd.rs` and have not been run:
+in `crates/orbitkv-core/tests/ssd_engine.rs` and have not been run:
 
 ```bash
-ORBITKV_SSD_TEST_ROOT=/path/to/test-owned/ssd cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --test orbitte_ssd -- --ignored --exact cuda_staged_file_roundtrip --test-threads=1
-ORBITKV_SSD_TEST_ROOT=/path/to/test-owned/ssd cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte-gds --test orbitte_ssd -- --ignored --exact native_gds_file_roundtrip --test-threads=1
+ORBITKV_SSD_TEST_ENGINE=orbitte ORBITKV_SSD_TEST_ROOT=/path/to/test-owned/ssd cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --test ssd_engine -- --ignored --exact cuda_staged_file_roundtrip --test-threads=1
+ORBITKV_SSD_TEST_ENGINE=orbitte ORBITKV_SSD_TEST_ROOT=/path/to/test-owned/ssd cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte-gds --test ssd_engine -- --ignored --exact native_gds_file_roundtrip --test-threads=1
 ```
+
+For TENT, use `ORBITKV_SSD_TEST_ENGINE=tent` and `--features cuda-13,mooncake`
+with the same two tests. These source gates are written, not hardware evidence.
 
 Native GDS qualification also requires cuFile/nvidia-fs route evidence from that
 same installed run; configuration and successful bytes alone do not prove the

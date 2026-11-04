@@ -385,9 +385,9 @@ fn logical_failures_wait_for_actual_completion_and_preserve_first_error() {
     for (operation, status) in [
         ("deadline", -23),
         ("tent_submit", -23),
-        ("tent_submit", 134),
-        ("tent_submit", 135),
-        ("tent_submit", 2),
+        ("tent_submit", -134),
+        ("tent_submit", -135),
+        ("tent_submit", -2),
         ("getTransferStatus", -23),
         ("tent_cancel_task", -23),
     ] {

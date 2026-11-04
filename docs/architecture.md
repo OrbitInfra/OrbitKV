@@ -138,10 +138,10 @@ Raw DRAM Restore executes in the engine through independently registered shared
 arenas. Peer restore submits remote→GPU through the selected transfer engine;
 only DRAM cache-tier fills retain a host destination. The imported tensor owner
 and client completion remain retained on unknown drain. Encoded peer inputs go
-to GPU codec allocations. SSD/codec paths use Manager workers. With OrbitTE,
+to GPU codec allocations. SSD/codec layouts use Manager workers.
 `TransferBackend` moves file bytes through io_uring or opt-in GDS; OrbitKV keeps
-extent leases and metadata publication. TENT uses the configured legacy SSD
-fallback until its wrapper exposes file configuration/drain. Unknown drain
+extent leases and metadata publication. TENT owns a separate file engine so its
+peer source-drain contract remains unchanged. Unknown drain
 retains backing, the immutable/unpublished extent and the file-operation budget.
 See [SSD file transfers](transport.md#ssd-file-transfers). Peer SSD uses
 exact-generation source-side staging before the same TENT READ contract. Per-layer

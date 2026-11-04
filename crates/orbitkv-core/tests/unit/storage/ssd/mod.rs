@@ -62,146 +62,14 @@ fn selective_writes_track_republication_without_pinning_payloads() {
     );
 }
 
-#[tokio::test]
-async fn neutral_leases_read_raw_and_encoded_generations_through_uring() {
-    use std::num::NonZeroU64;
-
-    use crate::block::{RawBlock, Segment};
-    use crate::memory::pool::PinnedAllocator;
-
-    let allocator = Arc::new(PinnedAllocator::new_global(
-        16 * 1024,
-        1,
-        false,
-        NonZeroU64::new(SSD_ALIGNMENT as u64),
-    ));
-    for encoded in [false, true] {
-        let directory = tempfile::tempdir().unwrap();
-        let pool = Arc::clone(&allocator);
-        let store = SsdStore::new(
-            SsdCacheConfig {
-                cache_paths: vec![directory.path().join("cache.bin")],
-                capacity_bytes: SSD_ALIGNMENT as u64,
-                backend: SsdBackend::Uring,
-                ..Default::default()
-            },
-            Arc::new(move |bytes, node| {
-                pool.allocate(NonZeroU64::new(bytes)?, node.unwrap_or(NumaNode::UNKNOWN))
-            }),
-            {
-                let allocator = Arc::clone(&allocator);
-                Arc::new(move |bytes, node| {
-                    allocator.allocation_footprint(
-                        NonZeroU64::new(bytes)?,
-                        node.unwrap_or(NumaNode::UNKNOWN),
-                    )
-                })
-            },
-            false,
-            None,
-            None,
-        )
-        .unwrap();
-        let data = [if encoded { 0x71 } else { 0x32 }; SSD_ALIGNMENT];
-        let allocation = allocator
-            .allocate(
-                NonZeroU64::new(SSD_ALIGNMENT as u64).unwrap(),
-                NumaNode::UNKNOWN,
-            )
-            .unwrap();
-        // SAFETY: this unshared allocation owns the complete target range.
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                data.as_ptr(),
-                allocation.mapped_ptr().host().as_ptr(),
-                data.len(),
-            );
-        }
-        let mut raw = RawBlock::single_segment(Segment::new(
-            allocation.mapped_ptr().host(),
-            data.len(),
-            allocation,
-        ));
-        if encoded {
-            raw.encoding = Some(vec![crate::codec::EncodedSegment {
-                version: 1,
-                format: orbitkv_state::StorageFormat::Exact,
-                logical_bytes: data.len(),
-                stored_bytes: data.len(),
-                checksum: crc32fast::hash(&data),
-            }]);
-        }
-        let block = Arc::new(SealedBlock::from_slots(vec![(raw, NumaNode::UNKNOWN)]));
-        let key = StateKey::new("lease-uring".into(), vec![u8::from(encoded)]);
-        store.ingest_batch(std::iter::once((&key, &block)), false);
-        store.flush().await;
-        drop(block);
-
-        let lease = store
-            .discover(std::slice::from_ref(&key))
-            .into_iter()
-            .map_while(|candidate| candidate?.pin())
-            .collect::<Vec<_>>()
-            .pop()
-            .unwrap();
-        assert!(!lease.cufile_eligible(0));
-        assert!(lease.file().is_err());
-        assert_eq!(lease.cost_resource(), store.io.cost_resource);
-        if encoded {
-            assert!(!lease.entry.fits_gpu_decode(0));
-        }
-        let generation = lease.entry.begin;
-        let readers = Arc::clone(&lease.entry.readers);
-        let restored = store
-            .read_host_batch(vec![Arc::clone(&lease)])
-            .await
-            .unwrap()
-            .remove(0)
-            .1;
-        let slot = restored.get_slot(0).unwrap();
-        // SAFETY: the successful read initialized the owned segment above.
-        let bytes = unsafe {
-            std::slice::from_raw_parts(slot.segment_ptr(0).unwrap().as_ptr(), data.len())
-        };
-        assert_eq!(bytes, data);
-        assert_eq!(slot.encoding.is_some(), encoded);
-
-        let replacement = StateKey::new("lease-uring".into(), vec![2]);
-        let slots = || {
-            vec![crate::SlotMeta::new(
-                smallvec::smallvec![SSD_ALIGNMENT as u64],
-                NumaNode::UNKNOWN,
-            )]
-        };
-        assert!(
-            store
-                .inner
-                .lock()
-                .ring
-                .reserve(&replacement, slots(), index::Encoding::Raw)
-                .is_none(),
-            "the selected generation must remain pinned after host materialization"
-        );
-        drop(lease);
-        tokio::time::timeout(std::time::Duration::from_secs(1), async {
-            while readers.load(Ordering::Acquire) != 0 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("completed host reader released its generation");
-        let next = store
-            .inner
-            .lock()
-            .ring
-            .reserve(&replacement, slots(), index::Encoding::Raw)
-            .unwrap();
-        assert_ne!(next.begin, generation);
-    }
-}
-
 pub(super) fn queued_read_store() -> (Arc<SsdStore>, tokio::sync::mpsc::Receiver<PrefetchBatch>) {
     queued_read_store_with_inventory(None, true)
+}
+
+pub(crate) fn query_store(read_path: Option<SsdReadPath>) -> (Arc<SsdStore>, impl Send) {
+    let (mut store, queued) = queued_read_store();
+    Arc::get_mut(&mut store).unwrap().read_path = read_path;
+    (store, queued)
 }
 
 fn queued_read_store_with_inventory(
@@ -210,17 +78,7 @@ fn queued_read_store_with_inventory(
 ) -> (Arc<SsdStore>, tokio::sync::mpsc::Receiver<PrefetchBatch>) {
     let file = Arc::new(tempfile::tempfile().unwrap());
     file.set_len(SSD_ALIGNMENT as u64).unwrap();
-    let io = Arc::new(
-        SsdIo::new(
-            &[Arc::clone(&file)],
-            None,
-            uring::UringConfig {
-                threads: 2,
-                ..Default::default()
-            },
-        )
-        .unwrap(),
-    );
+    let io = Arc::new(io::tests::queued_io());
     let (write_tx, _) = tokio::sync::mpsc::channel(1);
     let (prefetch_tx, prefetch_rx) = tokio::sync::mpsc::channel(1);
     let store = Arc::new(SsdStore {

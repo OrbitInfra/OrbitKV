@@ -782,7 +782,7 @@ def main(argv: list[str] | None = None) -> None:
                                 "orbitkv_ssd_prefetch_duration_seconds_count",
                                 "orbitkv_ssd_prefetch_duration_seconds_sum",
                                 "orbitkv_ssd_prefetch_failures_total",
-                                "orbitkv_ssd_uring_read_operations_total",
+                                "orbitkv_ssd_engine_read_batches_total",
                             ):
                                 ssd_observed[name] = observed.get(name, 0) - ssd_before.get(name, 0)
                             if ssd_observed["orbitkv_ssd_prefetch_bytes_total"] != expected_bytes:
@@ -791,8 +791,10 @@ def main(argv: list[str] | None = None) -> None:
                                 )
                             if ssd_observed["orbitkv_ssd_prefetch_duration_seconds_count"] <= 0:
                                 raise AssertionError("SSD batch completion evidence is missing")
-                            if ssd_observed["orbitkv_ssd_uring_read_operations_total"] <= 0:
-                                raise AssertionError("Queued io_uring READV evidence is missing")
+                            if ssd_observed["orbitkv_ssd_engine_read_batches_total"] <= 0:
+                                raise AssertionError(
+                                    "Completed engine file READ evidence is missing"
+                                )
                             if ssd_observed["orbitkv_ssd_prefetch_failures_total"]:
                                 raise AssertionError(f"SSD reads failed: {ssd_observed}")
                         key = {

@@ -10,14 +10,13 @@ use std::time::{Duration, Instant};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 
 use super::SSD_ALIGNMENT;
-use super::uring::{UringConfig, UringIoEngine};
 use crate::cost::{
     CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
     resource_id,
 };
 use crate::memory::pool::PinnedAllocation;
 use crate::transfer_engine::{
-    Cancellation, ErrorKind, FileSegment, FileTransport, Permission, Registration, TransferBackend,
+    Cancellation, ErrorKind, FileMemory, FileSegment, FileTransfer, FileTransport, TransferBackend,
     TransferError, TransferOp, TransferSlice, validate_slices,
 };
 
@@ -54,24 +53,6 @@ impl<T> Drop for DrainOwner<T> {
             unsafe { ManuallyDrop::drop(&mut self.value) };
         }
     }
-}
-
-pub(crate) enum FileMemory {
-    Pinned(Vec<Arc<PinnedAllocation>>),
-    Cuda {
-        address: u64,
-        length: usize,
-        device: i32,
-        owner: Arc<dyn Send + Sync>,
-    },
-}
-
-struct FileOwners {
-    _file: Arc<EngineFile>,
-    memory: FileMemory,
-    _extent: Arc<dyn Send + Sync>,
-    _permit: OwnedSemaphorePermit,
-    registration: Option<Registration>,
 }
 
 pub(crate) struct EngineFile {
@@ -119,14 +100,12 @@ impl EngineFile {
         let deadline = Instant::now() + DEADLINE;
         let (tx, rx) = oneshot::channel();
         self.runtime.spawn_blocking(move || {
-            let owners = DrainOwner::new(FileOwners {
-                _file: Arc::clone(&file),
+            let owners = DrainOwner::new(Arc::new(FileTransfer {
+                slices,
                 memory,
-                _extent: extent,
-                _permit: permit,
-                registration: None,
-            });
-            let result = file.execute(operation, transport, &slices, owners, deadline);
+                _lease: Arc::new((Arc::clone(&file), extent, permit)),
+            }));
+            let result = file.execute(operation, transport, owners, deadline);
             let _ = tx.send(result);
         });
         Ok(rx)
@@ -136,47 +115,10 @@ impl EngineFile {
         self: &Arc<Self>,
         operation: TransferOp,
         transport: FileTransport,
-        slices: &[TransferSlice],
-        mut owners: DrainOwner<FileOwners>,
+        owners: DrainOwner<Arc<FileTransfer>>,
         deadline: Instant,
     ) -> Result<usize, TransferError> {
-        let registration = match &owners.value.memory {
-            FileMemory::Pinned(allocations) => {
-                Arc::clone(&self.backend).register_pinned(allocations, Permission::LocalOnly)
-            }
-            FileMemory::Cuda {
-                address,
-                length,
-                device,
-                owner,
-            } => {
-                // SAFETY: the slot retains this allocation/context, and observes its
-                // gather event before admission. Scatter waits for this receipt.
-                unsafe {
-                    Arc::clone(&self.backend).register_cuda(
-                        *address,
-                        *length,
-                        *device,
-                        Arc::clone(owner),
-                        Permission::LocalOnly,
-                    )
-                }
-            }
-        };
-        let registration = match registration {
-            Ok(registration) => registration,
-            Err(error) => {
-                if error.kind != ErrorKind::Unquiesced {
-                    owners.drain();
-                } else {
-                    crate::metrics::core_metrics()
-                        .ssd_engine_retained_operations
-                        .add(1, &[]);
-                }
-                return Err(error);
-            }
-        };
-        owners.value.registration = Some(registration);
+        let slices = &owners.value.slices;
         let mut observation = Observation::new(
             CostEstimateKey::new(
                 if operation == TransferOp::Read {
@@ -196,11 +138,11 @@ impl EngineFile {
         // SAFETY: registration, actual backing, exact file and extent lease are
         // held by owners. An uncertain receipt retains that entire owner and permit.
         let mut result = unsafe {
-            self.backend.transfer_file(
+            Arc::clone(&self.backend).transfer_file(
                 operation,
                 &self.segment,
                 transport,
-                slices,
+                Arc::clone(&owners.value),
                 deadline,
                 &Cancellation::default(),
             )
@@ -214,16 +156,10 @@ impl EngineFile {
                 "short file transfer",
             ));
         }
-        if !matches!(&result, Err(error) if error.kind == ErrorKind::Unquiesced)
-            && let Some(registration) = owners.value.registration.as_mut()
-        {
-            // SAFETY: all results except Unquiesced prove local drain.
-            if let Err(error) = unsafe { self.backend.unregister(registration) } {
-                result = Err(TransferError::new(
-                    ErrorKind::Unquiesced,
-                    format!("file registration cleanup failed: {error}"),
-                ));
-            }
+        if operation == TransferOp::Read && result.is_ok() {
+            crate::metrics::core_metrics()
+                .ssd_engine_read_batches
+                .add(1, &[]);
         }
         observation.finish(
             if result.is_ok() {
@@ -267,178 +203,74 @@ impl Drop for EngineFile {
     }
 }
 
-enum Backend {
-    Legacy {
-        io: UringIoEngine,
-        _files: Vec<Arc<File>>,
-    },
-    Transfer(Vec<Arc<EngineFile>>),
-}
-
 pub(super) struct SsdIo {
-    backend: Backend,
-    admission: Arc<Semaphore>,
+    files: Vec<Arc<EngineFile>>,
     pub(super) cost_resource: ExecutionResource,
 }
 
 impl SsdIo {
     pub(super) fn new(
         files: &[Arc<File>],
-        transfer: Option<Arc<dyn TransferBackend>>,
-        legacy_config: UringConfig,
+        transfer: Arc<dyn TransferBackend>,
     ) -> std::io::Result<Self> {
         let admission = Arc::new(Semaphore::new(MAX_OPERATIONS));
-        let backend = if let Some(transfer) = transfer {
-            let mut handles = Vec::with_capacity(files.len());
-            for file in files {
-                let segment = transfer
-                    .open_file(&PathBuf::from(format!(
-                        "/proc/self/fd/{}",
-                        file.as_raw_fd()
-                    )))
-                    .map_err(std::io::Error::other)?;
-                if segment.length != file.metadata()?.len() {
-                    let _ = transfer.close_file(&segment, Instant::now() + DEADLINE);
-                    return Err(std::io::Error::other(
-                        "engine file length differs from reserved SSD shard",
-                    ));
-                }
-                handles.push(Arc::new(EngineFile {
-                    backend: Arc::clone(&transfer),
-                    segment,
-                    file: Arc::clone(file),
-                    admission: Arc::clone(&admission),
-                    runtime: tokio::runtime::Handle::current(),
-                    cost_resource: ExecutionResource::SsdFile(resource_id(&(
-                        transfer.source_epoch(),
-                        file.as_raw_fd(),
-                    ))),
-                }));
+        let mut handles = Vec::with_capacity(files.len());
+        for file in files {
+            let segment = transfer
+                .open_file(&PathBuf::from(format!(
+                    "/proc/self/fd/{}",
+                    file.as_raw_fd()
+                )))
+                .map_err(std::io::Error::other)?;
+            let handle = Arc::new(EngineFile {
+                backend: Arc::clone(&transfer),
+                segment,
+                file: Arc::clone(file),
+                admission: Arc::clone(&admission),
+                runtime: tokio::runtime::Handle::current(),
+                cost_resource: ExecutionResource::SsdFile(resource_id(&(
+                    transfer.source_epoch(),
+                    file.as_raw_fd(),
+                ))),
+            });
+            if handle.segment.length != file.metadata()?.len() {
+                return Err(std::io::Error::other(
+                    "engine file length differs from reserved SSD shard",
+                ));
             }
-            Backend::Transfer(handles)
-        } else {
-            Backend::Legacy {
-                io: UringIoEngine::new_multi(
-                    files.iter().map(|f| f.as_raw_fd()).collect(),
-                    legacy_config,
-                )?,
-                _files: files.to_vec(),
-            }
-        };
-        let cost_resource = match &backend {
-            Backend::Legacy { io, .. } => io.cost_resource,
-            Backend::Transfer(handles) => ExecutionResource::SsdStore(resource_id(
-                &handles.iter().map(|f| f.cost_resource).collect::<Vec<_>>(),
-            )),
-        };
+            handles.push(handle);
+        }
+        let cost_resource = ExecutionResource::SsdStore(resource_id(
+            &handles.iter().map(|f| f.cost_resource).collect::<Vec<_>>(),
+        ));
         Ok(Self {
-            backend,
-            admission,
+            files: handles,
             cost_resource,
         })
     }
 
     pub(super) fn engine_file(&self, shard: usize) -> Option<Arc<EngineFile>> {
-        match &self.backend {
-            Backend::Transfer(files) => files.get(shard).cloned(),
-            _ => None,
-        }
+        self.files.get(shard).cloned()
     }
 
     pub(super) fn submit(
-        self: &Arc<Self>,
+        &self,
         operation: TransferOp,
         shard: usize,
         slices: Vec<TransferSlice>,
         allocations: Vec<Arc<PinnedAllocation>>,
         extent: Arc<dyn Send + Sync>,
     ) -> Result<Receipt, TransferError> {
-        validate(&slices)?;
-        if slices.iter().any(|s| {
-            !allocations
-                .iter()
-                .any(|a| a.source_range(s.local, s.length).is_ok())
-        }) {
-            return Err(TransferError::new(
-                ErrorKind::InvalidRequest,
-                "SSD descriptor is outside retained backing",
-            ));
-        }
-        match &self.backend {
-            Backend::Transfer(files) => files
-                .get(shard)
-                .ok_or_else(|| TransferError::new(ErrorKind::InvalidRequest, "invalid SSD shard"))?
-                .submit(
-                    operation,
-                    FileTransport::IoUring,
-                    slices,
-                    FileMemory::Pinned(allocations),
-                    extent,
-                ),
-            Backend::Legacy { io, .. } => {
-                let permit = admit(&self.admission)?;
-                let offset = slices
-                    .first()
-                    .ok_or_else(|| {
-                        TransferError::new(ErrorKind::InvalidRequest, "empty SSD batch")
-                    })?
-                    .remote_address;
-                let mut expected = offset;
-                for slice in &slices {
-                    if slice.remote_address != expected {
-                        return Err(TransferError::new(
-                            ErrorKind::InvalidRequest,
-                            "legacy SSD iovecs must be consecutive",
-                        ));
-                    }
-                    expected += slice.length as u64;
-                }
-                let owners = DrainOwner::new((Arc::clone(self), allocations, extent, permit));
-                let receiver = match operation {
-                    TransferOp::Read => io.readv_at_async(
-                        shard,
-                        slices
-                            .iter()
-                            .map(|s| (s.local.as_ptr(), s.length))
-                            .collect(),
-                        offset,
-                    ),
-                    TransferOp::Write => io.writev_at_async(
-                        shard,
-                        slices
-                            .iter()
-                            .map(|s| (s.local.as_ptr().cast_const(), s.length))
-                            .collect(),
-                        offset,
-                    ),
-                };
-                let receiver = match receiver {
-                    Ok(receiver) => receiver,
-                    Err(error) => {
-                        owners.drain();
-                        return Err(TransferError::new(ErrorKind::Backend, error.to_string()));
-                    }
-                };
-                let (tx, rx) = oneshot::channel();
-                tokio::spawn(async move {
-                    let result = match receiver.await {
-                        Ok(result) => {
-                            owners.drain();
-                            result
-                                .map_err(|e| TransferError::new(ErrorKind::Backend, e.to_string()))
-                        }
-                        Err(error) => {
-                            crate::metrics::core_metrics()
-                                .ssd_engine_retained_operations
-                                .add(1, &[]);
-                            Err(TransferError::new(ErrorKind::Unquiesced, error.to_string()))
-                        }
-                    };
-                    let _ = tx.send(result);
-                });
-                Ok(rx)
-            }
-        }
+        self.files
+            .get(shard)
+            .ok_or_else(|| TransferError::new(ErrorKind::InvalidRequest, "invalid SSD shard"))?
+            .submit(
+                operation,
+                FileTransport::IoUring,
+                slices,
+                FileMemory::Pinned(allocations),
+                extent,
+            )
     }
 }
 
@@ -474,4 +306,4 @@ fn validate(slices: &[TransferSlice]) -> Result<(), TransferError> {
 
 #[cfg(test)]
 #[path = "../../../tests/unit/storage/ssd/io.rs"]
-mod tests;
+pub(super) mod tests;

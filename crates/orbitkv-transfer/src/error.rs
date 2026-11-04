@@ -13,6 +13,12 @@ pub enum MooncakeError {
         operation: &'static str,
         status: i32,
     },
+    #[error("TENT file {operation} failed with status {status} ({transferred_bytes} bytes)")]
+    File {
+        operation: &'static str,
+        status: i32,
+        transferred_bytes: u64,
+    },
     #[error("Mooncake returned an invalid batch id")]
     InvalidBatch,
     #[error("Mooncake native batch admission exhausted or descriptor bytes overflow")]

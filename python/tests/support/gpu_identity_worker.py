@@ -125,8 +125,8 @@ def main():
                     - before.get("orbitkv_ssd_prefetch_bytes_total", 0)
                     == tensor.numel()
                 ), result
-                assert after["orbitkv_ssd_uring_read_operations_total"] - before.get(
-                    "orbitkv_ssd_uring_read_operations_total", 0
+                assert after["orbitkv_ssd_engine_read_batches_total"] - before.get(
+                    "orbitkv_ssd_engine_read_batches_total", 0
                 ) == len(hashes), result
         args.output.with_suffix(".ready.json").write_text(json.dumps(result, indent=2) + "\n")
         deadline = time.monotonic() + 60

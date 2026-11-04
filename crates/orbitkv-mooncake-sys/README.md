@@ -30,7 +30,7 @@ later without changing cache or framework code.
 
 - repository: [OrbitInfra/Mooncake](https://github.com/OrbitInfra/Mooncake)
 - branch: `orbitkv-integration-v0.3.14`
-- pinned commit: `af13e06af174f27ba8782057b8a37afc7cddf8fd`
+- pinned commit: `85c270db5ad7b9a8a91a851e4a4c7ef684939760`
 - upstream base: `v0.3.14`, `e1ea5d31bb5e46ff2df9f90e7c2fbaf52fcdee8c`
 
 The gitlink selects an immutable integration commit; builds never resolve a moving
@@ -38,13 +38,16 @@ branch head. The fork carries the previously consumed TCP copy/context,
 worker ownership, source drain/epoch and registration ownership fixes as ordinary
 commits. Cargo copies this source into its private build directory and invokes
 CMake directly. It does not apply patches or rewrite the submodule.
-See the [integration branch guide](https://github.com/OrbitInfra/Mooncake/blob/af13e06af174f27ba8782057b8a37afc7cddf8fd/ORBITKV_INTEGRATION.md)
+See the [integration branch guide](https://github.com/OrbitInfra/Mooncake/blob/85c270db5ad7b9a8a91a851e4a4c7ef684939760/ORBITKV_INTEGRATION.md)
 for upstream origins and the update policy. The v0.3.14 port preserves those
-ownership contracts and the 23 consumed C function signatures. This upgrade
+ownership contracts and the original 23 C function signatures. The consumer also
+loads six file functions and `tent_terminal_result`. This upgrade
 grants no new hardware qualification.
 
-Install the CLI11 development headers (`libcli11-dev`) with the other native
-dependencies. The fork pins yalantinglibs to
+Install the CLI11 headers (`libcli11-dev`) and liburing headers/library
+(`liburing-dev`) with the other native dependencies. File engines always require
+io_uring. TENT GDS additionally requires a CUDA build with cuFile headers/library
+detected by CMake; the default wheel toolchain does not install that SDK. The fork pins yalantinglibs to
 `45c6463c0afbcc46262e373effa30635be3846a0` (upstream #5132). When upgrading an
 existing checkout, run `cargo clean -p orbitkv-mooncake-sys` before rebuilding
 to discard native CMake and dependency caches from the earlier `7801bc9` pin.

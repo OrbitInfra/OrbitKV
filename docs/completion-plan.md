@@ -96,8 +96,8 @@ and [adapter contracts](adapters.md).
   [runtime contract and CPU gates](transport.md#runtime-transfer-backend).
 - [x] OrbitTE SSD file-segment integration implemented for io_uring, CUDA staging
   and opt-in native-only GDS, preserving OrbitKV placement, extents and index
-  publication. TENT retains the configured legacy fallback until A3 consumes its
-  file configuration/drain API. CPU file/lifetime gates are required in CI; GPU/GDS
+  publication. A3 below removes the temporary native fallback. CPU file/lifetime
+  gates are required in CI; GPU/GDS
   and installed qualification remain open. See [file contracts](transport.md#ssd-file-transfers).
 - [x] Peer restores now retain source grants until the selected engine completes
   remote→GPU READs. Raw ranges land in final pages; encoded payloads land in
@@ -107,15 +107,16 @@ and [adapter contracts](adapters.md).
   drain. CPU controls are implemented; GPU/GDR and installed profiles remain
   unqualified pending installed runs. See
   [direct peer restore](transport.md#peer-restore-into-gpu).
-- [x] D implements the Mooncake submodule upgrade to
-  `orbitkv-integration-v0.3.14` at `af13e06a`, includes `libtent_metrics.so`, rebuilds
-  dependencies at yalantinglibs `45c6463` with CLI11, and preserves the 23 C
-  signatures. Status mappings 134/135/2 are implemented, but the upstream C
-  wrappers still erase these codes; see the [C API gap](transport.md#mooncake-findings).
-  Independent review and installed hardware qualification remain open.
-- [ ] A3 follows the submodule bump: consume its six file C functions through a
-  **separate TENT file engine**, preserving the peer TCP source-drain contract;
-  delete native SSD I/O plus `--ssd-io-engine legacy`.
+- [x] D's v0.3.14 submodule/build update was independently accepted and merged
+  as `8bc9ba52`, including four runtime libraries, yalantinglibs `45c6463`, CLI11
+  and the original 23 C signatures. Hardware profiles remain unqualified.
+- [x] A3 is implemented pending review: all SSD I/O uses engine file segments;
+  TENT uses a **separate file engine** to preserve the peer source-drain contract.
+  Native OrbitKV io_uring/cuFile/slot code and `--ssd-io-engine` are removed.
+  The fork pin advances to `85c270db`, preserving negative native status codes
+  and exposing asynchronous terminal evidence without weakening physical drain.
+  Real-file CPU gates cover both providers; GPU/GDS/installed qualification
+  remains open. See [file contracts](transport.md#ssd-file-transfers).
 - [ ] A2 follows A3: bump OrbitTE to current main including #154 (`6cee3056`) and
   #156 (`5bca3a72`), consume
   `TransferRequest::file_vectored` and `EngineConfig::gds_enabled`, pass layout

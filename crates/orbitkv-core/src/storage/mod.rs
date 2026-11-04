@@ -79,11 +79,10 @@ impl Storage {
         let value_size_hint = config.hint_value_size_bytes.filter(|size| *size > 0);
         let unit_hint = value_size_hint.and_then(|size| NonZeroU64::new(size as u64));
         let ssd_cache_config = config.ssd_cache_config;
-        let engine_ssd = ssd_cache_config
-            .as_ref()
-            .map(|ssd| ssd.use_transfer_engine(config.peer_transfer_backend))
-            .transpose()?
-            .unwrap_or(false);
+        if let Some(ssd) = &ssd_cache_config {
+            ssd.validate_transfer_engine(config.peer_transfer_backend)?;
+        }
+        let engine_ssd = ssd_cache_config.is_some();
         #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
         if engine_ssd {
             return Err("SSD transfer engine was not compiled".into());
@@ -201,17 +200,12 @@ impl Storage {
                     inventory.clone(),
                     {
                         #[cfg(any(feature = "mooncake", feature = "orbitte"))]
-                        {
-                            if engine_ssd {
-                                peer_transport.clone()
-                            } else {
-                                None
-                            }
-                        }
+                        let transfer = peer_transport.clone();
                         #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
-                        {
-                            None
-                        }
+                        let transfer: Option<
+                            Arc<dyn crate::transfer_engine::TransferBackend>,
+                        > = None;
+                        transfer.ok_or("SSD transfer engine was not initialized")?
                     },
                 )
                 .map_err(|error| format!("Failed to initialise SSD cache: {error}"))

@@ -4,7 +4,7 @@ use super::*;
 fn runtime_requires_all_four_libraries_and_consumed_symbols() {
     let source = Path::new(WORKSPACE_RUNTIME_LIB_DIR);
     let loaded = unsafe { load_api_from(source) };
-    assert!(loaded.is_ok(), "{:?}", loaded.err());
+    assert!(loaded.as_ref().unwrap().files.is_ok());
     let incomplete =
         env::temp_dir().join(format!("orbitkv-tent-three-libs-{}", std::process::id()));
     std::fs::create_dir(&incomplete).unwrap();
@@ -28,6 +28,14 @@ fn tent_c_abi_layouts_match_the_pinned_header() {
     assert_eq!(std::mem::size_of::<NotificationRecord>(), 4360);
     assert_eq!(std::mem::size_of::<NotificationInfo>(), 16);
     assert_eq!(std::mem::size_of::<NicLoadStat>(), 80);
+    assert_eq!(std::mem::size_of::<files::FileOptions>(), 20);
+    assert_eq!(std::mem::size_of::<files::FileRange>(), 16);
+    assert_eq!(std::mem::size_of::<files::FileOwner>(), 24);
+    assert_eq!(std::mem::size_of::<files::FileResult>(), 16);
+    assert_eq!(
+        std::mem::offset_of!(files::FileResult, transferred_bytes),
+        8
+    );
     assert_eq!(INVALID_BATCH, 0);
     assert_eq!(INVALID_SEGMENT, u64::MAX);
 }
@@ -57,4 +65,12 @@ fn forced_tcp_temporarily_suppresses_general_tent_config() {
             None => env::remove_var("MC_TENT_CONF"),
         }
     }
+}
+
+#[test]
+fn failed_terminal_query_preserves_unknown_effect() {
+    ensure_loaded().unwrap();
+    // SAFETY: a null engine is the C API's explicit invalid-handle control.
+    let (status, code, known) = unsafe { terminal_result(std::ptr::null_mut(), 0, usize::MAX) };
+    assert_eq!((status, code, known), (-1, 135, false));
 }

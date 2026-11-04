@@ -195,7 +195,7 @@ def test_sglang_close_retires_only_its_registration(
         if channel_server.ssd_cache_path:
             for name in (
                 "orbitkv_ssd_prefetch_bytes_total",
-                "orbitkv_ssd_uring_read_operations_total",
+                "orbitkv_ssd_engine_read_batches_total",
             ):
                 assert name in after_restore and after_restore[name] > before_restore.get(name, 0)
         linker.client = native_client

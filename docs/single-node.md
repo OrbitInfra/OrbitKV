@@ -44,8 +44,8 @@ orbitkv-cache-manager \
   --ssd-cache-path /data/orbitkv/cache.bin --ssd-cache-capacity 100gb
 ```
 
-The default SSD backend tries cuFile and uses io_uring when unavailable. cuFile is
-an optional Manager library; it needs no separate service. Native GDS has separate
+The default SSD backend uses engine-owned io_uring and CUDA staging. Explicit
+`--ssd-backend cufile` selects native-only GDS in the engine; it needs no separate service. Native GDS has separate
 hardware requirements and remains unqualified. The SSD file is truncated on Manager
 startup; it is not durable across Manager restarts. See [GPU storage](gds.md).
 

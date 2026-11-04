@@ -21,7 +21,7 @@ use crate::types::{
     STATUS_INVALID, STATUS_PENDING, STATUS_TIMEOUT, STATUS_WAITING, TransferOp, TransferSlice,
 };
 
-static ENGINE_CREATE_LOCK: Mutex<()> = Mutex::new(());
+pub(crate) static ENGINE_CREATE_LOCK: Mutex<()> = Mutex::new(());
 const MAX_NATIVE_BATCHES: usize = 1024;
 const MAX_PEER_SEGMENTS: usize = 1024;
 const MAX_NATIVE_REQUEST_BYTES: usize = 32 * 1024 * 1024;
@@ -573,8 +573,12 @@ impl TransferEngine {
                 || unsafe { native::free_batch(self.native, batch) == 0 },
                 |task, state, cause| {
                     admission.retain();
+                    // SAFETY: this stack retains the batch and engine. This is
+                    // logical evidence only; it cannot authorize free or replay.
+                    let (receipt_status, native_code, effect_known) =
+                        unsafe { native::terminal_result(self.native, batch, task) };
                     log::error!(
-                        "TENT termination unproven; retaining native batch and caller buffers: batch={batch} task={task} state={} first_failure={cause:?} descriptor_bytes={descriptor_bytes}",
+                        "TENT termination unproven; retaining native batch and caller buffers: batch={batch} task={task} state={} first_failure={cause:?} descriptor_bytes={descriptor_bytes} terminal_query={receipt_status} native_code={native_code} effect_known={effect_known}",
                         native_status_name(state),
                     );
                 },

@@ -314,12 +314,12 @@ fn save_shape(
     for write in ssd_writes {
         charge(
             write.batches.capacity(),
-            std::mem::size_of::<crate::storage::ssd::cufile::IoBatch>(),
+            std::mem::size_of::<crate::storage::ssd::layout::IoBatch>(),
         )?;
         for batch in &write.batches {
             charge(
                 batch.copies.capacity(),
-                std::mem::size_of::<crate::storage::ssd::cufile::CopyRange>(),
+                std::mem::size_of::<crate::storage::ssd::layout::CopyRange>(),
             )?;
         }
     }

@@ -1,261 +1,91 @@
 # GPU storage
 
-This page describes OrbitKV's native io_uring/cuFile fallback, used by TENT and
-by explicit `--ssd-io-engine legacy`. With an OrbitTE backend, the default
-`--ssd-io-engine auto` uses OrbitTE file segments: `--ssd-backend auto` selects
-CUDA staging plus io_uring, while `cufile` requires the `orbitte-gds` feature
-and native-only GDS. See [SSD file transfers](transport.md#ssd-file-transfers)
-for the owner contract, configuration and exact GPU gates. Those OrbitTE GPU
-profiles are implemented but unqualified; the historical results below apply
-only to the native fallback.
+All SSD byte movement belongs to the selected transfer engine. OrbitKV owns
+placement, extents, index publication, DRAM policy, layout descriptors and codec
+compute. TENT uses a separate file engine so file transports cannot weaken its
+peer source-drain contract. The native OrbitKV io_uring/cuFile fallback and
+`--ssd-io-engine` option are removed. See [SSD file transfers](transport.md#ssd-file-transfers)
+for the contracts, bounds and exact GPU gate commands.
 
-OrbitKV defaults to automatic SSD backend selection when SSD caching is configured.
-Complete state groups can be written
-from registered engine GPU pages to SSD, and selected SSD state can be restored
-to those pages. The cuFile routes use bounded, registered GPU staging in both directions.
-vLLM and SGLang share this Rust implementation and their existing cache API.
-Normal deployment only configures the SSD path and budget; leave
-`--ssd-backend` unset. Its default `auto` tries native cuFile and uses io_uring
-when unavailable. cuFile is a dynamically loaded Manager library, not an
-additional service or an inference-engine option.
+GPU staging and native GDS at this revision are implemented but unqualified.
+Historical measurements below apply to their original native SSD implementation.
+CPU file bytes and ownership controls cannot qualify CUDA or GDS.
 
-Calling cuFile does **not** prove native GPUDirect Storage: its compatibility
-mode performs host staging internally. Native-mode probes in this H20 container
-have failed driver initialization (5001) or file registration (5027); automatic
-selection falls back to io_uring. An A100 native-only initialization probe on
-2026-10-07 also returned driver error 5001 on its `/tmp` ext4 NVMe mount; `auto`
-selected io_uring and the Manager exited normally. Its surviving capability
-record is retained in the SSD host-batching archive, separate from native I/O
-qualification. Native GDS throughput remains unqualified.
+## Selection and capacity
 
-## Automatic selection
+Normal deployment sets the SSD path and capacity. Both inference adapters use
+the same cache API; no separate cuFile service is needed.
 
-The Manager owns this decision; engine adapters use the same cache API.
-
-| Mode | Behavior |
+| Mode | Selected engine behavior |
 | --- | --- |
-| `auto` (default) | Try cuFile on ext4/XFS with sufficient alignment capacity; disable both allow/force compatibility through NVIDIA's parameter API before driver initialization. Missing API/library, driver, mount or file-registration support selects io_uring. |
-| `uring` | Use host staging; never load cuFile. Useful as a reproducible control. |
-| `cufile` | Require cuFile initialization and follow NVIDIA configuration, including explicitly enabled CPU compatibility for functional development. Operation failures remain errors. |
+| `auto` (default) | GPU layout slots plus engine-owned CUDA staging/io_uring; host materialization remains available for DRAM policy and unsupported layout shapes. |
+| `uring` | Host materialization through engine io_uring. |
+| `cufile` | Native-only GDS. OrbitTE requires `orbitte-gds`; TENT requires a CUDA runtime built with the cuFile SDK. Missing support is an error. |
 
-Auto selection is currently cache-wide: every configured shard must register;
-otherwise the whole SSD cache uses io_uring. It requires cuFile's parameter API
-to enforce the native-only initialization policy. An already initialized
-compatibility-capable driver is not accepted as native evidence. Other filesystem
-types need separate qualification and an explicit `cufile` selection.
+The default wheel toolchain does not install the GDS SDK for TENT. Native GDS
+requires the matching source-built runtime, supported filesystem and installed
+route evidence. Neither library presence nor successful bytes prove native GDS.
+A failed submitted operation is never replayed through another route.
 
-On a GPU storage buffer or I/O failure in `auto`, the Manager stops admitting
-new cuFile work. With no read-route override, subsequent operations use io_uring
-until restart; an explicit cuFile read route does not silently switch routes.
-When several engine instances share one Manager, one pool owns each CUDA
-device's persistent cuFile/codec staging until its lanes drain. Another
-instance's automatically selected read may use io_uring over the same extent;
-an explicit cuFile read fails instead so qualification cannot pass on fallback.
-Submitted work retains its file/extent/page ownership and completes or reports
-its error; changing the backend does not revoke DMA or silently replay an
-already submitted restore. The failing operation retains normal error semantics.
-Logs identify the selection and fallback reason; `orbitkv_ssd_backend_fallbacks_total`
-counts the transition. Per-mount/per-device isolation, retries after a cooldown,
-and online latency-based selection remain future work.
+GPU-capable shards reserve physical capacity with `fallocate` before serving;
+allocation errors fail startup and roll back prior reservations. Host-only
+shards use logical sizing. The default capacity is 512 GiB; select a budget that
+fits the target filesystem. Every file is recreated at Manager startup.
 
-This is capability and failure adaptation. Successful initialization does not
-establish that cuFile beats io_uring for a workload, or replace native-path
-statistics. An SSD path is required to enable disk caching. Capacity defaults
-to `512gb`; set an explicit budget that fits the storage filesystem.
+## Demand routes and ownership
 
-## Independent demand read routes
+`--ssd-read-path uring` requests host materialization; `cufile` requests the GPU
+layout route. These spellings select destinations, not a claim about native GDS.
+The selected engine owns the actual file transport. Prepare/warmup still fills
+the DRAM cache tier. Explicit unavailable GPU routes do not silently fall back;
+ordinary recovery may still select a compatible peer source.
 
-Immutable SSD extent leasing is now separate from GPU-route eligibility.
-io_uring and cuFile are independently executable routes over the same stored
-representation and source generation. The store keeps its io_uring engine even
-when cuFile is healthy. `--ssd-backend auto|uring|cufile` controls capability
-initialization and existing write behavior; it is not a measured route ranking.
-
-For controlled demand-read comparisons, use `--ssd-read-path uring` or
-`--ssd-read-path cufile`. With a cuFile-capable backend, the former still uses
-io_uring and pinned DRAM; the latter uses registered GPU staging. The override
-does not change write policy or prepare/warmup, which still targets DRAM.
-Omitting it preserves existing source priority and capability-based behavior.
-If the explicit SSD route is unavailable, it is not replaced by a host-prefetch
-route; a compatible peer source can still satisfy ordinary remote recovery.
-
-The explicit io_uring route carries the same extent lease through the bounded
-host-reader queue. A separate SSD host-restore lane waits for these reads, then
-uses existing copy/codec completion before releasing engine destinations. It
-deduplicates repeated layer references and submits at most 16 unique state keys
-per existing SSD-store reader batch; same-key physical generations stay in
-separate batches. All batches drain and all requested results are validated
-before GPU sources change or an error returns. This reduces submission/completion
-work, without merging physical I/O or adding earlier readiness. It does not block
-the ordinary DRAM worker or reacquire a potentially different generation by key.
-Both routes share the SSD store and extent ownership;
-separate queues do not imply separate hardware bandwidth.
-
-Opt-in cost observations compare enqueue-to-GPU-terminal route totals in shadow,
-including host allocation/read/H2D or GPU staging/scatter/decode. They do not
-select execution or probe an alternative. Dynamic selection and common
-device-pressure scheduling remain future work. See the
-[candidate route contract](state-planning.md#candidate-routes-and-eligibility).
-
-## File capacity
-
-After every cuFile shard registers, the Manager reserves its configured physical
-space with Linux `fallocate` before starting workers. This applies to both
-`auto` selecting cuFile and explicit `cufile`. Insufficient space, quota errors
-or unsupported allocation fail startup with the shard and requested size;
-already reserved startup files are truncated to release space, with cleanup
-errors logged. Capacity failures do not silently select a sparse io_uring cache.
-Choose a capacity that fits the available storage. Explicit io_uring and
-capability fallback retain logical file sizing without upfront reservation.
-
-Preallocation does not prove native GDS. First writes into unwritten extents
-can still need filesystem metadata work; qualify first writes and overwrites
-separately with compatibility disabled and cuFile path statistics. See NVIDIA's
-[write-allocation guidance](https://docs.nvidia.com/gpudirect-storage/o-direct-guide/#block-allocation-for-writes).
-
-## Data flow and ownership
-
-| Operation | Path |
+| Operation | Destination/path |
 | --- | --- |
-| DRAM hit | Pinned DRAM → engine GPU pages |
-| SSD demand with cuFile read route | SSD → registered GPU staging → engine GPU pages |
-| SSD demand with explicit io_uring read route | Same leased SSD generation → pinned DRAM → engine GPU pages |
-| Speculative prepare/warmup | SSD → pinned DRAM; GPU restore after consumption |
-| Complete state group in one Publish | Engine GPU → registered GPU staging → SSD; also retain a hot DRAM copy |
-| Fragmented/multi-writer Publish | Engine GPU → pinned DRAM; seal complete group → io_uring → SSD |
-| Shared-cache remote recovery | Mooncake → pinned DRAM → engine GPU pages |
+| SSD GPU demand | Engine file read → bounded GPU layout slot → scatter/decode into inference pages |
+| SSD host demand or prepare | Engine file read → leased pinned DRAM; restore follows cache policy |
+| Complete GPU publication | Gather/encode → engine file write; retain a hot DRAM copy |
+| Fragmented publication | Seal complete state in DRAM → engine file write |
+| Peer GPU restore | Engine remote READ directly into GPU pages or bounded codec inputs |
 
-Candidate discovery remains metadata-only. A selected demand using cuFile or an
-explicit SSD read route acquires an extent lease before reading bytes. Default
-io_uring queries retain their existing host-prefetch behavior. The compiled
-recovery requirements still select the necessary windows and checkpoints. The
-lease pins the source against ring overwrite until all query/GPU interests are
-released. Cancellation, expiry and session teardown release unconsumed interests;
-submitted restores keep their interests until completion.
+The temporary `storage/ssd/gpu.rs` layout owner has two 4 MiB slots per
+instance/device. A2 replaces gather/scatter with engine vectored requests.
+The engine owns storage staging, native registrations, queues and completions.
+OrbitKV retains layout, codec and extent owners through those completions and
+through the final CUDA scatter event. Local GPU↔DRAM migration is a separate step.
 
-Rust validates source segment sizes, slot offsets and GPU destinations before
-issuing I/O. On the cuFile route, adjacent ranges from different source leases in the same file are
-merged into reads of at most **4 MiB** with **4 KiB** aligned boundaries. Different
-files and unrequested aligned gaps stay separate. The worker retains the entire
-restore task, keeping every source lease alive until GPU completion; it never
-uses one representative lease to protect other extents. Existing 512-byte storage segments can cause edge
-overread; only actual component bytes are scattered into engine pages. Large
-recurrent checkpoints are split across the bounded staging buffer.
+Each store admits 32 file operations, including retained work, with at most
+64 MiB and 16,384 descriptors per operation. Host offsets preserve 512-byte
+alignment; GPU layouts use 4 KiB alignment. A failed or short READ never becomes
+a cache hit. Only a complete successful WRITE publishes metadata. Unknown drain
+keeps the fd, actual backing, extent lease and admission charge until process
+exit; failed cleanup is never retried. Deadline, cancellation and dropped
+receivers do not authorize reuse.
 
-Each instance/device lazily creates one SSD worker with **two registered 4 MiB
-slots**, each with its own CUDA stream and completion event. It submits
-`cuFileReadAsync` / `cuFileWriteAsync` and polls completion without waiting for a
-whole storage job. At most two batches are in flight, including at most one write,
-leaving a slot for demand reads. Jobs rotate after each batch; after four read
-submissions a waiting write gets the next available opportunity. This bounds
-starvation by submissions, not elapsed time, and does not preempt DMA. Ordinary
-DRAM transfers retain their separate workers; hardware bandwidth remains shared.
-Reserve the total **8 MiB per instance/device** in the engine's memory budget;
-it is outside `--pool-size`. Slots are reused until the worker drains. Query
-reservations still charge logical source bytes under the existing query budget,
-even when those bytes remain on SSD. Queued reads use those existing byte
-budgets; there is no additional read-job count limit.
+Layout coalescing preserves each source generation and excludes unrequested
+aligned gaps. GPU publication remains bounded to eight queued/active jobs and
+one active write per worker. Saturation uses ordinary host publication for
+unsubmitted work. Explicit GPU restore errors retain their error semantics.
+Opt-in route costs remain observational; they do not change execution.
 
-At most **eight GPU write jobs** can be queued or active per instance/device.
-Admission exhaustion rolls back unsubmitted GPU extents and uses ordinary D2H
-publication with bounded io_uring writeback. A permit stays owned until the
-GPU job terminates. Mixed-load H2D and hot-copy D2H preparation enqueue on the
-worker's stream and retain a per-job CUDA event. SSD submission and completion
-polling continue while those copies run. Each job keeps its pages until both
-its host-copy event and storage work complete; a later job's copy does not extend
-an earlier job's completion fence.
+## Qualification
 
-Before GPU writeback, Rust reserves an unpublished, 4 KiB aligned SSD extent.
-Each chunk gathers only valid source bytes and zeroes padding, then completes
-asynchronous cuFile I/O before reusing staging. The complete object becomes queryable only
-after all chunks finish. Failed or short writes abort the reservation; other
-completed objects remain valid. Publish retains the source pages until D2H and
-SSD work finish, including after a caller wait deadline. This extends page hold
-time versus asynchronous DRAM writeback.
+Run the two explicit `ssd_engine` GPU byte gates from
+[the transport guide](transport.md#ssd-file-transfers) with
+`ORBITKV_SSD_TEST_ENGINE=tent` or `orbitte`, the matching build features and a
+test-owned directory on the qualification SSD. The broader `cufile` integration
+tests cover layouts, codec inputs, cancellation and extent lifetime under native
+GDS; compatibility-mode qualification of the removed implementation does not
+qualify these engines. Do not run Cargo native builds while a serving process
+has the staged libraries mapped.
 
-Direct writes require all slots of a storage group in the same Publish.
-Fragmented layers and multi-writer TP/PP groups assemble in DRAM and keep
-io_uring writeback. Both forms can subsequently restore through cuFile.
-The existing `all`/`reuse` admission policy still applies. Optional
-[GPU storage encoding](storage-formats.md) also supports direct cuFile payloads.
-Complete groups that fit one codec batch write encoded GPU bytes through a
-reusable 4 MiB registered slot. An independent bounded writeback lane retains
-the codec arena until disk completion; demand reads and host publication can
-continue. Fragmented groups, CPU encoding and oversized batches use io_uring
-writeback. A compressed pinned-DRAM copy remains available for hot reuse.
+Preserve native-route evidence from the same installed run: cuFile logs or
+nvidia-fs/PCI P2PDMA counters, successful byte checks, device topology, budgets,
+first-write/overwrite behavior and drain results. Compare with engine io_uring
+using equal layouts and cache policy before claiming a performance advantage.
+GPU, RDMA and GDS profiles remain unqualified without that installed evidence.
 
-Encoded demand reads use the two existing cuFile slots to assemble a bounded
-GPU input. A decoder validates CRC32 on GPU before decompressing into engine
-pages. Its retained input plus codec scratch share the configured codec budget.
-The I/O queue continues polling other requests while the decoder runs. Mixed
-raw/encoded prefixes use the same extent leases; a failed encoded generation
-cannot be reused or overwritten while another lease still owns it. Small codec
-budgets that cannot stage a segment select the host reader. Speculative warming
-continues through DRAM. Compression remains disabled by default.
-
-Each slot retains address-stable size/offset/result storage and a registered
-file reference until its completion event. Submission success alone never
-accepts data: Rust checks the completed byte count before scatter or publication.
-A second event proves read scatter has completed before reusing staging or
-reporting completion. Short/failed reads fail the restore. Partial submission
-errors drain their stream; other submitted batches retain ownership until they
-complete. A closed completion consumer stops unsubmitted work, then drains
-submitted batches. Canceling a query after restore submission does not revoke
-that restore's ownership or completion. Unregister waits for every worker and
-deregisters streams/buffers before releasing engine mappings.
-
-A ring reservation that would overwrite an
-active read or write tries the other shards, then drops the write if none has
-space. It does not block the directory. SSD remains a best-effort cache recreated
-at Manager startup.
-
-## Copy avoidance and remote storage
-
-Optimize request completion time and retained resources alongside copy count.
-The native cuFile path avoids host staging for SSD demand reads. OrbitKV still
-uses a registered GPU staging buffer and D2D scatter/gather to handle engine
-layouts and alignment. Direct I/O into registered engine pages is a separate,
-unimplemented optimization: it needs compatible offsets/sizes, reusable memory
-registration, engine-page lifetime protection and a comparison against coalesced
-staging. Many small direct operations can cost more than a larger staged read.
-
-| Source and destination | Relevant mechanism | OrbitKV status |
-| --- | --- | --- |
-| Local SSD ↔ GPU | GDS/cuFile | Bounded GPU staging implemented; direct engine-page I/O pending |
-| Remote shared-cache memory ↔ GPU | GPUDirect RDMA through a transport such as Mooncake TE | Manager recovery lands in requester DRAM before GPU restore; direct engine destinations are pending |
-| Prefill GPU → decode GPU | Mooncake TE memory transport; GPUDirect RDMA on supported hardware | Experimental vLLM P/D connector writes engine GPU pages; GPU and cross-host qualification pending |
-| Remote storage filesystem or mounted NVMe-oF ↔ GPU | GDS with a supported filesystem/network/storage stack | Separate deployment and qualification; not enabled by the current peer-memory path |
-
-The pinned Mooncake TE includes an NVMe-oF transport that registers buffers with
-cuFile and submits cuFile batch I/O. This is distinct from its RDMA memory
-transport. The OrbitKV Manager registers its pinned DRAM pool and fetches remote
-state into that pool; using Mooncake does not implicitly enable its storage
-transport. Remote GDS requires an accessible storage namespace and a qualified
-filesystem, network and GPU path. See the pinned
-[NVMe-oF implementation](https://github.com/kvcache-ai/Mooncake/blob/719735896c86b56fabec6cf3e825fb2ea640597a/mooncake-transfer-engine/src/transport/nvmeof_transport/nvmeof_transport.cpp).
-
-Direct placement in engine HBM can remove an extra GPU staging allocation and
-D2D scatter when source and destination layouts match. The KV state still
-occupies HBM, and destination pages must remain reserved until completion,
-including after cancellation. CUDA IPC only shares access to an allocation;
-sharing a handle does not itself move data. The
-[native P/D path](pd.md) uses each official engine's transport and ownership;
-its direct GPU transfer does not qualify shared-cache direct placement. Direct placement in that shared-cache path is a follow-up to
-qualify independently from the host-staged peer SSD route.
-
-GDS does not schedule requests or select reusable model state. Recovery planning
-selects the required ranges; the storage/transfer owners choose a viable data
-path and keep leases until it completes. A future request-level selector should
-measure queue delay, registration cost, I/O count, bytes/alignment amplification,
-GPU scatter cost, source-page hold time and deadline. Use bounded concurrency,
-read priority and hysteresis before changing paths based on latency. Those
-policies require matched native hardware measurements; they are not inferred
-from successful driver loading.
-
-See [NVIDIA's buffering guidance](https://docs.nvidia.com/gpudirect-storage/best-practices-guide/index.html)
-and [Mooncake's transport design](https://github.com/kvcache-ai/Mooncake/blob/main/docs/source/design/transfer-engine/index.md).
-
-## Review against LMCache
+## Historical review against LMCache
 
 Reviewed on 2026-09-24 against LMCache **v0.5.5**, commit
 `05a013b29da78cf2321b9b46ec5039dde2fb0bb0`. Its
@@ -271,7 +101,7 @@ and retains asynchronous submissions behind per-stream GPU events. Its
 [cuFile binding](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/gpu_connector/_cufile_async.py)
 uses `cuFileStreamRegister`, `cuFileReadAsync` and `cuFileWriteAsync`.
 
-| Concern | LMCache MP reference | Current OrbitKV |
+| Concern | LMCache MP reference | OrbitKV at the historical review |
 | --- | --- | --- |
 | GPU registration | Reusable staging, registered in regions of at most 16 MiB | Two reusable registered 4 MiB slots per instance/device |
 | File allocation | Preallocates its slab with `posix_fallocate` | Native `fallocate` reserves all GPU-storage shards before admission; allocation errors fail startup and release partial reservations |
@@ -301,58 +131,13 @@ Physical allocation, cross-lease read coalescing, bounded asynchronous submissio
 and read/write scheduling are implemented. They do not establish a measured
 native-GDS performance advantage. Benchmark both
 engines with matched DRAM/SSD capacities, HBM budgets, working sets and native-I/O
-statistics. Shared-cache direct engine-page I/O remains a separate later step.
+statistics. Direct peer GPU placement is implemented separately and remains hardware-unqualified.
 
-## Enable and qualify
+## Historical native SSD qualification
 
-Install NVIDIA's GDS user-space library on the Manager and provide a supported
-storage mount and compatible host driver/kernel configuration. Ordinary io_uring
-deployments do not load cuFile. Explicit `cufile` selection fails startup on
-library/file registration errors; GPU buffer registration errors fail the
-operation. Default `auto` instead logs capability fallback and disables new
-cuFile admission after an operation failure as described above. GPU-storage
-capacity reservation errors fail startup in both modes.
-
-For native qualification, explicitly disallow compatibility mode:
-
-```bash
-CUFILE_ALLOW_COMPAT_MODE=false CUFILE_FORCE_COMPAT_MODE=false \
-orbitkv-cache-manager --pool-size 8gb \
-  --ssd-cache-path /mnt/nvme/orbitkv/cache.bin \
-  --ssd-cache-capacity 100gb --ssd-backend cufile
-```
-
-Check the target mount with NVIDIA's `gdscheck.py -p` and `gdsio`, then inspect cuFile
-statistics for actual reads. Library installation, file registration or an
-OrbitKV cuFile byte counter alone is not native-path evidence. Local NVMe GDS
-does not need a network RDMA adapter. Containers require suitable host mounts,
-devices and kernel support; newer NVMe PCI P2PDMA configurations can operate
-without `nvidia_fs`.
-
-Run the explicit GPU gate with no serving process active during Cargo builds:
-
-```bash
-mkdir -p /mnt/nvme/orbitkv-tests
-TMPDIR=/mnt/nvme/orbitkv-tests \
-CUFILE_ALLOW_COMPAT_MODE=false CUFILE_FORCE_COMPAT_MODE=false \
-cargo test --release -p orbitkv-core --no-default-features \
-  --features cuda-13,mooncake --test cufile -- --ignored --test-threads=1
-```
-
-For functional development, set both cuFile environment values to `true` and
-choose a writable mount on which cuFile can register files. Compatibility mode
-does not make every mount usable: this container's `/tmp` ext4 mount fails file
-registration, while `/workspace` overlay works in forced compatibility mode.
-Set `TMPDIR` accordingly; for pytest, set `--basetemp` on that same mount. Record
-this as **cuFile compatibility-mode correctness**, not native GDS performance.
-The gate covers split/page-first layouts, unaligned components, checkpoints
-larger than staging, ring pinning, cross-shard progress, cancellation and
-short-read failure recovery. It also covers fragmented publication sealing
-and restoring its io_uring-written payload through cuFile.
-The Manager process gate additionally checks actual cuFile call counts, exact
-selected bytes and lease retention during canceled coalesced reads, including
-separate files and unrequested gaps. Rust file tests verify physical allocation
-and rollback after a later shard fails.
+The following commands and results describe the removed native SSD implementation
+and remain as evidence references. Current engine-file gates are linked above;
+compatibility-mode runs below do not apply to the native-only engine GDS profile.
 
 The development serving gates use **cuFile 1.16.1 from CUDA 13.1**. Their Torch
 2.13/cu130 environments preload cuFile 1.15.1.6, which fails to register this

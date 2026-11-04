@@ -138,7 +138,7 @@ pub(crate) struct CoreMetrics {
     pub ssd_write_admission_skips: Counter<u64>,
     pub ssd_write_inflight: UpDownCounter<i64>,
 
-    pub ssd_uring_read_operations: Counter<u64>,
+    pub ssd_engine_read_batches: Counter<u64>,
     pub ssd_prefetch_bytes: Counter<u64>,
     pub ssd_prefetch_duration_seconds: Histogram<f64>,
     pub ssd_prefetch_success: Counter<u64>,
@@ -566,17 +566,17 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
             storage_codec_seconds: meter.f64_histogram("orbitkv_storage_codec_duration")
                 .with_description("GPU codec and memory transfer duration, including CPU fallback").with_unit("s")
                 .with_boundaries(duration_seconds_boundaries()).build(),
-            ssd_backend_fallbacks: meter.u64_counter("orbitkv_ssd_backend_fallbacks").with_description("Automatic transitions from cuFile to io_uring; startup or runtime failures").build(),
-            ssd_cufile_write_bytes: meter.u64_counter("orbitkv_ssd_cufile_write_bytes").with_description("Bytes written by cuFile including alignment; does not prove native GDS").build(),
+            ssd_backend_fallbacks: meter.u64_counter("orbitkv_ssd_backend_fallbacks").with_description("Automatic GPU layout admission disabled after failures").build(),
+            ssd_cufile_write_bytes: meter.u64_counter("orbitkv_ssd_cufile_write_bytes").with_description("GPU file-route bytes including alignment; engine staging or GDS").build(),
             ssd_cufile_write_failures: meter.u64_counter("orbitkv_ssd_cufile_write_failures").with_description("Failed or short cuFile writes").build(),
             ssd_cufile_write_seconds: meter.f64_histogram("orbitkv_ssd_cufile_write").with_unit("s").with_description("Asynchronous cuFile write completion latency including GPU gather and polling").build(),
             ssd_read_pinned_bytes: meter.i64_up_down_counter("orbitkv_ssd_read_pinned_bytes").with_description("SSD bytes pinned by restore source leases").build(),
             ssd_cufile_inflight_batches: meter.i64_up_down_counter("orbitkv_ssd_cufile_inflight_batches").with_description("GPU storage batches owning a staging slot until I/O and scatter complete").build(),
             ssd_gpu_read_fallbacks: meter.u64_counter("orbitkv_ssd_gpu_read_fallbacks").with_description("Automatic cuFile restores falling back to io_uring when another instance owns device staging").build(),
             ssd_gpu_write_fallbacks: meter.u64_counter("orbitkv_ssd_gpu_write_fallbacks").with_description("GPU write batches falling back to host publication after bounded admission fills").build(),
-            ssd_gpu_staging_bytes: meter.i64_up_down_counter("orbitkv_ssd_gpu_staging_bytes").with_description("Registered GPU staging bytes owned by cuFile workers").build(),
+            ssd_gpu_staging_bytes: meter.i64_up_down_counter("orbitkv_ssd_gpu_staging_bytes").with_description("GPU layout-slot bytes; separate from engine staging").build(),
             ssd_pinned_write_skips: meter.u64_counter("orbitkv_ssd_pinned_write_skips").with_description("SSD reservations rejected to protect readers or in-flight writes").build(),
-            ssd_cufile_read_bytes: meter.u64_counter("orbitkv_ssd_cufile_read_bytes").with_description("Bytes read by cuFile including alignment; does not prove native GDS").build(),
+            ssd_cufile_read_bytes: meter.u64_counter("orbitkv_ssd_cufile_read_bytes").with_description("GPU file-route bytes including alignment; engine staging or GDS").build(),
             ssd_cufile_read_failures: meter.u64_counter("orbitkv_ssd_cufile_read_failures").with_description("Failed or short cuFile reads").build(),
             ssd_cufile_read_seconds: meter.f64_histogram("orbitkv_ssd_cufile_read").with_unit("s").with_description("Asynchronous cuFile read completion latency including GPU scatter and polling").build(),
             ssd_write_bytes: meter
@@ -618,9 +618,9 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .with_description("Current in-flight SSD write operations")
                 .build(),
 
-            ssd_uring_read_operations: meter
-                .u64_counter("orbitkv_ssd_uring_read_operations")
-                .with_description("Successfully queued io_uring READV SQEs; not physical NVMe commands")
+            ssd_engine_read_batches: meter
+                .u64_counter("orbitkv_ssd_engine_read_batches")
+                .with_description("Successfully completed engine file READ batches; not native SQEs or NVMe commands")
                 .build(),
             ssd_prefetch_bytes: meter
                 .u64_counter("orbitkv_ssd_prefetch_bytes")

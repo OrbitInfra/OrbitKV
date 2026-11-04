@@ -413,7 +413,7 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
         if channel_server.ssd_cache_path:
             for name in (
                 "orbitkv_ssd_prefetch_bytes_total",
-                "orbitkv_ssd_uring_read_operations_total",
+                "orbitkv_ssd_engine_read_batches_total",
             ):
                 assert name in after_restore and after_restore[name] > before_restore.get(name, 0)
         worker.unregister_context()

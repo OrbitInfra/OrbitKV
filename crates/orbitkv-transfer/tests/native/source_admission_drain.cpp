@@ -51,6 +51,8 @@ tent_engine_t make_engine() {
            {"transports/shm/enable", "false"},
            {"transports/nvlink/enable", "false"},
            {"transports/mnnvl/enable", "false"},
+           {"transports/io_uring/enable", "false"},
+           {"transports/gds/enable", "false"},
            {"enable_auto_failover_on_poll", "false"},
            {"enable_runtime_queue", "false"},
            {"transports/tcp/max_retry_count", "0"},

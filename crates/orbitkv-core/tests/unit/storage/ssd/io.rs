@@ -21,13 +21,22 @@ fn unknown_drain_retains_actual_owners_and_exhausts_admission() {
     assert!(admit(&admission).is_ok());
 }
 
-#[cfg(feature = "orbitte")]
-mod orbitte {
+pub(in crate::storage::ssd) fn queued_io() -> SsdIo {
+    // Metadata/queue controls never start a reader or submit byte I/O.
+    SsdIo {
+        files: Vec::new(),
+        cost_resource: ExecutionResource::SsdStore(resource_id(&"queued SSD")),
+    }
+}
+
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+mod engine {
     use super::*;
     use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
     use crate::memory::numa::NumaNode;
     use crate::storage::Storage;
-    use crate::storage::ssd::{SsdBackend, SsdCacheConfig, SsdIoEngine};
+    use crate::storage::ssd::{SsdBackend, SsdCacheConfig};
+    use crate::transfer_engine::{Permission, Registration};
     use std::num::{NonZeroU64, NonZeroUsize};
     use std::os::unix::fs::FileExt;
 
@@ -42,24 +51,30 @@ mod orbitte {
         File::open(format!("/proc/self/fd/{}", file.as_raw_fd())).unwrap()
     }
 
+    fn selected_backend() -> crate::PeerTransferBackend {
+        match std::env::var("ORBITKV_SSD_TEST_ENGINE").as_deref() {
+            Ok("tent") => crate::PeerTransferBackend::Mooncake,
+            Ok("orbitte") => crate::PeerTransferBackend::OrbitTeTcp,
+            _ => panic!("select the tested engine with ORBITKV_SSD_TEST_ENGINE=tent|orbitte"),
+        }
+    }
+
     fn storage(path: PathBuf, capacity: u64, shards: usize) -> Arc<Storage> {
         assert_eq!(
             std::env::var("ORBITKV_REQUIRE_ENGINE_SSD").as_deref(),
             Ok("1"),
             "run this real-file gate explicitly with ORBITKV_REQUIRE_ENGINE_SSD=1 and the CPU host-registration fixture"
         );
-        io_uring::IoUring::new(2).expect("required kernel io_uring facility is unavailable");
         Storage::new_with_config(
             256 << 10,
             false,
             crate::EngineConfig {
-                peer_transfer_backend: crate::PeerTransferBackend::OrbitTeTcp,
+                peer_transfer_backend: selected_backend(),
                 ssd_cache_config: Some(SsdCacheConfig {
                     cache_paths: vec![path],
                     capacity_bytes: capacity,
                     shards: NonZeroUsize::new(shards).unwrap(),
                     backend: SsdBackend::Uring,
-                    io_engine: SsdIoEngine::Transfer,
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -99,12 +114,12 @@ mod orbitte {
 
     #[tokio::test]
     #[ignore = "real Linux file I/O plus CPU host-registration fixture; CI requires this gate"]
-    async fn orbitte_files_preserve_bytes_metadata_shards_and_leased_generations() {
+    async fn engine_files_preserve_bytes_metadata_shards_and_leased_generations() {
         let dir = directory();
         let storage = storage(dir.path().to_path_buf(), 2048, 2);
         let store = storage.ssd_store.as_ref().unwrap();
         assert!(
-            matches!(store.io.backend, Backend::Transfer(_)),
+            store.io.engine_file(0).is_some(),
             "standalone SSD must create the selected engine without a global index"
         );
         let mut held = Vec::new();
@@ -173,7 +188,7 @@ mod orbitte {
 
     #[tokio::test]
     #[ignore = "real Linux file I/O plus CPU host-registration fixture; CI requires this gate"]
-    async fn orbitte_files_reject_misalignment_and_truncated_files() {
+    async fn engine_files_reject_misalignment_and_truncated_files() {
         let dir = directory();
         let storage = storage(dir.path().join("cache.bin"), 4096, 1);
         let store = storage.ssd_store.as_ref().unwrap();
@@ -231,7 +246,7 @@ mod orbitte {
         );
         assert_eq!(store._files[0].metadata().unwrap().len(), 4096);
         store._files[0].set_len(512).unwrap();
-        let destination = allocation(&storage, 1024, 0xa5);
+        let destination = allocation(&storage, 2048, 0xa5);
         let read = TransferSlice {
             local: destination.mapped_ptr().host(),
             remote_address: 0,
@@ -242,29 +257,31 @@ mod orbitte {
             .await
             .unwrap()
             .unwrap_err();
-        assert_eq!(
-            error.kind,
-            ErrorKind::InvalidRequest,
-            "OrbitTE refreshes file size before admitting each request"
-        );
-        // SAFETY: the truncated range was rejected before touching this destination.
+        // The native file owner pins its admitted length; OrbitTE refreshes it.
         let bytes =
-            unsafe { std::slice::from_raw_parts(destination.mapped_ptr().host().as_ptr(), 1024) };
-        assert!(bytes.iter().all(|&byte| byte == 0xa5));
+            unsafe { std::slice::from_raw_parts(destination.mapped_ptr().host().as_ptr(), 2048) };
+        if selected_backend() == crate::PeerTransferBackend::Mooncake {
+            assert_eq!(error.kind, ErrorKind::Backend);
+            assert_eq!(&bytes[..512], &[0x47; 512]);
+            assert!(error.message.contains("512 bytes"), "{error}");
+            // O_DIRECT can zero the requested suffix beyond a short result.
+            // Only the returned prefix is valid; bytes outside the request stay intact.
+            assert_eq!(&bytes[1024..], &[0xa5; 1024]);
+        } else {
+            assert_eq!(error.kind, ErrorKind::InvalidRequest);
+            assert_eq!(bytes, &[0xa5; 2048]);
+        }
         assert_eq!(file.admission.available_permits(), MAX_OPERATIONS);
     }
 
     #[tokio::test]
     #[ignore = "real Linux file I/O plus CPU host-registration fixture; CI requires this gate"]
-    async fn orbitte_files_cancel_before_submit_and_drain_detached_receivers() {
+    async fn engine_files_cancel_before_submit_and_drain_detached_receivers() {
         let dir = directory();
         let storage = storage(dir.path().join("cache.bin"), 4096, 1);
         let store = storage.ssd_store.as_ref().unwrap();
         let file = store.io.engine_file(0).unwrap();
         let source = allocation(&storage, 512, 0x69);
-        let mut registration = Arc::clone(&file.backend)
-            .register_pinned(&[Arc::clone(&source)], Permission::LocalOnly)
-            .unwrap();
         let slices = [TransferSlice {
             local: source.mapped_ptr().host(),
             remote_address: 0,
@@ -282,11 +299,15 @@ mod orbitte {
         ] {
             // SAFETY: registration and backing are held, and this destination is exclusively owned.
             let error = unsafe {
-                file.backend.transfer_file(
+                Arc::clone(&file.backend).transfer_file(
                     TransferOp::Write,
                     &file.segment,
                     FileTransport::IoUring,
-                    &slices,
+                    Arc::new(FileTransfer {
+                        slices: slices.to_vec(),
+                        memory: FileMemory::Pinned(vec![Arc::clone(&source)]),
+                        _lease: Arc::new(Arc::clone(&file)),
+                    }),
                     deadline,
                     cancellation,
                 )
@@ -299,8 +320,6 @@ mod orbitte {
             .read_exact_at(&mut disk, 0)
             .unwrap();
         assert_eq!(disk, [0; 512]);
-        // SAFETY: both rejected requests were never admitted.
-        unsafe { file.backend.unregister(&mut registration) }.unwrap();
         // An engine segment must remain bound to the opened inode after rename.
         let path = dir.path().join("cache.bin");
         std::fs::rename(&path, dir.path().join("original.bin")).unwrap();
@@ -338,12 +357,16 @@ mod orbitte {
             "path replacement must not redirect file I/O"
         );
         assert_eq!(file.admission.available_permits(), MAX_OPERATIONS);
+        if selected_backend() == crate::PeerTransferBackend::Mooncake {
+            file.backend
+                .shutdown(Instant::now() + Duration::from_secs(1))
+                .unwrap();
+        }
     }
 
     struct Fault {
         real: Arc<dyn TransferBackend>,
         kind: ErrorKind,
-        cleanup: bool,
         short: bool,
         calls: std::sync::atomic::AtomicUsize,
     }
@@ -379,12 +402,6 @@ mod orbitte {
             ))
         }
         unsafe fn unregister(&self, registration: &mut Registration) -> Result<(), TransferError> {
-            if self.cleanup {
-                return Err(TransferError::new(
-                    ErrorKind::Unquiesced,
-                    "injected cleanup uncertainty",
-                ));
-            }
             // SAFETY: the caller established drain, and this delegates the actual registration.
             unsafe { self.real.unregister(registration) }
         }
@@ -421,21 +438,21 @@ mod orbitte {
             self.real.close_file(file, deadline)
         }
         unsafe fn transfer_file(
-            &self,
+            self: Arc<Self>,
             operation: TransferOp,
             file: &FileSegment,
             transport: FileTransport,
-            slices: &[TransferSlice],
+            transfer: Arc<FileTransfer>,
             deadline: Instant,
             cancel: &Cancellation,
         ) -> Result<usize, TransferError> {
             self.calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if self.cleanup || self.short {
+            if self.short {
                 // SAFETY: this forwards the unchanged, registered descriptors and owners.
                 unsafe {
-                    self.real
-                        .transfer_file(operation, file, transport, slices, deadline, cancel)
+                    Arc::clone(&self.real)
+                        .transfer_file(operation, file, transport, transfer, deadline, cancel)
                 }
                 .map(|bytes| if self.short { bytes / 2 } else { bytes })
             } else {
@@ -446,13 +463,12 @@ mod orbitte {
 
     #[tokio::test]
     #[ignore = "isolated retained-owner control; intentionally retains bounded owners until process exit"]
-    async fn orbitte_files_unknown_drain_and_cleanup_keep_real_extents_and_backing() {
+    async fn engine_files_unknown_drain_keeps_real_extents_and_backing() {
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-        for (kind, cleanup, short, retained) in [
-            (ErrorKind::Timeout, false, false, false),
-            (ErrorKind::Unquiesced, false, false, true),
-            (ErrorKind::Backend, true, false, true),
-            (ErrorKind::Backend, false, true, false),
+        for (kind, short, retained) in [
+            (ErrorKind::Timeout, false, false),
+            (ErrorKind::Unquiesced, false, true),
+            (ErrorKind::Backend, true, false),
         ] {
             let dir = directory();
             let storage = storage(dir.path().join("cache.bin"), 512, 1);
@@ -461,7 +477,6 @@ mod orbitte {
             let backend = Arc::new(Fault {
                 real: Arc::clone(&real.backend),
                 kind,
-                cleanup,
                 short,
                 calls: AtomicUsize::new(0),
             });

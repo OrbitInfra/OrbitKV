@@ -1,5 +1,6 @@
 mod engine;
 mod error;
+pub mod files;
 mod notification;
 mod types;
 

@@ -119,7 +119,7 @@ orbitkv/
 - `crates/orbitkv-core/src/memory/`: NUMA, allocations and pools
 - `crates/orbitkv-core/src/transfer/`: GPU layouts, copy backends and worker ownership
 - `crates/orbitkv-core/src/codec/`: GPU ANS/FP8/TurboQuant and bounded representation validation
-- `crates/orbitkv-core/src/storage/ssd/`: SSD index, io_uring and optional cuFile read/write
+- `crates/orbitkv-core/src/storage/ssd/`: SSD index, extents and engine file-transfer plans
 - `crates/orbitkv-core/src/storage/mod.rs`: residency assembly and pinned-memory reclamation
 - `crates/orbitkv-core/src/storage/dram/`: DRAM residency, policy and inventory
 - `crates/orbitkv-core/src/storage/publish.rs`: queued sealing and DRAM/SSD publication

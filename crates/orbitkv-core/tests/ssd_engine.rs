@@ -1,26 +1,28 @@
 //! Explicit GPU byte gates. Compilation is not hardware qualification.
-#![cfg(feature = "orbitte")]
+#![cfg(any(feature = "mooncake", feature = "orbitte"))]
 mod common;
 
 use common::TestEnvBuilder;
-use orbitkv_core::{
-    EngineConfig, PeerTransferBackend, RestoreSource, SsdBackend, SsdCacheConfig, SsdIoEngine,
-};
+use orbitkv_core::{EngineConfig, PeerTransferBackend, RestoreSource, SsdBackend, SsdCacheConfig};
 
 async fn roundtrip(backend: SsdBackend) {
+    let engine = match std::env::var("ORBITKV_SSD_TEST_ENGINE").as_deref() {
+        Ok("tent") => PeerTransferBackend::Mooncake,
+        Ok("orbitte") => PeerTransferBackend::OrbitTeTcp,
+        _ => panic!("set ORBITKV_SSD_TEST_ENGINE=tent|orbitte"),
+    };
     let root = std::env::var_os("ORBITKV_SSD_TEST_ROOT")
         .expect("set a test-owned directory on the qualification SSD");
     let directory = tempfile::tempdir_in(root).unwrap();
-    let env = TestEnvBuilder::new("orbitte-file-gpu", "orbitte-file-gpu")
+    let env = TestEnvBuilder::new("engine-file-gpu", "engine-file-gpu")
         .layer("attention", 3, 4096)
         .split_layer("split", 3, 4096, 3 * 4096)
         .pool_size(1 << 20)
         .storage(EngineConfig {
-            peer_transfer_backend: PeerTransferBackend::OrbitTeTcp,
+            peer_transfer_backend: engine,
             ssd_cache_config: Some(SsdCacheConfig {
                 cache_paths: vec![directory.path().join("cache.bin")],
                 capacity_bytes: 1 << 20,
-                io_engine: SsdIoEngine::Transfer,
                 backend,
                 ..Default::default()
             }),
@@ -60,12 +62,11 @@ async fn roundtrip(backend: SsdBackend) {
 }
 
 #[tokio::test]
-#[ignore = "requires CUDA 13 and a Linux SSD; run the documented OrbitTE GPU storage gate"]
+#[ignore = "requires CUDA 13 and a Linux SSD; run the documented engine GPU storage gate"]
 async fn cuda_staged_file_roundtrip() {
     roundtrip(SsdBackend::Auto).await;
 }
 
-#[cfg(feature = "orbitte-gds")]
 #[tokio::test]
 #[ignore = "requires CUDA 13 and native-only GDS; preserve cuFile/nvidia-fs route evidence separately"]
 async fn native_gds_file_roundtrip() {
