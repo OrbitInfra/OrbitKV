@@ -1,6 +1,11 @@
 //! Deferred source grants for GPU restores. DRAM-cache fills use `read` instead.
 
-use std::{ptr::NonNull, sync::Arc, time::Instant};
+use std::{
+    panic::{AssertUnwindSafe, catch_unwind},
+    ptr::NonNull,
+    sync::Arc,
+    time::Instant,
+};
 
 use super::{
     completion::TransferLockGuard,
@@ -11,8 +16,8 @@ use super::{
 };
 use crate::planning::peer::{FetchPlan, FetchSegment};
 use crate::transfer_engine::{
-    Cancellation, ErrorKind, PeerTransferError, Permission, TransferBackend, TransferOp,
-    TransferSlice,
+    Cancellation, ErrorKind, PeerTransferError, Permission, TransferBackend, TransferError,
+    TransferOp, TransferSlice,
 };
 use crate::{SlotMeta, block::StateKey, memory::numa::NumaNode};
 
@@ -117,41 +122,61 @@ impl PeerRestoreBlock {
                 .ok()
                 .and_then(|p| NonNull::new(p as *mut u8))
                 .ok_or_else(|| PeerTransferError::Failed("invalid GPU destination".into()))?;
-            // SAFETY: the caller lends this actual backing exclusively through drain.
-            let mut registration = unsafe {
-                Arc::clone(&grant.transfer).register_cuda(
-                    address,
-                    bytes,
-                    device,
-                    Arc::clone(&owner),
-                    Permission::LocalOnly,
-                )
-            }?;
-            // SAFETY: the registration and source ticket outlive the READ.
-            let result = unsafe {
-                grant.transfer.transfer(
-                    TransferOp::Read,
-                    &peer,
-                    &[TransferSlice {
-                        local: ptr,
-                        remote_address,
-                        length: bytes,
-                    }],
-                    grant.deadline,
-                    &Cancellation::default(),
-                )
+            let mut registration = match catch_unwind(AssertUnwindSafe(|| {
+                // SAFETY: the caller lends this actual backing exclusively through drain.
+                unsafe {
+                    Arc::clone(&grant.transfer).register_cuda(
+                        address,
+                        bytes,
+                        device,
+                        Arc::clone(&owner),
+                        Permission::LocalOnly,
+                    )
+                }
+            })) {
+                Ok(Ok(registration)) => registration,
+                Ok(Err(error)) if error.kind != ErrorKind::Unquiesced => {
+                    return Err(error.into());
+                }
+                uncertain => {
+                    std::mem::forget((uncertain, Arc::clone(grant), owner));
+                    return Err(PeerTransferError::Unquiesced);
+                }
             };
-            // Unregister is a physical cleanup operation; a failure is not a
-            // receipt even when the payload itself finished.
-            let unquiesced = matches!(&result, Err(error) if error.kind == ErrorKind::Unquiesced);
-            // SAFETY: only drained payload outcomes may begin unregister.
-            let cleanup_failed =
-                !unquiesced && unsafe { grant.transfer.unregister(&mut registration) }.is_err();
-            if unquiesced || cleanup_failed {
-                std::mem::forget((registration, Arc::clone(grant), owner));
-                return Err(PeerTransferError::Unquiesced);
-            }
-            let transferred = result.map_err(PeerTransferError::from)?;
+            // Keep the registration outside the unwind boundary: its destructor
+            // must not unregister while a panicking backend may still access it.
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                // SAFETY: the registration and source ticket outlive the READ.
+                let result = unsafe {
+                    grant.transfer.transfer(
+                        TransferOp::Read,
+                        &peer,
+                        &[TransferSlice {
+                            local: ptr,
+                            remote_address,
+                            length: bytes,
+                        }],
+                        grant.deadline,
+                        &Cancellation::default(),
+                    )
+                };
+                if !matches!(&result, Err(error) if error.kind == ErrorKind::Unquiesced) {
+                    // SAFETY: only drained payload outcomes may begin unregister.
+                    unsafe { grant.transfer.unregister(&mut registration) }.map_err(|error| {
+                        TransferError::new(ErrorKind::Unquiesced, error.to_string())
+                    })?;
+                }
+                result
+            }));
+            let transferred = match result {
+                Ok(result) if !matches!(&result, Err(error) if error.kind == ErrorKind::Unquiesced) => {
+                    result.map_err(PeerTransferError::from)?
+                }
+                uncertain => {
+                    std::mem::forget((uncertain, registration, Arc::clone(grant), owner));
+                    return Err(PeerTransferError::Unquiesced);
+                }
+            };
             if transferred != bytes {
                 return Err(PeerTransferError::Failed("short peer GPU READ".into()));
             }

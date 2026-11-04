@@ -13,8 +13,19 @@ pub(crate) struct Control {
     pub(crate) result: Mutex<Option<ErrorKind>>,
     pub(crate) registrations: AtomicUsize,
     pub(crate) reads: AtomicUsize,
+    cleanups: AtomicUsize,
     cleanup_failed: std::sync::atomic::AtomicBool,
+    failure: Mutex<Option<Failure>>,
 }
+
+#[derive(Clone, Copy, Debug)]
+enum Failure {
+    RegistrationPanic,
+    RegistrationUnquiesced,
+    TransferPanic,
+    CleanupPanic,
+}
+
 impl TransferBackend for Control {
     fn transfer_endpoint(&self) -> &str {
         "control"
@@ -41,11 +52,25 @@ impl TransferBackend for Control {
         _: Permission,
     ) -> Result<Registration, TransferError> {
         self.registrations.fetch_add(1, Ordering::SeqCst);
+        match *self.failure.lock().unwrap() {
+            Some(Failure::RegistrationPanic) => panic!("registration panicked"),
+            Some(Failure::RegistrationUnquiesced) => {
+                return Err(TransferError::new(
+                    ErrorKind::Unquiesced,
+                    "registration failed",
+                ));
+            }
+            _ => {}
+        }
         Ok(Registration {
             inner: RegistrationInner::Control(owner),
         })
     }
     unsafe fn unregister(&self, _: &mut Registration) -> Result<(), TransferError> {
+        self.cleanups.fetch_add(1, Ordering::SeqCst);
+        if matches!(*self.failure.lock().unwrap(), Some(Failure::CleanupPanic)) {
+            panic!("cleanup panicked");
+        }
         if self.cleanup_failed.load(Ordering::SeqCst) {
             Err(TransferError::new(ErrorKind::Backend, "cleanup failed"))
         } else {
@@ -79,6 +104,9 @@ impl TransferBackend for Control {
     ) -> Result<usize, TransferError> {
         assert_eq!(op, TransferOp::Read);
         self.reads.fetch_add(1, Ordering::SeqCst);
+        if matches!(*self.failure.lock().unwrap(), Some(Failure::TransferPanic)) {
+            panic!("transfer panicked");
+        }
         if let Some(kind) = *self.result.lock().unwrap() {
             return Err(TransferError::new(kind, "injected"));
         }
@@ -212,6 +240,46 @@ async fn unknown_drain_retains_registration_backing_and_shared_source_grant() {
         1,
         "uncertain READ must not replay"
     );
+}
+
+#[tokio::test]
+async fn backend_unwind_and_registration_uncertainty_retain_owners_without_cleanup_retry() {
+    for (failure, reads, cleanups, retained_owners) in [
+        (Failure::RegistrationPanic, 0, 0, 1),
+        (Failure::RegistrationUnquiesced, 0, 0, 1),
+        (Failure::TransferPanic, 1, 0, 2),
+        (Failure::CleanupPanic, 1, 1, 2),
+    ] {
+        let control = Arc::new(Control::default());
+        *control.failure.lock().unwrap() = Some(failure);
+        let source = source(control.clone(), vec![]);
+        let grant = Arc::downgrade(&source.grant);
+        let owner = Arc::new(Mutex::new(vec![0u8; 16]));
+        let target = owner.lock().unwrap().as_mut_ptr() as u64;
+        let input = [9u8; 16];
+        let backing = Arc::downgrade(&owner);
+        // SAFETY: the control uses disjoint actual host bytes or panics before use.
+        let result = unsafe { source.read_gpu(input.as_ptr() as u64, target, 16, 0, owner) };
+        assert!(
+            matches!(result, Err(PeerTransferError::Unquiesced)),
+            "{failure:?}"
+        );
+        drop(source);
+        assert!(grant.upgrade().is_some(), "{failure:?}");
+        // A returned registration must survive too, not only the caller's Arc.
+        assert_eq!(backing.strong_count(), retained_owners, "{failure:?}");
+        assert_eq!(
+            control.registrations.load(Ordering::SeqCst),
+            1,
+            "{failure:?}"
+        );
+        assert_eq!(control.reads.load(Ordering::SeqCst), reads, "{failure:?}");
+        assert_eq!(
+            control.cleanups.load(Ordering::SeqCst),
+            cleanups,
+            "{failure:?}"
+        );
+    }
 }
 
 #[tokio::test]

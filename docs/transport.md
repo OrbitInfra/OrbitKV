@@ -696,7 +696,7 @@ layout. Native registrations also retain its CUDA context. Pointer-only Rust
 registrations remain usable for existing local paths but explicitly reject peer
 GPU restore; `register_context_layer_batch_strided` takes optional per-layer
 allocation owners for this path. Client page exclusivity lasts until the managed
-completion receipt. Unknown drain or failed unregister retains the whole task,
+completion receipt. Unknown drain, failed unregister or a backend unwind retains the whole task,
 source grants, tensor mappings, query/device budgets and the completion sender.
 The worker is fenced and instance drain fails; no terminal client receipt allows
 page reuse. A timeout or disconnected client cannot turn this into success.
@@ -714,7 +714,7 @@ TENT's interruptible-open/drain limitation described above remains.
 CPU controls exercise the production descriptor and retention boundaries with
 host bytes standing in for GPU backing; these are not CUDA/RDMA qualification.
 They cover page/split layout bounds, missing backing owners, codec shape/budget,
-chunked copies, epoch/deadline rejection, failed unregister, retained source and
+chunked copies, epoch/deadline rejection, failed unregister, backend unwinds, retained source and
 destination owners, and a pending client completion after unknown drain. CI runs
 these under TENT, OrbitTE and both feature sets. The `peer_gpu_restore` cost sample
 is separate from local H2D and HostReady route samples.
