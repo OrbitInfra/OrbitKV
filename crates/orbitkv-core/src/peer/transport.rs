@@ -1,3 +1,5 @@
+mod file;
+
 use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -7,10 +9,10 @@ use orbitkv_transfer::{AUTO_MEMORY_LOCATION, MemoryRegistration, P2P_METADATA, T
 
 use crate::memory::pool::PinnedAllocator;
 use crate::transfer_engine::{
-    Cancellation, ErrorKind, FileMemory, FileSegment, FileSegmentInner, FileTransfer,
-    FileTransport, MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, PeerSegment, Permission,
-    REGISTERED_POOLS, Registration, RegistrationInner, Segment, TransferBackend, TransferError,
-    TransferOp, TransferSlice, remaining, validate_slices,
+    Cancellation, ErrorKind, FileSegment, FileSegmentInner, FileTransfer, FileTransport,
+    MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, PeerSegment, Permission, REGISTERED_POOLS,
+    Registration, RegistrationInner, Segment, TransferBackend, TransferError, TransferOp,
+    TransferSlice, remaining, validate_slices,
 };
 
 struct RetainedSource {
@@ -291,52 +293,8 @@ impl TransferBackend for MooncakeTransport {
         };
         #[cfg(not(feature = "orbitte"))]
         let FileSegmentInner::Tent(file) = &file.inner;
-        let transport = match (&transfer.memory, transport) {
-            (FileMemory::Cuda { context, .. }, transport) => {
-                context
-                    .bind_to_thread()
-                    .map_err(|error| TransferError::new(ErrorKind::Backend, error.to_string()))?;
-                if transport == FileTransport::Gds {
-                    orbitkv_transfer::files::FileTransport::Gds(context.clone())
-                } else {
-                    orbitkv_transfer::files::FileTransport::IoUring
-                }
-            }
-            (FileMemory::Pinned(_), FileTransport::IoUring) => {
-                orbitkv_transfer::files::FileTransport::IoUring
-            }
-            _ => {
-                return Err(TransferError::new(
-                    ErrorKind::InvalidRequest,
-                    "native GDS requires CUDA memory",
-                ));
-            }
-        };
-        let slices = transfer
-            .slices
-            .iter()
-            .map(|slice| orbitkv_transfer::TransferSlice {
-                local: slice.local,
-                remote_address: slice.remote_address,
-                length: slice.length,
-            })
-            .collect::<Vec<_>>();
-        // SAFETY: FileTransfer owns backing, context and extent/admission leases.
-        // The native file owner retains this exact Arc until physical drain.
-        unsafe {
-            file.transfer(
-                match operation {
-                    TransferOp::Read => orbitkv_transfer::TransferOp::Read,
-                    TransferOp::Write => orbitkv_transfer::TransferOp::Write,
-                },
-                transport,
-                &slices,
-                transfer,
-                deadline,
-                cancellation.flag(),
-            )
-        }
-        .map_err(tent_error)
+        // SAFETY: FileTransfer retains the actual ranges and extent through physical drain.
+        unsafe { file::transfer(file, operation, transport, transfer, deadline, cancellation) }
     }
 
     fn register_pinned(

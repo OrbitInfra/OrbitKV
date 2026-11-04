@@ -414,3 +414,33 @@ impl OrbitTeTransport {
         .map_err(Into::into)
     }
 }
+
+#[cfg(feature = "orbitte-gds")]
+#[test]
+fn compiled_gds_stays_unloaded_without_configuration() {
+    for storage in [
+        None,
+        Some(crate::SsdCacheConfig {
+            backend: crate::SsdBackend::Auto,
+            ..Default::default()
+        }),
+    ] {
+        let engine = OrbitTeTransport::new(
+            4096,
+            "127.0.0.1:0",
+            Transport::Tcp,
+            storage.as_ref(),
+            #[cfg(feature = "orbitte-rdma")]
+            None,
+        )
+        .unwrap();
+        let stats = engine.engine.stats().unwrap();
+        assert!(!stats.gds.available);
+        assert!(stats.gds.mode.is_none());
+        let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+        assert!(
+            !maps.lines().any(|line| line.contains("libcufile.so")),
+            "compiling GDS must not load cuFile for the default/auto profile"
+        );
+    }
+}

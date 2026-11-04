@@ -140,7 +140,10 @@ only DRAM cache-tier fills retain a host destination. The imported tensor owner
 and client completion remain retained on unknown drain. Encoded peer inputs go
 to GPU codec allocations. SSD/codec layouts use Manager workers.
 `TransferBackend` moves file bytes through io_uring or opt-in GDS; OrbitKV keeps
-extent leases and metadata publication. TENT owns a separate file engine so its
+extent leases and metadata publication. OrbitTE consumes layout vectors with
+padding directly into GPU pages or persistent codec inputs; its engine owns
+storage gather/scatter and staging. TENT's file ABI still needs a bounded adapter
+for padding and unaligned ranges. TENT owns a separate file engine so its
 peer source-drain contract remains unchanged. Unknown drain
 retains backing, the immutable/unpublished extent and the file-operation budget.
 See [SSD file transfers](transport.md#ssd-file-transfers). Peer SSD uses

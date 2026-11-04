@@ -317,6 +317,8 @@ jobs:
             LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE="$engine" cargo test --locked -p orbitkv-core --no-default-features --features mooncake,orbitte,cudarc/cuda-13000,cudarc/nvrtc --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
           done
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --lib storage::ssd:: -- --test-threads=1
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte-gds --lib peer::orbitte::tests::compiled_gds_stays_unloaded_without_configuration -- --exact
+          cargo test --locked -p orbitkv-core --lib transfer::worker::ssd:: -- --test-threads=1
           cargo test --locked -p orbitkv-server --lib tests::ssd_uses_selected_engine_and_rejects_removed_legacy_switch -- --exact
         env:
           CUDA_PATH: /usr/local/cuda

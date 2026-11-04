@@ -303,7 +303,7 @@ async fn execute_write(task: WriteTask, store: Weak<SsdStore>, io: Arc<SsdIo>) -
         gpu: false,
         store: Arc::clone(&store),
     });
-    let bytes = task.block.memory_footprint();
+    let bytes = entry.len;
     let rx = {
         let mut offset = entry.file_offset;
         let slices = task
@@ -321,13 +321,20 @@ async fn execute_write(task: WriteTask, store: Weak<SsdStore>, io: Arc<SsdIo>) -
                 slice
             })
             .collect();
-        io.submit(
-            crate::transfer_engine::TransferOp::Write,
-            entry.shard_id,
+        crate::transfer_engine::FileExtent::from_slices(
+            entry.file_offset,
+            entry.len as usize,
             slices,
-            task.block.allocations().cloned().collect(),
-            lease.clone(),
         )
+        .and_then(|extent| {
+            io.submit(
+                crate::transfer_engine::TransferOp::Write,
+                entry.shard_id,
+                extent,
+                task.block.allocations().cloned().collect(),
+                lease.clone(),
+            )
+        })
     };
     let success = match rx {
         Ok(rx) => matches!(rx.await, Ok(Ok(written)) if written as u64 == bytes),

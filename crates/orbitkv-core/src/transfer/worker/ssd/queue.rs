@@ -9,9 +9,11 @@ use crate::EngineError;
 use crate::codec::gpu::{DecodeError, MAX_BATCH_SEGMENTS};
 use crate::cost::{Observation, Outcome};
 use crate::metrics::core_metrics;
+use crate::storage::ssd::GpuFile;
 use crate::storage::ssd::WriteLease;
-use crate::storage::ssd::gpu::{GpuFile, GpuSlot};
-use crate::storage::ssd::layout::{IoBatch, STAGING_SLOTS};
+use crate::storage::ssd::io::Receipt;
+use crate::storage::ssd::layout::{FILE_INFLIGHT, IoBatch};
+use crate::transfer_engine::{CudaRegistration, ErrorKind, FileMemory, TransferError, TransferOp};
 
 use super::decode::{DecodeCommand, DecodeRange, DecodeReply};
 use crate::transfer::finish_gpu_transfer;
@@ -34,6 +36,7 @@ struct Work {
     batch: IoBatch,
     write: Option<usize>,
     encoded: bool,
+    input: Option<Arc<CudaRegistration>>,
 }
 
 struct Write {
@@ -48,6 +51,12 @@ struct BatchOwner {
     encoded: bool,
 }
 
+struct Pending {
+    receipt: Receipt,
+    owner: BatchOwner,
+    file: Arc<GpuFile>,
+}
+
 struct Job {
     id: u64,
     task: Task,
@@ -57,6 +66,7 @@ struct Job {
     writes: Vec<Write>,
     inflight: usize,
     error: Option<String>,
+    uncertain: bool,
     prepared: bool,
     host_completion: Option<CudaEvent>,
     started: Instant,
@@ -81,6 +91,7 @@ impl Job {
             writes: Vec::new(),
             inflight: 0,
             error: None,
+            uncertain: false,
             prepared: false,
             host_completion: None,
             started: Instant::now(),
@@ -108,6 +119,7 @@ impl Job {
                                 batch,
                                 write: None,
                                 encoded: false,
+                                input: None,
                             });
                         }
                     }
@@ -128,6 +140,7 @@ impl Job {
                                 batch,
                                 write: Some(index),
                                 encoded: false,
+                                input: None,
                             });
                         }
                     }
@@ -242,7 +255,8 @@ impl Job {
         }
     }
 
-    fn complete(&mut self, write: Option<usize>, result: Result<(), String>) {
+    fn complete(&mut self, write: Option<usize>, result: Result<(), TransferError>) {
+        self.uncertain |= matches!(&result, Err(error) if error.kind == ErrorKind::Unquiesced);
         self.inflight -= 1;
         let publish = result.is_ok() && self.error.is_none();
         if let Some(index) = write {
@@ -257,7 +271,7 @@ impl Job {
             }
         }
         if let Err(error) = result {
-            self.fail(error);
+            self.fail(error.to_string());
         }
     }
 
@@ -269,7 +283,15 @@ impl Job {
             && self.host_completion.is_none()
     }
 
+    #[allow(
+        clippy::mem_forget,
+        reason = "unknown file drain retains task completion, admission and caller GPU loans"
+    )]
     fn finish(self) {
+        if self.uncertain {
+            std::mem::forget(self);
+            return;
+        }
         assert_eq!(self.inflight, 0, "submitted I/O still owns this job");
         assert!(!self.decoding, "codec completion still owns this job");
         assert!(
@@ -285,7 +307,7 @@ impl Job {
         } else {
             self.outcome
         };
-        // Physical cuFile bytes belong to GpuSlot; this is an inclusive job span.
+        // Physical file bytes belong to EngineFile; this is an inclusive job span.
         self.observation.finish(outcome, None);
         // Drop unpublished extents before telling the caller it can reuse pages.
         drop(self.writes);
@@ -413,7 +435,12 @@ impl Decode {
             .take_while(|read| Arc::ptr_eq(&read.source.entry.readers, &first.source.entry.readers))
             .map(|read| read.meta.stored_bytes);
         let (offsets, bytes) = input_window(sizes, budget)?;
-        decoder.send(DecodeCommand::Prepare { bytes, budget })?;
+        let backend = Arc::clone(&first.source.file().map_err(|e| e.to_string())?.file.backend);
+        decoder.send(DecodeCommand::Prepare {
+            bytes,
+            budget,
+            backend,
+        })?;
         let reads = job.encoded.drain(..offsets.len()).collect();
         job.decoding = true;
         Ok(Self {
@@ -426,7 +453,8 @@ impl Decode {
         })
     }
 
-    fn prepared(&mut self, job: &mut Job, base: u64) -> Result<(), String> {
+    fn prepared(&mut self, job: &mut Job, input: Arc<CudaRegistration>) -> Result<(), String> {
+        let base = input.address;
         self.base = base;
         let copies = self
             .reads
@@ -451,6 +479,7 @@ impl Decode {
                 batch,
                 write: None,
                 encoded: true,
+                input: Some(Arc::clone(&input)),
             });
         }
         self.phase = DecodePhase::Reading;
@@ -547,14 +576,13 @@ pub(in crate::transfer::worker) fn run(
     runtime: WorkerRuntime,
 ) {
     let mut jobs: VecDeque<Job> = VecDeque::new();
-    let mut slots: Vec<(GpuSlot, Option<BatchOwner>)> = Vec::new();
+    let mut slots: Vec<Option<Pending>> = (0..FILE_INFLIGHT).map(|_| None).collect();
     let mut decoder: Option<Decoder> = None;
     let mut decoding: Option<Decode> = None;
     let mut drain: Option<oneshot::Sender<Result<(), String>>> = None;
     let mut closed = false;
     let mut next_id = 0;
     let mut read_burst = 0;
-    let mut reset_slots = false;
     loop {
         // Bound CPU admission work per turn so producers cannot starve completions.
         for _ in 0..32 {
@@ -589,29 +617,62 @@ pub(in crate::transfer::worker) fn run(
             job.poll_host(&runtime);
             job.cancel_abandoned();
         }
-        for (slot, owner) in &mut slots {
-            if let Some(result) = slot.poll() {
-                reset_slots |= result.is_err();
-                let owner = owner.take().expect("submitted slot has an owner");
-                if owner.encoded {
-                    let decode = decoding.as_mut().expect("encoded input retained");
-                    assert_eq!(decode.job, owner.job);
-                    decode.remaining -= 1;
-                }
-                jobs.iter_mut()
-                    .find(|job| job.id == owner.job)
-                    .expect("submitted job retained")
-                    .complete(owner.write, result);
+        for slot in &mut slots {
+            let Some(pending) = slot.as_mut() else {
+                continue;
+            };
+            #[cfg(feature = "test-hooks")]
+            if crate::test_faults::active(if pending.owner.write.is_some() {
+                "cufile_write_completion"
+            } else {
+                "cufile_read_completion"
+            }) {
+                continue;
             }
+            let result = match pending.receipt.try_recv() {
+                Err(oneshot::error::TryRecvError::Empty) => continue,
+                Err(_) => Err(TransferError::new(
+                    ErrorKind::Unquiesced,
+                    "file worker closed without receipt",
+                )),
+                Ok(result) => result,
+            };
+            let pending = slot.take().expect("pending file receipt");
+            let owner = pending.owner;
+            if owner.encoded {
+                let decode = decoding.as_mut().expect("encoded input retained");
+                assert_eq!(decode.job, owner.job);
+                decode.remaining -= 1;
+            }
+            if matches!(&result, Err(e) if e.kind == ErrorKind::Unquiesced) {
+                runtime.unquiesced.set(true);
+                for job in &mut jobs {
+                    job.fail("GPU file worker has no drain receipt".into());
+                }
+            }
+            let result = result.map(|_| ());
+            #[cfg(feature = "test-hooks")]
+            let result = if result.is_ok()
+                && owner.write.is_some()
+                && crate::test_faults::active("cufile_write_error")
+            {
+                Err(TransferError::new(
+                    ErrorKind::Backend,
+                    "injected GPU file write error after physical receipt",
+                ))
+            } else {
+                result
+            };
+            if let Err(error) = &result {
+                pending.file.gpu_io.failed(&error.to_string());
+            }
+            jobs.iter_mut()
+                .find(|job| job.id == owner.job)
+                .expect("submitted job retained")
+                .complete(owner.write, result);
         }
         if let Some(decoder) = &decoder {
             poll_decode(decoder, &mut decoding, &mut jobs);
-        }
-        // Errors can leave a stream unusable. Keep every other slot alive until
-        // its submitted work completes, then recreate the registered resources.
-        if reset_slots && slots.iter().all(|(_, owner)| owner.is_none()) {
-            slots.clear();
-            reset_slots = false;
         }
         let mut index = 0;
         while index < jobs.len() {
@@ -625,7 +686,7 @@ pub(in crate::transfer::worker) fn run(
             if closed {
                 drop(slots);
                 drop(decoder);
-                let result = runtime.drain_peer();
+                let result = runtime.drain_transfers();
                 drop(runtime);
                 if let Some(reply) = drain {
                     let _ = reply.send(result);
@@ -634,38 +695,14 @@ pub(in crate::transfer::worker) fn run(
             }
             continue;
         }
-        if slots.is_empty() {
-            let created = (0..STAGING_SLOTS)
-                .map(|_| GpuSlot::new(runtime.stream.context()).map(|slot| (slot, None)))
-                .collect::<Result<Vec<_>, _>>();
-            match created {
-                Ok(created) => slots = created,
-                Err(error) => {
-                    for job in &mut jobs {
-                        for work in &job.work {
-                            work.file.gpu_io.failed(&error);
-                        }
-                        for read in &job.encoded {
-                            if let Ok(file) = read.source.file() {
-                                file.gpu_io.failed(&error);
-                            }
-                        }
-                        job.fail(error.clone());
-                    }
-                    continue;
-                }
-            }
-        }
         for index in 0..slots.len() {
-            if reset_slots {
-                break;
-            }
-            if slots[index].1.is_some() {
+            if slots[index].is_some() {
                 continue;
             }
             let writing = slots
                 .iter()
-                .any(|(_, owner)| owner.is_some_and(|owner| owner.write.is_some()));
+                .flatten()
+                .any(|pending| pending.owner.write.is_some());
             let eligible = |job: &Job| {
                 if job.work.is_empty() && (job.encoded.is_empty() || decoding.is_some()) {
                     return false;
@@ -735,18 +772,53 @@ pub(in crate::transfer::worker) fn run(
                 encoded: work.encoded,
             };
             job.observation.submitted();
-            match slots[index]
-                .0
-                .submit(work.file, work.batch, !reading, work.extent)
-            {
-                Ok(()) => {
+            let submitted = (|| {
+                let owners = if let Some(input) = work.input {
+                    vec![input]
+                } else {
+                    let layers = match &job.task {
+                        Task::Load(task) => &task.layers,
+                        Task::Save(task) => &task.layers,
+                    };
+                    layers
+                        .iter()
+                        .map(|layer| {
+                            layer
+                                .layout
+                                .owner
+                                .clone()
+                                .ok_or("GPU tensor has no transfer registration".to_owned())
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                };
+                work.file
+                    .file
+                    .submit(
+                        if reading {
+                            TransferOp::Read
+                        } else {
+                            TransferOp::Write
+                        },
+                        work.file.transport,
+                        work.batch.into_extent()?,
+                        FileMemory::RegisteredCuda {
+                            owners,
+                            context: Arc::clone(runtime.stream.context()),
+                        },
+                        work.extent,
+                    )
+                    .map_err(|e| e.to_string())
+            })();
+            match submitted {
+                Ok(receipt) => {
                     job.inflight += 1;
-                    slots[index].1 = Some(owner);
+                    slots[index] = Some(Pending {
+                        receipt,
+                        owner,
+                        file: work.file,
+                    });
                 }
-                Err(error) => {
-                    job.fail(error);
-                    reset_slots = true;
-                }
+                Err(error) => job.fail(error),
             }
             jobs.push_back(job);
         }

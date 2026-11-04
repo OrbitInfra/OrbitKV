@@ -58,15 +58,17 @@ TENT uses a separate file engine; OrbitTE uses its file segments. cuFile is an
 optional engine dependency, not a service to deploy. See [deployment examples](deployment.md#configure-capacity-then-connect-engines).
 
 - `--ssd-cache-path`: Enable SSD cache by providing cache file path (optional)
-- `--ssd-cache-capacity`: SSD cache capacity (default: `512gb`, supports: `kb`, `mb`, `gb`, `tb`). Enabling GPU file slots reserves this physical space before serving; allocation errors fail startup. Host-only io_uring uses logical sizing without upfront reservation.
+- `--ssd-cache-capacity`: SSD cache capacity (default: `512gb`, supports: `kb`, `mb`, `gb`, `tb`). Enabling GPU file transfers reserves this physical space before serving; allocation errors fail startup. Host-only io_uring uses logical sizing without upfront reservation.
 - `--ssd-write-queue-depth`: SSD write queue depth, max pending write batches (default: `8`)
 - `--ssd-write-policy`: `all` writes newly saved pages; `reuse` admits foreground-returned pages or repeated publications within a bounded history (default: `all`). Selective admission can require recomputation on the first reuse after DRAM eviction.
 - `--ssd-backend`: `uring` uses pinned DRAM; `auto` (default) additionally uses
-  GPU layout slots with engine-owned CUDA staging/io_uring; `cufile` requires
+  layout vectors with engine-owned CUDA staging/io_uring; `cufile` requires
   native-only GDS. OrbitTE needs `orbitte-gds`; TENT needs a native CUDA build
-  with cuFile SDK support. Missing support fails initialization. The old
-  `--ssd-io-engine` option is removed. Complete GPU state groups use two 4 MiB
-  layout slots per instance/device until vectored integration replaces them.
+  with cuFile SDK support. Missing build support fails initialization; OrbitTE
+  discovers the configured GDS driver lazily at submission. The old
+  `--ssd-io-engine` option is removed. Complete GPU state groups use two in-flight
+  file receipts per instance/device. TENT alone keeps bounded alignment scratch
+  until its file API supports padding and unaligned ranges.
   Native GDS must be [qualified separately](gds.md).
   Fragmented/multi-writer saves and speculative preparation retain io_uring.
   GPU-direct writes hold Publish pages until storage completion.
@@ -85,7 +87,7 @@ optional engine dependency, not a service to deploy. See [deployment examples](d
 - `--ssd-prefetch-queue-depth`: SSD prefetch queue depth, max pending prefetch batches (default: `2`)
 - `--ssd-write-inflight`: SSD write inflight, max concurrent block writes (default: `2`)
 - `--ssd-prefetch-inflight`: SSD prefetch inflight, max concurrent block reads (default: `16`)
-- Each store admits at most 32 active/queued/retained file operations, 64 MiB and 16,384 descriptors per operation. Engine I/O has a 30-second deadline; expiry never releases undrained owners. There are at most 256 shards (128 for TENT GDS) and queue/inflight depths are 1–1,024.
+- Each store admits at most 32 active/queued/retained file operations, 64 MiB and 1,024 vector elements including padding per operation. Engine I/O has a 30-second deadline; expiry never releases undrained owners. There are at most 256 shards (128 for TENT GDS) and queue/inflight depths are 1–1,024.
 - Full SSD prefetch queues wait for capacity while retaining the query's byte reservation.
   Concurrent queries for an identical prefix and storage identity can share a read.
 

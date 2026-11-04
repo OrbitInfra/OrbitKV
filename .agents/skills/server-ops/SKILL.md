@@ -79,8 +79,13 @@ its peer engine keeps file transports disabled. `--ssd-io-engine` is removed.
 `auto` storage uses engine CUDA staging/io_uring. `cufile` is native-only GDS:
 OrbitTE requires `orbitte-gds`, and TENT requires a native build with cuFile SDK
 support. Uncertain work retains backing, extents and one of 32 operation permits.
-GPU/GDS remains unqualified. See `docs/transport.md#ssd-file-transfers`.
-OrbitTE `df9ded0` uses a one-route Unspec peer policy with
+OrbitTE submits one vector per extent, including padding (64 MiB/1,024 elements).
+It reuses persistent tensor/codec input registrations and retains caller completion
+on unknown GPU drain. TENT passes aligned vectors directly; its file ABI still
+needs padding/unaligned repair in a bounded TENT-only adapter. Explicit padded
+GDS requests fail without fallback. `gds_enabled` prevents unconfigured cuFile
+loading. GPU/GDS remains unqualified. See `docs/transport.md#ssd-file-transfers`.
+OrbitTE `36516152` uses a one-route Unspec peer policy with
 failover, HP-TCP, SHM and MNNVL disabled. Historical hardware results below do not
 qualify this new dependency revision. See `docs/transport.md#runtime-transfer-backend`.
 Tensor import registers GPU storage once; aliases share its persistent owner.

@@ -183,7 +183,10 @@ fn failed_or_canceled_write_cannot_commit_a_later_successful_chunk() {
         lease: None,
         remaining: 2,
     });
-    job.complete(Some(0), Err("first chunk failed".into()));
+    job.complete(
+        Some(0),
+        Err(TransferError::new(ErrorKind::Backend, "first chunk failed")),
+    );
     job.complete(Some(0), Ok(()));
     assert_eq!(job.writes[0].remaining, 0);
     assert_eq!(job.error.as_deref(), Some("first chunk failed"));
@@ -208,7 +211,7 @@ fn cancellation_observation_waits_for_io_and_preserves_later_failure() {
                 job.complete(
                     None,
                     if failed {
-                        Err("I/O failed".into())
+                        Err(TransferError::new(ErrorKind::Backend, "I/O failed"))
                     } else {
                         Ok(())
                     },
@@ -247,11 +250,36 @@ fn canceled_decoder_preparation_is_not_an_io_failure() {
         phase: DecodePhase::Preparing,
     });
     let (decoder, requests, replies) = decoder_channels();
-    replies.send(DecodeReply::Prepared(Ok(1))).unwrap();
+    // No native registration is needed: cancellation happens before any file I/O.
+    let input = unsafe { CudaRegistration::new(None, 1, 4096, 0, Arc::new(())) }.unwrap();
+    replies.send(DecodeReply::Prepared(Ok(input))).unwrap();
     poll_decode(&decoder, &mut active, &mut jobs);
     assert!(active.is_none());
     assert!(jobs[0].is_complete());
     assert_eq!(jobs[0].outcome, Outcome::Cancelled);
     assert!(requests.try_recv().is_err());
     jobs.pop_front().unwrap().finish();
+}
+
+#[test]
+fn uncertain_file_receipt_retains_caller_completion() {
+    let (mut job, mut completion) = load_job();
+    job.inflight = 1;
+    job.complete(
+        None,
+        Err(TransferError::new(
+            ErrorKind::Unquiesced,
+            "unknown physical drain",
+        )),
+    );
+    assert!(job.is_complete());
+    job.finish();
+    assert!(matches!(
+        completion.try_recv(),
+        Err(oneshot::error::TryRecvError::Empty)
+    ));
+    let (mut drained, mut completion) = load_job();
+    drained.fail("timeout with physical drain".into());
+    drained.finish();
+    assert!(completion.try_recv().unwrap().result.is_err());
 }

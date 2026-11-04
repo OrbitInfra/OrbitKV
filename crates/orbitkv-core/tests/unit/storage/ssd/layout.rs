@@ -1,121 +1,37 @@
 use super::*;
+use crate::transfer_engine::{FileIoElement, MAX_FILE_BYTES, MAX_FILE_ELEMENTS};
 
 #[test]
-fn submission_rejects_ranges_outside_registered_staging() {
-    let batch = |file_offset, bytes, copy| IoBatch {
-        file_offset,
-        bytes,
-        copies: vec![copy],
-    };
+fn extent_above_old_chunk_size_is_one_vector_with_padding() {
     let copy = CopyRange {
-        file_offset: 4096,
+        file_offset: 4096 + 512,
         device: 0x10000,
-        bytes: 512,
+        bytes: (12 << 20) + 137,
     };
-    batch(4096, 4096, copy).validate().unwrap();
-    for invalid in [
-        batch(4096, STAGING_BYTES + ALIGNMENT, copy),
-        batch(4097, 4096, copy),
-        batch(4096, 4095, copy),
-        batch(4096, 0, copy),
-        batch(
-            4096,
-            4096,
-            CopyRange {
-                file_offset: 4095,
-                ..copy
-            },
-        ),
-        batch(
-            4096,
-            4096,
-            CopyRange {
-                bytes: 4097,
-                ..copy
-            },
-        ),
-        batch(4096, 4096, CopyRange { device: 0, ..copy }),
-        batch(
-            4096,
-            4096,
-            CopyRange {
-                device: u64::MAX,
-                ..copy
-            },
-        ),
+    let bytes = (512 + copy.bytes).next_multiple_of(ALIGNMENT);
+    for batches in [
+        plan_reads(vec![copy]).unwrap(),
+        plan_writes(4096, bytes as u64, vec![copy]).unwrap(),
     ] {
-        assert!(invalid.validate().is_err());
+        assert_eq!(batches.len(), 1);
+        let extent = batches.into_iter().next().unwrap().into_extent().unwrap();
+        assert_eq!(extent.bytes().unwrap(), bytes);
+        assert_eq!(
+            extent.elements,
+            vec![
+                FileIoElement::Padding(512),
+                FileIoElement::Range {
+                    address: copy.device,
+                    length: copy.bytes
+                },
+                FileIoElement::Padding(bytes - 512 - copy.bytes)
+            ]
+        );
     }
 }
 
 #[test]
-fn writes_cover_the_padded_extent_without_reading_gpu_padding() {
-    let high_address = CopyRange {
-        file_offset: 4096,
-        device: u64::MAX - 8,
-        bytes: 8,
-    };
-    assert_eq!(
-        plan_writes(4096, 4096, vec![high_address]).unwrap()[0].copies[0],
-        high_address
-    );
-    let start = ALIGNMENT as u64;
-    let source = CopyRange {
-        file_offset: start + 512,
-        device: 0x10000,
-        bytes: STAGING_BYTES + 137,
-    };
-    let length = (source.bytes + 512).next_multiple_of(ALIGNMENT) as u64;
-    let batches = plan_writes(start, length, vec![source]).unwrap();
-    assert_eq!(batches.len(), 2);
-    assert_eq!(batches.iter().map(|b| b.bytes as u64).sum::<u64>(), length);
-    let mut consumed = 0;
-    for batch in batches {
-        assert!(batch.bytes <= STAGING_BYTES);
-        assert_eq!(batch.bytes % ALIGNMENT, 0);
-        for copy in batch.copies {
-            assert_eq!(copy.device, source.device + consumed);
-            assert_eq!(copy.file_offset, source.file_offset + consumed);
-            consumed += copy.bytes as u64;
-        }
-    }
-    assert_eq!(consumed, source.bytes as u64);
-    for (offset, size, copy) in [
-        (start + 1, length, source),
-        (start, length - 1, source),
-        (start, 0, source),
-        (
-            start,
-            length,
-            CopyRange {
-                device: u64::MAX,
-                ..source
-            },
-        ),
-        (
-            start,
-            length,
-            CopyRange {
-                file_offset: 0,
-                ..source
-            },
-        ),
-        (
-            start,
-            length,
-            CopyRange {
-                bytes: length as usize,
-                ..source
-            },
-        ),
-        (u64::MAX - 4095, length, source),
-    ] {
-        assert!(plan_writes(offset, size, vec![copy]).is_err());
-    }
-}
-
-#[test]
-fn aligned_batches_merge_neighbors_but_do_not_read_unrequested_gaps() {
+fn gaps_are_padding_and_repeated_file_ranges_keep_both_destinations() {
     let copies = vec![
         CopyRange {
             file_offset: 512,
@@ -123,88 +39,75 @@ fn aligned_batches_merge_neighbors_but_do_not_read_unrequested_gaps() {
             bytes: 700,
         },
         CopyRange {
-            file_offset: 4096,
-            device: 0x20000,
-            bytes: 4096,
-        },
-        CopyRange {
             file_offset: 16384,
-            device: 0x30000,
-            bytes: 1,
+            device: 0x20000,
+            bytes: 137,
         },
     ];
-    let batches = plan_reads(copies.clone()).unwrap();
+    let extent = plan_reads(copies.clone())
+        .unwrap()
+        .remove(0)
+        .into_extent()
+        .unwrap();
+    assert_eq!(extent.elements.len(), 5);
+    assert_eq!(extent.elements[2], FileIoElement::Padding(16384 - 1212));
+    let mut repeated = copies;
+    repeated.push(CopyRange {
+        file_offset: 512,
+        device: 0x30000,
+        bytes: 700,
+    });
+    let batches = plan_reads(repeated).unwrap();
     assert_eq!(batches.len(), 2);
-    assert_eq!((batches[0].file_offset, batches[0].bytes), (0, 8192));
-    assert_eq!((batches[1].file_offset, batches[1].bytes), (16384, 4096));
-    assert_eq!(
-        batches
-            .into_iter()
-            .flat_map(|batch| batch.copies)
-            .collect::<Vec<_>>(),
-        copies
-    );
-}
-
-#[test]
-fn checkpoints_larger_than_staging_split_without_losing_or_padding_gpu_bytes() {
-    let copy = CopyRange {
-        file_offset: 512,
-        device: 0x10000,
-        bytes: 3 * STAGING_BYTES + 137,
-    };
-    let batches = plan_reads(vec![copy]).unwrap();
-    assert_eq!(batches.len(), 4);
-    let mut consumed = 0;
+    assert_eq!(batches.iter().map(|b| b.copies.len()).sum::<usize>(), 3);
     for batch in batches {
-        assert!(batch.bytes <= STAGING_BYTES);
-        assert_eq!(batch.bytes % ALIGNMENT, 0);
-        assert_eq!(batch.file_offset % ALIGNMENT as u64, 0);
-        for piece in batch.copies {
-            assert_eq!(piece.device, copy.device + consumed as u64);
-            assert_eq!(piece.file_offset, copy.file_offset + consumed as u64);
-            assert!(
-                piece.file_offset + piece.bytes as u64 <= batch.file_offset + batch.bytes as u64
-            );
-            consumed += piece.bytes;
-        }
+        batch.into_extent().unwrap();
     }
-    assert_eq!(consumed, copy.bytes);
 }
 
 #[test]
-fn duplicate_destinations_and_overflow_are_handled_before_submission() {
-    let original = CopyRange {
-        file_offset: 512,
+fn full_vector_preflight_rejects_overlap_overflow_and_budgets() {
+    let copy = CopyRange {
+        file_offset: 4096,
         device: 0x10000,
-        bytes: STAGING_BYTES * 2,
+        bytes: 512,
     };
-    let duplicate = CopyRange {
-        device: 0x5000000,
-        bytes: 100,
-        ..original
-    };
-    let batches = plan_reads(vec![original, duplicate]).unwrap();
-    assert_eq!(
-        batches
-            .iter()
-            .flat_map(|batch| &batch.copies)
-            .map(|copy| copy.bytes)
-            .sum::<usize>(),
-        original.bytes + 100
-    );
+    for (offset, bytes, copies) in [
+        (4097, 4096, vec![copy]),
+        (4096, 4095, vec![copy]),
+        (4096, 0, vec![copy]),
+        (4096, 4096, vec![CopyRange { device: 0, ..copy }]),
+        (
+            4096,
+            4096,
+            vec![CopyRange {
+                device: u64::MAX,
+                ..copy
+            }],
+        ),
+        (
+            4096,
+            4096,
+            vec![CopyRange {
+                bytes: 4097,
+                ..copy
+            }],
+        ),
+        (4096, 4096, vec![copy, copy]),
+        (4096, MAX_FILE_BYTES as u64 + 4096, vec![copy]),
+        (u64::MAX - 4095, 4096, vec![copy]),
+    ] {
+        assert!(plan_writes(offset, bytes, copies).is_err());
+    }
+    let copies = (0..MAX_FILE_ELEMENTS)
+        .map(|i| CopyRange {
+            file_offset: (i * 2) as u64,
+            device: 0x10000 + i as u64,
+            bytes: 1,
+        })
+        .collect();
     assert!(
-        plan_reads(vec![CopyRange {
-            file_offset: u64::MAX,
-            ..duplicate
-        }])
-        .is_err()
-    );
-    assert!(
-        plan_reads(vec![CopyRange {
-            device: u64::MAX,
-            ..duplicate
-        }])
-        .is_err()
+        plan_writes(0, 4096, copies).is_err(),
+        "padding counts against descriptor budget"
     );
 }
