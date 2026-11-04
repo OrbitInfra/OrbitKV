@@ -87,6 +87,19 @@ workers. Extend these owners; do not introduce a Python coordinator or facade.
 See [transport](transport.md), [engine-local restore](engine-local-restore.md)
 and [adapter contracts](adapters.md).
 
+- [x] Runtime transfer-backend boundary for TENT and OrbitTE, retaining peer
+  grants and completion ownership, with OrbitTE pinned at `6f544ff4`. READ/WRITE,
+  registration, cancellation and shutdown contracts are implemented; hardware
+  and installed qualification at this pin remain open. The prior profile
+  results below do not qualify this upgrade. See the
+  [runtime contract and CPU gates](transport.md#runtime-transfer-backend).
+- [ ] After independent PR 1 acceptance: route SSD bytes through file segments,
+  retaining OrbitKV placement/index ownership and documenting TENT API gaps.
+- [ ] After independent PR 2 acceptance: put existing local CUDA copies behind
+  the shared interface and report OrbitTE's missing stream/strided-copy API.
+- [ ] After independent PR 3 acceptance and fork availability: consume Mooncake
+  `orbitkv-integration-v0.3.14` and rerun TENT gates.
+
 - [x] Explicit registration identity and failure propagation; retry ownership
   retained after failed unregister.
 - [x] Prepared Save handles, Rust batching, bounded producer admission and

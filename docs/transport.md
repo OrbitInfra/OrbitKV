@@ -605,10 +605,74 @@ bundle `libtent_shared.so`, `libmooncake_common.so`, and `libasio.so`; the legac
 `libtransfer_engine.so` is removed from staged runtimes. System
 RDMA/CUDA libraries remain deployment prerequisites.
 
+## Runtime transfer backend
+
+`orbitkv-core::transfer_engine::TransferBackend` is the consumed peer transfer
+boundary: retained pinned/CUDA registrations, explicit unregister, epoch-bound
+peer open, READ/WRITE batches with an absolute deadline and cancellation, typed
+errors, and irreversible shutdown/drain. The existing `--peer-transfer-backend`
+selects TENT (`mooncake`, default), `orbitte-tcp`, or `orbitte-rdma` at startup.
+Both implementations can be compiled together. Missing features fail before
+Manager CUDA initialization. No transport fallback crosses these namespaces.
+WRITE is available at the byte-transfer boundary; this does not implement cache
+replication or authorize writes to immutable source grants.
+OrbitTE enforces registration permissions; TENT retains its existing whole-pool
+registration because the pinned C ABI has no per-range permission argument.
+OrbitKV source grants remain authoritative for peer access in both profiles.
+
+OrbitTE is pinned to
+[`6f544ff443974cf5b2b9da1905bf89494e6cbf58`](https://github.com/OrbitInfra/OrbitTE/commit/6f544ff443974cf5b2b9da1905bf89494e6cbf58).
+Requests use `Transport::Unspec` with a one-route selector policy, an absolute
+deadline, and no automatic failover. HP-TCP, SHM, NVLink and remote CUDA staging
+are disabled. `orbitte` enables its CUDA registration API and `orbitte-rdma`
+additionally enables RDMA. File transports (`io-uring`, `gds`) and native metrics
+are not enabled until a consumer needs them. Existing OrbitKV metrics remain
+the reporting surface.
+
+The OrbitTE profile bounds registrations to 4,096 regions and the configured
+pool bytes, submissions to 16,384 descriptors and 64 MiB, and outstanding work
+to 32 batches and 64 MiB. Splitting into 8 MiB requests must also fit the
+descriptor budget. TENT retains its native batch/descriptor budgets and caps
+cached peer segments at 1,024. Process-wide registered owners retain their
+1,024-pool/1 TiB admission even after failed shutdown. The CUDA registration
+contract requires the actual allocation and CUDA context owner, completed
+producers and coordinated aliases; it is not a stream-ordered local copy API.
+
+A cancellation only requests termination. An expired wait with active physical
+owners returns `Unquiesced`; registrations, source tickets and destination
+allocations remain retained. A logical timeout permits release only after drain
+was independently established. Unknown remote WRITE effects likewise retain
+ownership and are never replayed. OrbitTE submission reports provide additive
+byte totals; merged public task counters are not summed. Source epochs always
+come from the authoritative grant. Shutdown fences both directions; failure
+retains engine/backing/admission. TENT still holds its blocking owner when the
+pinned C ABI cannot prove termination; its metadata open has no interruptible
+deadline API, so the wrapper checks the deadline before and after that call.
+
+OrbitTE pins registry `cudarc = 0.19.0`, which conflicts with OrbitKV's required
+regenerated bindings. OrbitKV therefore uses the exact upstream `v0.19.8` commit
+`e1ab1e59f441db6f0a5aef0d5a078696f802a166`, preserving its existing binding code
+while allowing separate dependency identities. Only raw addresses and retained
+owners cross the boundary. Remove this workaround when OrbitTE accepts a
+compatible `cudarc` release; OrbitTE source is not patched.
+
+The CPU gate `peer::orbitte::tests::cpu_tcp_backend_reads_and_writes_fragmented_bytes_and_drains`
+uses real TCP, two engines, fragmented/merged READ and WRITE, byte guards,
+pre-submit cancellation/deadlines, unregister and normal drain. CI runs the
+existing peer suite with TENT, OrbitTE and both features using an explicitly
+labelled CPU host-registration shim. That shim exercises ownership, not CUDA.
+The existing epoch-restart and isolated unquiesced-completion tests remain gates.
+GPU, RDMA, GDS, installed serving and cross-host operation at the new revision
+remain unqualified; historical results below apply only to their recorded pins.
+
+This stage changes peer transfer only. SSD and local GPU copies still use
+OrbitKV's owners and implementations. The next SSD and local-copy stages are
+tracked only in the [completion plan](completion-plan.md).
+
 ## Experimental OrbitTE allocation bridge
 
 The opt-in `orbitkv-core/orbitte` feature pins
-[OrbitTE `02d64e55`](https://github.com/OrbitInfra/OrbitTE/commit/02d64e552f94ef965eff32b35a55789018223439).
+[OrbitTE `6f544ff4`](https://github.com/OrbitInfra/OrbitTE/commit/6f544ff443974cf5b2b9da1905bf89494e6cbf58).
 `PinnedAllocation::orbitte_memory` returns a canonical `Arc<HostMemory>` retaining
 that exact allocation. A pool owner alone would keep the mapping alive while
 allowing a slot to be reused. The allocation holds only a weak cached view, so

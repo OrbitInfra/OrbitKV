@@ -446,14 +446,18 @@ async fn p2p_orbitte_rdma_remote_fetch_roundtrip() {
 #[cfg(feature = "orbitte-rdma")]
 fn orbitte_rdma_config(backend: PeerTransferBackend) -> Option<orbitkv_core::OrbitTeRdmaConfig> {
     (backend == PeerTransferBackend::OrbitTeRdma).then(|| orbitkv_core::OrbitTeRdmaConfig {
-        port: std::env::var("ORBITKV_TEST_ORBITTE_RDMA_PORT")
-            .unwrap()
-            .parse()
-            .unwrap(),
-        gid_index: std::env::var("ORBITKV_TEST_ORBITTE_RDMA_GID_INDEX")
-            .unwrap()
-            .parse()
-            .unwrap(),
+        port: Some(
+            std::env::var("ORBITKV_TEST_ORBITTE_RDMA_PORT")
+                .unwrap()
+                .parse()
+                .unwrap(),
+        ),
+        gid_index: Some(
+            std::env::var("ORBITKV_TEST_ORBITTE_RDMA_GID_INDEX")
+                .unwrap()
+                .parse()
+                .unwrap(),
+        ),
         ..orbitkv_core::OrbitTeRdmaConfig::new(
             std::env::var("ORBITKV_TEST_ORBITTE_RDMA_DEVICE").unwrap(),
         )

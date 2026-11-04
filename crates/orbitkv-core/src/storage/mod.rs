@@ -18,7 +18,9 @@ use crate::memory::numa::NumaNode;
 use crate::memory::pool::{PinnedAllocation, PinnedAllocator};
 use crate::metrics::core_metrics;
 #[cfg(any(feature = "mooncake", feature = "orbitte"))]
-use crate::peer::{provider::PeerTransport, read::PeerReader};
+use crate::peer::read::PeerReader;
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+use crate::transfer_engine::{TransferBackend, create_transfer_backend};
 use orbitkv_catalog::GlobalIndex;
 
 use crate::query::read::ReadCoordinator;
@@ -46,7 +48,7 @@ pub(crate) struct Storage {
     pub(crate) writes: PublishQueue,
     pub(crate) ssd_store: Option<Arc<SsdStore>>,
     #[cfg(any(feature = "mooncake", feature = "orbitte"))]
-    peer_transport: Option<Arc<PeerTransport>>,
+    peer_transport: Option<Arc<dyn TransferBackend>>,
     blockwise_alloc: bool,
     pub(crate) global_index: Option<Arc<GlobalIndex>>,
     pub(crate) inventory: Option<Arc<inventory::ResidencyInventory>>,
@@ -60,11 +62,10 @@ impl Storage {
         config: EngineConfig,
         numa_nodes: &[NumaNode],
     ) -> Result<Arc<Self>, String> {
-        #[cfg(not(feature = "orbitte-rdma"))]
-        if config.peer_transfer_backend == crate::PeerTransferBackend::OrbitTeRdma {
-            return Err(
-                "OrbitTE RDMA peer transport requires the orbitte-rdma build feature".into(),
-            );
+        if config.global_index.is_some()
+            || config.peer_transfer_backend != crate::PeerTransferBackend::Mooncake
+        {
+            config.peer_transfer_backend.validate_compiled()?;
         }
         if config.codec_budget < 4096 || config.codec_budget > u32::MAX as usize {
             return Err("codec budget must be between 4 KiB and 4 GiB - 1".into());
@@ -151,7 +152,7 @@ impl Storage {
                 .expect("distributed configuration")
                 .owner()
                 .endpoint;
-            let transfer = PeerTransport::new(
+            let transfer = create_transfer_backend(
                 config.peer_transfer_backend,
                 &mooncake_nic_names,
                 allocator.clone(),
@@ -159,19 +160,11 @@ impl Storage {
                 #[cfg(feature = "orbitte-rdma")]
                 config.orbitte_rdma.clone(),
             )
-            .map(Arc::new)
             .map_err(|error| format!("Failed to initialise peer transfer engine: {error}"))?;
             Some(transfer)
         } else {
             None
         };
-
-        #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
-        if global_index.is_some() {
-            log::warn!(
-                "Catalog was configured, but this binary was built without the `mooncake` feature; remote transfer is disabled"
-            );
-        }
 
         let is_numa = allocator.is_numa();
         let storage_ref = Arc::new(std::sync::OnceLock::<Weak<Self>>::new());
@@ -469,7 +462,7 @@ impl Storage {
     }
 
     #[cfg(any(feature = "mooncake", feature = "orbitte"))]
-    pub(crate) fn peer_transport(&self) -> Option<&Arc<PeerTransport>> {
+    pub(crate) fn peer_transport(&self) -> Option<&Arc<dyn TransferBackend>> {
         self.peer_transport.as_ref()
     }
 

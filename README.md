@@ -38,7 +38,9 @@ Version 0.1.0 is not yet published; interfaces may change before 1.0.
   fetch compatible peer replicas through Mooncake TENT TCP/RDMA.
   Opt-in [OrbitTE TCP](docs/transport.md#experimental-orbitte-peer-tcp-profile) and
   [RDMA development profiles](docs/transport.md#experimental-orbitte-peer-rdma-profile)
-  connect the existing peer grants and pinned owners; installed serving remains unqualified.
+  use the same transfer-backend contract and peer owners. A build with both
+  providers selects one at startup; TENT remains the default. The current
+  OrbitTE revision requires fresh hardware qualification; installed serving remains unqualified.
 - **Rust ownership:** native cache and transfer owners manage byte budgets,
   reservations and completion; Python connects engine callbacks and layouts.
 - **Local discovery:** bounded inventory streams maintain covered indexes;

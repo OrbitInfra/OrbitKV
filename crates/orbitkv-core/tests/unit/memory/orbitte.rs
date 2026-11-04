@@ -56,18 +56,18 @@ fn pinned_aliases_transfer_bytes_and_release_the_actual_slot() {
         .open_segment(source.endpoint(), source.source_epoch(), TIMEOUT)
         .unwrap();
     let requests = [
-        TransferRequest {
-            transport: Transport::Tcp,
-            local_address: destination.base_address(),
-            remote_address: registrations[0].base_address(),
-            length: 256,
-        },
-        TransferRequest {
-            transport: Transport::Tcp,
-            local_address: destination.base_address() + 256,
-            remote_address: registrations[0].base_address() + 256,
-            length: 256,
-        },
+        TransferRequest::new(
+            Transport::Tcp,
+            destination.base_address(),
+            registrations[0].base_address(),
+            256,
+        ),
+        TransferRequest::new(
+            Transport::Tcp,
+            destination.base_address() + 256,
+            registrations[0].base_address() + 256,
+            256,
+        ),
     ];
     let mut batch = requester
         .submit_async(TransferOp::Read, &peer, &requests, None, TIMEOUT)
@@ -84,12 +84,12 @@ fn pinned_aliases_transfer_bytes_and_release_the_actual_slot() {
         .submit_and_wait(
             TransferOp::Write,
             &peer,
-            &[TransferRequest {
-                local_address: destination.base_address() + 64,
-                remote_address: registrations[0].base_address() + 64,
-                length: 64,
-                transport: Transport::Tcp,
-            }],
+            &[TransferRequest::new(
+                Transport::Tcp,
+                destination.base_address() + 64,
+                registrations[0].base_address() + 64,
+                64,
+            )],
             TIMEOUT,
         )
         .unwrap();
@@ -155,12 +155,12 @@ fn detached_transfer_retains_pinned_slot_after_cancel_unregister_and_wait_timeou
         .submit_async(
             TransferOp::Read,
             &peer,
-            &[TransferRequest {
-                local_address: local.base_address(),
-                remote_address: remote.base_address(),
-                length: 512,
-                transport: Transport::Tcp,
-            }],
+            &[TransferRequest::new(
+                Transport::Tcp,
+                local.base_address(),
+                remote.base_address(),
+                512,
+            )],
             None,
             TIMEOUT,
         )

@@ -272,7 +272,10 @@ fn get_gpu_numa_affinity() -> Vec<(i32, NumaNode)> {
                 let uuid = result::device::get_uuid(device)?;
                 Ok((
                     ordinal,
-                    format!("GPU-{}", Uuid::from_bytes(uuid.bytes.map(|b| b as u8))),
+                    format!(
+                        "GPU-{}",
+                        Uuid::from_bytes(uuid.bytes.map(|b| b.to_ne_bytes()[0]))
+                    ),
                 ))
             })
             .collect::<Result<Vec<_>, result::DriverError>>()

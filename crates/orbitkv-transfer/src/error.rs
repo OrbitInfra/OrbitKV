@@ -17,10 +17,14 @@ pub enum MooncakeError {
     InvalidBatch,
     #[error("Mooncake native batch admission exhausted or descriptor bytes overflow")]
     BatchAdmissionExhausted,
+    #[error("Mooncake peer segment admission exhausted")]
+    SegmentAdmissionExhausted,
     #[error("Mooncake transfer task {task} failed with state {state}")]
     TransferFailed { task: usize, state: i32 },
     #[error("Mooncake transfer batch timed out")]
     Timeout,
+    #[error("Mooncake transfer cancelled after drain")]
+    Cancelled,
     #[error("Mooncake notification buffer has invalid size {0}")]
     InvalidNotificationCount(i32),
     #[error("Mooncake returned a null notification buffer for {0} messages")]

@@ -16,7 +16,6 @@ use super::completion::{TransferCompletions, TransferLockGuard};
 use super::execute::{
     AuthorizationError, AuthorizationMode, FetchResult, SegmentFetcher, execute_fetch_plan,
 };
-use super::provider::{PeerReadSlice, PeerTransferError, PeerTransport};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
 use crate::cost::{
     CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
@@ -26,6 +25,7 @@ use crate::memory::AllocateFn;
 use crate::metrics::core_metrics;
 use crate::planning::peer::{FetchPlan, FetchSegment, PeerSource};
 use crate::storage::MaterializedBlocks;
+use crate::transfer_engine::{PeerReadSlice, PeerTransferError, TransferBackend};
 use orbitkv_catalog::GlobalIndex;
 
 /// Minimum usable transfer timeout. If the server's lock timeout minus the
@@ -49,7 +49,7 @@ pub(crate) struct PeerReader {
     global_index: Arc<GlobalIndex>,
     completions: Arc<TransferCompletions>,
     membership: Arc<orbitkv_catalog::MembershipView>,
-    transfer: Arc<PeerTransport>,
+    transfer: Arc<dyn TransferBackend>,
     allocate_fn: AllocateFn,
 }
 
@@ -320,7 +320,7 @@ impl SegmentFetcher for PeerReader {
 impl PeerReader {
     pub(crate) fn new(
         global_index: Arc<GlobalIndex>,
-        transfer: Arc<PeerTransport>,
+        transfer: Arc<dyn TransferBackend>,
         allocate_fn: AllocateFn,
         membership: Arc<orbitkv_catalog::MembershipView>,
     ) -> Self {
@@ -404,7 +404,7 @@ type StagedBlock = (Vec<u8>, Vec<StagedSlot>);
     reason = "the peer incarnation scopes cost evidence"
 )]
 async fn fetch_blocks_via_peer(
-    transfer: &Arc<PeerTransport>,
+    transfer: &Arc<dyn TransferBackend>,
     allocate_fn: &AllocateFn,
     namespace: &str,
     transfer_endpoint: &str,

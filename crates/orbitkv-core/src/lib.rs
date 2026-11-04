@@ -19,6 +19,8 @@ mod planning;
 mod query;
 mod storage;
 pub mod transfer;
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+pub mod transfer_engine;
 
 pub use block::{
     BlockHash, LayerBlock, LayerSave, QueryResult, RawBlock, RestoreSource, SealedBlock, StateKey,
@@ -36,7 +38,7 @@ pub use engine::{
 pub use memory::numa::NumaNode;
 pub use memory::pool::{PayloadArena, PinnedAllocation};
 #[cfg(feature = "orbitte-rdma")]
-pub use orbit_te::rdma::RdmaConfig as OrbitTeRdmaConfig;
+pub use orbit_te::transport::rdma::RdmaConfig as OrbitTeRdmaConfig;
 pub use orbitkv_state::{
     BundleComponent, RecoveryContract, StateBundle, StateComponent, StateDescriptor, StateFormat,
     TokenRange,

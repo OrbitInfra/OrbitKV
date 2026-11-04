@@ -442,6 +442,7 @@ fn logical_failures_wait_for_actual_completion_and_preserve_first_error() {
                 frees.get() == 2
             },
             |_, state, _| assert_eq!(state, STATUS_PENDING),
+            || false,
         );
         assert_eq!(cancellations.get(), 1);
         assert_eq!(polls.get(), 4);
@@ -501,6 +502,7 @@ fn native_retention_child() {
             ));
             println!("retained_native_state={state}");
         },
+        || false,
     );
     panic!("uncertain native task returned to caller");
 }
@@ -709,6 +711,7 @@ fn native_panic_child() {
                 permit.retain();
                 panic!("injected logging/retention panic");
             },
+            || false,
         );
     });
     println!("native_call_returned");
@@ -773,6 +776,7 @@ fn batch_drain_uses_batch_bytes_for_merged_tasks() {
         },
         || rounds.get() == 3,
         |_, _, _| panic!("successful batch must not be retained"),
+        || false,
     );
     assert_eq!(result.unwrap(), 22);
 }
@@ -802,7 +806,49 @@ fn batch_counter_failure_still_reclaims_completed_tasks() {
             true
         },
         |_, state, _| assert_eq!(state, STATUS_PENDING),
+        || false,
     );
     assert!(result.is_err());
     assert!(freed.get());
+}
+
+#[test]
+fn external_cancellation_waits_for_completion_before_freeing_the_batch() {
+    let polls = std::cell::Cell::new(0);
+    let cancellations = std::cell::Cell::new(0);
+    let freed = std::cell::Cell::new(false);
+    let result = drain_batch(
+        1,
+        Duration::from_secs(1),
+        Ok(()),
+        |_| {
+            polls.set(polls.get() + 1);
+            Ok(native::TransferStatus {
+                status: if polls.get() >= 3 {
+                    STATUS_COMPLETED
+                } else {
+                    STATUS_PENDING
+                },
+                transferred_bytes: 8,
+            })
+        },
+        |_| {
+            cancellations.set(cancellations.get() + 1);
+            Ok(())
+        },
+        || panic!("cancelled data is not a successful service sample"),
+        || {
+            assert_eq!(polls.get(), 3);
+            freed.set(true);
+            true
+        },
+        |_, state, _| {
+            assert_eq!(state, STATUS_PENDING);
+            assert!(!freed.get());
+        },
+        || polls.get() >= 1,
+    );
+    assert!(matches!(result, Err(MooncakeError::Cancelled)));
+    assert!(freed.get());
+    assert_eq!(cancellations.get(), 1);
 }
