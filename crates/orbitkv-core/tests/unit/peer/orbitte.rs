@@ -375,6 +375,7 @@ fn rdma_configuration_and_payload_namespaces_are_explicit() {
 mod rdma_host;
 
 // Hardware consumers share the same trait submission as production peer READs.
+#[cfg(feature = "orbitte-rdma")]
 impl OrbitTeTransport {
     fn read_registered(
         &self,
