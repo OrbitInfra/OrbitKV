@@ -19,7 +19,9 @@ use crate::metrics::core_metrics;
 mod config;
 pub(crate) mod cufile;
 mod files;
+pub(crate) mod gpu;
 pub(crate) mod index;
+mod io;
 pub(crate) mod metadata;
 mod reader;
 mod uring;
@@ -30,12 +32,13 @@ use crate::memory::{AllocateFn, AllocationFootprintFn};
 pub(crate) use config::SSD_ALIGNMENT;
 pub use config::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,
-    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdReadPath, SsdWritePolicy,
+    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdIoEngine, SsdReadPath,
+    SsdWritePolicy,
 };
-use cufile::CufileFile;
+use gpu::GpuFile;
 use index::{SsdIndexEntry, SsdRingBuffer};
+use io::SsdIo;
 use reader::{PrefetchBatch, ssd_prefetch_loop};
-use uring::{UringConfig, UringIoEngine};
 use writer::{SsdWriteBatch, SsdWriteCommand, ssd_writer_loop};
 
 /// Owns an immutable SSD source until the last query/GPU consumer releases it.
@@ -96,13 +99,11 @@ impl SsdReadLease {
         self.store.cufile_eligible(&self.entry, codec_budget)
     }
 
-    pub(crate) fn file(&self) -> Result<&Arc<CufileFile>, crate::EngineError> {
+    pub(crate) fn file(&self) -> Result<&Arc<GpuFile>, crate::EngineError> {
         self.store
             .cufile_files
             .get(self.entry.shard_id)
-            .ok_or_else(|| {
-                crate::EngineError::Storage("SSD source has no cuFile registration".into())
-            })
+            .ok_or_else(|| crate::EngineError::Storage("SSD source has no GPU file route".into()))
     }
 
     pub(crate) fn cost_resource(&self) -> ExecutionResource {
@@ -130,33 +131,41 @@ impl Drop for SsdReadLease {
 }
 
 /// An unpublished extent. Dropping a failed/unsubmitted write rolls it back;
-/// the GPU worker commits only after every cuFile chunk has completed.
-pub(crate) struct GpuWriteLease {
+/// host/GPU workers commit only after every file chunk has completed.
+pub(crate) struct WriteLease {
     pub(crate) entry: SsdIndexEntry,
-    key: Option<StateKey>,
+    key: StateKey,
+    committed: AtomicBool,
+    gpu: bool,
     store: Arc<SsdStore>,
 }
 
-impl GpuWriteLease {
-    pub(crate) fn file(&self) -> &Arc<CufileFile> {
+impl WriteLease {
+    pub(crate) fn file(&self) -> &Arc<GpuFile> {
         &self.store.cufile_files[self.entry.shard_id]
     }
 
-    pub(crate) fn commit(mut self) {
-        if let Some(key) = self.key.take() {
-            self.store.commit_write(&key, true);
-            core_metrics().ssd_write_bytes.add(self.entry.len, &[]);
+    pub(crate) fn commit(&self) {
+        if !self.committed.swap(true, Ordering::AcqRel) {
+            self.store.commit_write(&self.key, true);
+            if self.gpu {
+                core_metrics().ssd_write_bytes.add(self.entry.len, &[]);
+            }
         }
     }
 }
 
-impl Drop for GpuWriteLease {
+impl Drop for WriteLease {
     fn drop(&mut self) {
-        if let Some(key) = self.key.take() {
-            self.store.commit_write(&key, false);
-            core_metrics().ssd_write_failures.add(1, &[]);
+        if !self.committed.load(Ordering::Acquire) {
+            self.store.commit_write(&self.key, false);
+            if self.gpu {
+                core_metrics().ssd_write_failures.add(1, &[]);
+            }
         }
-        core_metrics().ssd_write_inflight.add(-1, &[]);
+        if self.gpu {
+            core_metrics().ssd_write_inflight.add(-1, &[]);
+        }
     }
 }
 
@@ -214,10 +223,10 @@ impl SsdInner {
 pub(crate) struct SsdStore {
     pub(crate) gpu_io: Arc<GpuIo>,
     pub(crate) read_path: Option<SsdReadPath>,
-    /// Keeps file descriptors alive for io_uring operations.
-    _files: Vec<std::fs::File>,
-    cufile_files: Vec<Arc<CufileFile>>,
-    io: Arc<UringIoEngine>,
+    /// Retains the shard inodes independently of the byte mover.
+    _files: Vec<Arc<std::fs::File>>,
+    cufile_files: Vec<Arc<GpuFile>>,
+    io: Arc<SsdIo>,
     write_tx: tokio::sync::mpsc::Sender<SsdWriteCommand>,
     write_policy: SsdWritePolicy,
     prefetch_tx: tokio::sync::mpsc::Sender<PrefetchBatch>,
@@ -238,7 +247,7 @@ impl SsdStore {
         self: &Arc<Self>,
         key: StateKey,
         slots: Vec<crate::SlotMeta>,
-    ) -> Option<GpuWriteLease> {
+    ) -> Option<Arc<WriteLease>> {
         if !self.gpu_io.available() {
             return None;
         }
@@ -263,11 +272,13 @@ impl SsdStore {
         core_metrics().ssd_write_inflight.add(1, &[]);
         drop(inner);
         self.retire_inventory(retired);
-        Some(GpuWriteLease {
+        Some(Arc::new(WriteLease {
             entry,
-            key: Some(key),
+            key,
+            committed: AtomicBool::new(false),
+            gpu: true,
             store: Arc::clone(self),
-        })
+        }))
     }
 
     pub(crate) fn new(
@@ -276,12 +287,30 @@ impl SsdStore {
         allocation_footprint_fn: AllocationFootprintFn,
         is_numa: bool,
         inventory: Option<Arc<crate::storage::inventory::ResidencyInventory>>,
+        transfer: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
     ) -> std::io::Result<Arc<Self>> {
         use std::fs::OpenOptions;
-        use std::os::unix::io::AsRawFd;
 
         let shards_per_path = config.shards.get();
-        let total_shards = config.cache_paths.len() * shards_per_path;
+        let total_shards = config
+            .cache_paths
+            .len()
+            .checked_mul(shards_per_path)
+            .filter(|count| (1..=256).contains(count))
+            .ok_or_else(|| std::io::Error::other("SSD requires 1..=256 total shards"))?;
+        if [
+            config.write_queue_depth,
+            config.prefetch_queue_depth,
+            config.write_inflight,
+            config.prefetch_inflight,
+        ]
+        .iter()
+        .any(|depth| !(1..=1024).contains(depth))
+        {
+            return Err(std::io::Error::other(
+                "SSD queue and inflight depths must be 1..=1024",
+            ));
+        }
         let try_gpu = config.backend != SsdBackend::Uring
             && (config.backend == SsdBackend::Cufile
                 || config.capacity_bytes / total_shards.max(1) as u64 >= cufile::ALIGNMENT as u64);
@@ -302,14 +331,21 @@ impl SsdStore {
             shard_capacity,
             &mut OpenOptions::new(),
         )?;
-        let fds: Vec<_> = files.iter().map(|file| file.as_raw_fd()).collect();
+        let files = files.into_iter().map(Arc::new).collect::<Vec<_>>();
+        let io = Arc::new(SsdIo::new(&files, transfer, uring::UringConfig::default())?);
         let cufile_files = if try_gpu {
             let registered = files
                 .iter()
-                .map(|file| {
-                    CufileFile::new(file.try_clone()?, Arc::clone(&gpu_io))
-                        .map(Arc::new)
-                        .map_err(std::io::Error::other)
+                .enumerate()
+                .map(|(shard, file)| {
+                    GpuFile::new(
+                        file.try_clone()?,
+                        Arc::clone(&gpu_io),
+                        io.engine_file(shard),
+                        config.backend,
+                    )
+                    .map(Arc::new)
+                    .map_err(std::io::Error::other)
                 })
                 .collect::<std::io::Result<Vec<_>>>();
             match registered {
@@ -331,8 +367,6 @@ impl SsdStore {
         } else {
             SSD_ALIGNMENT
         };
-
-        let io = Arc::new(UringIoEngine::new_multi(fds, UringConfig::default())?);
 
         let (write_tx, write_rx) = tokio::sync::mpsc::channel(config.write_queue_depth);
         let (prefetch_tx, prefetch_rx) = tokio::sync::mpsc::channel(config.prefetch_queue_depth);
@@ -366,8 +400,8 @@ impl SsdStore {
         let store = Arc::new(Self {
             gpu_io,
             read_path: config.read_path,
-            _files: files,
             cufile_files,
+            _files: files,
             io: Arc::clone(&io),
             write_tx,
             write_policy: config.write_policy,
@@ -667,7 +701,8 @@ impl SsdStore {
         }
     }
 
-    /// Flush the SSD writer: waits until all enqueued writes complete.
+    /// Wait for earlier logical write outcomes, including retained failures.
+    /// This is not an fsync barrier or a physical-drain receipt.
     pub(crate) async fn flush(&self) {
         let (tx, rx) = tokio::sync::oneshot::channel();
         if self.write_tx.send(SsdWriteCommand::Flush(tx)).await.is_ok() {

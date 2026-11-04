@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 /// Reserve capacity before admitting GPU I/O. Allocation failures must not
 /// silently turn a capacity error into sparse, best-effort writes.
-pub(super) fn reserve_cache_space(files: &[std::fs::File], capacity: u64) -> std::io::Result<()> {
+pub(super) fn reserve_cache_space<F: std::borrow::Borrow<std::fs::File>>(
+    files: &[F],
+    capacity: u64,
+) -> std::io::Result<()> {
     use std::os::fd::AsRawFd;
 
     let length = i64::try_from(capacity).map_err(|_| {
@@ -12,6 +15,7 @@ pub(super) fn reserve_cache_space(files: &[std::fs::File], capacity: u64) -> std
         )
     })?;
     for (shard, file) in files.iter().enumerate() {
+        let file = file.borrow();
         // SAFETY: each fd is owned and no I/O has been admitted. Use the native
         // allocation operation, without a libc zero-fill emulation on failure.
         if unsafe { libc::fallocate(file.as_raw_fd(), 0, 0, length) } != 0 {
@@ -19,7 +23,7 @@ pub(super) fn reserve_cache_space(files: &[std::fs::File], capacity: u64) -> std
             // These files were just truncated for this startup. Release even a
             // partially allocated failing shard before returning the error.
             for (index, file) in files.iter().enumerate() {
-                if let Err(cleanup) = file.set_len(0) {
+                if let Err(cleanup) = file.borrow().set_len(0) {
                     log::warn!(
                         "Failed to release SSD shard {index} after allocation failure: {cleanup}"
                     );

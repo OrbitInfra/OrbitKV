@@ -1,4 +1,4 @@
-use super::{SsdStore, index::Encoding, uring::UringIoEngine};
+use super::{SsdStore, index::Encoding, io::SsdIo};
 use crate::PublishDiagnostic;
 use crate::block::{SealedBlock, StateKey};
 use crate::cost::{Observation, Outcome};
@@ -83,7 +83,7 @@ const fn outcome_name(outcome: Outcome) -> &'static str {
 pub(super) async fn ssd_writer_loop(
     store: Weak<SsdStore>,
     mut rx: tokio::sync::mpsc::Receiver<SsdWriteCommand>,
-    io: Arc<UringIoEngine>,
+    io: Arc<SsdIo>,
     write_inflight: usize,
 ) {
     use std::future::Future;
@@ -113,11 +113,6 @@ pub(super) async fn ssd_writer_loop(
             // Priority 1: Complete writes
             Some((key, success, duration_secs, block_size)) = inflight.next(), if !inflight.is_empty() => {
                 metrics.ssd_write_inflight.add(-1, &[]);
-
-                // Commit result to ring buffer (Writing→Committed or remove)
-                if let Some(s) = store.upgrade() {
-                    s.commit_write(&key, success);
-                }
 
                 if success {
                     metrics.ssd_write_bytes.add(block_size, &[]);
@@ -221,7 +216,7 @@ pub(super) async fn ssd_writer_loop(
     }
 
     // Drain remaining inflight writes
-    drain_inflight(&store, metrics, &mut inflight, &mut batches).await;
+    drain_inflight(metrics, &mut inflight, &mut batches).await;
 
     // Fire any remaining flush waiters
     for tx in flush_waiters.drain(..) {
@@ -232,7 +227,6 @@ pub(super) async fn ssd_writer_loop(
 }
 
 async fn drain_inflight(
-    store: &Weak<SsdStore>,
     metrics: &crate::metrics::CoreMetrics,
     inflight: &mut FuturesOrdered<
         std::pin::Pin<Box<dyn std::future::Future<Output = WriteResult> + Send>>,
@@ -241,10 +235,6 @@ async fn drain_inflight(
 ) {
     while let Some((key, success, duration_secs, block_size)) = inflight.next().await {
         metrics.ssd_write_inflight.add(-1, &[]);
-
-        if let Some(s) = store.upgrade() {
-            s.commit_write(&key, success);
-        }
 
         if success {
             metrics.ssd_write_bytes.add(block_size, &[]);
@@ -269,11 +259,7 @@ async fn drain_inflight(
 }
 
 /// Reserve extents at the stored size; retain sealed buffers through I/O completion.
-async fn execute_write(
-    task: WriteTask,
-    store: Weak<SsdStore>,
-    io: Arc<UringIoEngine>,
-) -> WriteResult {
+async fn execute_write(task: WriteTask, store: Weak<SsdStore>, io: Arc<SsdIo>) -> WriteResult {
     let start = Instant::now();
     let key = task.key;
     let Some(store) = store.upgrade() else {
@@ -307,25 +293,49 @@ async fn execute_write(
     };
     store.retire_inventory(retired);
     let Some(entry) = entry else {
+        store.commit_write(&key, false);
         return (key, false, start.elapsed().as_secs_f64(), 0);
     };
+    let lease = Arc::new(super::WriteLease {
+        entry: entry.clone(),
+        key: key.clone(),
+        committed: std::sync::atomic::AtomicBool::new(false),
+        gpu: false,
+        store: Arc::clone(&store),
+    });
     let bytes = task.block.memory_footprint();
     let rx = {
-        let iovecs = task
+        let mut offset = entry.file_offset;
+        let slices = task
             .block
             .slots()
             .iter()
-            .flat_map(|slot| {
-                slot.segment_iovecs()
-                    .map(|(ptr, len)| (ptr.as_ptr() as *const u8, len))
+            .flat_map(|slot| slot.segment_iovecs())
+            .map(|(local, length)| {
+                let slice = crate::transfer_engine::TransferSlice {
+                    local,
+                    remote_address: offset,
+                    length,
+                };
+                offset += length as u64;
+                slice
             })
             .collect();
-        io.writev_at_async(entry.shard_id, iovecs, entry.file_offset)
+        io.submit(
+            crate::transfer_engine::TransferOp::Write,
+            entry.shard_id,
+            slices,
+            task.block.allocations().cloned().collect(),
+            lease.clone(),
+        )
     };
     let success = match rx {
         Ok(rx) => matches!(rx.await, Ok(Ok(written)) if written as u64 == bytes),
         Err(_) => false,
     };
+    if success {
+        lease.commit();
+    }
     let duration = start.elapsed().as_secs_f64();
     core_metrics()
         .ssd_write_duration_seconds

@@ -605,8 +605,10 @@ impl OrbitKVEngine {
 
     /// Flush write pipeline and SSD writer.
     ///
-    /// Guarantees that all saves submitted before this call are both
-    /// cache-visible and persisted to SSD (if SSD is enabled).
+    /// Waits for logical outcomes of earlier saves and SSD writes. Only
+    /// successful complete writes become cache-visible. This is neither an
+    /// fsync durability barrier nor a physical-drain receipt: uncertain file
+    /// operations retain their backing, extents and admission charges.
     pub async fn flush_all(&self) {
         self.storage.writes.flush().await;
         self.storage.flush_ssd().await;

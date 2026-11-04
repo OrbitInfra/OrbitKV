@@ -607,7 +607,7 @@ RDMA/CUDA libraries remain deployment prerequisites.
 
 ## Runtime transfer backend
 
-`orbitkv-core::transfer_engine::TransferBackend` is the consumed peer transfer
+`orbitkv-core::transfer_engine::TransferBackend` is the consumed peer and file transfer
 boundary: retained pinned/CUDA registrations, explicit unregister, epoch-bound
 peer open, READ/WRITE batches with an absolute deadline and cancellation, typed
 errors, and irreversible shutdown/drain. The existing `--peer-transfer-backend`
@@ -626,15 +626,15 @@ Run the same OrbitKV build on both peers.
 Requests use `Transport::Unspec` with a one-route selector policy, an absolute
 deadline, and no automatic failover. HP-TCP, SHM, NVLink, MNNVL and remote CUDA
 staging are disabled, including when `MC_ENABLE_MNNVL` is set in the environment.
-`orbitte` enables its CUDA registration API and `orbitte-rdma`
-additionally enables RDMA. File transports (`io-uring`, `gds`) and native metrics
-are not enabled until a consumer needs them. Existing OrbitKV metrics remain
-the reporting surface. The Manager inherits the RDMA defaults: signal every
+`orbitte` enables CUDA registration and `io-uring`; `orbitte-rdma`
+additionally enables RDMA. `orbitte-gds` separately enables the runtime-loaded
+cuFile transport. Native metrics remain off; existing OrbitKV metrics are the
+reporting surface. The Manager inherits the RDMA defaults: signal every
 payload WR and cap initiator/responder READ depth at 16, clamped to the local
 HCA. The optional `rdma-adaptive` feature remains disabled.
 
 The OrbitTE profile bounds registrations to 4,096 regions and the configured
-pool bytes, submissions to 16,384 descriptors and 64 MiB, and outstanding work
+pool bytes (plus 64 MiB for SSD GPU staging registrations when enabled), submissions to 16,384 descriptors and 64 MiB, and outstanding work
 to 32 batches and 64 MiB. Splitting into 8 MiB requests must also fit the
 descriptor budget. TENT retains its native batch/descriptor budgets and caps
 cached peer segments at 1,024. Process-wide registered owners retain their
@@ -667,9 +667,77 @@ The existing epoch-restart and isolated unquiesced-completion tests remain gates
 GPU, RDMA, GDS, installed serving and cross-host operation at the new revision
 remain unqualified; historical results below apply only to their recorded pins.
 
-This stage changes peer transfer only. SSD and local GPU copies still use
-OrbitKV's owners and implementations. The next SSD and local-copy stages are
-tracked only in the [completion plan](completion-plan.md).
+Local GPU↔DRAM copies retain OrbitKV's existing stream-ordered implementations.
+Their interface migration is tracked in the [completion plan](completion-plan.md).
+
+## SSD file transfers
+
+SSD flush waits for logical write outcomes. It does not promise fsync durability
+or prove physical drain of failed operations. Only complete successful writes
+become index-visible.
+
+With an OrbitTE transfer backend, `--ssd-io-engine auto` (the default) routes
+DRAM↔SSD through the same engine's `open_file_segment` and io_uring. A standalone
+Manager creates that engine even without cluster membership. `--ssd-io-engine
+transfer` requires engine file support; `legacy` explicitly selects the temporary
+OrbitKV io_uring/cuFile implementation. Selection happens before opening the
+cache. Failure after submission never switches engines or replays a WRITE.
+
+OrbitKV still creates/truncates and sizes the shards, owns placement, eviction,
+logical ring extents, encoding metadata and index publication. The engine sees
+only byte ranges. Its file name refers to the retained inode through
+`/proc/self/fd`, so replacement of a path cannot redirect an admitted transfer.
+Offsets are byte offsets from file base zero. Host descriptors preserve the
+512-byte O_DIRECT contract; GPU plans retain 4 KiB alignment and existing gather,
+scatter and decode semantics. OrbitTE selects a direct fd when the filesystem
+supports it, otherwise its documented buffered path (including tmpfs).
+
+For OrbitTE, `--ssd-backend uring` uses host materialization; `auto` additionally
+uses the existing bounded GPU slots with OrbitTE's CUDA staging plus io_uring.
+`cufile` requires `orbitte-gds` and a native-only cuFile configuration; unavailable
+GDS fails startup. There is no GDS-to-io_uring replay. GPU gather must complete
+before file submission, and scatter follows a physical engine receipt. The
+legacy `cufile` read-route spelling still selects GPU staging; the configured
+engine determines how those bytes reach the file.
+
+Each store admits at most 32 file operations, including queued and retained work.
+Each operation is capped at 64 MiB and 16,384 descriptors, with a 30-second
+submission deadline. GPU slots remain 4 MiB, two per admitted worker; engine
+registration and staging limits remain separate. There are at most 256 shards;
+SSD queue/inflight settings must be 1–1,024. Unknown drain or failed unregister
+retains the exact fd, engine, registration, backing, extent lease and admission
+slot until process exit. A failed WRITE stays unpublished and cannot be evicted
+or overwritten. `orbitkv_ssd_engine_retained_operations_total` records such
+retention. A failed or short READ never becomes a cache hit.
+
+The TENT C ABI has generic segment open/close calls, but OrbitKV's current
+initializer hard-disables `transports/io_uring/enable` and `transports/gds/enable`.
+Its Rust wrapper only exposes epoch-validated peer transfers and no supported
+file configuration or file-drain contract. TENT therefore keeps the legacy SSD
+path under `auto`; explicit `transfer` fails with that gap. Remove the fallback
+when the TENT wrapper supplies file setup, transport selection and physical-drain
+receipts, both engines pass file byte/lifetime gates, and installed GPU/GDS
+profiles pass. The Mooncake version bump remains a separate change.
+
+CI requires real Linux io_uring and real file bytes, with an explicitly labelled
+CPU host-registration shim. It covers sharded raw/encoded metadata, extent
+leases, alignment and truncation rejection, cancellation before submission,
+detached completion, and retained owners after injected uncertainty/cleanup
+failure. The latter are ownership controls, not simulated storage qualification.
+The same file gate runs on the runner filesystem and tmpfs. GPU/CUDA staging,
+GDS and installed serving remain unqualified. Source GPU byte gates are written
+in `crates/orbitkv-core/tests/orbitte_ssd.rs` and have not been run:
+
+```bash
+ORBITKV_SSD_TEST_ROOT=/path/to/test-owned/ssd cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --test orbitte_ssd -- --ignored --exact cuda_staged_file_roundtrip --test-threads=1
+ORBITKV_SSD_TEST_ROOT=/path/to/test-owned/ssd cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte-gds --test orbitte_ssd -- --ignored --exact native_gds_file_roundtrip --test-threads=1
+```
+
+Native GDS qualification also requires cuFile/nvidia-fs route evidence from that
+same installed run; configuration and successful bytes alone do not prove the
+native route. OrbitTE currently probes the cuFile DSO when `gds` is compiled,
+even for an engine with no file policy. Keep `orbitte-gds` off unless needed;
+a runtime switch for that probe is an upstream gap.
 
 ## Experimental OrbitTE allocation bridge
 

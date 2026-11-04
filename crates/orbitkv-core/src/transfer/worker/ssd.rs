@@ -8,14 +8,15 @@ pub(super) use queue::{MAX_WRITES, run};
 use orbitkv_state::StorageFormat;
 
 use crate::codec::{EncodedSegment, segment_format};
-use crate::storage::ssd::cufile::{CopyRange, CufileFile, IoBatch, plan_reads};
-use crate::storage::ssd::{GpuWriteLease, SsdReadLease};
+use crate::storage::ssd::cufile::{CopyRange, IoBatch, plan_reads};
+use crate::storage::ssd::gpu::GpuFile;
+use crate::storage::ssd::{SsdReadLease, WriteLease};
 use crate::transfer::layout::BlockCopies;
 use crate::{EngineError, SlotMeta};
 
 use super::{LayerTransferData, TransferPayload};
 
-type FileReads = (Arc<CufileFile>, Vec<IoBatch>);
+type FileReads = (Arc<GpuFile>, Vec<IoBatch>);
 
 pub(super) struct EncodedRead {
     source: Arc<SsdReadLease>,
@@ -28,10 +29,11 @@ pub(super) struct EncodedRead {
 pub(super) struct ReadPlan {
     raw: Vec<FileReads>,
     encoded: Vec<EncodedRead>,
+    owners: Vec<Arc<SsdReadLease>>,
 }
 
 pub(crate) struct GpuWrite {
-    pub lease: GpuWriteLease,
+    pub lease: Arc<WriteLease>,
     pub batches: Vec<IoBatch>,
 }
 
@@ -39,7 +41,7 @@ pub(crate) struct GpuWrite {
 /// extent lease separately until all submitted reads and scatters complete.
 pub(super) fn plan(layers: &[LayerTransferData]) -> Result<ReadPlan, EngineError> {
     let mut plan = ReadPlan::default();
-    let mut sources: HashMap<*const CufileFile, (Arc<CufileFile>, Vec<CopyRange>)> = HashMap::new();
+    let mut sources: HashMap<*const GpuFile, (Arc<GpuFile>, Vec<CopyRange>)> = HashMap::new();
     for layer in layers {
         for block in &layer.blocks {
             let TransferPayload::Ssd {
@@ -51,6 +53,7 @@ pub(super) fn plan(layers: &[LayerTransferData]) -> Result<ReadPlan, EngineError
             else {
                 continue;
             };
+            plan.owners.push(Arc::clone(source));
             let (slot, base) = source_slot(source, *slot_id)?;
             let copies = layer
                 .layout

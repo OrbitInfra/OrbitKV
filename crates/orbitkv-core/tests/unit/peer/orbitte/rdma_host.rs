@@ -101,6 +101,7 @@ fn registered_host_rdma_peer() {
         (32 << 20) as u64,
         &env::var("ORBITKV_ORBITTE_BIND").unwrap(),
         Transport::Rdma,
+        None,
         Some(crate::OrbitTeRdmaConfig {
             port: Some(port),
             gid_index: Some(gid_index),

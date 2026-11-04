@@ -79,6 +79,15 @@ impl Storage {
         let value_size_hint = config.hint_value_size_bytes.filter(|size| *size > 0);
         let unit_hint = value_size_hint.and_then(|size| NonZeroU64::new(size as u64));
         let ssd_cache_config = config.ssd_cache_config;
+        let engine_ssd = ssd_cache_config
+            .as_ref()
+            .map(|ssd| ssd.use_transfer_engine(config.peer_transfer_backend))
+            .transpose()?
+            .unwrap_or(false);
+        #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
+        if engine_ssd {
+            return Err("SSD transfer engine was not compiled".into());
+        }
         #[cfg(any(feature = "mooncake", feature = "orbitte"))]
         let mooncake_nic_names = config.mooncake_nic_names;
         let blockwise_alloc = config.blockwise_alloc || ssd_cache_config.is_some();
@@ -145,18 +154,18 @@ impl Storage {
         // Mooncake must be created after the allocator so it can register the
         // pinned pool. An empty rail filter lets Mooncake choose TCP fallback.
         #[cfg(any(feature = "mooncake", feature = "orbitte"))]
-        let peer_transport = if global_index.is_some() {
-            let advertise = &config
+        let peer_transport = if global_index.is_some() || engine_ssd {
+            let advertise = config
                 .membership
                 .as_ref()
-                .expect("distributed configuration")
-                .owner()
-                .endpoint;
+                .map(|membership| membership.owner().endpoint.as_str())
+                .unwrap_or("127.0.0.1:0");
             let transfer = create_transfer_backend(
                 config.peer_transfer_backend,
                 &mooncake_nic_names,
                 allocator.clone(),
                 advertise,
+                engine_ssd.then_some(ssd_cache_config.as_ref()).flatten(),
                 #[cfg(feature = "orbitte-rdma")]
                 config.orbitte_rdma.clone(),
             )
@@ -190,6 +199,20 @@ impl Storage {
                     allocation_footprint_fn.clone(),
                     is_numa,
                     inventory.clone(),
+                    {
+                        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+                        {
+                            if engine_ssd {
+                                peer_transport.clone()
+                            } else {
+                                None
+                            }
+                        }
+                        #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
+                        {
+                            None
+                        }
+                    },
                 )
                 .map_err(|error| format!("Failed to initialise SSD cache: {error}"))
             })

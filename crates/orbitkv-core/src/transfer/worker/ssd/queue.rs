@@ -9,8 +9,9 @@ use crate::EngineError;
 use crate::codec::gpu::{DecodeError, MAX_BATCH_SEGMENTS};
 use crate::cost::{Observation, Outcome};
 use crate::metrics::core_metrics;
-use crate::storage::ssd::GpuWriteLease;
-use crate::storage::ssd::cufile::{CufileFile, GpuSlot, IoBatch, STAGING_SLOTS};
+use crate::storage::ssd::WriteLease;
+use crate::storage::ssd::cufile::{IoBatch, STAGING_SLOTS};
+use crate::storage::ssd::gpu::{GpuFile, GpuSlot};
 
 use super::decode::{DecodeCommand, DecodeRange, DecodeReply};
 use crate::transfer::finish_gpu_transfer;
@@ -28,14 +29,15 @@ enum Task {
 }
 
 struct Work {
-    file: Arc<CufileFile>,
+    file: Arc<GpuFile>,
+    extent: Arc<dyn Send + Sync>,
     batch: IoBatch,
     write: Option<usize>,
     encoded: bool,
 }
 
 struct Write {
-    lease: Option<GpuWriteLease>,
+    lease: Option<Arc<WriteLease>>,
     remaining: usize,
 }
 
@@ -96,11 +98,13 @@ impl Job {
                     let layers = &task.layers;
                     let plans = super::plan(layers)?;
                     job.encoded = plans.encoded.into();
+                    let extents = Arc::new(plans.owners);
                     for (file, batches) in plans.raw {
                         for batch in batches {
                             job.bytes += batch.copies.iter().map(|copy| copy.bytes).sum::<usize>();
                             job.work.push_back(Work {
                                 file: Arc::clone(&file),
+                                extent: extents.clone(),
                                 batch,
                                 write: None,
                                 encoded: false,
@@ -114,12 +118,13 @@ impl Job {
                     {
                         let file = Arc::clone(write.lease.file());
                         job.writes.push(Write {
-                            lease: Some(write.lease),
+                            lease: Some(Arc::clone(&write.lease)),
                             remaining: write.batches.len(),
                         });
                         for batch in write.batches {
                             job.work.push_back(Work {
                                 file: Arc::clone(&file),
+                                extent: write.lease.clone(),
                                 batch,
                                 write: Some(index),
                                 encoded: false,
@@ -442,6 +447,7 @@ impl Decode {
         for batch in batches {
             job.work.push_back(Work {
                 file: Arc::clone(self.reads[0].source.file().map_err(|e| e.to_string())?),
+                extent: self.reads[0].source.clone(),
                 batch,
                 write: None,
                 encoded: true,
@@ -721,7 +727,10 @@ pub(in crate::transfer::worker) fn run(
                 encoded: work.encoded,
             };
             job.observation.submitted();
-            match slots[index].0.submit(work.file, work.batch, !reading) {
+            match slots[index]
+                .0
+                .submit(work.file, work.batch, !reading, work.extent)
+            {
                 Ok(()) => {
                     job.inflight += 1;
                     slots[index].1 = Some(owner);

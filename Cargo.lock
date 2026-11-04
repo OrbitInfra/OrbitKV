@@ -2069,6 +2069,7 @@ dependencies = [
  "cc",
  "cudarc",
  "ibverbs-sys",
+ "io-uring",
  "libc",
  "libloading 0.8.9",
  "log",

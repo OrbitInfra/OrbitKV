@@ -1,5 +1,14 @@
 # GPU storage
 
+This page describes OrbitKV's native io_uring/cuFile fallback, used by TENT and
+by explicit `--ssd-io-engine legacy`. With an OrbitTE backend, the default
+`--ssd-io-engine auto` uses OrbitTE file segments: `--ssd-backend auto` selects
+CUDA staging plus io_uring, while `cufile` requires the `orbitte-gds` feature
+and native-only GDS. See [SSD file transfers](transport.md#ssd-file-transfers)
+for the owner contract, configuration and exact GPU gates. Those OrbitTE GPU
+profiles are implemented but unqualified; the historical results below apply
+only to the native fallback.
+
 OrbitKV defaults to automatic SSD backend selection when SSD caching is configured.
 Complete state groups can be written
 from registered engine GPU pages to SSD, and selected SSD state can be restored

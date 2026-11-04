@@ -300,6 +300,19 @@ jobs:
           LIBCLANG_PATH: /usr/lib/llvm-18/lib
           CLANG_PATH: /usr/bin/clang-18
 
+      - name: SSD engine real-file byte and ownership gates
+        run: |
+          CC=gcc CXX=g++ cargo clippy --locked -p orbitkv-server -p orbitkv-core --all-targets --no-default-features --features cuda-13,orbitte-gds -- -D warnings
+          # CUDA host-registration is a CPU fixture; io_uring and file bytes are real.
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte-gds --lib storage::ssd::io::tests::orbitte -- --ignored --test-threads=1
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ROOT=/dev/shm cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib storage::ssd::io::tests::orbitte -- --ignored --test-threads=1
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --lib storage::ssd:: -- --test-threads=1
+          cargo test --locked -p orbitkv-server --lib tests::ssd_engine_switch_is_explicit_and_tent_requires_legacy_file_io -- --exact
+        env:
+          CUDA_PATH: /usr/local/cuda
+          LIBCLANG_PATH: /usr/lib/llvm-18/lib
+          CLANG_PATH: /usr/bin/clang-18
+
   cargo-check:
     name: cargo check
     if: always()

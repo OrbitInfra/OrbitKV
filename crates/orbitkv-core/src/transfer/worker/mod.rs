@@ -790,7 +790,7 @@ struct WorkerRuntime {
     backend: Box<dyn TransferBackend>,
     max_dma_pitch: usize,
     codec: std::cell::RefCell<Option<crate::codec::gpu::GpuCodec>>,
-    codec_write: std::cell::RefCell<Option<crate::storage::ssd::cufile::GpuSlot>>,
+    codec_write: std::cell::RefCell<Option<crate::storage::ssd::gpu::GpuSlot>>,
 }
 
 fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRuntime, EngineError> {

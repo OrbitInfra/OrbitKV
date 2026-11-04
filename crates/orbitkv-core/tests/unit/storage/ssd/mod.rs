@@ -99,6 +99,7 @@ async fn neutral_leases_read_raw_and_encoded_generations_through_uring() {
             },
             false,
             None,
+            None,
         )
         .unwrap();
         let data = [if encoded { 0x71 } else { 0x32 }; SSD_ALIGNMENT];
@@ -207,14 +208,13 @@ fn queued_read_store_with_inventory(
     inventory: Option<Arc<crate::storage::inventory::ResidencyInventory>>,
     commit: bool,
 ) -> (Arc<SsdStore>, tokio::sync::mpsc::Receiver<PrefetchBatch>) {
-    use std::os::fd::AsRawFd;
-
-    let file = tempfile::tempfile().unwrap();
+    let file = Arc::new(tempfile::tempfile().unwrap());
     file.set_len(SSD_ALIGNMENT as u64).unwrap();
     let io = Arc::new(
-        UringIoEngine::new_multi(
-            vec![file.as_raw_fd()],
-            UringConfig {
+        SsdIo::new(
+            &[Arc::clone(&file)],
+            None,
+            uring::UringConfig {
                 threads: 2,
                 ..Default::default()
             },

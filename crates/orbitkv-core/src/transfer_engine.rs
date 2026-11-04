@@ -1,16 +1,27 @@
 //! Transfer-engine contracts. Logical failure never establishes physical drain.
 
 use std::fmt;
+use std::path::Path;
 use std::ptr::NonNull;
+use std::sync::Arc;
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+use std::time::Duration;
+use std::time::Instant;
 
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 use crate::PeerTransferBackend;
-use crate::memory::pool::{PinnedAllocation, PinnedAllocator};
+use crate::memory::pool::PinnedAllocation;
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+use crate::memory::pool::PinnedAllocator;
 
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 pub(crate) const MAX_REGISTERED_POOLS: usize = 1024;
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 pub(crate) const MAX_REGISTERED_BYTES: u64 = 1 << 40;
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 pub(crate) static REGISTERED_POOLS: Mutex<(usize, u64)> = Mutex::new((0, 0));
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,9 +101,12 @@ unsafe impl Send for TransferSlice {}
 unsafe impl Sync for TransferSlice {}
 
 pub struct PeerSegment {
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     pub(crate) owner_epoch: String,
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     pub(crate) inner: Segment,
 }
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 pub(crate) enum Segment {
     #[cfg(feature = "mooncake")]
     Tent {
@@ -103,11 +117,28 @@ pub(crate) enum Segment {
     OrbitTe(orbit_te::RemoteSegment),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileTransport {
+    IoUring,
+    Gds,
+}
+
+/// Engine-local file handle. The SSD owner keeps the original fd and extents.
+pub struct FileSegment {
+    #[cfg(feature = "orbitte")]
+    pub(crate) owner_epoch: String,
+    pub length: u64,
+    #[cfg(feature = "orbitte")]
+    pub(crate) inner: orbit_te::FileSegment,
+}
+
 /// Retains registration, engine and actual backing. Failed cleanup retains all
 /// three and their admission charge. Drop is only legal after transfer drain.
 pub struct Registration {
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     pub(crate) inner: RegistrationInner,
 }
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 pub(crate) enum RegistrationInner {
     #[cfg(feature = "mooncake")]
     Tent(crate::peer::transport::TentRegistration),
@@ -120,6 +151,40 @@ pub trait TransferBackend: Send + Sync {
     fn transfer_endpoint(&self) -> &str;
     fn source_epoch(&self) -> &str;
     fn accepts_endpoint(&self, endpoint: &str) -> bool;
+
+    fn open_file(&self, _path: &Path) -> Result<FileSegment, TransferError> {
+        Err(TransferError::new(
+            ErrorKind::Unavailable,
+            "selected backend does not expose file transports",
+        ))
+    }
+
+    fn close_file(&self, _file: &FileSegment, _deadline: Instant) -> Result<(), TransferError> {
+        Err(TransferError::new(
+            ErrorKind::Unavailable,
+            "selected backend does not expose file drain",
+        ))
+    }
+
+    /// # Safety
+    /// The registration, actual backing and immutable/read-exclusive extents
+    /// must remain owned until drain. `remote_address` is a file byte offset.
+    /// Unquiesced requires retaining all of them; never replay a failed WRITE.
+    /// Every other result proves local drain, including a pre-admission rejection.
+    unsafe fn transfer_file(
+        &self,
+        _operation: TransferOp,
+        _file: &FileSegment,
+        _transport: FileTransport,
+        _slices: &[TransferSlice],
+        _deadline: Instant,
+        _cancellation: &Cancellation,
+    ) -> Result<usize, TransferError> {
+        Err(TransferError::new(
+            ErrorKind::Unavailable,
+            "selected backend does not expose file transfers",
+        ))
+    }
 
     /// The caller transfers exclusive access to destination allocations, or
     /// supplies immutable source allocations, through the last admitted operation.
@@ -174,6 +239,7 @@ pub trait TransferBackend: Send + Sync {
     fn record_nic_load(&self);
 }
 
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 pub(crate) struct PeerReadSlice {
     pub(crate) local: NonNull<u8>,
     pub(crate) remote_address: u64,
@@ -181,14 +247,17 @@ pub(crate) struct PeerReadSlice {
     pub(crate) allocation: Arc<PinnedAllocation>,
 }
 // SAFETY: each descriptor retains its actual allocation; READ owns exclusive access.
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 unsafe impl Send for PeerReadSlice {}
 
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 #[derive(Debug)]
 pub(crate) enum PeerTransferError {
     Timeout,
     Failed(String),
     Unquiesced,
 }
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 impl fmt::Display for PeerTransferError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -198,6 +267,7 @@ impl fmt::Display for PeerTransferError {
         }
     }
 }
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 impl From<TransferError> for PeerTransferError {
     fn from(error: TransferError) -> Self {
         match error.kind {
@@ -208,6 +278,7 @@ impl From<TransferError> for PeerTransferError {
     }
 }
 
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 impl dyn TransferBackend {
     #[allow(
         clippy::mem_forget,
@@ -261,6 +332,7 @@ impl dyn TransferBackend {
     }
 }
 
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 pub(crate) fn remaining(deadline: Instant) -> Result<Duration, TransferError> {
     deadline
         .checked_duration_since(Instant::now())
@@ -292,14 +364,19 @@ pub(crate) fn validate_slices(slices: &[TransferSlice]) -> Result<usize, Transfe
     })
 }
 
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
 pub(crate) fn create_transfer_backend(
     backend: PeerTransferBackend,
     nics: &[String],
     allocator: Arc<PinnedAllocator>,
     advertise: &str,
+    storage: Option<&crate::SsdCacheConfig>,
     #[cfg(feature = "orbitte-rdma")] rdma: Option<crate::OrbitTeRdmaConfig>,
 ) -> Result<Arc<dyn TransferBackend>, String> {
     backend.validate_compiled()?;
+    if storage.is_some() && backend == PeerTransferBackend::Mooncake {
+        return Err("TENT file transport configuration is not exposed".into());
+    }
     #[cfg(feature = "orbitte-rdma")]
     if (backend == PeerTransferBackend::OrbitTeRdma) != rdma.is_some() {
         return Err(
@@ -324,6 +401,7 @@ pub(crate) fn create_transfer_backend(
                 } else {
                     orbit_te::Transport::Tcp
                 },
+                storage,
                 #[cfg(feature = "orbitte-rdma")]
                 rdma,
             )?))

@@ -69,7 +69,14 @@ Default deployments use native TENT payloads and OrbitKV source-control RPCs.
 Both providers can be compiled together and selected by `--peer-transfer-backend`;
 an unavailable provider now fails before Manager CUDA initialization. The shared
 `transfer_engine::TransferBackend` contract owns register/open/READ/WRITE/cancel/
-shutdown boundaries. OrbitTE `df9ded0` uses a one-route Unspec policy with
+shutdown boundaries. SSD `--ssd-io-engine auto` uses the selected OrbitTE engine
+for file bytes and TENT's temporary native fallback. `transfer` rejects the
+current TENT file API gap; `legacy` explicitly selects the fallback. OrbitTE
+`auto` storage uses CUDA staging/io_uring, while `cufile` requires `orbitte-gds`
+and native-only configuration. Uncertain file work retains backing, extents and
+one of 32 per-store operation permits; never replay it. GPU/GDS remains
+unqualified. See `docs/transport.md#ssd-file-transfers`.
+OrbitTE `df9ded0` uses a one-route Unspec peer policy with
 failover, HP-TCP, SHM and MNNVL disabled. Historical hardware results below do not
 qualify this new dependency revision. See `docs/transport.md#runtime-transfer-backend`.
 An experimental `orbitte` build can explicitly select

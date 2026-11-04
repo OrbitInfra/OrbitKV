@@ -135,7 +135,12 @@ release a physically active allocation.
 ### Transfer and backing domains
 
 Raw DRAM Restore executes in the engine through independently registered shared
-arenas. SSD/codec paths use Manager workers and bounded staging. Peer SSD uses
+arenas. SSD/codec paths use Manager workers and bounded staging. With OrbitTE,
+`TransferBackend` moves file bytes through io_uring or opt-in GDS; OrbitKV keeps
+extent leases and metadata publication. TENT uses the configured legacy SSD
+fallback until its wrapper exposes file configuration/drain. Unknown drain
+retains backing, the immutable/unpublished extent and the file-operation budget.
+See [SSD file transfers](transport.md#ssd-file-transfers). Peer SSD uses
 exact-generation source-side staging before the same TENT READ contract. Per-layer
 readiness, multipart partitioning and whole-operation drain retain distinct owners.
 Native GDS and broad transport-fault qualification remain open.

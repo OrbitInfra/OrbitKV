@@ -1,4 +1,4 @@
-use super::{SsdStore, index::SsdIndexEntry, uring::UringIoEngine};
+use super::{SsdStore, index::SsdIndexEntry, io::SsdIo};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
 use crate::cost::{
     CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
@@ -124,6 +124,7 @@ pub(super) struct BatchContext {
     observation: Mutex<Option<Observation>>,
     reservation: Mutex<Option<StagingReservation>>,
     failed: AtomicBool,
+    unquiesced: AtomicBool,
     submitted: AtomicBool,
     /// Pinned generations stay owned until every queued/submitted read drains.
     leases: Vec<Arc<super::SsdReadLease>>,
@@ -144,6 +145,7 @@ impl BatchContext {
             observation: Mutex::new(Some(observation)),
             reservation: Mutex::new(reservation),
             failed: AtomicBool::new(false),
+            unquiesced: AtomicBool::new(false),
             submitted: AtomicBool::new(false),
             leases,
         }
@@ -160,9 +162,18 @@ impl BatchContext {
         {
             let results = std::mem::take(&mut *self.results.lock());
             let failed = self.failed.load(Ordering::Acquire);
-            let reservation = self.reservation.lock().take();
+            let unquiesced = self.unquiesced.load(Ordering::Acquire);
+            // The detached file owner retains this context on uncertainty. Keep
+            // its export reservation charged even after logical failure delivery.
+            let reservation = if unquiesced {
+                None
+            } else {
+                self.reservation.lock().take()
+            };
             let mut prepared = None;
-            let result = if let Some(reservation) = reservation {
+            let result = if unquiesced {
+                Err(PeerError::StagingFailed)
+            } else if let Some(reservation) = reservation {
                 if failed {
                     Err(PeerError::StagingFailed)
                 } else {
@@ -213,7 +224,7 @@ struct PrefetchTask {
 pub(super) async fn ssd_prefetch_loop(
     store: Weak<SsdStore>,
     rx: tokio::sync::mpsc::Receiver<PrefetchBatch>,
-    io: Arc<UringIoEngine>,
+    io: Arc<SsdIo>,
     prefetch_inflight: usize,
 ) {
     let prefetch_inflight = prefetch_inflight.max(1);
@@ -342,7 +353,7 @@ async fn dispatch_prefetch_batch(
 async fn ssd_prefetch_worker(
     store: Weak<SsdStore>,
     mut task_rx: tokio::sync::mpsc::Receiver<PrefetchTask>,
-    io: Arc<UringIoEngine>,
+    io: Arc<SsdIo>,
     max_inflight: usize,
 ) {
     use std::future::Future;
@@ -423,7 +434,7 @@ async fn ssd_prefetch_worker(
 }
 
 /// Execute a single prefetch operation.
-async fn execute_prefetch(task: PrefetchTask, io: Arc<UringIoEngine>) -> SingleMaterializedBlocks {
+async fn execute_prefetch(task: PrefetchTask, io: Arc<SsdIo>) -> SingleMaterializedBlocks {
     let start = Instant::now();
     let duration_secs = || start.elapsed().as_secs_f64();
 
@@ -438,12 +449,19 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<UringIoEngine>) -> SingleM
 
     let expected_len = block_size as usize;
     let read_result = {
-        let iovecs = task
+        let mut offset = task.entry.file_offset;
+        let slices = task
             .slots
             .iter()
-            .flat_map(|slot| {
-                slot.segment_iovecs()
-                    .map(|(ptr, size)| (ptr.as_ptr(), size))
+            .flat_map(|slot| slot.segment_iovecs())
+            .map(|(local, length)| {
+                let slice = crate::transfer_engine::TransferSlice {
+                    local,
+                    remote_address: offset,
+                    length,
+                };
+                offset += length as u64;
+                slice
             })
             .collect();
         if !ctx.submitted.swap(true, Ordering::Relaxed)
@@ -451,16 +469,35 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<UringIoEngine>) -> SingleM
         {
             observation.submitted();
         }
-        io.readv_at_async(task.entry.shard_id, iovecs, task.entry.file_offset)
+        io.submit(
+            crate::transfer_engine::TransferOp::Read,
+            task.entry.shard_id,
+            slices,
+            task.slots
+                .iter()
+                .flat_map(|slot| slot.allocations().cloned())
+                .collect(),
+            ctx.clone(),
+        )
     };
 
     #[cfg(feature = "test-hooks")]
     crate::test_faults::pause("ssd").await;
 
-    let read_ok = match read_result {
-        Ok(rx) => matches!(rx.await, Ok(Ok(bytes)) if bytes == expected_len),
-        Err(_) => false,
+    let result = match read_result {
+        Ok(rx) => rx.await.unwrap_or_else(|error| {
+            Err(crate::transfer_engine::TransferError::new(
+                crate::transfer_engine::ErrorKind::Unquiesced,
+                error.to_string(),
+            ))
+        }),
+        Err(error) => Err(error),
     };
+    if matches!(&result, Err(error) if error.kind == crate::transfer_engine::ErrorKind::Unquiesced)
+    {
+        ctx.unquiesced.store(true, Ordering::Release);
+    }
+    let read_ok = matches!(result, Ok(bytes) if bytes == expected_len);
     let slots = if !read_ok {
         warn!("SSD prefetch: failed or short read for {key:?}");
         None
