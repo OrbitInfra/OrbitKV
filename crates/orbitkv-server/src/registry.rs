@@ -3,6 +3,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
 #[derive(Debug, Clone)]
@@ -13,25 +14,16 @@ pub struct TensorMetadata {
     pub data_ptr: u64,
     pub size_bytes: usize,
     pub device_id: i32,
+    pub owner: Arc<Py<PyAny>>,
 }
 
 struct LayerTensor {
-    #[allow(
-        dead_code,
-        reason = "holding the Python tensor keeps CUDA IPC memory mapped"
-    )]
-    tensor: Py<PyAny>,
     metadata: TensorMetadata,
     credit_identity: (Vec<u8>, u64),
 }
 
-// Note: No custom Drop impl needed for LayerTensor.
-// PyO3's Py<PyAny> will automatically:
-// 1. Acquire the GIL when dropped
-// 2. Decrement the Python object's reference count
-// 3. Let Python's garbage collector handle the actual cleanup
-// This is the correct way to release CUDA IPC tensors - the mapped memory
-// will be unmapped when the tensor's storage is garbage collected.
+// The last actual tensor owner releases the Python CUDA IPC storage credit.
+// Registry removal cannot unmap backing retained by a submitted engine READ.
 
 struct ContextState {
     device_id: i32,
@@ -325,8 +317,8 @@ impl CudaTensorRegistry {
                     registration.ref_counter_handle.clone(),
                     registration.ref_counter_offset,
                 ),
-                tensor: tensor.unbind(),
                 metadata: TensorMetadata {
+                    owner: Arc::new(tensor.unbind()),
                     dtype: format!("torch.{}", registration.dtype),
                     shape,
                     strides,

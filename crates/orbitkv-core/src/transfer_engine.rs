@@ -108,6 +108,8 @@ pub struct PeerSegment {
 }
 #[cfg(any(feature = "mooncake", feature = "orbitte"))]
 pub(crate) enum Segment {
+    #[cfg(test)]
+    Control,
     #[cfg(feature = "mooncake")]
     Tent {
         endpoint: String,
@@ -140,6 +142,12 @@ pub struct Registration {
 }
 #[cfg(any(feature = "mooncake", feature = "orbitte"))]
 pub(crate) enum RegistrationInner {
+    #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "CPU control retains the actual borrowed owner until registration drop"
+    )]
+    Control(Arc<dyn Send + Sync>),
     #[cfg(feature = "mooncake")]
     Tent(crate::peer::transport::TentRegistration),
     #[cfg(feature = "orbitte")]

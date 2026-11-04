@@ -34,7 +34,7 @@ const REMOTE_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 struct MaterializedRead {
     source: Option<AttributionSource>,
     cache_inserts: MaterializedBlocks,
-    ready_blocks: Vec<Arc<SealedBlock>>,
+    ready_blocks: Vec<RestoreSource>,
     missing: usize,
 }
 
@@ -45,6 +45,7 @@ struct ReadKey {
     wait_for_full_prefix: bool,
     allow_ssd_prefetch: bool,
     destination_nodes: Vec<NumaNode>,
+    host_ready: bool,
 }
 type SharedRead = OnceCell<MaterializedRead>;
 
@@ -150,6 +151,7 @@ impl ReadCoordinator {
             wait_for_full_prefix,
             allow_ssd_prefetch,
             destination_nodes: destination_nodes.to_vec(),
+            host_ready: warming,
         };
         let read = {
             let mut reads = self.reads.lock();
@@ -185,9 +187,17 @@ impl ReadCoordinator {
             })
             .await;
         if !warming {
-            self.dram.retain_demand(&keys, &result.ready_blocks);
+            let (resident_keys, resident): (Vec<_>, Vec<_>) = keys
+                .iter()
+                .zip(&result.ready_blocks)
+                .filter_map(|(key, source)| match source {
+                    RestoreSource::Memory(block) => Some((key.clone(), Arc::clone(block))),
+                    _ => None,
+                })
+                .unzip();
+            self.dram.retain_demand(&resident_keys, &resident);
             if let Some(ssd) = &self.ssd_store {
-                ssd.ingest_batch(keys.iter().zip(&result.ready_blocks), true);
+                ssd.ingest_batch(resident_keys.iter().zip(&resident), true);
             }
         }
         record_tier_attribution(
@@ -197,12 +207,7 @@ impl ReadCoordinator {
             result.source,
         );
         QueryResult {
-            blocks: result
-                .ready_blocks
-                .iter()
-                .cloned()
-                .map(RestoreSource::Memory)
-                .collect(),
+            blocks: result.ready_blocks.clone(),
             missing: result.missing,
         }
     }
@@ -258,7 +263,7 @@ impl ReadCoordinator {
         req_id: &str,
         allow_ssd_prefetch: bool,
         destination_nodes: &[NumaNode],
-    ) -> (Option<AttributionSource>, MaterializedBlocks) {
+    ) -> (Option<AttributionSource>, Vec<(StateKey, RestoreSource)>) {
         #[cfg(any(feature = "mooncake", feature = "orbitte"))]
         if let Some(remote) = &self.remote_fetch {
             remote.discover(&mut plan.rows);
@@ -270,13 +275,16 @@ impl ReadCoordinator {
         #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
         let _ = (req_id, destination_nodes);
 
+        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+        let target = plan.target;
         let mut allow_local_ssd = allow_ssd_prefetch;
         for _ in 0..3 {
             match plan.host_route(peer_available, allow_local_ssd, self.codec_budget) {
                 #[cfg(any(feature = "mooncake", feature = "orbitte"))]
                 Some(HostReadRoute::Peer(route)) => {
                     if let Some(remote) = &self.remote_fetch {
-                        let result = remote.fetch_plan(route, req_id, destination_nodes).await;
+                        let result =
+                            fetch_peer(remote, route, target, req_id, destination_nodes).await;
                         if !result.can_replan() {
                             return (Some(AttributionSource::Remote), result.blocks);
                         }
@@ -291,7 +299,12 @@ impl ReadCoordinator {
                     {
                         return (
                             Some(AttributionSource::Ssd),
-                            ssd.read_host_batch(leases).await.unwrap_or_default(),
+                            ssd.read_host_batch(leases)
+                                .await
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|(key, block)| (key, RestoreSource::Memory(block)))
+                                .collect(),
                         );
                     }
                     // This exact local generation disappeared after planning.
@@ -316,7 +329,7 @@ impl ReadCoordinator {
                 {
                     // A submitted payload failure completes this query; only
                     // missing advertisements participate in producer waiting.
-                    let result = remote.fetch_plan(route, req_id, destination_nodes).await;
+                    let result = fetch_peer(remote, route, target, req_id, destination_nodes).await;
                     if !result.can_replan() {
                         return (Some(AttributionSource::Remote), result.blocks);
                     }
@@ -350,19 +363,26 @@ fn build_ready_result(
     total: usize,
     source: Option<AttributionSource>,
     requested_keys: &[StateKey],
-    cache_inserts: MaterializedBlocks,
+    fetched: Vec<(StateKey, RestoreSource)>,
 ) -> MaterializedRead {
-    let mut ready_blocks = prefix_blocks;
-    let inserts_by_key: HashMap<_, _> = cache_inserts
-        .iter()
-        .map(|(key, block)| (key, block))
+    let mut ready_blocks: Vec<_> = prefix_blocks
+        .into_iter()
+        .map(RestoreSource::Memory)
         .collect();
+    let inserts_by_key: HashMap<_, _> = fetched.iter().map(|(key, block)| (key, block)).collect();
     ready_blocks.extend(
         requested_keys
             .iter()
-            .map_while(|key| inserts_by_key.get(key).map(|block| Arc::clone(*block))),
+            .map_while(|key| inserts_by_key.get(key).map(|block| (*block).clone())),
     );
     let missing = total.saturating_sub(ready_blocks.len());
+    let cache_inserts = fetched
+        .into_iter()
+        .filter_map(|(key, source)| match source {
+            RestoreSource::Memory(block) => Some((key, block)),
+            _ => None,
+        })
+        .collect();
     MaterializedRead {
         source,
         cache_inserts,
@@ -374,3 +394,39 @@ fn build_ready_result(
 #[cfg(test)]
 #[path = "../../tests/unit/query/read.rs"]
 mod tests;
+
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+async fn fetch_peer(
+    remote: &PeerReader,
+    route: crate::planning::peer::FetchPlan<'_>,
+    target: crate::planning::read::ReadTarget,
+    req_id: &str,
+    nodes: &[NumaNode],
+) -> crate::peer::execute::FetchResult<RestoreSource> {
+    use crate::peer::execute::FetchResult;
+    if target == crate::planning::read::ReadTarget::EngineRestore {
+        let result = remote.restore_plan(route, req_id, nodes).await;
+        FetchResult {
+            blocks: result
+                .blocks
+                .into_iter()
+                .map(|(key, block)| (key, RestoreSource::Peer(block)))
+                .collect(),
+            status: result.status,
+            attempts: result.attempts,
+            completed_segments: result.completed_segments,
+        }
+    } else {
+        let result = remote.fetch_plan(route, req_id, nodes).await;
+        FetchResult {
+            blocks: result
+                .blocks
+                .into_iter()
+                .map(|(key, block)| (key, RestoreSource::Memory(block)))
+                .collect(),
+            status: result.status,
+            attempts: result.attempts,
+            completed_segments: result.completed_segments,
+        }
+    }
+}

@@ -1,7 +1,10 @@
 use crate::memory::numa::NumaNode;
 use crate::planning::peer::{FetchPlan, FetchSegment};
 
+use crate::block::{SealedBlock, StateKey};
+#[cfg(test)]
 use crate::storage::MaterializedBlocks;
+use std::sync::Arc;
 
 const MAX_AUTHORIZATION_RETRIES: usize = 2;
 
@@ -26,14 +29,14 @@ pub(crate) enum FetchStatus {
     PayloadFailed,
 }
 
-pub(crate) struct FetchResult {
-    pub(crate) blocks: MaterializedBlocks,
+pub(crate) struct FetchResult<B = Arc<SealedBlock>> {
+    pub(crate) blocks: Vec<(StateKey, B)>,
     pub(crate) status: FetchStatus,
     pub(crate) attempts: usize,
     pub(crate) completed_segments: usize,
 }
 
-impl FetchResult {
+impl<B> FetchResult<B> {
     pub(crate) fn can_replan(&self) -> bool {
         self.status == FetchStatus::AuthorizationExhausted && self.blocks.is_empty()
     }
@@ -43,6 +46,7 @@ impl FetchResult {
 pub(super) trait SegmentFetcher {
     /// The grant owns its source pins, including cleanup when never consumed.
     type Grant: Send;
+    type Block: Send;
 
     async fn authorize_segment(
         &self,
@@ -57,7 +61,7 @@ pub(super) trait SegmentFetcher {
         grant: Self::Grant,
         req_id: &str,
         destination_nodes: &[NumaNode],
-    ) -> Result<MaterializedBlocks, ()>;
+    ) -> Result<Vec<(StateKey, Self::Block)>, ()>;
 }
 
 pub(super) async fn execute_fetch_plan<F: SegmentFetcher>(
@@ -65,7 +69,7 @@ pub(super) async fn execute_fetch_plan<F: SegmentFetcher>(
     mut plan: FetchPlan<'_>,
     req_id: &str,
     destination_nodes: &[NumaNode],
-) -> FetchResult {
+) -> FetchResult<F::Block> {
     let mut fetched = Vec::with_capacity(plan.block_count());
     let mut attempts = 0;
     let mut completed = 0;

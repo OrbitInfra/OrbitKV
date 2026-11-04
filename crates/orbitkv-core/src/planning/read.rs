@@ -118,7 +118,8 @@ impl ReadPlan {
         let selected = local_ssd.then_some(HostReadSelection::Ssd);
 
         #[cfg(any(feature = "mooncake", feature = "orbitte"))]
-        if crate::cost::enabled()
+        if self.target == ReadTarget::HostReady
+            && crate::cost::enabled()
             && let Some(default_selection) = selected
         {
             selected = Some(self.evaluate_host_routes(

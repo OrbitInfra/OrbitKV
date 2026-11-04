@@ -115,6 +115,8 @@ pub(crate) enum CostObservationKind {
     #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     RemoteRead,
     #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    PeerGpuRestore,
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     RemoteAuthorization,
     #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     RemoteSsdAuthorization,
@@ -164,9 +166,10 @@ impl CostObservationKind {
             | Self::SsdCufileRead
             | Self::SsdCufileWrite => SampleBoundary::SubmittedToCompletion,
             #[cfg(any(feature = "mooncake", feature = "orbitte"))]
-            Self::RemoteRead | Self::RemoteAuthorization | Self::RemoteSsdAuthorization => {
-                SampleBoundary::SubmittedToCompletion
-            }
+            Self::RemoteRead
+            | Self::PeerGpuRestore
+            | Self::RemoteAuthorization
+            | Self::RemoteSsdAuthorization => SampleBoundary::SubmittedToCompletion,
             #[cfg(any(feature = "mooncake", feature = "orbitte"))]
             Self::PeerDramHostReady | Self::PeerSsdHostReady => {
                 SampleBoundary::SubmittedToCompletion
@@ -176,6 +179,10 @@ impl CostObservationKind {
 
     fn completion_target(self, resource: ExecutionResource) -> Option<CompletionTarget> {
         match (self, resource) {
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+            (Self::PeerGpuRestore, ExecutionResource::Gpu(device)) => {
+                Some(CompletionTarget::engine_restore(device))
+            }
             (Self::GpuLoadDirect | Self::GpuLoadKernel, ExecutionResource::Gpu(device)) => {
                 Some(CompletionTarget::engine_restore(device))
             }
@@ -226,6 +233,8 @@ impl CostObservationKind {
             Self::LocalSsdHostReady => "local_ssd_host_ready",
             #[cfg(any(feature = "mooncake", feature = "orbitte"))]
             Self::RemoteRead => "remote_read",
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+            Self::PeerGpuRestore => "peer_gpu_restore",
             #[cfg(any(feature = "mooncake", feature = "orbitte"))]
             Self::RemoteAuthorization => "remote_authorization",
             #[cfg(any(feature = "mooncake", feature = "orbitte"))]

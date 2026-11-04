@@ -295,6 +295,9 @@ jobs:
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --lib peer::
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --features orbitte --lib peer::
           cargo test --locked -p orbitkv-transfer --no-default-features --lib
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib query::read::tests
+          cargo test --locked -p orbitkv-core --lib query::read::tests
+          cargo test --locked -p orbitkv-server --lib registry::tests::tensor_owner_survives_registry_removal -- --exact
         env:
           CUDA_PATH: /usr/local/cuda
           LIBCLANG_PATH: /usr/lib/llvm-18/lib

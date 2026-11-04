@@ -389,6 +389,7 @@ impl EncodedFixture {
                 Some(&[orbitkv_state::StorageFormat::Fp8FromBf16]),
                 TransferMode::Direct,
                 false,
+                None,
             )
             .unwrap();
         Self {

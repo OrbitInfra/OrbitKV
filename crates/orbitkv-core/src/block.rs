@@ -41,6 +41,8 @@ pub struct QueryResult {
 #[derive(Clone)]
 pub enum RestoreSource {
     Memory(Arc<SealedBlock>),
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    Peer(crate::peer::restore::PeerRestoreBlock),
     Ssd {
         lease: Arc<crate::storage::ssd::SsdReadLease>,
         path: crate::SsdReadPath,
@@ -54,6 +56,8 @@ impl fmt::Debug for RestoreSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct(match self {
             Self::Memory(_) => "Memory",
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+            Self::Peer(_) => "Peer",
             Self::Ssd { .. } => "Ssd",
         })
         .field("slots", &self.slot_count())
@@ -66,6 +70,8 @@ impl RestoreSource {
     pub fn memory_footprint(&self) -> u64 {
         match self {
             Self::Memory(block) => block.memory_footprint(),
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+            Self::Peer(block) => block.bytes(),
             Self::Ssd { lease, .. } => lease
                 .entry
                 .slots
@@ -78,6 +84,8 @@ impl RestoreSource {
     pub(crate) fn slot_count(&self) -> usize {
         match self {
             Self::Memory(block) => block.slots().len(),
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+            Self::Peer(block) => block.slots.len(),
             Self::Ssd { lease, .. } => lease.entry.slots.len(),
         }
     }

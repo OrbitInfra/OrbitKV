@@ -79,6 +79,14 @@ unqualified. See `docs/transport.md#ssd-file-transfers`.
 OrbitTE `df9ded0` uses a one-route Unspec peer policy with
 failover, HP-TCP, SHM and MNNVL disabled. Historical hardware results below do not
 qualify this new dependency revision. See `docs/transport.md#runtime-transfer-backend`.
+Demand peer queries hold source grants until Restore submits directly to GPU
+pages through the selected engine. Prepare/Warmup still fill the DRAM tier.
+Do not diagnose a missing DRAM replica after GPU Restore as a publication bug.
+Unknown drain or failed unregister retains actual imported tensors and client
+completion; the worker is fenced and instance cleanup cannot claim drain.
+The `--orbitte-rdma-gpu-direct` option selects strict engine GDR registration,
+requiring `MLX5_SCATTER_TO_CQE=0`; the default uses engine-owned staging. Both
+GPU profiles remain unqualified. See `docs/transport.md#peer-restore-into-gpu`.
 An experimental `orbitte` build can explicitly select
 `--peer-transfer-backend orbitte-tcp`; read `docs/transport.md` for its 64 MiB
 READ/4,096-region limits, numeric advertised IP and no-RDMA-filter requirement.
@@ -91,7 +99,7 @@ installed serving or CUDA 13 runtime support. Do not switch default deployments
 or infer RDMA/device-DMA qualification from the TCP candidate.
 An experimental `orbitte-rdma` build separately selects `orbitte-rdma` with an
 explicit single `--orbitte-rdma-device`, port and GID index. Its
-`orbitte+rdma://` namespace fixes the payload to RC verbs with host staging;
+`orbitte+rdma://` namespace fixes the payload to RC verbs, with engine CUDA staging by default;
 there is no TCP/TENT payload fallback. Staging/endpoint budgets are independent
 of source ticket and process pool charges. Requester-local drain does not prove
 remote source termination: remote cleanup errors retain the actual source

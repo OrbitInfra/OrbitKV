@@ -235,11 +235,12 @@ pub(crate) enum BlockRanges {
 }
 
 /// One process's GPU address binding for validated cache geometry.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct KVCacheLayout {
     pub(crate) storage_format: orbitkv_state::StorageFormat,
     data_ptr: u64,
     geometry: KVCacheGeometry,
+    pub(crate) owner: Option<std::sync::Arc<dyn Send + Sync>>,
 }
 
 impl KVCacheLayout {
@@ -267,6 +268,7 @@ impl KVCacheLayout {
             storage_format: Default::default(),
             data_ptr,
             geometry,
+            owner: None,
         })
     }
 
@@ -293,3 +295,11 @@ impl KVCacheLayout {
 #[cfg(test)]
 #[path = "../../tests/unit/transfer/layout.rs"]
 mod tests;
+
+impl std::fmt::Debug for KVCacheLayout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KVCacheLayout")
+            .field("geometry", &self.geometry)
+            .finish_non_exhaustive()
+    }
+}

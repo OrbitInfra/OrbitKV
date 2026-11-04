@@ -25,6 +25,8 @@ use crate::transfer::layout::{BlockCopies, KVCacheLayout};
 use crate::transfer::{CopyDesc, KernelBackend, MemcpyBackend, TransferBackend, TransferMode};
 
 mod codec;
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+mod peer;
 mod restore;
 pub(crate) use codec::SaveGroup;
 pub(crate) mod ssd;
@@ -37,6 +39,7 @@ pub(crate) struct LoadTask {
     pub completion: oneshot::Sender<LoadOutcome>,
     pub reservations: Vec<crate::QueryReservation>,
     pub codec_budget: usize,
+    pub peer_bytes: usize,
     pub decode_ready_started: Instant,
     pub decode_ready_observation: Box<Observation>,
     pub decode_admission: Option<DecodeRestorePermit>,
@@ -69,6 +72,12 @@ pub(crate) enum TransferPayload {
         slot_id: usize,
         offset: usize,
     },
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    Peer {
+        source: crate::peer::restore::PeerRestoreBlock,
+        slot_id: usize,
+        offset: usize,
+    },
     /// Load path: slot borrowed from a cached sealed block.
     Cached {
         sealed: Arc<SealedBlock>,
@@ -81,8 +90,18 @@ pub(crate) enum TransferPayload {
 }
 
 impl TransferPayload {
+    fn is_external(&self) -> bool {
+        match self {
+            Self::Ssd { .. } => true,
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+            Self::Peer { .. } => true,
+            _ => false,
+        }
+    }
     pub(crate) fn raw(&self) -> &RawBlock {
         match self {
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+            Self::Peer { .. } => unreachable!("peer sources do not own host memory"),
             Self::Pending => unreachable!("unallocated save"),
             Self::Ssd { .. } => unreachable!("SSD sources do not own host memory"),
             Self::Owned(block) => block,
@@ -98,6 +117,8 @@ impl TransferPayload {
     fn host_offset(&self) -> usize {
         match self {
             Self::Ssd { offset, .. } => *offset,
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+            Self::Peer { offset, .. } => *offset,
             Self::Owned(_) | Self::Pending => 0,
             Self::Cached { offset, .. } => *offset,
         }
@@ -560,6 +581,8 @@ impl GpuWorkerPool {
         let decode_queue_depth = decode_admission.depth;
         task.decode_admission = Some(decode_admission);
         restore::validate_plan(&task.plan, layers)?;
+        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+        peer::validate(layers, task.codec_budget).map_err(EngineError::Storage)?;
         let mut ssd_path = task.plan.ssd_path();
         if ssd_path == Some(crate::SsdReadPath::Cufile)
             && layers.iter().flat_map(|layer| &layer.blocks).any(|block| {
@@ -789,6 +812,7 @@ struct WorkerRuntime {
     stream: Arc<CudaStream>,
     backend: Box<dyn TransferBackend>,
     max_dma_pitch: usize,
+    peer_unquiesced: std::cell::Cell<bool>,
     codec: std::cell::RefCell<Option<crate::codec::gpu::GpuCodec>>,
     codec_write: std::cell::RefCell<Option<crate::storage::ssd::gpu::GpuSlot>>,
 }
@@ -821,6 +845,7 @@ fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRunt
         stream,
         backend,
         max_dma_pitch,
+        peer_unquiesced: Default::default(),
         codec: Default::default(),
         codec_write: Default::default(),
     })
@@ -832,12 +857,22 @@ fn worker_loop(
     runtime: WorkerRuntime,
 ) {
     while let Some(command) = receiver.blocking_recv() {
+        let Some(command) = prepare_peer(command, &runtime) else {
+            continue;
+        };
         match command {
             WorkerCommand::Drain(reply) => {
                 let result = runtime
                     .stream
                     .synchronize()
-                    .map_err(|e| format!("GPU drain failed: {e}"));
+                    .map_err(|e| format!("GPU drain failed: {e}"))
+                    .and_then(|()| {
+                        if runtime.peer_unquiesced.get() {
+                            Err("peer GPU transfer has not drained".into())
+                        } else {
+                            Ok(())
+                        }
+                    });
                 drop(runtime);
                 let _ = reply.send(result);
                 return;
@@ -876,7 +911,7 @@ fn worker_loop(
                             gpu_observation.admitted();
                         }
                     }
-                    let gpu_cost = if host_staged {
+                    let gpu_cost = if host_staged || task.peer_bytes != 0 {
                         &mut gpu_observation
                     } else {
                         &mut observation
@@ -899,13 +934,15 @@ fn worker_loop(
                         );
                     }
                     gpu_cost.submitted();
-                    copy_and_drain(
-                        runtime.backend.as_ref(),
-                        &runtime.stream,
-                        &copies,
-                        true,
-                        runtime.max_dma_pitch,
-                    )?;
+                    if !copies.is_empty() {
+                        copy_and_drain(
+                            runtime.backend.as_ref(),
+                            &runtime.stream,
+                            &copies,
+                            true,
+                            runtime.max_dma_pitch,
+                        )?;
+                    }
                     Ok(bytes + decoded_bytes)
                 })();
                 let bytes = result.as_ref().copied().unwrap_or(0);
@@ -919,7 +956,7 @@ fn worker_loop(
                     && runtime.backend.name() == "direct"
                     && !has_encoded(&task.layers))
                 .then_some(bytes as u64);
-                if host_staged {
+                if host_staged || task.peer_bytes != 0 {
                     gpu_observation.finish(outcome, actual_io);
                     observation.finish(outcome, None);
                 } else {
@@ -987,6 +1024,13 @@ fn terminal_outcome(completed: bool, consumer_closed: bool) -> Outcome {
 fn has_encoded(layers: &[LayerTransferData]) -> bool {
     layers.iter().any(|layer| {
         layer.blocks.iter().any(|block| match &block.block {
+            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+            TransferPayload::Peer {
+                source, slot_id, ..
+            } => source
+                .slots
+                .get(*slot_id)
+                .is_some_and(|slot| slot.meta.encoding.is_some()),
             TransferPayload::Pending => true,
             TransferPayload::Owned(raw) => raw.encoding.is_some(),
             TransferPayload::Cached {
@@ -1048,6 +1092,16 @@ fn transfer_key(
         (false, false, true, TransferMode::Direct) => CostObservationKind::GpuSaveDirect,
         (false, false, true, TransferMode::Kernel) => CostObservationKind::GpuSaveKernel,
     };
+    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    let path = if layers
+        .iter()
+        .flat_map(|layer| &layer.blocks)
+        .any(|block| matches!(block.block, TransferPayload::Peer { .. }))
+    {
+        CostObservationKind::PeerGpuRestore
+    } else {
+        path
+    };
     let mut representation = None;
     let mut add_format = |format| {
         let next = Representation::from(format);
@@ -1059,6 +1113,13 @@ fn transfer_key(
     for layer in layers {
         for block in &layer.blocks {
             let metadata = match &block.block {
+                #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+                TransferPayload::Peer {
+                    source, slot_id, ..
+                } => source
+                    .slots
+                    .get(*slot_id)
+                    .and_then(|slot| slot.meta.encoding.as_ref()),
                 TransferPayload::Pending => {
                     add_format(layer.layout.storage_format);
                     continue;
@@ -1234,7 +1295,7 @@ fn build_copy_descs(layers: &[LayerTransferData]) -> Result<(Vec<CopyDesc>, usiz
     let mut total_bytes = 0usize;
     for (layer_index, layer) in layers.iter().enumerate() {
         for block in &layer.blocks {
-            if matches!(block.block, TransferPayload::Ssd { .. }) {
+            if block.block.is_external() {
                 continue;
             }
             let raw = block.block.raw();
@@ -1272,6 +1333,12 @@ fn finish_load(
     bytes: usize,
     outcome: Outcome,
 ) {
+    let started = if task.peer_bytes == 0 {
+        started
+    } else {
+        task.decode_ready_started
+    };
+    let bytes = bytes.saturating_add(task.peer_bytes);
     if result.is_ok() {
         for layer in &task.layers {
             for block in &layer.blocks {
@@ -1353,3 +1420,89 @@ fn process_save_task(
 #[cfg(test)]
 #[path = "../../../tests/unit/transfer/worker/mod.rs"]
 mod drain_tests;
+
+#[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
+fn prepare_peer(command: WorkerCommand, _: &WorkerRuntime) -> Option<WorkerCommand> {
+    Some(command)
+}
+
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+fn prepare_peer(command: WorkerCommand, runtime: &WorkerRuntime) -> Option<WorkerCommand> {
+    let WorkerCommand::Load(mut task, mut observation) = command else {
+        return Some(command);
+    };
+    if runtime.peer_unquiesced.get() {
+        finish_load(
+            task,
+            Err(EngineError::Storage("peer GPU worker is unquiesced".into())),
+            Instant::now(),
+            0,
+            Outcome::Failed,
+        );
+        return None;
+    }
+    if task
+        .layers
+        .iter()
+        .flat_map(|layer| &layer.blocks)
+        .any(|block| matches!(block.block, TransferPayload::Peer { .. }))
+    {
+        if task.completion.is_closed() {
+            finish_load(
+                task,
+                Err(EngineError::Storage("GPU transfer consumer closed".into())),
+                Instant::now(),
+                0,
+                Outcome::Cancelled,
+            );
+            return None;
+        }
+        observation.admitted();
+        observation.submitted();
+        task.decode_ready_observation.admitted();
+        task.decode_ready_observation.submitted();
+        let result = crate::transfer::contain_gpu_unwind(|| {
+            peer::restore(runtime, &task.layers, task.codec_budget)
+        });
+        return complete_peer(task, observation, &runtime.peer_unquiesced, result);
+    }
+    Some(WorkerCommand::Load(task, observation))
+}
+
+#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[allow(
+    clippy::mem_forget,
+    reason = "unknown peer drain retains GPU backing, grants, client completion and device admission"
+)]
+fn complete_peer(
+    mut task: LoadTask,
+    observation: Observation,
+    unquiesced: &std::cell::Cell<bool>,
+    result: Result<usize, crate::transfer_engine::PeerTransferError>,
+) -> Option<WorkerCommand> {
+    match result {
+        Ok(bytes) => {
+            task.peer_bytes = bytes;
+            Some(WorkerCommand::Load(task, observation))
+        }
+        Err(crate::transfer_engine::PeerTransferError::Unquiesced) => {
+            unquiesced.set(true);
+            observation.finish(Outcome::Failed, None);
+            // Never send LoadOutcome: the client must keep destination pages
+            // and its restore record pending, as must instance cleanup.
+            std::mem::forget(task);
+            None
+        }
+        Err(error) => {
+            observation.finish(Outcome::Failed, None);
+            finish_load(
+                task,
+                Err(EngineError::Storage(error.to_string())),
+                Instant::now(),
+                0,
+                Outcome::Failed,
+            );
+            None
+        }
+    }
+}

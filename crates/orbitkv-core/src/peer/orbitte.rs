@@ -140,7 +140,8 @@ impl OrbitTeTransport {
             max_registered_regions: 4096,
             max_registered_bytes: usize::try_from(pool_bytes)
                 .map_err(|_| "pool exceeds addressable bytes")?
-                .checked_add(if storage.is_some() { 64 << 20 } else { 0 })
+                .checked_add(2 << 30) // Bounded concurrent GPU READ registrations.
+                .and_then(|bytes| bytes.checked_add(if storage.is_some() { 64 << 20 } else { 0 }))
                 .ok_or("registration budget overflow")?,
             max_batch_requests: MAX_BATCH_REQUESTS,
             max_inflight_batches: 32,
@@ -475,7 +476,7 @@ impl TransferBackend for OrbitTeTransport {
         )]
         let peer = match &peer.inner {
             Segment::OrbitTe(peer) => peer,
-            #[cfg(feature = "mooncake")]
+            #[cfg(any(feature = "mooncake", test))]
             _ => {
                 return Err(TransferError::new(
                     ErrorKind::InvalidRequest,

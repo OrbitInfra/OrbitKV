@@ -358,6 +358,7 @@ impl LifecycleService {
         } else {
             Some(&req.layer_group_ids)
         };
+        let owners: Vec<Arc<dyn Send + Sync>> = metadatas.iter().map(|metadata| metadata.owner.clone() as Arc<dyn Send + Sync>).collect();
         let registered = self.engine.register_context_layer_batch_strided(
             &req.instance_id,
             &req.namespace,
@@ -378,6 +379,7 @@ impl LifecycleService {
             Some(&formats),
             transfer_mode,
             req.page_first,
+            Some(&owners),
         );
         let registration_generation = match registered {
             Ok(generation) => generation,

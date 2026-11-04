@@ -267,3 +267,38 @@ fn duplicate_credit_refusal_keeps_disposition_unknown() {
     );
     assert_eq!(disposition, CudaCreditDisposition::Unknown);
 }
+
+#[test]
+fn tensor_owner_survives_registry_removal() {
+    use std::sync::Arc;
+    // CPU ownership control: a Python object stands in for the imported tensor.
+    // CUDA IPC itself remains an installed gate.
+    let owner = pyo3::Python::attach(|py| Arc::new(py.None()));
+    let weak = Arc::downgrade(&owner);
+    let metadata = TensorMetadata {
+        dtype: "control".into(),
+        shape: vec![1],
+        strides: vec![1],
+        data_ptr: 4096,
+        size_bytes: 1,
+        device_id: 0,
+        owner,
+    };
+    let retained = metadata.clone();
+    let mut registry = CudaTensorRegistry::empty();
+    let context_key = key("owner-control", 0, 0, "gpu");
+    let mut context = ContextState::new(0);
+    context.tensors.insert(
+        "layer".into(),
+        LayerTensor {
+            metadata,
+            credit_identity: (vec![1], 0),
+        },
+    );
+    registry.contexts.insert(context_key.clone(), context);
+    // Exercise owner removal without calling Torch CUDA cache collection.
+    drop(registry.contexts.remove(&context_key));
+    assert!(weak.upgrade().is_some());
+    drop(retained);
+    assert!(weak.upgrade().is_none());
+}

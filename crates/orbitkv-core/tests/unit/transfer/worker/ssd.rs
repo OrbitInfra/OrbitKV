@@ -268,6 +268,7 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
                 }],
                 completion,
                 reservations: vec![],
+                peer_bytes: 0,
                 codec_budget: CODEC_BUDGET,
                 decode_ready_started: std::time::Instant::now(),
                 decode_ready_observation: Box::new(crate::cost::Observation::disabled()),

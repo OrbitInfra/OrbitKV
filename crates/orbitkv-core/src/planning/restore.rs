@@ -83,6 +83,24 @@ impl RestorePlan {
                         .ok_or("restore source fragment count overflow")?;
                     source_domains.push((0u8, 0u64));
                 }
+                #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+                RestoreSource::Peer(block) => {
+                    source_domains.push((2u8, block.source_id()));
+                    plan.source_bytes = plan
+                        .source_bytes
+                        .checked_add(block.bytes())
+                        .ok_or("restore source bytes overflow")?;
+                    plan.source_fragments = plan
+                        .source_fragments
+                        .checked_add(
+                            block
+                                .slots
+                                .iter()
+                                .map(|slot| slot.meta.num_segments())
+                                .sum(),
+                        )
+                        .ok_or("restore fragment count overflow")?;
+                }
                 RestoreSource::Ssd { lease, .. } => {
                     source_domains.push((1u8, resource_id(&lease.cost_resource())));
                     for slot in &lease.entry.slots {

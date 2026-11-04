@@ -205,3 +205,9 @@ The current OrbitTE pin is `df9ded09898217fd6d93bf02bb24d980c3e327a9`;
 historical hardware results below the [transport contract](transport.md#runtime-transfer-backend)
 do not qualify this revision. SSD can use [engine file segments](transport.md#ssd-file-transfers); local CUDA copies retain their existing
 OrbitKV implementations in this first integration stage.
+
+Peer GPU restores use the selected engine directly; Prepare/Warmup continues to
+fill the DRAM cache tier. For OrbitTE RDMA, `--orbitte-rdma-gpu-direct` selects
+strict GDR registration with `MLX5_SCATTER_TO_CQE=0` set before startup; omission
+uses engine-owned CUDA staging. Neither profile is hardware-qualified at the
+current revision. See [ownership and gates](transport.md#peer-restore-into-gpu).

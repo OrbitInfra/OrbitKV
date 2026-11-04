@@ -43,7 +43,9 @@ for CPU gates and the unqualified GPU/GDS scope.
   Opt-in [OrbitTE TCP](docs/transport.md#experimental-orbitte-peer-tcp-profile) and
   [RDMA development profiles](docs/transport.md#experimental-orbitte-peer-rdma-profile)
   use the same transfer-backend contract and peer owners. A build with both
-  providers selects one at startup; TENT remains the default. The current
+  providers selects one at startup; TENT remains the default. Peer restores
+  target GPU memory through the engine; DRAM cache fills retain a host target.
+  GPU/GDR qualification for this path remains open. The current
   OrbitTE revision requires fresh hardware qualification; installed serving remains unqualified.
 - **Rust ownership:** native cache and transfer owners manage byte budgets,
   reservations and completion; Python connects engine callbacks and layouts.

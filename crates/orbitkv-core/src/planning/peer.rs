@@ -52,6 +52,7 @@ impl FetchSegment {
 pub(crate) struct FetchPlan<'a> {
     rows: &'a mut [ReplicaSet],
     source: PeerSource,
+    host_costs: bool,
 }
 
 struct PeerChoice<'a> {
@@ -86,7 +87,14 @@ impl<'a> FetchPlan<'a> {
         Self {
             rows: &mut rows[..prefix],
             source,
+            host_costs: true,
         }
+    }
+
+    /// HostReady measurements do not price a direct GPU completion target.
+    pub(crate) fn for_gpu_restore(mut self) -> Self {
+        self.host_costs = false;
+        self
     }
 
     pub(crate) fn reject(&mut self, start: usize, segment: &FetchSegment) {
@@ -162,7 +170,7 @@ impl<'a> FetchPlan<'a> {
         });
         let count = candidates.first()?.1;
         candidates.retain(|(_, coverage)| *coverage == count);
-        let selected = if selection_enabled() {
+        let selected = if self.host_costs && selection_enabled() {
             let keys: SmallVec<[CostEstimateKey; 4]> = candidates
                 .iter()
                 .map(|(owner, _)| {

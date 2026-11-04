@@ -576,6 +576,9 @@ pub(in crate::transfer::worker) fn run(
                     closed = true;
                 }
                 Some(command) => {
+                    let Some(command) = super::super::prepare_peer(command, &runtime) else {
+                        continue;
+                    };
                     jobs.push_back(Job::new(next_id, command));
                     next_id += 1;
                 }
@@ -622,9 +625,14 @@ pub(in crate::transfer::worker) fn run(
             if closed {
                 drop(slots);
                 drop(decoder);
+                let result = if runtime.peer_unquiesced.get() {
+                    Err("peer GPU transfer has not drained".into())
+                } else {
+                    Ok(())
+                };
                 drop(runtime);
                 if let Some(reply) = drain {
-                    let _ = reply.send(Ok(()));
+                    let _ = reply.send(result);
                 }
                 return;
             }
