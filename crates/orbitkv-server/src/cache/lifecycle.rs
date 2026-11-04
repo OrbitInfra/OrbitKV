@@ -176,7 +176,11 @@ impl LifecycleService {
             Ok(()) | Err(EngineError::InstanceMissing(_)) => {}
             Err(error) => return Err(Self::map_engine_error(error)),
         }
-        let removed = self.registry.drop_instance(instance_id.to_string()).await;
+        let removed = self
+            .registry
+            .drop_instance(instance_id.to_string())
+            .await
+            .map_err(ControlError::internal)?;
         if removed > 0 {
             info!("Lifecycle cleanup: dropped {removed} CUDA tensors for instance {instance_id}");
         }
@@ -270,7 +274,7 @@ impl LifecycleService {
             .collect();
         let metadatas = self
             .registry
-            .register_layers(context_key.clone(), layers)
+            .register_layers(context_key.clone(), layers, self.engine.transfer_backend())
             .await
             .map_err(|error| {
                 disposition = error.disposition;
@@ -301,7 +305,7 @@ impl LifecycleService {
                 ("bf16", "torch.bfloat16") => StorageFormat::Fp8FromBf16,
                 ("fp16", "torch.float16") => StorageFormat::Fp8FromFp16,
                 _ => {
-                    self.registry.drop_context(context_key.clone()).await;
+                    self.registry.drop_context(context_key.clone()).await.map_err(ControlError::internal)?;
                     return Err(ControlError::invalid_argument(format!(
                         "layer {} storage format {format} does not match imported {}",
                         req.layer_names[index], metadata.dtype
@@ -340,7 +344,7 @@ impl LifecycleService {
                 || meta.strides.last().copied() != Some(1)
                 || !bytes_per_block_list[index].is_multiple_of(width * 2)
             {
-                self.registry.drop_context(context_key.clone()).await;
+                self.registry.drop_context(context_key.clone()).await.map_err(ControlError::internal)?;
                 return Err(ControlError::invalid_argument(
                     "attention layout does not match imported contiguous head vectors",
                 ));
@@ -358,7 +362,7 @@ impl LifecycleService {
         } else {
             Some(&req.layer_group_ids)
         };
-        let owners: Vec<Arc<dyn Send + Sync>> = metadatas.iter().map(|metadata| metadata.owner.clone() as Arc<dyn Send + Sync>).collect();
+        let owners: Vec<_> = metadatas.iter().map(|metadata| metadata.owner.clone().ok_or_else(|| ControlError::internal("tensor registration missing"))).collect::<Result<_, _>>()?;
         let registered = self.engine.register_context_layer_batch_strided(
             &req.instance_id,
             &req.namespace,
@@ -385,7 +389,7 @@ impl LifecycleService {
             Ok(generation) => generation,
             Err(err) => {
                 let status = Self::map_engine_error(err);
-                let removed = self.registry.drop_context(context_key.clone()).await;
+                let removed = self.registry.drop_context(context_key.clone()).await.map_err(ControlError::internal)?;
                 if removed > 0 {
                     warn!(
                         "Rolled back {} CUDA tensor(s) for failed register_context_batch context {:?}",

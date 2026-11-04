@@ -2,7 +2,6 @@
 
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
-    ptr::NonNull,
     sync::Arc,
     time::Instant,
 };
@@ -16,8 +15,8 @@ use super::{
 };
 use crate::planning::peer::{FetchPlan, FetchSegment};
 use crate::transfer_engine::{
-    Cancellation, ErrorKind, PeerTransferError, Permission, TransferBackend, TransferError,
-    TransferOp, TransferSlice,
+    Cancellation, CudaRegistration, ErrorKind, PeerTransferError, TransferBackend, TransferOp,
+    TransferSlice,
 };
 use crate::{SlotMeta, block::StateKey, memory::numa::NumaNode};
 
@@ -76,113 +75,87 @@ impl PeerRestoreBlock {
         crate::cost::resource_id(&(&self.grant.endpoint, &self.grant.epoch))
     }
 
-    /// The caller owns exclusive GPU destinations and actual imported backing.
-    /// Every non-Unquiesced result proves drain; no retry follows submission.
+    pub(crate) fn grant_id(&self) -> usize {
+        Arc::as_ptr(&self.grant) as usize
+    }
+    pub(crate) fn same_grant(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.grant, &other.grant)
+    }
+    pub(crate) fn backend(&self) -> Arc<dyn TransferBackend> {
+        Arc::clone(&self.grant.transfer)
+    }
+
+    /// All ranges belong to persistent registrations. The engine slices and
+    /// pipelines this batch; only an unknown physical outcome retains its grants.
     #[allow(
         clippy::mem_forget,
-        reason = "unknown drain retains source authority and actual GPU owners"
+        reason = "unknown drain retains source authority and GPU registrations"
     )]
     pub(crate) unsafe fn read_gpu(
         &self,
-        remote: u64,
-        local: u64,
-        length: usize,
-        device: i32,
-        owner: Arc<dyn Send + Sync>,
+        slices: &[TransferSlice],
+        owners: &[Arc<CudaRegistration>],
     ) -> Result<usize, PeerTransferError> {
-        // Each admission uses at most 16 MiB and one region. At most 128
-        // restores per GPU are admitted; engine-wide byte/region limits apply.
-        const CHUNK: usize = 16 << 20;
         let grant = &self.grant;
-        let check_admission = || {
-            if !grant.membership.permits(&grant.source_owner) {
-                return Err(PeerTransferError::Failed(
-                    "peer GPU source membership is fenced".into(),
-                ));
-            }
-            crate::transfer_engine::remaining(grant.deadline)
-                .map(|_| ())
-                .map_err(Into::into)
-        };
-        check_admission()?;
+        if !grant.membership.permits(&grant.source_owner) {
+            return Err(PeerTransferError::Failed(
+                "peer GPU source membership is fenced".into(),
+            ));
+        }
+        crate::transfer_engine::remaining(grant.deadline)?;
+        let total = crate::transfer_engine::validate_slices(slices)?;
+        if slices.len() > 16_384 || total > 64 << 20 || owners.len() != slices.len() {
+            return Err(PeerTransferError::Failed(
+                "peer GPU batch exceeds descriptor or byte limits".into(),
+            ));
+        }
+        if slices
+            .iter()
+            .zip(owners)
+            .any(|(slice, owner)| !owner.covers(slice.local.as_ptr() as u64, slice.length))
+        {
+            return Err(PeerTransferError::Failed(
+                "peer GPU range exceeds its registered tensor".into(),
+            ));
+        }
+        let mut registrations: Vec<_> = owners.iter().collect();
+        registrations.sort_unstable_by_key(|owner| Arc::as_ptr(owner));
+        registrations.dedup_by(|a, b| Arc::ptr_eq(a, b));
+        let _loans = registrations
+            .iter()
+            .map(|owner| owner.loan(&grant.transfer))
+            .collect::<Result<Vec<_>, _>>()?;
         let peer = grant
             .transfer
             .open_peer(&grant.endpoint, &grant.epoch, grant.deadline)?;
-        let mut done = 0;
-        while done < length {
-            check_admission()?;
-            let bytes = CHUNK.min(length - done);
-            let address = local
-                .checked_add(done as u64)
-                .ok_or_else(|| PeerTransferError::Failed("GPU address overflow".into()))?;
-            let remote_address = remote
-                .checked_add(done as u64)
-                .ok_or_else(|| PeerTransferError::Failed("peer address overflow".into()))?;
-            let ptr = usize::try_from(address)
-                .ok()
-                .and_then(|p| NonNull::new(p as *mut u8))
-                .ok_or_else(|| PeerTransferError::Failed("invalid GPU destination".into()))?;
-            let mut registration = match catch_unwind(AssertUnwindSafe(|| {
-                // SAFETY: the caller lends this actual backing exclusively through drain.
-                unsafe {
-                    Arc::clone(&grant.transfer).register_cuda(
-                        address,
-                        bytes,
-                        device,
-                        Arc::clone(&owner),
-                        Permission::LocalOnly,
-                    )
-                }
-            })) {
-                Ok(Ok(registration)) => registration,
-                Ok(Err(error)) if error.kind != ErrorKind::Unquiesced => {
-                    return Err(error.into());
-                }
-                uncertain => {
-                    std::mem::forget((uncertain, Arc::clone(grant), owner));
-                    return Err(PeerTransferError::Unquiesced);
-                }
-            };
-            // Keep the registration outside the unwind boundary: its destructor
-            // must not unregister while a panicking backend may still access it.
-            let result = catch_unwind(AssertUnwindSafe(|| {
-                // SAFETY: the registration and source ticket outlive the READ.
-                let result = unsafe {
-                    grant.transfer.transfer(
-                        TransferOp::Read,
-                        &peer,
-                        &[TransferSlice {
-                            local: ptr,
-                            remote_address,
-                            length: bytes,
-                        }],
-                        grant.deadline,
-                        &Cancellation::default(),
-                    )
-                };
-                if !matches!(&result, Err(error) if error.kind == ErrorKind::Unquiesced) {
-                    // SAFETY: only drained payload outcomes may begin unregister.
-                    unsafe { grant.transfer.unregister(&mut registration) }.map_err(|error| {
-                        TransferError::new(ErrorKind::Unquiesced, error.to_string())
-                    })?;
-                }
-                result
-            }));
-            let transferred = match result {
-                Ok(result) if !matches!(&result, Err(error) if error.kind == ErrorKind::Unquiesced) => {
-                    result.map_err(PeerTransferError::from)?
-                }
-                uncertain => {
-                    std::mem::forget((uncertain, registration, Arc::clone(grant), owner));
-                    return Err(PeerTransferError::Unquiesced);
-                }
-            };
-            if transferred != bytes {
-                return Err(PeerTransferError::Failed("short peer GPU READ".into()));
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            // SAFETY: registrations and source authority are held through physical drain.
+            unsafe {
+                grant.transfer.transfer(
+                    TransferOp::Read,
+                    &peer,
+                    slices,
+                    grant.deadline,
+                    &Cancellation::default(),
+                )
             }
-            done += bytes;
+        }));
+        match result {
+            Ok(result) if !matches!(&result, Err(error) if error.kind == ErrorKind::Unquiesced) => {
+                let transferred = result.map_err(PeerTransferError::from)?;
+                if transferred != total {
+                    return Err(PeerTransferError::Failed("short peer GPU READ".into()));
+                }
+                Ok(transferred)
+            }
+            uncertain => {
+                for owner in owners {
+                    owner.retain();
+                }
+                std::mem::forget((uncertain, Arc::clone(grant), owners.to_vec()));
+                Err(PeerTransferError::Unquiesced)
+            }
         }
-        Ok(done)
     }
 }
 

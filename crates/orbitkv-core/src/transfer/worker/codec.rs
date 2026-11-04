@@ -508,6 +508,7 @@ pub(super) fn restore(
     if inputs.is_empty() {
         return Ok(0);
     }
+    let budget = runtime.codec_budget(budget);
     let _reservation = Reservation::new(budget, "decode");
     let stream = &runtime.stream;
     let mut owner = runtime.codec.borrow_mut();

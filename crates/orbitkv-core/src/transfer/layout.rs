@@ -240,7 +240,7 @@ pub(crate) struct KVCacheLayout {
     pub(crate) storage_format: orbitkv_state::StorageFormat,
     data_ptr: u64,
     geometry: KVCacheGeometry,
-    pub(crate) owner: Option<std::sync::Arc<dyn Send + Sync>>,
+    pub(crate) owner: Option<std::sync::Arc<crate::transfer_engine::CudaRegistration>>,
 }
 
 impl KVCacheLayout {

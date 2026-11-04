@@ -687,37 +687,49 @@ READ destination. Query coalescing distinguishes this intent from GPU restore.
 A GPU restore does not create or advertise a DRAM replica. Authorization retries
 remain pre-submit only; a failed or uncertain submitted READ is not replayed.
 The source epoch still comes exclusively from its grant. Membership and the
-deadline are rechecked before each bounded GPU READ. Grants can expire before
-restore starts; that fails before destination registration instead of silently
-fetching another source.
+deadline are rechecked before each bounded GPU batch. Expired grants reject
+submission without replacing the source or disturbing the tensor registration.
 
-The registry lends the actual imported Python tensor/storage owner to each core
-layout. Native registrations also retain its CUDA context. Pointer-only Rust
-registrations remain usable for existing local paths but explicitly reject peer
-GPU restore; `register_context_layer_batch_strided` takes optional per-layer
-allocation owners for this path. Client page exclusivity lasts until the managed
-completion receipt. Unknown drain, failed unregister or a backend unwind retains the whole task,
-source grants, tensor mappings, query/device budgets and the completion sender.
-The worker is fenced and instance drain fails; no terminal client receipt allows
-page reuse. A timeout or disconnected client cannot turn this into success.
+At import, the registry registers each GPU KV storage allocation with the
+selected engine once and lends that registration to its layer layouts. Views of
+the same imported storage share it. The registration owns the actual Python
+tensor and CUDA context; the native provider charges its existing registration
+allowance for the entire lifetime, including retained failures. Pointer-only
+Rust layouts still support local copies but reject peer restore.
+`register_context_layer_batch_strided` accepts persistent `CudaRegistration`
+owners for this path. Release fences new loans and unregisters only after active
+transfers drain and all importing contexts release the storage. Failed cleanup
+retains backing and charges without retrying unregister.
 
-Reads submit at most 16 MiB per registration, sequentially, within the existing
-128-operation per-device restore admission and engine-wide limits. Codec input
-and scratch each use at most half the configured codec budget. OrbitTE owns its
-bounded CUDA staging chunks. TCP uses them; RDMA defaults to engine staging.
-`--orbitte-rdma-gpu-direct` selects OrbitTE's strict Direct CUDA-memory policy and
-requires `MLX5_SCATTER_TO_CQE=0` before startup. Failed Direct registration does
-not silently stage or replay. TENT consumes its existing CUDA registration and
-READ API and chooses its native route. No new upstream API is needed for B.
-TENT's interruptible-open/drain limitation described above remains.
+The planner batches all destination ranges sharing a source grant, up to 64 MiB
+and 16,384 descriptors in one engine submission. Larger plans use bounded batches
+against the same registrations; OrbitKV performs no per-chunk registration or
+unregistration. OrbitTE receives those descriptors directly with a 64 MiB request
+ceiling; the engine owns transport slicing, multirail and pipelining. The existing
+128 admitted restores per device and source deadline remain unchanged.
 
-CPU controls exercise the production descriptor and retention boundaries with
-host bytes standing in for GPU backing; these are not CUDA/RDMA qualification.
-They cover page/split layout bounds, missing backing owners, codec shape/budget,
-chunked copies, epoch/deadline rejection, failed unregister, backend unwinds, retained source and
-destination owners, and a pending client completion after unknown drain. CI runs
-these under TENT, OrbitTE and both feature sets. The `peer_gpu_restore` cost sample
-is separate from local H2D and HostReady route samples.
+Encoded restores create one persistent GPU codec input pool per worker on first
+use, capped at the smaller of 64 MiB and half its codec budget. Later restores
+reuse its registration and decode before reusing its bytes. Remaining codec
+scratch accounts for this resident pool; a lower budget is rejected rather than
+reallocating under live work. Worker drain closes the pool after all transfers.
+Unknown drain or backend unwind retains source grants, tensor/input mappings,
+query/device admission and the completion sender. The worker is fenced and
+instance drain fails; no client receipt permits page reuse.
+
+OrbitTE owns bounded CUDA staging for TCP and, by default, RDMA.
+`--orbitte-rdma-gpu-direct` selects strict Direct CUDA registration and requires
+`MLX5_SCATTER_TO_CQE=0` before startup; failure never silently stages or replays.
+TENT uses its existing CUDA registration and READ API. No upstream API addition
+is needed for B; TENT's interruptible-open/drain limitation above remains.
+
+CPU controls drive the production planner, submission and lifetime owners with
+host backing: eight restores register once and never unregister before tensor
+release; an 18 MiB, two-range restore submits once with full byte and guard checks.
+They also cover input-pool reuse, batch limits, layouts/codec bounds, source
+fences, concurrent release, failed cleanup, unwinds and unknown drain. CI runs
+these under TENT, OrbitTE and both feature sets. These controls do not qualify
+CUDA/RDMA. `peer_gpu_restore` cost samples stay separate from H2D and HostReady.
 
 Installed GPU byte gates are written, compiled and **unrun**. With CUDA 13,
 `ETCD_BIN`, isolated test-owned peers and external artifact paths configured:

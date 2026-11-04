@@ -102,18 +102,21 @@ and [adapter contracts](adapters.md).
 - [x] Peer restores now retain source grants until the selected engine completes
   remote→GPU READs. Raw ranges land in final pages; encoded payloads land in
   bounded GPU codec inputs. DRAM-tier Prepare/Warmup keeps host destinations.
-  Actual imported tensor owners, client completion and admission survive unknown
+  Imported tensors and codec pools keep persistent registrations; restores batch
+  their layout ranges within native limits. Owners, completion and admission survive unknown
   drain. CPU controls are implemented; GPU/GDR and installed profiles remain
   unqualified pending independent review and installed runs. See
   [direct peer restore](transport.md#peer-restore-into-gpu).
 - [ ] Next, after peer-restore review: consume Mooncake
-  `orbitkv-integration-v0.3.14` at `096547df`, include `libtent_metrics.so`, rebuild
+  `orbitkv-integration-v0.3.14` at `af13e06a`, include `libtent_metrics.so`, rebuild
   yalantinglibs at `45c6463` with CLI11, verify the 23 C signatures and map TENT
   statuses 134/135/2 without retrying unknown effects.
-- [ ] A2, after OrbitTE vectored file requests land: pass layout ranges directly
-  and delete `storage/ssd/gpu.rs` gather/scatter owners.
-- [ ] A3, after the fork's file configuration/drain API lands: route TENT SSD
-  through its engine and delete native SSD I/O plus `--ssd-io-engine legacy`.
+- [ ] A3 follows the submodule bump: consume its six file C functions through a
+  **separate TENT file engine**, preserving the peer TCP source-drain contract;
+  delete native SSD I/O plus `--ssd-io-engine legacy`.
+- [ ] A2 follows A3: bump OrbitTE to include #154 (`6cee3056`), consume
+  `TransferRequest::file_vectored` and `EngineConfig::gds_enabled`, pass layout
+  ranges directly and delete `storage/ssd/gpu.rs` gather/scatter owners.
 - [ ] C waits for the maintainer's OrbitTE S15b API. OrbitTE then owns local
   stream-ordered copies; TENT keeps the existing Memcpy/Kernel implementation
   behind the shared backend boundary. Do not port CUDA copies in this repository.

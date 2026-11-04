@@ -1,5 +1,8 @@
 //! Transfer-engine contracts. Logical failure never establishes physical drain.
 
+mod cuda;
+pub use cuda::CudaRegistration;
+
 use std::fmt;
 use std::path::Path;
 use std::ptr::NonNull;

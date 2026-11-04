@@ -813,8 +813,29 @@ struct WorkerRuntime {
     backend: Box<dyn TransferBackend>,
     max_dma_pitch: usize,
     peer_unquiesced: std::cell::Cell<bool>,
+    peer_input: std::cell::RefCell<Option<Arc<crate::transfer_engine::CudaRegistration>>>,
     codec: std::cell::RefCell<Option<crate::codec::gpu::GpuCodec>>,
     codec_write: std::cell::RefCell<Option<crate::storage::ssd::gpu::GpuSlot>>,
+}
+
+impl WorkerRuntime {
+    fn drain_peer(&self) -> Result<(), String> {
+        if self.peer_unquiesced.get() {
+            return Err("peer GPU transfer has not drained".into());
+        }
+        if let Some(input) = self.peer_input.borrow().as_ref() {
+            input.close().map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+    fn codec_budget(&self, budget: usize) -> usize {
+        budget.saturating_sub(
+            self.peer_input
+                .borrow()
+                .as_ref()
+                .map_or(0, |input| input.length),
+        )
+    }
 }
 
 fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRuntime, EngineError> {
@@ -846,6 +867,7 @@ fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRunt
         backend,
         max_dma_pitch,
         peer_unquiesced: Default::default(),
+        peer_input: Default::default(),
         codec: Default::default(),
         codec_write: Default::default(),
     })
@@ -866,13 +888,7 @@ fn worker_loop(
                     .stream
                     .synchronize()
                     .map_err(|e| format!("GPU drain failed: {e}"))
-                    .and_then(|()| {
-                        if runtime.peer_unquiesced.get() {
-                            Err("peer GPU transfer has not drained".into())
-                        } else {
-                            Ok(())
-                        }
-                    });
+                    .and_then(|()| runtime.drain_peer());
                 drop(runtime);
                 let _ = reply.send(result);
                 return;

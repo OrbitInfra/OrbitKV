@@ -9,17 +9,18 @@ use crate::codec::{
 };
 use crate::peer::restore::PeerRestoreBlock;
 use crate::transfer::layout::BlockCopies;
-use crate::transfer_engine::PeerTransferError;
+use crate::transfer_engine::{CudaRegistration, PeerTransferError, TransferSlice};
 use cudarc::driver::DevicePtr;
-use std::sync::Arc;
+use std::{collections::VecDeque, ptr::NonNull, sync::Arc};
 
+#[derive(Clone)]
 struct Copy<'a> {
     source: &'a PeerRestoreBlock,
     remote: u64,
     target: u64,
     bytes: usize,
     encoded: Option<&'a EncodedSegment>,
-    owner: Arc<dyn Send + Sync>,
+    owner: Arc<CudaRegistration>,
 }
 
 fn plan(layers: &[LayerTransferData], budget: usize) -> Result<Vec<Copy<'_>>, String> {
@@ -57,7 +58,7 @@ fn plan(layers: &[LayerTransferData], budget: usize) -> Result<Vec<Copy<'_>>, St
                     }
                     // Codec inputs are compute owners, not transport staging.
                     if meta.format != orbitkv_state::StorageFormat::Exact
-                        && meta.stored_bytes > budget / 2
+                        && meta.stored_bytes > (budget / 2).min(BATCH_BYTES)
                     {
                         return Err("peer codec input exceeds its GPU budget".into());
                     }
@@ -94,11 +95,97 @@ fn plan(layers: &[LayerTransferData], budget: usize) -> Result<Vec<Copy<'_>>, St
             }
         }
     }
+    for copy in &plan {
+        if !copy.owner.covers(copy.target, copy.bytes) {
+            return Err("peer GPU destination exceeds its registered tensor".into());
+        }
+    }
     Ok(plan)
 }
 
 pub(super) fn validate(layers: &[LayerTransferData], budget: usize) -> Result<(), String> {
     plan(layers, budget).map(|_| ())
+}
+
+const BATCH_BYTES: usize = 64 << 20;
+const BATCH_RANGES: usize = 16_384;
+
+struct Batch<'a> {
+    source: &'a PeerRestoreBlock,
+    slices: Vec<TransferSlice>,
+    owners: Vec<Arc<CudaRegistration>>,
+    decodes: Vec<DecodeInput<'a>>,
+    bytes: usize,
+}
+fn batch<'a>(
+    pending: &mut VecDeque<Copy<'a>>,
+    input: Option<&Arc<CudaRegistration>>,
+) -> Result<Batch<'a>, String> {
+    let source = pending.front().ok_or("empty peer restore")?.source;
+    let mut batch = Batch {
+        source,
+        slices: Vec::new(),
+        owners: Vec::new(),
+        decodes: Vec::new(),
+        bytes: 0,
+    };
+    let mut wire_bytes = 0;
+    let mut input_offset = 0;
+    while let Some(copy) = pending.front() {
+        if !source.same_grant(copy.source)
+            || batch.slices.len() == BATCH_RANGES
+            || wire_bytes == BATCH_BYTES
+        {
+            break;
+        }
+        let mut copy = copy.clone();
+        let (target, length, owner) = if let Some(meta) = copy.encoded {
+            let input = input.ok_or("missing persistent codec input pool")?;
+            let offset = (input_offset + 7) & !7;
+            if meta.stored_bytes > input.length || meta.stored_bytes > BATCH_BYTES {
+                return Err("peer codec segment exceeds the input or engine batch budget".into());
+            }
+            if offset + meta.stored_bytes > input.length
+                || wire_bytes + meta.stored_bytes > BATCH_BYTES
+            {
+                break;
+            }
+            let target = input.address + offset as u64;
+            input_offset = offset + meta.stored_bytes;
+            batch.decodes.push(DecodeInput {
+                source: target,
+                source_bytes: meta.stored_bytes,
+                target: copy.target,
+                target_bytes: copy.bytes,
+                meta,
+            });
+            (target, meta.stored_bytes, Arc::clone(input))
+        } else {
+            (
+                copy.target,
+                copy.bytes.min(BATCH_BYTES - wire_bytes),
+                Arc::clone(&copy.owner),
+            )
+        };
+        pending.pop_front();
+        let remote_address = copy.remote;
+        if copy.encoded.is_none() && length < copy.bytes {
+            copy.remote += length as u64;
+            copy.target += length as u64;
+            copy.bytes -= length;
+            pending.push_front(copy.clone());
+            copy.bytes = length;
+        }
+        batch.slices.push(TransferSlice {
+            local: NonNull::new(target as *mut u8).ok_or("invalid GPU range")?,
+            remote_address,
+            length,
+        });
+        batch.owners.push(owner);
+        wire_bytes += length;
+        batch.bytes += copy.bytes;
+    }
+    Ok(batch)
 }
 
 pub(super) fn restore(
@@ -107,70 +194,73 @@ pub(super) fn restore(
     budget: usize,
 ) -> Result<usize, PeerTransferError> {
     let fail = PeerTransferError::Failed;
-    let copies = plan(layers, budget).map_err(fail)?;
-    let stream = &runtime.stream;
-    let mut codec = None;
-    let mut bytes = 0usize;
-    for copy in copies {
-        let owner: Arc<dyn Send + Sync> = Arc::new((copy.owner, Arc::clone(stream.context())));
-        if let Some(meta) = copy.encoded {
-            if codec.is_none() {
-                codec = Some(GpuCodec::new(stream.context()).map_err(fail)?);
-            }
-            // SAFETY: the engine fills the entire input before codec reads it.
-            let input = Arc::new(
-                unsafe { stream.alloc::<u8>(meta.stored_bytes) }
-                    .map_err(|e| fail(e.to_string()))?,
+    let mut copies = plan(layers, budget).map_err(fail)?;
+    copies.sort_by_key(|copy| copy.source.grant_id());
+    if copies
+        .iter()
+        .any(|copy| copy.owner.device != runtime.stream.context().ordinal() as i32)
+    {
+        return Err(fail(
+            "peer destination is on a different CUDA device".into(),
+        ));
+    }
+    if let Some(copy) = copies.iter().find(|copy| copy.encoded.is_some()) {
+        let mut input = runtime.peer_input.borrow_mut();
+        if input.is_none() {
+            runtime.codec.borrow_mut().take();
+            let capacity = (budget / 2).min(BATCH_BYTES);
+            // SAFETY: no codec reads this pool before engine completion.
+            let allocation = Arc::new(
+                unsafe { runtime.stream.alloc::<u8>(capacity) }.map_err(|e| fail(e.to_string()))?,
             );
-            // Make allocator/initialization work ready before an independent engine writes.
-            crate::transfer::finish_gpu_transfer(stream, Ok(()))
+            crate::transfer::finish_gpu_transfer(&runtime.stream, Ok(()))
                 .map_err(|e| fail(e.to_string()))?;
-            let (address, _record) = input.device_ptr(stream);
-            let input_owner: Arc<dyn Send + Sync> = Arc::clone(&input) as Arc<dyn Send + Sync>;
-            // SAFETY: actual codec input and context are retained by registration; the
-            // layout owner keeps the disjoint target through synchronous codec drain.
-            unsafe {
-                copy.source.read_gpu(
-                    copy.remote,
+            let (address, _record) = allocation.device_ptr(&runtime.stream);
+            // SAFETY: the pool owns its allocation and CUDA context through unregister.
+            *input = Some(unsafe {
+                CudaRegistration::new(
+                    Some(copy.source.backend()),
                     address,
-                    meta.stored_bytes,
-                    stream.context().ordinal() as i32,
-                    input_owner,
-                )?;
-            }
-            // SAFETY: engine completion proves input readiness; decode_batch drains
-            // every accepted CUDA operation before releasing input/target owners.
-            unsafe {
-                codec.as_mut().expect("codec initialized").decode_batch(
-                    stream,
-                    &[DecodeInput {
-                        source: address,
-                        source_bytes: meta.stored_bytes,
-                        target: copy.target,
-                        target_bytes: copy.bytes,
-                        meta,
-                    }],
-                    budget / 2,
+                    capacity,
+                    copy.owner.device,
+                    allocation.clone(),
                 )
+            }?);
+        }
+    }
+    let input = runtime.peer_input.borrow();
+    if input
+        .as_ref()
+        .is_some_and(|input| input.length > budget / 2)
+    {
+        return Err(fail(
+            "codec budget is below the persistent input pool".into(),
+        ));
+    }
+    let mut pending = VecDeque::from(copies);
+    let mut bytes = 0;
+    while !pending.is_empty() {
+        let batch = batch(&mut pending, input.as_ref()).map_err(fail)?;
+        // SAFETY: this batch owns registered destinations and source authority through drain.
+        unsafe { batch.source.read_gpu(&batch.slices, &batch.owners) }?;
+        if !batch.decodes.is_empty() {
+            let mut codec = runtime.codec.borrow_mut();
+            if codec.is_none() {
+                *codec = Some(GpuCodec::new(runtime.stream.context()).map_err(fail)?);
             }
-            .map_err(|e| fail(e.to_string()))?;
-            drop(owner);
-        } else {
-            // SAFETY: the admitted restore exclusively owns these validated pages;
-            // the actual imported tensor and context accompany the native registration.
-            unsafe {
-                copy.source.read_gpu(
-                    copy.remote,
-                    copy.target,
-                    copy.bytes,
-                    stream.context().ordinal() as i32,
-                    owner,
-                )?;
+            for decode in &batch.decodes {
+                // SAFETY: engine-complete input and actual targets outlive the codec drain.
+                unsafe {
+                    codec.as_mut().expect("codec initialized").decode_batch(
+                        &runtime.stream,
+                        std::slice::from_ref(decode),
+                        budget / 2,
+                    )
+                }
+                .map_err(|e| fail(e.to_string()))?;
             }
         }
-        bytes = bytes
-            .checked_add(copy.bytes)
-            .ok_or_else(|| fail("peer restore byte count overflow".into()))?;
+        bytes += batch.bytes;
     }
     Ok(bytes)
 }

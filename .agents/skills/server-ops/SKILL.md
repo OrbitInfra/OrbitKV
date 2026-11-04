@@ -79,6 +79,10 @@ unqualified. See `docs/transport.md#ssd-file-transfers`.
 OrbitTE `df9ded0` uses a one-route Unspec peer policy with
 failover, HP-TCP, SHM and MNNVL disabled. Historical hardware results below do not
 qualify this new dependency revision. See `docs/transport.md#runtime-transfer-backend`.
+Tensor import registers GPU storage once; aliases share its persistent owner.
+Restore batches layout ranges within 64 MiB/16,384-descriptor limits and reuses
+registrations, including its bounded codec input pool. Release must drain loans
+before unregister; failed cleanup retains the mapping and charge without retry.
 Demand peer queries hold source grants until Restore submits directly to GPU
 pages through the selected engine. Prepare/Warmup still fill the DRAM tier.
 Do not diagnose a missing DRAM replica after GPU Restore as a publication bug.

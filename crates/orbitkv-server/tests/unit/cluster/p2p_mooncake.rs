@@ -782,7 +782,19 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
             None,
             TransferMode::Direct,
             false,
-            Some(&[Arc::new((Arc::clone(&gpu_b), Arc::clone(&_cuda_ctx))) as Arc<dyn Send + Sync>]),
+            Some(&[{
+                // SAFETY: the target owns this entire GPU allocation and context.
+                unsafe {
+                    orbitkv_core::transfer_engine::CudaRegistration::new(
+                        engine_b.transfer_backend(),
+                        gpu_b.as_u64(),
+                        TOTAL_SIZE,
+                        DEVICE_ID,
+                        Arc::new((Arc::clone(&gpu_b), Arc::clone(&_cuda_ctx))),
+                    )
+                }
+                .unwrap()
+            }]),
         )
         .expect("register layer on engine B");
 
@@ -1486,9 +1498,19 @@ async fn encoded_peer_roundtrip(backend: PeerTransferBackend) {
                     }]),
                     TransferMode::Direct,
                     false,
-                    Some(
-                        &[Arc::new((Arc::clone(gpu), Arc::clone(&_cuda))) as Arc<dyn Send + Sync>],
-                    ),
+                    Some(&[{
+                        // SAFETY: this installed gate retains actual GPU storage and context.
+                        unsafe {
+                            orbitkv_core::transfer_engine::CudaRegistration::new(
+                                engine.transfer_backend(),
+                                gpu.as_u64(),
+                                8192,
+                                0,
+                                Arc::new((Arc::clone(gpu), Arc::clone(&_cuda))),
+                            )
+                        }
+                        .unwrap()
+                    }]),
                 )
                 .unwrap();
         }

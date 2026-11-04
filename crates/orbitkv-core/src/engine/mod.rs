@@ -293,7 +293,7 @@ impl OrbitKVEngine {
     /// block stride, validated as part of the final cache geometry. When
     /// `block_stride_bytes_list` is `Some` it must match `layer_names` in length;
     /// each entry overrides that layer's stride. `allocation_owners` retains the
-    /// actual imported tensor/storage and CUDA context for each layer. Callers
+    /// persistent native registration, actual tensor/storage and CUDA context. Callers
     /// must lend exclusive destination pages until the managed completion receipt.
     /// Pointer-only registrations cannot execute direct peer GPU restores.
     ///
@@ -325,7 +325,7 @@ impl OrbitKVEngine {
         storage_formats: Option<&[orbitkv_state::StorageFormat]>,
         transfer_mode: TransferMode,
         page_first: bool,
-        allocation_owners: Option<&[Arc<dyn Send + Sync>]>,
+        allocation_owners: Option<&[Arc<crate::transfer_engine::CudaRegistration>]>,
     ) -> Result<[u8; 16], EngineError> {
         // Build all registrations
         let ssd_enabled = self.storage.is_ssd_enabled();
@@ -654,6 +654,18 @@ impl OrbitKVEngine {
     #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
     pub fn has_remote_transport(&self) -> bool {
         false
+    }
+
+    /// Shared byte engine used when importing persistent GPU allocations.
+    pub fn transfer_backend(&self) -> Option<Arc<dyn crate::transfer_engine::TransferBackend>> {
+        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+        {
+            self.storage.peer_transport().cloned()
+        }
+        #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
+        {
+            None
+        }
     }
 
     #[cfg(any(feature = "mooncake", feature = "orbitte"))]
