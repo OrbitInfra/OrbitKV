@@ -1,184 +1,218 @@
-"""Stress E2E for OrbitKV warm-hit pressure.
+"""Fixed-capacity vLLM recovery, preemption and client-disconnect gate.
 
-This test intentionally creates warm-hit traffic under constrained KV capacity.
-It is not a replacement for the correctness E2E; it is an observability-heavy
-proof that concurrent repeated prompts keep using the cache path and do not
-leave obvious pending-probe release failures in the logs.
+This proves output after ordinary scheduler preemption and cancellation after
+the first generated token. It does not inject cancellation during physical DMA.
 """
 
 from __future__ import annotations
 
-import re
+import json
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import pytest
 import requests
 
-from tests.support.metrics import fetch_orbitkv_metrics
-from tests.support.vllm_helpers import CacheManager, VLLMServer, call_openai_api
+from tests.support.vllm_helpers import CacheManager, VLLMServer
 
 pytestmark = [pytest.mark.e2e, pytest.mark.stress, pytest.mark.gpu]
 
-STRESS_GPU_MEMORY_UTILIZATION = 0.82
-STRESS_MAX_MODEL_LEN = 2048
-STRESS_MAX_NUM_SEQS = 16
-STRESS_CONCURRENCY = 12
-STRESS_LONG_OUTPUT_WORKERS = 8
-STRESS_LONG_MAX_TOKENS = 96
-STRESS_SHORT_MAX_TOKENS = 32
-MIN_WARM_HIT_LOOKUPS = STRESS_CONCURRENCY // 2
-WARM_HIT_LOOKUP_RE = re.compile(r"cache_lookup: hit_blocks=(\d+)")
-
-STRESS_PROMPT = (
-    "Distributed systems often rely on caching to reduce latency and improve "
-    "throughput, but cache correctness depends on carefully managed ownership. "
-    "A request may observe that a prefix is available, wait while other work is "
-    "scheduled, and later attempt to use that same prefix after allocation. "
-    "During this gap, the cache layer must avoid double-counting reservations, "
-    "must release abandoned references, and must preserve the exact hash order "
-    "used for the eventual load. " * 12
-)
+PROMPT_TOKENS = 512
+OUTPUT_TOKENS = 256
+GPU_BLOCKS = 32
+BLOCK_SIZE = 64
+CONCURRENCY = 4
 
 
-def _post_completion(
-    port: int,
-    model: str,
-    prompt: str,
-    max_tokens: int,
-    *,
-    stream: bool,
-    timeout: float,
-) -> str:
+def _completion(port: int, model: str, prompt: list[int], *, cancel: bool = False) -> dict:
     payload = {
         "model": model,
         "prompt": prompt,
-        "max_tokens": max_tokens,
+        "max_tokens": 512 if cancel else OUTPUT_TOKENS,
         "temperature": 0.0,
         "seed": 42,
-        "stream": stream,
+        "ignore_eos": True,
+        "stream": cancel,
+        "logprobs": 0,
+        "return_tokens_as_token_ids": True,
     }
-    url = f"http://localhost:{port}/v1/completions"
-    if not stream:
-        response = requests.post(url, json=payload, timeout=timeout)
+    with requests.post(
+        f"http://localhost:{port}/v1/completions",
+        json=payload,
+        stream=cancel,
+        timeout=(10, 180),
+    ) as response:
         response.raise_for_status()
-        return response.json()["choices"][0]["text"]
+        if cancel:
+            for line in response.iter_lines(chunk_size=1):
+                if not line.startswith(b"data: ") or line == b"data: [DONE]":
+                    continue
+                event = json.loads(line[6:])
+                if event["choices"] and event["choices"][0]["text"]:
+                    return event
+            raise AssertionError("Streaming request ended before its first generated text")
+        result = response.json()
+    assert result["usage"]["completion_tokens"] == OUTPUT_TOKENS, result
+    assert result["choices"][0]["finish_reason"] == "length", result
+    assert len(result["choices"][0]["logprobs"]["tokens"]) == OUTPUT_TOKENS, result
+    return result
 
-    with requests.post(url, json=payload, stream=True, timeout=timeout) as response:
-        response.raise_for_status()
-        for line in response.iter_lines():
-            if line:
-                return "stream-started"
-    return "stream-closed"
+
+def _same_output(actual: dict, expected: dict) -> None:
+    actual_choice, expected_choice = actual["choices"][0], expected["choices"][0]
+    assert actual_choice["text"] == expected_choice["text"]
+    assert actual_choice["logprobs"]["tokens"] == expected_choice["logprobs"]["tokens"]
 
 
-def _grep_log(log_text: str, patterns: tuple[str, ...]) -> str:
-    lines = [line for line in log_text.splitlines() if any(pattern in line for pattern in patterns)]
-    return "\n".join(lines[-80:])
-
-
-def _metric_delta(before: dict[str, float], after: dict[str, float], key: str) -> float:
-    return after.get(key, 0) - before.get(key, 0)
+def _abort_count(port: int) -> float:
+    response = requests.get(f"http://localhost:{port}/metrics", timeout=10)
+    response.raise_for_status()
+    rows = [
+        line
+        for line in response.text.splitlines()
+        if line.startswith("vllm:request_success_total{") and 'finished_reason="abort"' in line
+    ]
+    assert rows, "Official vLLM abort counter is absent"
+    return sum(float(line.rsplit(" ", 1)[1]) for line in rows)
 
 
 def test_warm_hit_pressure_on_single_gpu_profile(
-    model: str,
-    base_port: int,
-    tmp_path: Path,
-    max_model_len: int | None,
+    model: str, base_port: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """Concurrent repeated prompts should produce cache hits and clean releases."""
+    """Require actual preemption, an acknowledged abort and exact reused-page output."""
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3]))
+    from transformers import AutoTokenizer
 
-    log_dir = tmp_path / "warm_hit_stress_logs"
-    log_dir.mkdir()
-    orbitkv_log = log_dir / "orbitkv-vllm.log"
-    server_log = log_dir / "orbitkv-cache-manager.log"
+    from benches.common.metrics import DRAIN_GAUGES, metrics, validate_ownership
 
-    with CacheManager(log_file=server_log) as orbitkv_server:
-        with VLLMServer(
+    tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True)
+    prompts = [
+        tokenizer.encode(
+            f"Record {topic}: "
+            + (
+                f"The {topic} study checks memory ownership and exact cache recovery. "
+                "Explain how a request preserves data while independent work progresses. "
+            )
+            * 80,
+            add_special_tokens=False,
+        )[:PROMPT_TOKENS]
+        for topic in ("astronomy", "botany", "chemistry", "geology")
+    ]
+    assert all(len(prompt) == PROMPT_TOKENS for prompt in prompts)
+    assert len({tuple(prompt[:BLOCK_SIZE]) for prompt in prompts}) == CONCURRENCY
+    (tmp_path / "prompts.json").write_text(json.dumps(prompts) + "\n")
+    report = []
+
+    def record(stage: str, **values) -> None:
+        report.append({"stage": stage, **values})
+        (tmp_path / "results.json").write_text(json.dumps(report, indent=2) + "\n")
+
+    def server(label: str, manager: CacheManager | None = None) -> VLLMServer:
+        return VLLMServer(
             model,
             base_port,
-            use_orbitkv=True,
-            orbitkv_port=orbitkv_server.cache_port,
-            log_file=orbitkv_log,
-            max_model_len=max_model_len or STRESS_MAX_MODEL_LEN,
-            gpu_memory_utilization=STRESS_GPU_MEMORY_UTILIZATION,
-            extra_args=["--max-num-seqs", str(STRESS_MAX_NUM_SEQS)],
-            startup_timeout=240,
-        ):
-            print(f"[Stress] vLLM log: {orbitkv_log}")
-            print(f"[Stress] OrbitKV server log: {server_log}")
-
-            metrics_start = fetch_orbitkv_metrics(orbitkv_server.metrics_port)
-
-            cold = call_openai_api(base_port, model, STRESS_PROMPT, max_tokens=32)["text"]
-            warm = call_openai_api(base_port, model, STRESS_PROMPT, max_tokens=32)["text"]
-            assert warm == cold
-
-            futures = []
-            with ThreadPoolExecutor(max_workers=STRESS_CONCURRENCY) as pool:
-                for idx in range(STRESS_CONCURRENCY):
-                    futures.append(
-                        pool.submit(
-                            _post_completion,
-                            base_port,
-                            model,
-                            STRESS_PROMPT,
-                            (
-                                STRESS_LONG_MAX_TOKENS
-                                if idx < STRESS_LONG_OUTPUT_WORKERS
-                                else STRESS_SHORT_MAX_TOKENS
-                            ),
-                            stream=False,
-                            timeout=120,
-                        )
-                    )
-
-                completed = 0
-                for future in as_completed(futures, timeout=240):
-                    future.result()
-                    completed += 1
-
-            assert completed == len(futures)
-
-            final = call_openai_api(base_port, model, STRESS_PROMPT, max_tokens=32)["text"]
-            assert final == cold
-
-            metrics_end = fetch_orbitkv_metrics(orbitkv_server.metrics_port)
-
-        orbitkv_text = orbitkv_log.read_text(errors="replace")
-        server_text = server_log.read_text(errors="replace")
-        interesting = _grep_log(
-            orbitkv_text,
-            (
-                "cache_lookup",
-                "pending query lease",
-                "Preempt",
-                "preempt",
-                "abort",
-            ),
+            use_orbitkv=manager is not None,
+            orbitkv_port=manager.cache_port if manager else None,
+            log_file=tmp_path / f"{label}.log",
+            max_model_len=1024,
+            gpu_memory_utilization=0.3,
+            prefix_caching=True,
+            extra_args=[
+                "--enforce-eager",
+                "--max-num-seqs",
+                str(CONCURRENCY),
+                "--max-num-batched-tokens",
+                "1024",
+                "--block-size",
+                str(BLOCK_SIZE),
+                "--num-gpu-blocks-override",
+                str(GPU_BLOCKS),
+            ],
         )
-        print("[Stress] Interesting vLLM log lines:\n" + interesting)
 
-        warm_hit_lookups = [
-            int(match.group(1))
-            for match in WARM_HIT_LOOKUP_RE.finditer(orbitkv_text)
-            if int(match.group(1)) > 0
-        ]
-        assert len(warm_hit_lookups) >= MIN_WARM_HIT_LOOKUPS, (
-            "Expected repeated warm cache lookups under concurrent pressure.\n"
-            f"warm_hit_lookups={warm_hit_lookups}\n"
-            f"vLLM log: {orbitkv_log}\n"
-            f"OrbitKV log: {server_log}\n"
-            f"Interesting lines:\n{interesting}"
-        )
-        assert "cache_lookup: hit_blocks=0" in orbitkv_text
-        assert "pending query lease release failed" not in orbitkv_text
-        assert "pending query lease release exception" not in orbitkv_text
+    engine_url = f"http://localhost:{base_port}"
+    references = []
+    with server("native"):
+        for index, prompt in enumerate(prompts):
+            reference = _completion(base_port, model, prompt)
+            references.append(reference)
+            record("native_cold", prompt=index, response=reference)
+            before = metrics(engine_url)["vllm:prefix_cache_hits_total"]
+            warm = _completion(base_port, model, prompt)
+            record("native_hbm", prompt=index, response=warm)
+            _same_output(warm, reference)
+            assert metrics(engine_url)["vllm:prefix_cache_hits_total"] > before
 
-        hits = _metric_delta(metrics_start, metrics_end, "orbitkv_cache_block_hits_total")
-        loads = _metric_delta(metrics_start, metrics_end, "orbitkv_load_bytes_total")
-        assert hits > 0 or loads > 0, (
-            f"Expected warm-hit/load activity, got hits={hits}, loads={loads}.\n"
-            f"Server log tail:\n{_grep_log(server_text, ('hit=', 'load', 'release'))}"
-        )
+    with CacheManager(
+        log_file=tmp_path / "manager.log",
+        pool_size="1gb",
+        devices="0",
+        extra_args=("--query-budget", "512mb"),
+    ) as manager:
+        manager_url = f"http://localhost:{manager.metrics_port}"
+
+        def settled(stage: str) -> tuple[dict, dict]:
+            deadline = time.monotonic() + 30
+            while True:
+                engine, cache = metrics(engine_url), metrics(manager_url)
+                validate_ownership(cache, drained=False)
+                if (
+                    engine["vllm:num_requests_running"] == 0
+                    and engine["vllm:num_requests_waiting"] == 0
+                    and engine["vllm:orbitkv_pending_save_requests"] == 0
+                    and engine["vllm:orbitkv_pending_prefetches"] == 0
+                    and all(cache.get(name, 0) == 0 for name in DRAIN_GAUGES)
+                ):
+                    validate_ownership(cache, drained=True)
+                    record(stage, engine=engine, manager=cache)
+                    return engine, cache
+                assert time.monotonic() < deadline, (engine, cache)
+                time.sleep(0.1)
+
+        with server("populate", manager):
+            for index, prompt in enumerate(prompts):
+                response = _completion(base_port, model, prompt)
+                record("orbitkv_cold", prompt=index, response=response)
+                _same_output(response, references[index])
+                _, before = settled("before_hbm")
+                hits_before = metrics(engine_url)["vllm:prefix_cache_hits_total"]
+                warm = _completion(base_port, model, prompt)
+                record("orbitkv_hbm", prompt=index, response=warm)
+                _same_output(warm, references[index])
+                _, after = settled("after_hbm")
+                assert after["orbitkv_load_bytes_total"] == before["orbitkv_load_bytes_total"]
+                assert metrics(engine_url)["vllm:prefix_cache_hits_total"] > hits_before
+
+        # A fresh engine has no HBM pages; only the Manager survives this restart.
+        with server("pressure", manager):
+            before_engine, before_cache = settled("before_pressure")
+            aborted_before = _abort_count(base_port)
+            with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
+                futures = {
+                    pool.submit(_completion, base_port, model, prompts[index % CONCURRENCY]): index
+                    for index in range(3 * CONCURRENCY)
+                }
+                cancelled = _completion(base_port, model, prompts[0], cancel=True)
+                record("client_disconnect_after_first_token", response=cancelled)
+                assert any(not future.done() for future in futures), "No concurrent pressure"
+                for future in as_completed(futures, timeout=300):
+                    index = futures[future]
+                    response = future.result()
+                    record("pressure", request=index, response=response)
+                    _same_output(response, references[index % CONCURRENCY])
+
+            after_engine, after_cache = settled("after_pressure")
+            assert _abort_count(base_port) > aborted_before, "Server did not observe the disconnect"
+            assert (
+                after_engine["vllm:num_preemptions_total"]
+                > before_engine["vllm:num_preemptions_total"]
+            ), "The fixed-capacity workload did not actually preempt a request"
+            assert (
+                after_cache["orbitkv_load_bytes_total"] > before_cache["orbitkv_load_bytes_total"]
+            )
+            for index, prompt in enumerate(prompts):
+                response = _completion(base_port, model, prompt)
+                record("after_reuse", prompt=index, response=response)
+                _same_output(response, references[index])
+            settled("final_drain")
