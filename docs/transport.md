@@ -643,7 +643,7 @@ registration because the pinned C ABI has no per-range permission argument.
 OrbitKV source grants remain authoritative for peer access in both profiles.
 
 OrbitTE is pinned to
-[`df9ded09898217fd6d93bf02bb24d980c3e327a9`](https://github.com/OrbitInfra/OrbitTE/commit/df9ded09898217fd6d93bf02bb24d980c3e327a9).
+[`36516152f768b77837f9b3e1d0787f1f3fd0f4ce`](https://github.com/OrbitInfra/OrbitTE/commit/36516152f768b77837f9b3e1d0787f1f3fd0f4ce).
 Run the same OrbitKV build on both peers.
 Requests use `Transport::Unspec` with a one-route selector policy, an absolute
 deadline, and no automatic failover. HP-TCP, SHM, NVLink, MNNVL and remote CUDA
@@ -656,8 +656,7 @@ payload WR and cap initiator/responder READ depth at 16, clamped to the local
 HCA. The optional `rdma-adaptive` feature remains disabled.
 
 The OrbitTE profile bounds registrations to 4,096 regions and the configured
-pool bytes plus 2 GiB for GPU READ registrations (and 64 MiB for SSD GPU staging
-when enabled), submissions to 16,384 descriptors and 64 MiB, and outstanding work
+pool bytes plus 2 GiB for persistent GPU tensor and codec registrations, submissions to 16,384 descriptors and 64 MiB, and outstanding work
 to 32 batches and 64 MiB. Each descriptor may cover up to 64 MiB; transport
 slicing belongs to the engine. TENT retains its native batch/descriptor budgets and caps
 cached peer segments at 1,024. Process-wide registered owners retain their
@@ -793,49 +792,73 @@ OrbitKV still creates/truncates and sizes the shards, owns placement, eviction,
 logical ring extents, encoding metadata and index publication. The engine sees
 only byte ranges. Its file name refers to the retained inode through
 `/proc/self/fd`, so replacement of a path cannot redirect an admitted transfer.
-Offsets are byte offsets from file base zero. Host descriptors preserve the
-512-byte O_DIRECT contract; GPU plans retain 4 KiB alignment and existing gather,
-scatter and decode semantics. Each engine selects a direct fd when the filesystem
-supports it, otherwise its documented buffered path (including tmpfs).
+Offsets are byte offsets from file base zero. Whole host extents preserve
+512-byte O_DIRECT alignment; GPU extents preserve 4 KiB alignment. Payload ranges
+may be unaligned. Layout holes and tails are `Padding` elements: WRITE emits
+zeros and READ discards file bytes without a local allocation.
 
 For either backend, `--ssd-backend uring` uses host materialization; `auto`
-additionally uses the bounded GPU layout slots with engine-owned CUDA staging
-and io_uring. `cufile` requests native-only GDS. OrbitTE requires `orbitte-gds`;
+additionally permits GPU destinations through engine-owned CUDA staging and
+io_uring. `cufile` requests native-only GDS. OrbitTE requires `orbitte-gds`;
 TENT requires a native CUDA build with the cuFile headers and library detected by
-CMake. The default wheel toolchain does not install the GDS SDK; that TENT profile
-requires a source-built runtime and fails clearly when unavailable. GDS never
-replays failed I/O through io_uring. GPU gather finishes before file submission,
-and scatter follows a physical engine receipt. The `cufile` read-route spelling
-selects a GPU destination; the engine owns how bytes reach it.
+CMake. The default wheel toolchain does not install the GDS SDK. An explicit GDS
+request with padding is unavailable; it never silently changes to io_uring.
+The `cufile` read-route spelling selects a GPU destination, while the engine
+owns how bytes reach it. Local GPU↔DRAM migration remains a separate step.
+
+OrbitTE receives **one `TransferRequest::file_vectored` per extent**, including
+its padding. It owns gather/scatter and storage staging; OrbitKV has no GPU
+layout slots or zero buffer. Imported tensors reuse their persistent engine
+registrations. Direct Rust callers must supply those allocation owners to layer
+registration; pointer-only layouts cannot execute GPU file transfers. The bounded
+codec input pool registers once per allocation;
+encoded writes retain the actual codec arena until drain. The worker holds
+caller completion and admission as well as backing on unknown GPU drain, and
+fences subsequent work. DRAM representations still initialize their own padding
+because peer exports can expose those complete host ranges.
 
 Each store admits at most 32 file operations, including queued and retained work.
-Each operation is capped at 64 MiB and 16,384 descriptors, with a 30-second
-submission deadline. GPU slots remain 4 MiB, two per admitted worker; engine
-registration and staging limits remain separate. There are at most 256 shards (128 with TENT GDS, which reserves two handles per shard);
-SSD queue/inflight settings must be 1–1,024. Unknown drain or failed unregister
-retains the exact fd, engine, registration, backing, extent lease and admission
-slot until process exit. A failed WRITE stays unpublished and cannot be evicted
-or overwritten. `orbitkv_ssd_engine_retained_operations_total` records such
-retention. A failed or short READ never becomes a cache hit.
+Each vector is capped at 64 MiB and **1,024 elements including padding**, with a
+30-second deadline. Two file receipts per GPU worker, at most one WRITE, bound
+its active work. Repeated file ranges targeting different GPU destinations
+require separate vectors: neither API expresses fan-out in one vector. Raw reads
+are grouped by immutable extent generation, never across source generations.
+There are at most 256 shards (128 with TENT GDS, which reserves two handles per
+shard); SSD queue/inflight settings must be 1–1,024. Unknown drain or failed
+unregister retains the exact fd, engine, registration, backing, extent lease and
+admission until process exit. A failed WRITE stays unpublished and cannot be
+evicted or overwritten. `orbitkv_ssd_engine_retained_operations_total` records
+such retention. A failed or short READ never becomes a cache hit.
 
-The TENT wrapper passes actual backing and extent owners through native retain/
-release callbacks, without registering file buffers on the peer engine. Only
-`drained == 1`, followed by successful batch release, permits owner destruction.
-Cancel, deadline, a dropped receiver and logical terminal status do not. Failed
-cleanup is never retried. A retained file or receipt prevents successful shutdown.
-TENT maps adjacent layout ranges into one native vectored request; noncontiguous
-file intervals use separate bounded requests without byte repacking. Its rings
-have depth 32; CUDA pinned staging is four 16 MiB slots. The native engine also
-bounds file handles, batch receipts and staged allocations.
+TENT uses `tent_file_submit` with actual ranges and native retain/release
+callbacks on its **separate file engine**. Only `drained == 1`, followed by
+successful batch release, permits owner destruction. Cancel, deadline, a dropped
+receiver and logical terminal status do not. Cleanup is never retried. A retained
+file or receipt prevents successful shutdown.
 
-OrbitKV retains the existing `storage/ssd/gpu.rs` gather/scatter layout slots
-until A2 consumes OrbitTE vectored requests. Reader/writer code now only plans
-layouts, manages queues/leases and publishes metadata; all byte I/O belongs to
-the selected engine. Local copy ownership moves behind the backend in C.
+The fork accepts GPU ranges, but its ABI has no padding element and splits each
+range into an independent O_DIRECT request. It cannot repair odd-sized ranges or
+file offsets. The remaining TENT-only adapter in `peer/transport/file.rs` passes
+aligned vectors directly and repairs other io_uring vectors with at most 4 MiB
+of scratch per operation (128 MiB at the store's 32-operation limit). Host
+vectors use aligned host scratch; GPU vectors use device scratch and synchronous
+D2D copies on a private stream, with engine-owned GPU↔host staging. A CUDA
+event proves copy completion under the same operation deadline. It never stages GPU payloads in
+OrbitKV's pinned pool. Every chunk drains before scratch reuse; uncertainty
+retains scratch, actual backing and admission. No WRITE is replayed. Delete this
+adapter once the fork accepts padding and owns unaligned vectored staging. Its
+native rings have depth 32 and CUDA pinned staging has four 16 MiB slots.
+
+`storage/ssd/gpu.rs` is deleted. SSD reader/writer code plans layouts, manages
+queues/leases and publishes metadata; file bytes move through the selected
+engine. All-padded extents are legal and need no consumer-owned buffer.
 
 CI requires real Linux io_uring and real file bytes, with an explicitly labelled
-CPU host-registration shim. It covers sharded raw/encoded metadata, extent
-leases, alignment and truncated-file errors, cancellation before submission,
+CPU host-registration shim. Its TENT source-drain control requires `MC_FORCE_TCP=1`
+so an RDMA device on the runner cannot change that CPU/TCP profile; the separate
+file engine still uses io_uring. It covers sharded raw/encoded metadata, extent
+leases, padded/odd-sized vectors above 4 MiB, all-padding extents, explicit GDS
+padding rejection, alignment and truncated-file errors, cancellation before submission,
 detached completion, and retained owners after injected uncertainty. TENT callback
 controls also cover short receipts, failed release/close and shutdown retention. The latter are ownership controls, not simulated storage qualification.
 The same file gate runs for both engines on the runner filesystem and tmpfs. GPU/CUDA staging,
@@ -852,14 +875,15 @@ with the same two tests. These source gates are written, not hardware evidence.
 
 Native GDS qualification also requires cuFile/nvidia-fs route evidence from that
 same installed run; configuration and successful bytes alone do not prove the
-native route. OrbitTE currently probes the cuFile DSO when `gds` is compiled,
-even for an engine with no file policy. Keep `orbitte-gds` off unless needed;
-a runtime switch for that probe is an upstream gap.
+native route. OrbitTE sets `EngineConfig::gds_enabled` only for configured
+`cufile` storage. Compiling `orbitte-gds` no longer loads cuFile for peer-only,
+`uring` or `auto` engines. Configured GDS discovers the driver lazily on its first
+eligible file submission; a missing runtime SDK fails that request.
 
 ## Experimental OrbitTE allocation bridge
 
 The opt-in `orbitkv-core/orbitte` feature pins
-[OrbitTE `df9ded0`](https://github.com/OrbitInfra/OrbitTE/commit/df9ded09898217fd6d93bf02bb24d980c3e327a9).
+[OrbitTE `36516152`](https://github.com/OrbitInfra/OrbitTE/commit/36516152f768b77837f9b3e1d0787f1f3fd0f4ce).
 `PinnedAllocation::orbitte_memory` returns a canonical `Arc<HostMemory>` retaining
 that exact allocation. A pool owner alone would keep the mapping alive while
 allowing a slot to be reused. The allocation holds only a weak cached view, so

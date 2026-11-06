@@ -11,10 +11,10 @@ use orbit_te::{
 
 use crate::memory::pool::PinnedAllocation;
 use crate::transfer_engine::{
-    Cancellation, ErrorKind, FileMemory, FileSegment, FileSegmentInner, FileTransfer,
-    FileTransport, MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, PeerSegment, REGISTERED_POOLS,
-    Registration, RegistrationInner, Segment, TransferBackend, TransferError, TransferSlice,
-    remaining, validate_slices,
+    Cancellation, ErrorKind, FileIoElement, FileMemory, FileSegment, FileSegmentInner,
+    FileTransfer, FileTransport, MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, PeerSegment,
+    REGISTERED_POOLS, Registration, RegistrationInner, Segment, TransferBackend, TransferError,
+    TransferSlice, remaining, validate_slices,
 };
 
 fn prefix(transport: Transport) -> &'static str {
@@ -142,7 +142,6 @@ impl OrbitTeTransport {
             max_registered_bytes: usize::try_from(pool_bytes)
                 .map_err(|_| "pool exceeds addressable bytes")?
                 .checked_add(2 << 30) // Persistent GPU registrations share this headroom.
-                .and_then(|bytes| bytes.checked_add(if storage.is_some() { 64 << 20 } else { 0 }))
                 .ok_or("registration budget overflow")?,
             max_batch_requests: MAX_BATCH_REQUESTS,
             max_inflight_batches: 32,
@@ -153,6 +152,8 @@ impl OrbitTeTransport {
             max_file_segments: if storage.is_some() { 256 } else { 0 },
             #[cfg(feature = "orbitte-gds")]
             gds_require_native: true,
+            #[cfg(feature = "orbitte-gds")]
+            gds_enabled: storage.is_some_and(|s| s.backend == crate::SsdBackend::Cufile),
             max_failover_attempts: 0,
             enable_auto_failover_on_poll: false,
             tcp: payload == Transport::Tcp,
@@ -169,14 +170,6 @@ impl OrbitTeTransport {
             ..EngineConfig::default()
         };
         let engine = Arc::new(TransferEngine::new(config).map_err(|error| error.to_string())?);
-        #[cfg(feature = "orbitte-gds")]
-        if storage.is_some_and(|s| s.backend == crate::SsdBackend::Cufile)
-            && !engine.stats().map_err(|e| e.to_string())?.gds.available
-        {
-            return Err(
-                "OrbitTE GDS/cuFile is unavailable or compatibility mode is enabled".into(),
-            );
-        }
         let epoch = engine.source_epoch().to_string();
         let endpoint = format!("{}{}", prefix(payload), engine.endpoint());
         {
@@ -232,13 +225,25 @@ impl OrbitTeTransport {
                 .with_deadline(deadline)
             })
             .collect();
+        self.transfer_requests(operation, target, &requests, total, deadline, cancellation)
+    }
+
+    fn transfer_requests(
+        &self,
+        operation: crate::transfer_engine::TransferOp,
+        target: orbit_te::TransferTarget<'_>,
+        requests: &[TransferRequest],
+        total: usize,
+        deadline: Instant,
+        cancellation: &Cancellation,
+    ) -> Result<usize, TransferError> {
         let op = match operation {
             crate::transfer_engine::TransferOp::Read => TransferOp::Read,
             crate::transfer_engine::TransferOp::Write => TransferOp::Write,
         };
         let mut batch = self
             .engine
-            .submit_async(op, target, &requests, None, remaining(deadline)?)
+            .submit_async(op, target, requests, None, remaining(deadline)?)
             .map_err(transfer_error)?;
         let mut cancelled = false;
         loop {
@@ -571,28 +576,39 @@ impl TransferBackend for OrbitTeTransport {
                 "file transfer cancelled before admission",
             ));
         }
+        let elements: Vec<_> = transfer
+            .extent
+            .elements
+            .iter()
+            .map(|element| match *element {
+                FileIoElement::Range { address, length } => {
+                    orbit_te::FileIoElement::Range { address, length }
+                }
+                FileIoElement::Padding(bytes) => orbit_te::FileIoElement::Padding(bytes),
+            })
+            .collect();
+        let total = transfer.extent.bytes()?;
+        let request = TransferRequest::file_vectored(
+            match transport {
+                FileTransport::IoUring => Transport::IoUring,
+                FileTransport::Gds => Transport::Gds,
+            },
+            transfer.extent.offset,
+            &elements,
+        )
+        .map_err(transfer_error)?
+        .with_deadline(deadline);
         let registration = match &transfer.memory {
+            FileMemory::Pinned(allocations) if allocations.is_empty() => Ok(None),
             FileMemory::Pinned(allocations) => Arc::clone(&self)
-                .register_pinned(allocations, crate::transfer_engine::Permission::LocalOnly),
-            FileMemory::Cuda {
-                address,
-                length,
-                context,
-                _owner: owner,
-            } => {
+                .register_pinned(allocations, crate::transfer_engine::Permission::LocalOnly)
+                .map(Some),
+            // EngineFile holds persistent registration loans through this receipt.
+            FileMemory::RegisteredCuda { context, .. } => {
                 context
                     .bind_to_thread()
-                    .map_err(|error| TransferError::new(ErrorKind::Backend, error.to_string()))?;
-                // SAFETY: FileTransfer retains this exact allocation/context and producer readiness.
-                unsafe {
-                    Arc::clone(&self).register_cuda(
-                        *address,
-                        *length,
-                        context.ordinal() as i32,
-                        Arc::clone(owner),
-                        crate::transfer_engine::Permission::LocalOnly,
-                    )
-                }
+                    .map_err(|e| TransferError::new(ErrorKind::Backend, e.to_string()))?;
+                Ok(None)
             }
         };
         let mut registration = ManuallyDrop::new(match registration {
@@ -604,21 +620,19 @@ impl TransferBackend for OrbitTeTransport {
                 return Err(error);
             }
         });
-        let mut result = self.transfer_target(
+        let mut result = self.transfer_requests(
             operation,
             inner.into(),
-            match transport {
-                FileTransport::IoUring => Transport::IoUring,
-                FileTransport::Gds => Transport::Gds,
-            },
-            &transfer.slices,
+            &[request],
+            total,
             deadline,
             cancellation,
         );
-        if !matches!(&result, Err(error) if error.kind == ErrorKind::Unquiesced) {
-            // SAFETY: every other transfer result proves physical drain or rejection.
-            if let Err(error) =
-                unsafe { TransferBackend::unregister(self.as_ref(), &mut registration) }
+        if !matches!(&result, Err(error) if error.kind == ErrorKind::Unquiesced)
+            && let Some(registration) = registration.as_mut()
+        {
+            // SAFETY: every other result proves physical drain or rejection.
+            if let Err(error) = unsafe { TransferBackend::unregister(self.as_ref(), registration) }
             {
                 result = Err(TransferError::new(
                     ErrorKind::Unquiesced,

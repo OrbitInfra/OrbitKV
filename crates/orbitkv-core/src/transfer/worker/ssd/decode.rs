@@ -8,6 +8,7 @@ use crate::codec::{
 };
 use crate::metrics::core_metrics;
 use crate::transfer::finish_gpu_transfer;
+use crate::transfer_engine::{CudaRegistration, TransferBackend};
 
 struct DeviceInput {
     stream: Arc<CudaStream>,
@@ -59,12 +60,16 @@ pub(super) struct DecodeRange {
 }
 
 pub(super) enum DecodeCommand {
-    Prepare { bytes: usize, budget: usize },
+    Prepare {
+        bytes: usize,
+        budget: usize,
+        backend: Arc<dyn TransferBackend>,
+    },
     Decode(Vec<DecodeRange>),
 }
 
 pub(super) enum DecodeReply {
-    Prepared(Result<u64, String>),
+    Prepared(Result<Arc<CudaRegistration>, String>),
     Completed(Result<(), DecodeError>),
 }
 
@@ -73,12 +78,16 @@ pub(super) fn run(
     requests: mpsc::Receiver<DecodeCommand>,
     replies: mpsc::SyncSender<DecodeReply>,
 ) {
-    let mut input: Option<DeviceInput> = None;
+    let mut input: Option<Arc<CudaRegistration>> = None;
     let mut codec: Option<GpuCodec> = None;
     let mut scratch_budget = 0;
     while let Ok(command) = requests.recv() {
         let reply = match command {
-            DecodeCommand::Prepare { bytes, budget } => {
+            DecodeCommand::Prepare {
+                bytes,
+                budget,
+                backend,
+            } => {
                 let prepared = (|| {
                     if bytes == 0 || bytes >= budget {
                         return Err("encoded SSD input exceeds codec budget".into());
@@ -86,11 +95,16 @@ pub(super) fn run(
                     let limit = (budget / 2).max(bytes);
                     if input
                         .as_ref()
-                        .is_some_and(|input| input.bytes < bytes || input.bytes > limit)
+                        .is_some_and(|input| input.length < bytes || input.length > limit)
                     {
+                        input
+                            .as_ref()
+                            .expect("input exists")
+                            .close()
+                            .map_err(|e| e.to_string())?;
                         input = None;
                     }
-                    let resident = input.as_ref().map_or(bytes, |input| input.bytes);
+                    let resident = input.as_ref().map_or(bytes, |input| input.length);
                     scratch_budget = budget - resident;
                     // Shrink old scratch before allocating input so changes in
                     // budget never produce a temporary double reservation.
@@ -101,9 +115,24 @@ pub(super) fn run(
                         codec = None;
                     }
                     if input.is_none() {
-                        input = Some(DeviceInput::new(&stream, bytes)?);
+                        let backing = Arc::new(DeviceInput::new(&stream, bytes)?);
+                        // SAFETY: registration retains the actual input and its stream/context.
+                        input = Some(
+                            unsafe {
+                                CudaRegistration::new(
+                                    Some(Arc::clone(&backend)),
+                                    backing.pointer,
+                                    bytes,
+                                    stream.context().ordinal() as i32,
+                                    backing,
+                                )
+                            }
+                            .map_err(|e| e.to_string())?,
+                        );
                     }
-                    Ok(input.as_ref().expect("input allocated").pointer)
+                    let registration = input.as_ref().expect("input allocated");
+                    let _loan = registration.loan(&backend).map_err(|e| e.to_string())?;
+                    Ok(Arc::clone(registration))
                 })();
                 DecodeReply::Prepared(prepared)
             }

@@ -5,7 +5,7 @@ mod common;
 use common::TestEnvBuilder;
 use orbitkv_core::{EngineConfig, PeerTransferBackend, RestoreSource, SsdBackend, SsdCacheConfig};
 
-async fn roundtrip(backend: SsdBackend) {
+async fn roundtrip(backend: SsdBackend, padded: bool) {
     let engine = match std::env::var("ORBITKV_SSD_TEST_ENGINE").as_deref() {
         Ok("tent") => PeerTransferBackend::Mooncake,
         Ok("orbitte") => PeerTransferBackend::OrbitTeTcp,
@@ -14,21 +14,28 @@ async fn roundtrip(backend: SsdBackend) {
     let root = std::env::var_os("ORBITKV_SSD_TEST_ROOT")
         .expect("set a test-owned directory on the qualification SSD");
     let directory = tempfile::tempdir_in(root).unwrap();
-    let env = TestEnvBuilder::new("engine-file-gpu", "engine-file-gpu")
+    let builder = TestEnvBuilder::new("engine-file-gpu", "engine-file-gpu")
         .layer("attention", 3, 4096)
         .split_layer("split", 3, 4096, 3 * 4096)
-        .pool_size(1 << 20)
+        .pool_size(32 << 20)
         .storage(EngineConfig {
             peer_transfer_backend: engine,
             ssd_cache_config: Some(SsdCacheConfig {
                 cache_paths: vec![directory.path().join("cache.bin")],
-                capacity_bytes: 1 << 20,
+                capacity_bytes: 64 << 20,
                 backend,
                 ..Default::default()
             }),
             ..Default::default()
-        })
-        .build();
+        });
+    let env = if padded {
+        builder
+            .layer("odd-checkpoint", 3, (5 << 20) + 137)
+            .split_layer("odd-split", 3, 137, 4096)
+            .build()
+    } else {
+        builder.build()
+    };
     let hashes = common::make_block_hashes(3, 83);
     env.save_all_layers_one_batch(&hashes).await;
     env.engine.flush_all().await;
@@ -64,11 +71,11 @@ async fn roundtrip(backend: SsdBackend) {
 #[tokio::test]
 #[ignore = "requires CUDA 13 and a Linux SSD; run the documented engine GPU storage gate"]
 async fn cuda_staged_file_roundtrip() {
-    roundtrip(SsdBackend::Auto).await;
+    roundtrip(SsdBackend::Auto, true).await;
 }
 
 #[tokio::test]
 #[ignore = "requires CUDA 13 and native-only GDS; preserve cuFile/nvidia-fs route evidence separately"]
 async fn native_gds_file_roundtrip() {
-    roundtrip(SsdBackend::Cufile).await;
+    roundtrip(SsdBackend::Cufile, false).await;
 }

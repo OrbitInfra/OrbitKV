@@ -88,7 +88,7 @@ See [transport](transport.md), [engine-local restore](engine-local-restore.md)
 and [adapter contracts](adapters.md).
 
 - [x] Runtime transfer-backend boundary for TENT and OrbitTE, retaining peer
-  grants and completion ownership, with OrbitTE pinned at `df9ded0` and one
+  grants and completion ownership, with OrbitTE pinned at `36516152` and one
   shared registry `cudarc` 0.19.8. READ/WRITE, registration, cancellation and
   shutdown contracts are implemented; hardware and installed qualification at
   this pin remain open. The prior profile results below do not qualify this
@@ -110,17 +110,21 @@ and [adapter contracts](adapters.md).
 - [x] D's v0.3.14 submodule/build update was independently accepted and merged
   as `8bc9ba52`, including four runtime libraries, yalantinglibs `45c6463`, CLI11
   and the original 23 C signatures. Hardware profiles remain unqualified.
-- [x] A3 is implemented pending review: all SSD I/O uses engine file segments;
+- [x] A3 was independently accepted and merged as `78e31f8a`: all SSD I/O uses engine file segments;
   TENT uses a **separate file engine** to preserve the peer source-drain contract.
   Native OrbitKV io_uring/cuFile/slot code and `--ssd-io-engine` are removed.
   The fork pin advances to `85c270db`, preserving negative native status codes
   and exposing asynchronous terminal evidence without weakening physical drain.
   Real-file CPU gates cover both providers; GPU/GDS/installed qualification
   remains open. See [file contracts](transport.md#ssd-file-transfers).
-- [ ] A2 follows A3: bump OrbitTE to current main including #154 (`6cee3056`) and
-  #156 (`5bca3a72`), consume
-  `TransferRequest::file_vectored` and `EngineConfig::gds_enabled`, pass layout
-  ranges directly and delete `storage/ssd/gpu.rs` gather/scatter owners.
+- [x] A2 is implemented pending review: OrbitTE `36516152` consumes one file
+  vector per extent with `Padding` for gaps/tails, and `gds_enabled` prevents
+  unconfigured cuFile loading. `storage/ssd/gpu.rs` and its zero buffers are
+  deleted. Persistent tensor/codec input registrations and actual codec arena
+  backing survive unknown drain with caller completion/admission. TENT uses
+  native vectors for aligned ranges; only its bounded padding/unaligned repair
+  adapter remains until the fork adds those contracts. CPU real-file and owner
+  gates cover both providers; GPU/GDS/installed profiles remain unqualified.
 - [ ] C follows A2: consume OrbitTE's `cuda::local_copy` API from #156, binding
   one `LocalCopyEngine` per worker stream and retaining each submitted completion
   until its bytes can be reused. See OrbitTE's `docs/local-copy.md`. TENT keeps

@@ -30,6 +30,18 @@ pub(crate) struct EncodedBatch<'a> {
     _owner: &'a GpuCodec,
 }
 
+impl EncodedBatch<'_> {
+    pub(crate) fn backing(&self) -> Option<(u64, usize, Arc<dyn Send + Sync>)> {
+        self._owner.arena.as_ref().map(|arena| {
+            (
+                arena.allocation,
+                arena.bytes,
+                arena.clone() as Arc<dyn Send + Sync>,
+            )
+        })
+    }
+}
+
 pub(crate) struct DecodeInput<'a> {
     pub source: u64,
     pub source_bytes: usize,
@@ -76,7 +88,7 @@ pub(crate) struct GpuCodec {
     crc_finish: CudaFunction,
     codebooks: Vec<f32>,
     ans: Option<ans::Library>,
-    arena: Option<Arena>,
+    arena: Option<Arc<Arena>>,
     upload: Vec<u8>,
     readback: Vec<u8>,
 }
@@ -407,12 +419,12 @@ impl GpuCodec {
             // cuMemAlloc (not the async pool) also permits cuFileBufRegister.
             let allocation = unsafe { result::malloc_sync(bytes) }.map_err(|e| e.to_string())?;
             let base = allocation.next_multiple_of(ALIGNMENT as u64);
-            self.arena = Some(Arena {
+            self.arena = Some(Arc::new(Arena {
                 stream: stream.clone(),
                 allocation,
                 base,
                 bytes,
-            });
+            }));
             crate::metrics::core_metrics()
                 .storage_codec_workspace_bytes
                 .add(bytes as i64, &[]);

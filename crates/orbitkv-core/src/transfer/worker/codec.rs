@@ -1,4 +1,3 @@
-use crate::storage::ssd::gpu::GpuSlot;
 use std::{
     num::NonZeroU64,
     sync::Arc,
@@ -10,6 +9,7 @@ use opentelemetry::KeyValue;
 use orbitkv_state::StorageFormat;
 
 use super::{LayerTransferData, TransferPayload, WorkerRuntime};
+use crate::transfer_engine::{CudaRegistration, ErrorKind, FileMemory, TransferError, TransferOp};
 use crate::{
     EngineError, SlotMeta,
     block::{RawBlock, Segment, StateKey},
@@ -355,7 +355,16 @@ fn save_blocks(
                 // A split batch or CPU fallback no longer has every encoded byte
                 // in the current arena. Its sealed DRAM object uses normal writeback.
                 if offset == 0 && devices.iter().all(Option::is_some) {
-                    write_gpu(runtime, storage, key, numa, blocks, layers, devices)?;
+                    write_gpu(
+                        runtime,
+                        storage,
+                        key,
+                        numa,
+                        blocks,
+                        layers,
+                        devices,
+                        batch.backing(),
+                    )?;
                 } else {
                     core_metrics().ssd_gpu_write_fallbacks.add(1, &[]);
                 }
@@ -370,6 +379,10 @@ fn save_blocks(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "write consumes the existing sealed object and its GPU backing"
+)]
 fn write_gpu(
     runtime: &WorkerRuntime,
     storage: &Storage,
@@ -378,6 +391,7 @@ fn write_gpu(
     blocks: &[(usize, usize)],
     layers: &[LayerTransferData],
     devices: Vec<Option<Vec<(u64, usize)>>>,
+    backing: Option<(u64, usize, Arc<dyn Send + Sync>)>,
 ) -> Result<(), EngineError> {
     let Some(store) = &storage.ssd_store else {
         return Ok(());
@@ -414,35 +428,100 @@ fn write_gpu(
     }
     let batches = plan_writes(lease.entry.file_offset, lease.entry.len, copies)
         .map_err(EngineError::Storage)?;
-    let mut owner = runtime.codec_write.borrow_mut();
-    if owner.is_none() {
-        *owner = Some(GpuSlot::new(runtime.stream.context()).map_err(|error| {
-            store.gpu_io.failed(&error);
-            EngineError::Storage(error)
-        })?);
-    }
-    let slot = owner.as_mut().expect("initialized GPU storage slot");
-    for batch in batches {
-        #[cfg(feature = "test-hooks")]
-        while crate::test_faults::active("cufile_write") {
-            std::thread::sleep(Duration::from_micros(50));
-        }
-        if let Err(error) = slot.submit(Arc::clone(lease.file()), batch, true, lease.clone()) {
-            *owner = None;
-            return Err(EngineError::Storage(error));
-        }
-        loop {
-            if let Some(result) = slot.poll() {
-                if let Err(error) = result {
-                    // A failed stream must not be reused by a subsequent batch.
-                    *owner = None;
-                    return Err(EngineError::Storage(error));
-                }
-                break;
+    let file = lease.file();
+    let mut owners: Vec<_> = layers
+        .iter()
+        .filter_map(|layer| layer.layout.owner.clone())
+        .collect();
+    let mut arena_registration = None;
+    if let Some((address, length, backing)) = backing {
+        // SAFETY: the codec arena is held independently of its worker through file drain.
+        let registered = unsafe {
+            CudaRegistration::new(
+                Some(Arc::clone(&file.file.backend)),
+                address,
+                length,
+                runtime.stream.context().ordinal() as i32,
+                backing,
+            )
+        };
+        match registered {
+            Ok(owner) => {
+                arena_registration = Some(Arc::clone(&owner));
+                owners.push(owner);
             }
-            std::thread::sleep(Duration::from_micros(50));
+            Err(error) => {
+                if error.kind == ErrorKind::Unquiesced {
+                    runtime.unquiesced.set(true);
+                }
+                return Err(EngineError::Storage(error.to_string()));
+            }
         }
     }
+    let result = (|| {
+        for batch in batches {
+            #[cfg(feature = "test-hooks")]
+            while crate::test_faults::active("cufile_write") {
+                std::thread::sleep(Duration::from_micros(50));
+            }
+            let submitted = file.file.submit(
+                TransferOp::Write,
+                file.transport,
+                batch.into_extent().map_err(EngineError::Storage)?,
+                FileMemory::RegisteredCuda {
+                    owners: owners.clone(),
+                    context: Arc::clone(runtime.stream.context()),
+                },
+                lease.clone(),
+            );
+            let mut receipt = submitted.map_err(|e| EngineError::Storage(e.to_string()))?;
+            let result = loop {
+                #[cfg(feature = "test-hooks")]
+                if crate::test_faults::active("cufile_write_completion") {
+                    std::thread::sleep(Duration::from_micros(50));
+                    continue;
+                }
+                match receipt.try_recv() {
+                    Ok(result) => break result,
+                    Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                        break Err(TransferError::new(
+                            ErrorKind::Unquiesced,
+                            "file worker closed without receipt",
+                        ));
+                    }
+                    Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
+                        std::thread::sleep(Duration::from_micros(50));
+                    }
+                }
+            };
+            if let Err(error) = result {
+                if error.kind == ErrorKind::Unquiesced {
+                    runtime.unquiesced.set(true);
+                    for owner in &owners {
+                        owner.retain();
+                    }
+                }
+                store.gpu_io.failed(&error.to_string());
+                return Err(EngineError::Storage(error.to_string()));
+            }
+            #[cfg(feature = "test-hooks")]
+            if crate::test_faults::active("cufile_write_error") {
+                return Err(EngineError::Storage(
+                    "injected GPU file write error after physical receipt".into(),
+                ));
+            }
+        }
+        Ok(())
+    })();
+    // Temporary encoded output registration must report cleanup before the
+    // codec can reuse its arena. Drop-only cleanup cannot fence that reuse.
+    if let Some(registration) = arena_registration
+        && let Err(error) = registration.close()
+    {
+        runtime.unquiesced.set(true);
+        return Err(EngineError::Storage(error.to_string()));
+    }
+    result?;
     lease.commit();
     Ok(())
 }

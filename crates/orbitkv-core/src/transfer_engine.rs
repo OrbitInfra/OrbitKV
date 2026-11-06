@@ -128,6 +128,113 @@ pub enum FileTransport {
     Gds,
 }
 
+pub(crate) const MAX_FILE_BYTES: usize = 64 << 20;
+pub(crate) const MAX_FILE_ELEMENTS: usize = 1024;
+
+/// File-ordered layout. Padding has no consumer-owned byte buffer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FileIoElement {
+    Range { address: u64, length: usize },
+    Padding(usize),
+}
+
+impl FileIoElement {
+    pub(crate) fn length(&self) -> usize {
+        match self {
+            Self::Range { length, .. } | Self::Padding(length) => *length,
+        }
+    }
+}
+
+pub(crate) struct FileExtent {
+    pub offset: u64,
+    pub elements: Vec<FileIoElement>,
+}
+
+impl FileExtent {
+    /// Layout planning only: local ranges cover the data; the engine owns gaps.
+    pub(crate) fn from_slices(
+        offset: u64,
+        bytes: usize,
+        mut slices: Vec<TransferSlice>,
+    ) -> Result<Self, TransferError> {
+        let invalid = || {
+            TransferError::new(
+                ErrorKind::InvalidRequest,
+                "file ranges overlap or exceed their extent",
+            )
+        };
+        let end = offset.checked_add(bytes as u64).ok_or_else(invalid)?;
+        if slices.len() > MAX_FILE_ELEMENTS || bytes > MAX_FILE_BYTES {
+            return Err(TransferError::new(
+                ErrorKind::ResourceExhausted,
+                "file vector budget exceeded",
+            ));
+        }
+        slices.sort_unstable_by_key(|slice| slice.remote_address);
+        let mut elements = Vec::new();
+        let mut cursor = offset;
+        for slice in slices {
+            let limit = slice
+                .remote_address
+                .checked_add(slice.length as u64)
+                .ok_or_else(invalid)?;
+            if slice.remote_address < cursor || limit > end || slice.length == 0 {
+                return Err(invalid());
+            }
+            if slice.remote_address > cursor {
+                elements.push(FileIoElement::Padding(
+                    (slice.remote_address - cursor) as usize,
+                ));
+            }
+            elements.push(FileIoElement::Range {
+                address: slice.local.as_ptr() as u64,
+                length: slice.length,
+            });
+            cursor = limit;
+        }
+        if cursor < end {
+            elements.push(FileIoElement::Padding((end - cursor) as usize));
+        }
+        let extent = Self { offset, elements };
+        extent.bytes()?;
+        Ok(extent)
+    }
+
+    pub(crate) fn bytes(&self) -> Result<usize, TransferError> {
+        let invalid = || TransferError::new(ErrorKind::InvalidRequest, "invalid file vector");
+        if self.elements.is_empty() || self.elements.len() > MAX_FILE_ELEMENTS {
+            return Err(TransferError::new(
+                ErrorKind::ResourceExhausted,
+                "file vector descriptor limit exceeded",
+            ));
+        }
+        let mut bytes = 0usize;
+        for element in &self.elements {
+            if element.length() == 0 {
+                return Err(invalid());
+            }
+            if let FileIoElement::Range { address, length } = element
+                && (*address == 0 || address.checked_add(*length as u64).is_none())
+            {
+                return Err(invalid());
+            }
+            bytes = bytes.checked_add(element.length()).ok_or_else(invalid)?;
+        }
+        self.offset
+            .checked_add(bytes as u64)
+            .filter(|end| i64::try_from(*end).is_ok())
+            .ok_or_else(invalid)?;
+        if bytes > MAX_FILE_BYTES {
+            return Err(TransferError::new(
+                ErrorKind::ResourceExhausted,
+                "file vector byte limit exceeded",
+            ));
+        }
+        Ok(bytes)
+    }
+}
+
 /// Engine-local file handle. The SSD owner keeps the original fd and extents.
 pub struct FileSegment {
     #[cfg(any(feature = "mooncake", feature = "orbitte"))]
@@ -148,18 +255,16 @@ pub(crate) enum FileSegmentInner {
 
 pub(crate) enum FileMemory {
     Pinned(Vec<Arc<PinnedAllocation>>),
-    Cuda {
-        address: u64,
-        length: usize,
+    RegisteredCuda {
+        owners: Vec<Arc<CudaRegistration>>,
         context: Arc<cudarc::driver::CudaContext>,
-        _owner: Arc<dyn Send + Sync>,
     },
 }
 
 /// Actual file-transfer backing, immutable layout and the SSD owner's lease.
 /// Native callbacks may retain this owner, including after a dropped receiver.
 pub struct FileTransfer {
-    pub(crate) slices: Vec<TransferSlice>,
+    pub(crate) extent: FileExtent,
     pub(crate) memory: FileMemory,
     pub(crate) _lease: Arc<dyn Send + Sync>,
 }

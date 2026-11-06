@@ -3,7 +3,9 @@
 use std::fs::File;
 use std::mem::ManuallyDrop;
 use std::os::fd::AsRawFd;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
+use std::ptr::NonNull;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -16,16 +18,14 @@ use crate::cost::{
 };
 use crate::memory::pool::PinnedAllocation;
 use crate::transfer_engine::{
-    Cancellation, ErrorKind, FileMemory, FileSegment, FileTransfer, FileTransport, TransferBackend,
-    TransferError, TransferOp, TransferSlice, validate_slices,
+    Cancellation, ErrorKind, FileExtent, FileIoElement, FileMemory, FileSegment, FileTransfer,
+    FileTransport, MAX_FILE_ELEMENTS, TransferBackend, TransferError, TransferOp,
 };
 
 const MAX_OPERATIONS: usize = 32;
-const MAX_BYTES: usize = 64 << 20;
-const MAX_SLICES: usize = 16_384;
 const DEADLINE: Duration = Duration::from_secs(30);
 
-pub(super) type Receipt = oneshot::Receiver<Result<usize, TransferError>>;
+pub(crate) type Receipt = oneshot::Receiver<Result<usize, TransferError>>;
 
 /// Defaults to retention, including unwind or a dropped completion receiver.
 /// Only a physical receipt may turn this into ordinary destruction.
@@ -56,7 +56,7 @@ impl<T> Drop for DrainOwner<T> {
 }
 
 pub(crate) struct EngineFile {
-    backend: Arc<dyn TransferBackend>,
+    pub(crate) backend: Arc<dyn TransferBackend>,
     segment: FileSegment,
     // /proc/self/fd binds the engine open to this exact inode, not a replaceable path.
     file: Arc<File>,
@@ -70,26 +70,31 @@ impl EngineFile {
         self: &Arc<Self>,
         operation: TransferOp,
         transport: FileTransport,
-        slices: Vec<TransferSlice>,
+        extent: FileExtent,
         memory: FileMemory,
-        extent: Arc<dyn Send + Sync>,
+        lease: Arc<dyn Send + Sync>,
     ) -> Result<Receipt, TransferError> {
-        validate(&slices)?;
-        let owns = |slice: &TransferSlice| match &memory {
+        validate(&extent)?;
+        let owns = |address, length| match &memory {
             FileMemory::Pinned(allocations) => {
-                allocations.len() <= MAX_SLICES
-                    && allocations
-                        .iter()
-                        .any(|a| a.source_range(slice.local, slice.length).is_ok())
+                allocations.len() <= MAX_FILE_ELEMENTS
+                    && NonNull::new(address as *mut u8).is_some_and(|pointer| {
+                        allocations
+                            .iter()
+                            .any(|a| a.source_range(pointer, length).is_ok())
+                    })
             }
-            FileMemory::Cuda {
-                address, length, ..
-            } => (slice.local.as_ptr() as u64)
-                .checked_sub(*address)
-                .and_then(|offset| offset.checked_add(slice.length as u64))
-                .is_some_and(|end| end <= *length as u64),
+            FileMemory::RegisteredCuda { owners, context } => {
+                owners.len() <= MAX_FILE_ELEMENTS
+                    && owners.iter().any(|owner| {
+                        owner.device == context.ordinal() as i32 && owner.covers(address, length)
+                    })
+            }
         };
-        if !slices.iter().all(owns) {
+        if extent.elements.iter().any(|element| match *element {
+            FileIoElement::Range { address, length } => !owns(address, length),
+            FileIoElement::Padding(_) => false,
+        }) {
             return Err(TransferError::new(
                 ErrorKind::InvalidRequest,
                 "file descriptor is outside retained backing",
@@ -101,9 +106,9 @@ impl EngineFile {
         let (tx, rx) = oneshot::channel();
         self.runtime.spawn_blocking(move || {
             let owners = DrainOwner::new(Arc::new(FileTransfer {
-                slices,
+                extent,
                 memory,
-                _lease: Arc::new((Arc::clone(&file), extent, permit)),
+                _lease: Arc::new((Arc::clone(&file), lease, permit)),
             }));
             let result = file.execute(operation, transport, owners, deadline);
             let _ = tx.send(result);
@@ -118,38 +123,73 @@ impl EngineFile {
         owners: DrainOwner<Arc<FileTransfer>>,
         deadline: Instant,
     ) -> Result<usize, TransferError> {
-        let slices = &owners.value.slices;
+        let bytes = owners.value.extent.bytes()?;
+        let elements = owners.value.extent.elements.len();
+        let gpu = matches!(owners.value.memory, FileMemory::RegisteredCuda { .. });
+        let started = Instant::now();
+        let metrics = crate::metrics::core_metrics();
+        if gpu {
+            metrics.ssd_cufile_inflight_batches.add(1, &[]);
+        }
         let mut observation = Observation::new(
             CostEstimateKey::new(
-                if operation == TransferOp::Read {
-                    CostObservationKind::SsdRead
-                } else {
-                    CostObservationKind::SsdWrite
+                match (gpu, operation) {
+                    (true, TransferOp::Read) => CostObservationKind::SsdCufileRead,
+                    (true, TransferOp::Write) => CostObservationKind::SsdCufileWrite,
+                    (false, TransferOp::Read) => CostObservationKind::SsdRead,
+                    (false, TransferOp::Write) => CostObservationKind::SsdWrite,
                 },
                 self.cost_resource,
                 Representation::Unknown,
-                slices.iter().map(|s| s.length as u64).sum(),
-                slices.len(),
+                bytes as u64,
+                elements,
             ),
             None,
         );
         observation.admitted();
         observation.submitted();
-        // SAFETY: registration, actual backing, exact file and extent lease are
-        // held by owners. An uncertain receipt retains that entire owner and permit.
-        let mut result = unsafe {
-            Arc::clone(&self.backend).transfer_file(
-                operation,
-                &self.segment,
-                transport,
-                Arc::clone(&owners.value),
-                deadline,
-                &Cancellation::default(),
-            )
+        let registrations = match &owners.value.memory {
+            FileMemory::RegisteredCuda { owners, .. } => owners.as_slice(),
+            _ => &[],
         };
+        let mut unique: Vec<_> = registrations.iter().collect();
+        unique.sort_unstable_by_key(|owner| Arc::as_ptr(owner));
+        unique.dedup_by(|a, b| Arc::ptr_eq(a, b));
+        let loans = unique
+            .iter()
+            .map(|owner| owner.loan(&self.backend))
+            .collect::<Result<Vec<_>, _>>();
+        let mut result = match loans.as_ref() {
+            Err(error) => Err(TransferError::new(error.kind, error.message.clone())),
+            Ok(_) => catch_unwind(AssertUnwindSafe(|| {
+                // SAFETY: actual backing, persistent loans, file and extent/admission leases outlive drain.
+                unsafe {
+                    Arc::clone(&self.backend).transfer_file(
+                        operation,
+                        &self.segment,
+                        transport,
+                        Arc::clone(&owners.value),
+                        deadline,
+                        &Cancellation::default(),
+                    )
+                }
+            }))
+            .unwrap_or_else(|_| {
+                Err(TransferError::new(
+                    ErrorKind::Unquiesced,
+                    "file backend unwound without a drain receipt",
+                ))
+            }),
+        };
+        if matches!(&result, Err(error) if error.kind == ErrorKind::Unquiesced) {
+            for owner in registrations {
+                owner.retain();
+            }
+        }
+        drop(loans);
         if result
             .as_ref()
-            .is_ok_and(|bytes| *bytes != slices.iter().map(|s| s.length).sum::<usize>())
+            .is_ok_and(|transferred| *transferred != bytes)
         {
             result = Err(TransferError::new(
                 ErrorKind::Backend,
@@ -160,6 +200,30 @@ impl EngineFile {
             crate::metrics::core_metrics()
                 .ssd_engine_read_batches
                 .add(1, &[]);
+        }
+        if gpu {
+            let (seconds, transferred, failures) = if operation == TransferOp::Read {
+                (
+                    &metrics.ssd_cufile_read_seconds,
+                    &metrics.ssd_cufile_read_bytes,
+                    &metrics.ssd_cufile_read_failures,
+                )
+            } else {
+                (
+                    &metrics.ssd_cufile_write_seconds,
+                    &metrics.ssd_cufile_write_bytes,
+                    &metrics.ssd_cufile_write_failures,
+                )
+            };
+            seconds.record(started.elapsed().as_secs_f64(), &[]);
+            if result.is_ok() {
+                transferred.add(bytes as u64, &[]);
+            } else {
+                failures.add(1, &[]);
+            }
+            if !matches!(&result, Err(error) if error.kind == ErrorKind::Unquiesced) {
+                metrics.ssd_cufile_inflight_batches.add(-1, &[]);
+            }
         }
         observation.finish(
             if result.is_ok() {
@@ -257,9 +321,9 @@ impl SsdIo {
         &self,
         operation: TransferOp,
         shard: usize,
-        slices: Vec<TransferSlice>,
+        extent: FileExtent,
         allocations: Vec<Arc<PinnedAllocation>>,
-        extent: Arc<dyn Send + Sync>,
+        lease: Arc<dyn Send + Sync>,
     ) -> Result<Receipt, TransferError> {
         self.files
             .get(shard)
@@ -267,9 +331,9 @@ impl SsdIo {
             .submit(
                 operation,
                 FileTransport::IoUring,
-                slices,
-                FileMemory::Pinned(allocations),
                 extent,
+                FileMemory::Pinned(allocations),
+                lease,
             )
     }
 }
@@ -283,23 +347,13 @@ fn admit(admission: &Arc<Semaphore>) -> Result<OwnedSemaphorePermit, TransferErr
     })
 }
 
-fn validate(slices: &[TransferSlice]) -> Result<(), TransferError> {
-    if slices.is_empty() || slices.len() > MAX_SLICES || validate_slices(slices)? > MAX_BYTES {
+fn validate(extent: &FileExtent) -> Result<(), TransferError> {
+    let bytes = extent.bytes()?;
+    if !extent.offset.is_multiple_of(SSD_ALIGNMENT as u64) || !bytes.is_multiple_of(SSD_ALIGNMENT) {
         return Err(TransferError::new(
-            ErrorKind::ResourceExhausted,
-            "SSD batch exceeds descriptor or byte budget",
+            ErrorKind::InvalidRequest,
+            "SSD file extent must preserve 512-byte O_DIRECT alignment",
         ));
-    }
-    for s in slices {
-        if !(s.local.as_ptr() as usize).is_multiple_of(SSD_ALIGNMENT)
-            || !s.length.is_multiple_of(SSD_ALIGNMENT)
-            || !s.remote_address.is_multiple_of(SSD_ALIGNMENT as u64)
-        {
-            return Err(TransferError::new(
-                ErrorKind::InvalidRequest,
-                "SSD I/O must preserve 512-byte O_DIRECT alignment",
-            ));
-        }
     }
     Ok(())
 }

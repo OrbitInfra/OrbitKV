@@ -36,9 +36,18 @@ mod engine {
     use crate::memory::numa::NumaNode;
     use crate::storage::Storage;
     use crate::storage::ssd::{SsdBackend, SsdCacheConfig};
-    use crate::transfer_engine::{Permission, Registration};
+    use crate::transfer_engine::{Permission, Registration, TransferSlice};
     use std::num::{NonZeroU64, NonZeroUsize};
     use std::os::unix::fs::FileExt;
+
+    fn file_extent(slices: Vec<TransferSlice>) -> FileExtent {
+        FileExtent::from_slices(
+            slices[0].remote_address,
+            slices.iter().map(|s| s.length).sum(),
+            slices,
+        )
+        .unwrap()
+    }
 
     fn directory() -> tempfile::TempDir {
         let root = std::env::var_os("ORBITKV_SSD_TEST_ROOT")
@@ -65,8 +74,15 @@ mod engine {
             Ok("1"),
             "run this real-file gate explicitly with ORBITKV_REQUIRE_ENGINE_SSD=1 and the CPU host-registration fixture"
         );
+        if selected_backend() == crate::PeerTransferBackend::Mooncake {
+            assert_eq!(
+                std::env::var("MC_FORCE_TCP").as_deref(),
+                Ok("1"),
+                "the CPU/TCP source-drain control requires MC_FORCE_TCP=1 even on runners with RDMA devices"
+            );
+        }
         Storage::new_with_config(
-            256 << 10,
+            16 << 20,
             false,
             crate::EngineConfig {
                 peer_transfer_backend: selected_backend(),
@@ -203,7 +219,7 @@ mod engine {
             file.submit(
                 operation,
                 FileTransport::IoUring,
-                slices,
+                file_extent(slices),
                 FileMemory::Pinned(vec![memory]),
                 Arc::new(()),
             )
@@ -304,7 +320,7 @@ mod engine {
                     &file.segment,
                     FileTransport::IoUring,
                     Arc::new(FileTransfer {
-                        slices: slices.to_vec(),
+                        extent: file_extent(slices.to_vec()),
                         memory: FileMemory::Pinned(vec![Arc::clone(&source)]),
                         _lease: Arc::new(Arc::clone(&file)),
                     }),
@@ -331,7 +347,7 @@ mod engine {
             .submit(
                 TransferOp::Write,
                 FileTransport::IoUring,
-                slices.to_vec(),
+                file_extent(slices.to_vec()),
                 FileMemory::Pinned(vec![source]),
                 extent,
             )
@@ -364,9 +380,168 @@ mod engine {
         }
     }
 
+    #[tokio::test]
+    #[ignore = "real Linux vectored file I/O; CI requires both engines and filesystems"]
+    async fn engine_files_vectors_zero_padding_discard_reads_and_submit_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = directory();
+        let size: usize = (5 << 20) + 137;
+        let total = (4096 + size).next_multiple_of(4096);
+        let storage = storage(dir.path().join("vectors.bin"), total as u64, 1);
+        let store = storage.ssd_store.as_ref().unwrap();
+        let real = store.io.engine_file(0).unwrap();
+        let backend = Arc::new(Fault {
+            real: Arc::clone(&real.backend),
+            kind: None,
+            short: false,
+            calls: AtomicUsize::new(0),
+        });
+        let file = Arc::new(EngineFile {
+            backend: backend.clone(),
+            segment: FileSegment {
+                owner_epoch: real.segment.owner_epoch.clone(),
+                length: real.segment.length,
+                inner: real.segment.inner.clone(),
+            },
+            file: Arc::clone(&real.file),
+            admission: Arc::new(Semaphore::new(1)),
+            runtime: tokio::runtime::Handle::current(),
+            cost_resource: real.cost_resource,
+        });
+        let first = allocation(&storage, 512, 0x71);
+        let second = allocation(&storage, size.next_multiple_of(512), 0x82);
+        let vector = || FileExtent {
+            offset: 0,
+            elements: vec![
+                FileIoElement::Padding(512),
+                FileIoElement::Range {
+                    address: first.as_non_null().as_ptr() as u64,
+                    length: 137,
+                },
+                FileIoElement::Padding(4096 - 512 - 137),
+                FileIoElement::Range {
+                    address: second.as_non_null().as_ptr() as u64,
+                    length: size,
+                },
+                FileIoElement::Padding(total - 4096 - size),
+            ],
+        };
+        let owners = || FileMemory::Pinned(vec![Arc::clone(&first), Arc::clone(&second)]);
+        assert_eq!(
+            file.submit(
+                TransferOp::Write,
+                FileTransport::IoUring,
+                vector(),
+                owners(),
+                Arc::new(())
+            )
+            .unwrap()
+            .await
+            .unwrap()
+            .unwrap(),
+            total
+        );
+        assert_eq!(
+            backend.calls.load(Ordering::Relaxed),
+            1,
+            "one extent exceeds the old 4 MiB chunk size"
+        );
+        let mut disk = vec![0xff; total];
+        buffered(&store._files[0])
+            .read_exact_at(&mut disk, 0)
+            .unwrap();
+        let mut expected = vec![0; total];
+        expected[512..649].fill(0x71);
+        expected[4096..4096 + size].fill(0x82);
+        assert_eq!(disk, expected, "padding is engine-generated zero data");
+        for allocation in [&first, &second] {
+            // SAFETY: the WRITE receipt has drained all readers.
+            unsafe {
+                std::ptr::write_bytes(
+                    allocation.as_non_null().as_ptr(),
+                    0xa5,
+                    allocation.size_bytes() as usize,
+                );
+            };
+        }
+        assert_eq!(
+            file.submit(
+                TransferOp::Read,
+                FileTransport::IoUring,
+                vector(),
+                owners(),
+                Arc::new(())
+            )
+            .unwrap()
+            .await
+            .unwrap()
+            .unwrap(),
+            total
+        );
+        assert_eq!(backend.calls.load(Ordering::Relaxed), 2);
+        for (allocation, length, value) in [(&first, 137, 0x71), (&second, size, 0x82)] {
+            // SAFETY: read receipt proves initialized payload and physical drain.
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    allocation.as_non_null().as_ptr(),
+                    allocation.size_bytes() as usize,
+                )
+            };
+            assert!(bytes[..length].iter().all(|&b| b == value));
+            assert!(
+                bytes[length..].iter().all(|&b| b == 0xa5),
+                "padding must not touch memory outside the described ranges"
+            );
+        }
+        let error = file
+            .submit(
+                TransferOp::Write,
+                FileTransport::Gds,
+                vector(),
+                owners(),
+                Arc::new(()),
+            )
+            .unwrap()
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(
+            error.kind,
+            ErrorKind::Unavailable,
+            "explicit GDS padding must reject before touching bytes"
+        );
+        buffered(&store._files[0])
+            .read_exact_at(&mut disk, 0)
+            .unwrap();
+        assert_eq!(disk, expected);
+        for op in [TransferOp::Write, TransferOp::Read] {
+            assert_eq!(
+                file.submit(
+                    op,
+                    FileTransport::IoUring,
+                    FileExtent {
+                        offset: 0,
+                        elements: vec![FileIoElement::Padding(total)]
+                    },
+                    FileMemory::Pinned(Vec::new()),
+                    Arc::new(())
+                )
+                .unwrap()
+                .await
+                .unwrap()
+                .unwrap(),
+                total
+            );
+        }
+        buffered(&store._files[0])
+            .read_exact_at(&mut disk, 0)
+            .unwrap();
+        assert!(disk.iter().all(|&b| b == 0));
+    }
+
     struct Fault {
         real: Arc<dyn TransferBackend>,
-        kind: ErrorKind,
+        kind: Option<ErrorKind>,
         short: bool,
         calls: std::sync::atomic::AtomicUsize,
     }
@@ -448,15 +623,16 @@ mod engine {
         ) -> Result<usize, TransferError> {
             self.calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if self.short {
-                // SAFETY: this forwards the unchanged, registered descriptors and owners.
-                unsafe {
-                    Arc::clone(&self.real)
-                        .transfer_file(operation, file, transport, transfer, deadline, cancel)
+            match (self.short, self.kind) {
+                (false, Some(kind)) => Err(TransferError::new(kind, "injected transfer receipt")),
+                _ => {
+                    // SAFETY: this forwards the unchanged, registered descriptors and owners.
+                    unsafe {
+                        Arc::clone(&self.real)
+                            .transfer_file(operation, file, transport, transfer, deadline, cancel)
+                    }
+                    .map(|bytes| if self.short { bytes / 2 } else { bytes })
                 }
-                .map(|bytes| if self.short { bytes / 2 } else { bytes })
-            } else {
-                Err(TransferError::new(self.kind, "injected transfer receipt"))
             }
         }
     }
@@ -476,7 +652,7 @@ mod engine {
             let real = store.io.engine_file(0).unwrap();
             let backend = Arc::new(Fault {
                 real: Arc::clone(&real.backend),
-                kind,
+                kind: Some(kind),
                 short,
                 calls: AtomicUsize::new(0),
             });
@@ -528,7 +704,7 @@ mod engine {
                 .submit(
                     TransferOp::Write,
                     FileTransport::IoUring,
-                    slices,
+                    file_extent(slices),
                     FileMemory::Pinned(vec![source]),
                     lease,
                 )

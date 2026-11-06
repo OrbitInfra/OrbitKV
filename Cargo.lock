@@ -2063,7 +2063,7 @@ dependencies = [
 [[package]]
 name = "orbit-te"
 version = "0.1.0-alpha.1"
-source = "git+https://github.com/OrbitInfra/OrbitTE?rev=df9ded09898217fd6d93bf02bb24d980c3e327a9#df9ded09898217fd6d93bf02bb24d980c3e327a9"
+source = "git+https://github.com/OrbitInfra/OrbitTE?rev=36516152f768b77837f9b3e1d0787f1f3fd0f4ce#36516152f768b77837f9b3e1d0787f1f3fd0f4ce"
 dependencies = [
  "bindgen 0.71.1",
  "cc",
@@ -2074,6 +2074,7 @@ dependencies = [
  "libloading 0.8.9",
  "log",
  "mio",
+ "regex-lite",
  "serde",
  "serde_json",
  "socket2",
@@ -2810,6 +2811,12 @@ dependencies = [
  "memchr",
  "regex-syntax",
 ]
+
+[[package]]
+name = "regex-lite"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
 
 [[package]]
 name = "regex-syntax"

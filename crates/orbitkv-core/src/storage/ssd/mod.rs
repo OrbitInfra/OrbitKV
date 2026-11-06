@@ -18,9 +18,8 @@ use crate::metrics::core_metrics;
 
 mod config;
 mod files;
-pub(crate) mod gpu;
 pub(crate) mod index;
-mod io;
+pub(crate) mod io;
 pub(crate) mod layout;
 pub(crate) mod metadata;
 mod reader;
@@ -33,7 +32,11 @@ pub use config::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,
     DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdReadPath, SsdWritePolicy,
 };
-use gpu::GpuFile;
+pub(crate) struct GpuFile {
+    pub(crate) file: Arc<io::EngineFile>,
+    pub(crate) transport: crate::transfer_engine::FileTransport,
+    pub(crate) gpu_io: Arc<GpuIo>,
+}
 use index::{SsdIndexEntry, SsdRingBuffer};
 use io::SsdIo;
 use reader::{PrefetchBatch, ssd_prefetch_loop};

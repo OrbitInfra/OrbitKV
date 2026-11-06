@@ -812,16 +812,15 @@ struct WorkerRuntime {
     stream: Arc<CudaStream>,
     backend: Box<dyn TransferBackend>,
     max_dma_pitch: usize,
-    peer_unquiesced: std::cell::Cell<bool>,
+    unquiesced: std::cell::Cell<bool>,
     peer_input: std::cell::RefCell<Option<Arc<crate::transfer_engine::CudaRegistration>>>,
     codec: std::cell::RefCell<Option<crate::codec::gpu::GpuCodec>>,
-    codec_write: std::cell::RefCell<Option<crate::storage::ssd::gpu::GpuSlot>>,
 }
 
 impl WorkerRuntime {
-    fn drain_peer(&self) -> Result<(), String> {
-        if self.peer_unquiesced.get() {
-            return Err("peer GPU transfer has not drained".into());
+    fn drain_transfers(&self) -> Result<(), String> {
+        if self.unquiesced.get() {
+            return Err("GPU transfer has not drained".into());
         }
         if let Some(input) = self.peer_input.borrow().as_ref() {
             input.close().map_err(|e| e.to_string())?;
@@ -866,10 +865,9 @@ fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRunt
         stream,
         backend,
         max_dma_pitch,
-        peer_unquiesced: Default::default(),
+        unquiesced: Default::default(),
         peer_input: Default::default(),
         codec: Default::default(),
-        codec_write: Default::default(),
     })
 }
 
@@ -888,7 +886,7 @@ fn worker_loop(
                     .stream
                     .synchronize()
                     .map_err(|e| format!("GPU drain failed: {e}"))
-                    .and_then(|()| runtime.drain_peer());
+                    .and_then(|()| runtime.drain_transfers());
                 drop(runtime);
                 let _ = reply.send(result);
                 return;
@@ -1018,6 +1016,15 @@ fn worker_loop(
                     observation.finish(outcome, actual_io);
                     result
                 });
+                if runtime.unquiesced.get() {
+                    // The engine retains backing; keep caller completion and admission fenced too.
+                    #[allow(
+                        clippy::mem_forget,
+                        reason = "unknown file drain must not release the caller GPU loan"
+                    )]
+                    std::mem::forget(task);
+                    continue;
+                }
                 drop(task.ssd_admission);
                 task.admission.complete();
                 let _ = task.reply.send(result.map(|()| task.layers));
@@ -1444,13 +1451,23 @@ fn prepare_peer(command: WorkerCommand, _: &WorkerRuntime) -> Option<WorkerComma
 
 #[cfg(any(feature = "mooncake", feature = "orbitte"))]
 fn prepare_peer(command: WorkerCommand, runtime: &WorkerRuntime) -> Option<WorkerCommand> {
+    if runtime.unquiesced.get()
+        && let WorkerCommand::Save(task, observation) = command
+    {
+        observation.finish(Outcome::Failed, None);
+        task.admission.complete();
+        let _ = task
+            .reply
+            .send(Err(EngineError::Storage("GPU worker is unquiesced".into())));
+        return None;
+    }
     let WorkerCommand::Load(mut task, mut observation) = command else {
         return Some(command);
     };
-    if runtime.peer_unquiesced.get() {
+    if runtime.unquiesced.get() {
         finish_load(
             task,
-            Err(EngineError::Storage("peer GPU worker is unquiesced".into())),
+            Err(EngineError::Storage("GPU worker is unquiesced".into())),
             Instant::now(),
             0,
             Outcome::Failed,
@@ -1480,7 +1497,7 @@ fn prepare_peer(command: WorkerCommand, runtime: &WorkerRuntime) -> Option<Worke
         let result = crate::transfer::contain_gpu_unwind(|| {
             peer::restore(runtime, &task.layers, task.codec_budget)
         });
-        return complete_peer(task, observation, &runtime.peer_unquiesced, result);
+        return complete_peer(task, observation, &runtime.unquiesced, result);
     }
     Some(WorkerCommand::Load(task, observation))
 }

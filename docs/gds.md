@@ -18,7 +18,7 @@ the same cache API; no separate cuFile service is needed.
 
 | Mode | Selected engine behavior |
 | --- | --- |
-| `auto` (default) | GPU layout slots plus engine-owned CUDA staging/io_uring; host materialization remains available for DRAM policy and unsupported layout shapes. |
+| `auto` (default) | Direct layout vectors plus engine-owned CUDA staging/io_uring; host materialization remains available for DRAM policy and unsupported layout shapes. |
 | `uring` | Host materialization through engine io_uring. |
 | `cufile` | Native-only GDS. OrbitTE requires `orbitte-gds`; TENT requires a CUDA runtime built with the cuFile SDK. Missing support is an error. |
 
@@ -42,31 +42,38 @@ ordinary recovery may still select a compatible peer source.
 
 | Operation | Destination/path |
 | --- | --- |
-| SSD GPU demand | Engine file read → bounded GPU layout slot → scatter/decode into inference pages |
+| SSD GPU demand | Engine vectored file read → inference pages or bounded codec inputs |
 | SSD host demand or prepare | Engine file read → leased pinned DRAM; restore follows cache policy |
-| Complete GPU publication | Gather/encode → engine file write; retain a hot DRAM copy |
+| Complete GPU publication | Layout/encode → engine vectored file write; retain a hot DRAM copy |
 | Fragmented publication | Seal complete state in DRAM → engine file write |
 | Peer GPU restore | Engine remote READ directly into GPU pages or bounded codec inputs |
 
-The temporary `storage/ssd/gpu.rs` layout owner has two 4 MiB slots per
-instance/device. A2 replaces gather/scatter with engine vectored requests.
-The engine owns storage staging, native registrations, queues and completions.
-OrbitKV retains layout, codec and extent owners through those completions and
-through the final CUDA scatter event. Local GPU↔DRAM migration is a separate step.
+OrbitTE consumes one vectored request per extent. Gaps and 4 KiB tails are
+padding elements, written as zeros or discarded on READ by the engine. The old
+GPU layout slots and zero buffers are deleted. Imported tensors and codec inputs
+retain persistent registrations, while encoded writes retain their actual codec
+arena. Unknown drain keeps caller completion/admission and fences the worker.
+Local GPU↔DRAM migration remains a separate step.
+
+TENT submits aligned GPU vectors directly. Its C API lacks padding and unaligned
+vector repair, so a TENT-only adapter uses at most 4 MiB of host or device scratch
+per operation; GPU scratch uses D2D copies, and the engine owns host staging.
+This adapter is removed when the fork provides those missing contracts. Explicit
+GDS with padding is unavailable on both backends. OrbitTE's `gds_enabled` is false
+unless `cufile` is configured, even when GDS is compiled.
 
 Each store admits 32 file operations, including retained work, with at most
-64 MiB and 16,384 descriptors per operation. Host offsets preserve 512-byte
-alignment; GPU layouts use 4 KiB alignment. A failed or short READ never becomes
-a cache hit. Only a complete successful WRITE publishes metadata. Unknown drain
-keeps the fd, actual backing, extent lease and admission charge until process
-exit; failed cleanup is never retried. Deadline, cancellation and dropped
-receivers do not authorize reuse.
+64 MiB and 1,024 elements including padding per operation. Whole host extents
+preserve 512-byte alignment; GPU extents use 4 KiB alignment. A failed or short
+READ never becomes a cache hit. Only a complete successful WRITE publishes
+metadata. Unknown drain retains backing, extent leases and admission until
+process exit; failed cleanup is never retried.
 
-Layout coalescing preserves each source generation and excludes unrequested
-aligned gaps. GPU publication remains bounded to eight queued/active jobs and
-one active write per worker. Saturation uses ordinary host publication for
-unsubmitted work. Explicit GPU restore errors retain their error semantics.
-Opt-in route costs remain observational; they do not change execution.
+Layout vectors preserve each source generation and express unrequested gaps as
+padding. Fan-out of the same file bytes requires separate vectors. GPU publication
+remains bounded to eight queued/active jobs and one active write per worker;
+there are two in-flight file receipts. Saturation uses ordinary host publication
+for unsubmitted work. Opt-in route costs remain observational.
 
 ## Qualification
 
@@ -279,7 +286,7 @@ functional passes do not satisfy it.
 - `orbitkv_ssd_cufile_read_failures_total` / `orbitkv_ssd_cufile_write_failures_total`: failed or short I/O.
 - `orbitkv_ssd_backend_fallbacks_total`: transitions from automatic cuFile admission to io_uring.
 - `orbitkv_ssd_read_pinned_bytes`: SSD bytes held by restore leases.
-- `orbitkv_ssd_gpu_staging_bytes`: allocated registered GPU staging memory.
+- `orbitkv_ssd_gpu_staging_bytes`: TENT-only device alignment scratch; absent in OrbitTE-only builds.
 - `orbitkv_ssd_pinned_write_skips_total`: reservations rejected to protect reads
   or in-flight writes.
 

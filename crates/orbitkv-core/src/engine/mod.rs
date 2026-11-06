@@ -295,7 +295,7 @@ impl OrbitKVEngine {
     /// each entry overrides that layer's stride. `allocation_owners` retains the
     /// persistent native registration, actual tensor/storage and CUDA context. Callers
     /// must lend exclusive destination pages until the managed completion receipt.
-    /// Pointer-only registrations cannot execute direct peer GPU restores.
+    /// Pointer-only registrations cannot execute direct peer or file GPU transfers.
     ///
     /// `transfer_mode` selects the GPU worker pools' H2D/D2H backend for this
     /// instance. The pools are spawned per (instance, GPU) at registration, so

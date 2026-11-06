@@ -447,7 +447,7 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<SsdIo>) -> SingleMateriali
         .sum();
     let ctx = task.ctx;
 
-    let expected_len = block_size as usize;
+    let expected_len = task.entry.len as usize;
     let read_result = {
         let mut offset = task.entry.file_offset;
         let slices = task
@@ -469,16 +469,23 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<SsdIo>) -> SingleMateriali
         {
             observation.submitted();
         }
-        io.submit(
-            crate::transfer_engine::TransferOp::Read,
-            task.entry.shard_id,
+        crate::transfer_engine::FileExtent::from_slices(
+            task.entry.file_offset,
+            expected_len,
             slices,
-            task.slots
-                .iter()
-                .flat_map(|slot| slot.allocations().cloned())
-                .collect(),
-            ctx.clone(),
         )
+        .and_then(|extent| {
+            io.submit(
+                crate::transfer_engine::TransferOp::Read,
+                task.entry.shard_id,
+                extent,
+                task.slots
+                    .iter()
+                    .flat_map(|slot| slot.allocations().cloned())
+                    .collect(),
+                ctx.clone(),
+            )
+        })
     };
 
     #[cfg(feature = "test-hooks")]

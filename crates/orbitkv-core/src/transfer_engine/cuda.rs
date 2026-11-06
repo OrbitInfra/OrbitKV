@@ -91,7 +91,6 @@ impl CudaRegistration {
                 .checked_add(length as u64)
                 .is_some_and(|end| end <= self.address + self.length as u64)
     }
-    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
     pub(crate) fn loan(
         &self,
         backend: &Arc<dyn TransferBackend>,

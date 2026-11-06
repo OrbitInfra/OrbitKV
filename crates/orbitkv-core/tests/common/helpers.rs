@@ -40,6 +40,7 @@ pub fn register_layers(
     world_size: usize,
     transfer_mode: TransferMode,
     page_first: bool,
+    allocation_owners: Option<&[std::sync::Arc<orbitkv_core::transfer_engine::CudaRegistration>]>,
 ) {
     let layer_names: Vec<String> = layers.iter().map(|l| l.name.clone()).collect();
     let gpu_ptrs: Vec<u64> = layers.iter().map(|l| l.gpu_ptr).collect();
@@ -71,7 +72,7 @@ pub fn register_layers(
             None,
             transfer_mode,
             page_first,
-            None,
+            allocation_owners,
         )
         .expect("register_context_layer_batch");
 }

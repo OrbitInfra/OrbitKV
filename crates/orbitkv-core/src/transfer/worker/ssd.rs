@@ -8,7 +8,7 @@ pub(super) use queue::{MAX_WRITES, run};
 use orbitkv_state::StorageFormat;
 
 use crate::codec::{EncodedSegment, segment_format};
-use crate::storage::ssd::gpu::GpuFile;
+use crate::storage::ssd::GpuFile;
 use crate::storage::ssd::layout::{CopyRange, IoBatch, plan_reads};
 use crate::storage::ssd::{SsdReadLease, WriteLease};
 use crate::transfer::layout::BlockCopies;
@@ -37,11 +37,11 @@ pub(crate) struct GpuWrite {
     pub batches: Vec<IoBatch>,
 }
 
-/// Merge validated ranges per file. The worker retains the whole task and every
+/// Merge validated ranges per immutable extent. The worker retains the whole task and every
 /// extent lease separately until all submitted reads and scatters complete.
 pub(super) fn plan(layers: &[LayerTransferData]) -> Result<ReadPlan, EngineError> {
     let mut plan = ReadPlan::default();
-    let mut sources: HashMap<*const GpuFile, (Arc<GpuFile>, Vec<CopyRange>)> = HashMap::new();
+    let mut sources: HashMap<usize, (Arc<GpuFile>, Vec<CopyRange>)> = HashMap::new();
     for layer in layers {
         for block in &layer.blocks {
             let TransferPayload::Ssd {
@@ -74,7 +74,7 @@ pub(super) fn plan(layers: &[LayerTransferData]) -> Result<ReadPlan, EngineError
             }
             let file = source.file()?;
             let reads = &mut sources
-                .entry(Arc::as_ptr(file))
+                .entry(Arc::as_ptr(&source.entry.readers) as usize)
                 .or_insert_with(|| (Arc::clone(file), Vec::new()))
                 .1;
             let (first, second) = raw_copies(slot, base, *offset, copies)?;
