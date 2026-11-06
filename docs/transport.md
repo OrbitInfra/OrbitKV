@@ -36,7 +36,7 @@ lookup. Both adapters capture it when queuing their producing step. The native
 client validates the original client and generation after acquiring its worker
 lock, so a wait or late callback cannot bind a replacement registration. Each
 Publish chunk carries the captured generation; the Core owner rechecks the same
-retained instance before topology or GPU pointer binding. Matching lifecycle 10
+retained instance before topology or GPU pointer binding. Matching lifecycle 11
 and cache schema 10 artifacts remain required; retired schemas are rejected.
 
 This is registration lifetime fencing, not allocation/page generation or a
@@ -277,13 +277,13 @@ size-sealed. Descriptor request/response generations advance monotonically,
 including when a slot is reused by a replacement session.
 
 After bootstrap, the persistent UDS carries epoch-checked lifecycle version
-**9** frames, with a 64 MiB metadata limit. Registration reuses protobuf metadata
+**11** frames, with a 64 MiB metadata limit. Registration reuses protobuf metadata
 without HTTP/2 or gRPC. A successful GPU registration reply also attaches
 payload arena FDs, identities, and sizes with `SCM_RIGHTS`. The engine validates
 the seals and independently maps and CUDA-registers each backing. This setup
 happens once per arena and GPU binding, not per restored block.
 
-Channel ABI **11** rejects older clients. Client, native extension, and Manager
+Channel ABI **12** rejects older clients. Client, native extension, and Manager
 must be rebuilt together; there is no old-wire decoder or alternate runtime
 protocol. Registration requires actual tensor/exporter objects through
 `register_context_batch(..., tensors=...)`, keeping them alive with the local
@@ -633,29 +633,29 @@ the terminal query and six file functions through a separate TENT file engine.
 boundary: retained pinned/CUDA registrations, explicit unregister, epoch-bound
 peer open, READ/WRITE batches with an absolute deadline and cancellation, typed
 errors, and irreversible shutdown/drain. The existing `--peer-transfer-backend`
-selects TENT (`mooncake`, default), `orbitte-tcp`, or `orbitte-rdma` at startup.
+selects TENT (`mooncake`, default), `orbite-tcp`, or `orbite-rdma` at startup.
 Both implementations can be compiled together. Missing features fail before
 Manager CUDA initialization. No transport fallback crosses these namespaces.
 WRITE is available at the byte-transfer boundary; this does not implement cache
 replication or authorize writes to immutable source grants.
-OrbitTE enforces registration permissions; TENT retains its existing whole-pool
+OrbiTE enforces registration permissions; TENT retains its existing whole-pool
 registration because the pinned C ABI has no per-range permission argument.
 OrbitKV source grants remain authoritative for peer access in both profiles.
 
-OrbitTE is pinned to
-[`c3700f00e104626725ea539263f73de640da2f64`](https://github.com/OrbitInfra/OrbiTE/commit/c3700f00e104626725ea539263f73de640da2f64).
+OrbiTE is pinned to
+[`8fa03eda9cf70e5f9867fedbf9855a09a41d9ac3`](https://github.com/OrbitInfra/OrbiTE/commit/8fa03eda9cf70e5f9867fedbf9855a09a41d9ac3).
 Run the same OrbitKV build on both peers.
 Requests use `Transport::Unspec` with a one-route selector policy, an absolute
 deadline, and no automatic failover. HP-TCP, SHM, NVLink, MNNVL and remote CUDA
 staging are disabled, including when `MC_ENABLE_MNNVL` is set in the environment.
-`orbitte` enables CUDA registration and `io-uring`; `orbitte-rdma`
-additionally enables RDMA. `orbitte-gds` separately enables the runtime-loaded
+`orbite` enables CUDA registration and `io-uring`; `orbite-rdma`
+additionally enables RDMA. `orbite-gds` separately enables the runtime-loaded
 cuFile transport. Native metrics remain off; existing OrbitKV metrics are the
 reporting surface. The Manager inherits the RDMA defaults: signal every
 payload WR and cap initiator/responder READ depth at 16, clamped to the local
 HCA. The optional `rdma-adaptive` feature remains disabled.
 
-The OrbitTE profile bounds registrations to 4,096 regions and the configured
+The OrbiTE profile bounds registrations to 4,096 regions and the configured
 pool bytes plus 2 GiB for persistent GPU tensor and codec registrations, submissions to 16,384 descriptors and 64 MiB, and outstanding work
 to 32 batches and 64 MiB. Each descriptor may cover up to 64 MiB; transport
 slicing belongs to the engine. TENT retains its native batch/descriptor budgets and caps
@@ -669,22 +669,22 @@ A cancellation only requests termination. An expired wait with active physical
 owners returns `Unquiesced`; registrations, source tickets and destination
 allocations remain retained. A logical timeout permits release only after drain
 was independently established. Unknown remote WRITE effects likewise retain
-ownership and are never replayed. OrbitTE submission reports provide additive
+ownership and are never replayed. OrbiTE submission reports provide additive
 byte totals; merged public task counters are not summed. Source epochs always
 come from the authoritative grant. Shutdown fences both directions; failure
 retains engine/backing/admission. TENT still holds its blocking owner when the
 pinned C ABI cannot prove termination; its metadata open has no interruptible
 deadline API, so the wrapper checks the deadline before and after that call.
 
-OrbitKV and OrbitTE share registry `cudarc` 0.19.8 in `Cargo.lock`. OrbitTE's
+OrbitKV and OrbiTE share registry `cudarc` 0.19.8 in `Cargo.lock`. OrbiTE's
 compatible dependency range accepts OrbitKV's regenerated bindings, so no
 separate Git dependency identity is needed. Only raw addresses and retained
-owners cross the boundary; OrbitTE source is not patched.
+owners cross the boundary; OrbiTE source is not patched.
 
-The CPU gate `peer::orbitte::tests::cpu_tcp_backend_reads_and_writes_fragmented_bytes_and_drains`
+The CPU gate `peer::orbite::tests::cpu_tcp_backend_reads_and_writes_fragmented_bytes_and_drains`
 uses real TCP, two engines, fragmented/merged READ and WRITE, byte guards,
 pre-submit cancellation/deadlines, unregister and normal drain. CI runs the
-existing peer suite with TENT, OrbitTE and both features using an explicitly
+existing peer suite with TENT, OrbiTE and both features using an explicitly
 labelled CPU host-registration shim. That shim exercises ownership, not CUDA.
 The existing epoch-restart and isolated unquiesced-completion tests remain gates.
 GPU, RDMA, GDS, installed serving and cross-host operation at the new revision
@@ -726,7 +726,7 @@ retains backing and charges without retrying unregister.
 The planner batches all destination ranges sharing a source grant, up to 64 MiB
 and 16,384 descriptors in one engine submission. Larger plans use bounded batches
 against the same registrations; OrbitKV performs no per-chunk registration or
-unregistration. OrbitTE receives those descriptors directly with a 64 MiB request
+unregistration. OrbiTE receives those descriptors directly with a 64 MiB request
 ceiling; the engine owns transport slicing, multirail and pipelining. The existing
 128 admitted restores per device and source deadline remain unchanged.
 
@@ -739,8 +739,8 @@ Unknown drain or backend unwind retains source grants, tensor/input mappings,
 query/device admission and the completion sender. The worker is fenced and
 instance drain fails; no client receipt permits page reuse.
 
-OrbitTE owns bounded CUDA staging for TCP and, by default, RDMA.
-`--orbitte-rdma-gpu-direct` selects strict Direct CUDA registration and requires
+OrbiTE owns bounded CUDA staging for TCP and, by default, RDMA.
+`--orbite-rdma-gpu-direct` selects strict Direct CUDA registration and requires
 `MLX5_SCATTER_TO_CQE=0` before startup; failure never silently stages or replays.
 TENT uses its existing CUDA registration and READ API. No upstream API addition
 is needed for B; TENT's interruptible-open/drain limitation above remains.
@@ -750,7 +750,7 @@ host backing: eight restores register once and never unregister before tensor
 release; an 18 MiB, two-range restore submits once with full byte and guard checks.
 They also cover input-pool reuse, batch limits, layouts/codec bounds, source
 fences, concurrent release, failed cleanup, unwinds and unknown drain. CI runs
-these under TENT, OrbitTE and both feature sets. These controls do not qualify
+these under TENT, OrbiTE and both feature sets. These controls do not qualify
 CUDA/RDMA. `peer_gpu_restore` cost samples stay separate from H2D and HostReady.
 
 Installed GPU byte gates are written, compiled and **unrun**. With CUDA 13,
@@ -758,15 +758,15 @@ Installed GPU byte gates are written, compiled and **unrun**. With CUDA 13,
 
 ```bash
 cargo test --locked -p orbitkv-server --lib cluster::tests::p2p_mooncake::p2p_mooncake_remote_fetch_roundtrip -- --exact --ignored --nocapture
-cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbitte --lib cluster::tests::p2p_mooncake::p2p_orbitte_remote_fetch_roundtrip -- --exact --ignored --nocapture
-cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbitte-rdma --lib cluster::tests::p2p_mooncake::p2p_orbitte_rdma_remote_fetch_roundtrip -- --exact --ignored --nocapture
+cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbite --lib cluster::tests::p2p_mooncake::p2p_orbite_remote_fetch_roundtrip -- --exact --ignored --nocapture
+cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbite-rdma --lib cluster::tests::p2p_mooncake::p2p_orbite_rdma_remote_fetch_roundtrip -- --exact --ignored --nocapture
 cargo test --locked -p orbitkv-server --lib cluster::tests::p2p_mooncake::encoded_peer_payloads_restore_the_same_gpu_image -- --exact --ignored --nocapture
-cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbitte --lib cluster::tests::p2p_mooncake::orbitte_encoded_peer_gpu_restore -- --exact --ignored --nocapture
+cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbite --lib cluster::tests::p2p_mooncake::orbite_encoded_peer_gpu_restore -- --exact --ignored --nocapture
 ```
 
-The RDMA gate additionally requires `ORBITKV_TEST_ORBITTE_RDMA_DEVICE`,
-`ORBITKV_TEST_ORBITTE_RDMA_PORT`, and `ORBITKV_TEST_ORBITTE_RDMA_GID_INDEX`.
-Run it separately with `ORBITKV_TEST_ORBITTE_GPU_DIRECT=1` and
+The RDMA gate additionally requires `ORBITKV_TEST_ORBITE_RDMA_DEVICE`,
+`ORBITKV_TEST_ORBITE_RDMA_PORT`, and `ORBITKV_TEST_ORBITE_RDMA_GID_INDEX`.
+Run it separately with `ORBITKV_TEST_ORBITE_GPU_DIRECT=1` and
 `MLX5_SCATTER_TO_CQE=0` for the strict GDR profile. Encoded gates require nvCOMP
 5.3. Preserve native-route evidence and qualify physical cross-host operation
 separately. The raw gate verifies direct GPU bytes without DRAM cache insertion,
@@ -779,7 +779,7 @@ SSD flush waits for logical write outcomes. It does not promise fsync durability
 or prove physical drain of failed operations. Only complete successful writes
 become index-visible.
 
-Every SSD byte transfer goes through the selected backend. OrbitTE uses its
+Every SSD byte transfer goes through the selected backend. OrbiTE uses its
 file segments; TENT uses `tent_create_engine_with_files`, `tent_file_open`,
 `tent_file_submit`, `tent_file_drain`, `tent_file_release_batch` and
 `tent_file_close`. TENT's file engine is separate from its peer engine, where
@@ -800,14 +800,14 @@ zeros and READ discards file bytes without a local allocation.
 
 For either backend, `--ssd-backend uring` uses host materialization; `auto`
 additionally permits GPU destinations through engine-owned CUDA staging and
-io_uring. `cufile` requests native-only GDS. OrbitTE requires `orbitte-gds`;
+io_uring. `cufile` requests native-only GDS. OrbiTE requires `orbite-gds`;
 TENT requires a native CUDA build with the cuFile headers and library detected by
 CMake. The default wheel toolchain does not install the GDS SDK. An explicit GDS
 request with padding is unavailable; it never silently changes to io_uring.
 The `cufile` read-route spelling selects a GPU destination, while the engine
 owns how bytes reach it. Local GPU↔DRAM migration remains a separate step.
 
-OrbitTE receives **one `TransferRequest::file_vectored` per extent**, including
+OrbiTE receives **one `TransferRequest::file_vectored` per extent**, including
 its padding. It owns gather/scatter and storage staging; OrbitKV has no GPU
 layout slots or zero buffer. Imported tensors reuse their persistent engine
 registrations. Direct Rust callers must supply those allocation owners to layer
@@ -867,8 +867,8 @@ GDS and installed serving remain unqualified. Source GPU byte gates are written
 in `crates/orbitkv-core/tests/ssd_engine.rs` and have not been run:
 
 ```bash
-ORBITKV_SSD_TEST_ENGINE=orbitte ORBITKV_SSD_TEST_ROOT=/path/to/test-owned/ssd cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --test ssd_engine -- --ignored --exact cuda_staged_file_roundtrip --test-threads=1
-ORBITKV_SSD_TEST_ENGINE=orbitte ORBITKV_SSD_TEST_ROOT=/path/to/test-owned/ssd cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte-gds --test ssd_engine -- --ignored --exact native_gds_file_roundtrip --test-threads=1
+ORBITKV_SSD_TEST_ENGINE=orbite ORBITKV_SSD_TEST_ROOT=/path/to/test-owned/ssd cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --test ssd_engine -- --ignored --exact cuda_staged_file_roundtrip --test-threads=1
+ORBITKV_SSD_TEST_ENGINE=orbite ORBITKV_SSD_TEST_ROOT=/path/to/test-owned/ssd cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --test ssd_engine -- --ignored --exact native_gds_file_roundtrip --test-threads=1
 ```
 
 For TENT, use `ORBITKV_SSD_TEST_ENGINE=tent` and `--features cuda-13,mooncake`
@@ -876,8 +876,8 @@ with the same two tests. These source gates are written, not hardware evidence.
 
 Native GDS qualification also requires cuFile/nvidia-fs route evidence from that
 same installed run; configuration and successful bytes alone do not prove the
-native route. OrbitTE sets `EngineConfig::gds_enabled` only for configured
-`cufile` storage. Compiling `orbitte-gds` no longer loads cuFile for peer-only,
+native route. OrbiTE sets `EngineConfig::gds_enabled` only for configured
+`cufile` storage. Compiling `orbite-gds` no longer loads cuFile for peer-only,
 `uring` or `auto` engines. Configured GDS discovers the driver lazily on its first
 eligible file submission; a missing runtime SDK fails that request.
 
@@ -912,7 +912,7 @@ tensor so it cannot retain an obsolete codec arena. CPU decode writes into a
 charged pinned output slot. Codec kernels, descriptor/codebook uploads and status
 readback remain codec compute; they do not implement payload transport.
 
-Lifecycle **10** returns the Manager's selected engine with the registration
+Lifecycle **11** returns the Manager's selected engine with the registration
 receipt, requiring matching client/Manager artifacts. The client registers its
 actual retained tensor exporters and imported arena pins once. It records each
 framework layer event after that layer's engine submission and holds native
@@ -926,7 +926,7 @@ native-registration profile. The default staged host profile needs no local-copy
 
 CI builds `tests/native/local_copy_cuda_shim.cpp` as a private `libcuda.so.1` and
 requires `ORBITKV_REQUIRE_LOCAL_COPY_SHIM=1` for the ignored
-`peer::orbitte::local::tests` controls. They exercise production OrbiTE DMA/kernel
+`peer::orbite::local::tests` controls. They exercise production OrbiTE DMA/kernel
 owners with CPU bytes: 2D gaps, bounded windows, partial submission, client layer
 events/context restoration across thirteen layers, delayed slot retention and
 failed completion query.
@@ -935,27 +935,30 @@ copy modes; with the private runtime and resources described in the installed
 profile, run:
 
 ```sh
-ORBITKV_TEST_INSTALLED_ORBITTE=1 ORBITKV_TEST_STRICT_SHUTDOWN=1 \
-  python -m pytest -m release_smoke tests/release/test_installed_orbitte.py \
-  -k orbitte-tcp
+ORBITKV_TEST_INSTALLED_ORBITE=1 ORBITKV_TEST_STRICT_SHUTDOWN=1 \
+  python -m pytest -m release_smoke tests/release/test_installed_orbite.py \
+  -k orbite-tcp
 ```
 
 This gate remains unrun for this revision. GPU, RDMA, GDS, serving and fault
-qualification remain separate. The dependency keeps the `orbit-te` crate,
-`orbit_te` imports and existing features/configuration names until the rename PR.
+qualification remain separate. The git dependency uses the `orbite` crate and imports, with `orbite`,
+`orbite-rdma` and `orbite-gds` features. Lifecycle 11 carries the renamed
+`orbite-tcp`/`orbite-rdma` selection; pre-release clients and Managers must
+upgrade together. Peer endpoints likewise use `orbite+tcp://`/`orbite+rdma://`;
+run matching builds across the cluster. No old-name aliases are accepted.
 
-## Experimental OrbitTE allocation bridge
+## Experimental OrbiTE allocation bridge
 
-The opt-in `orbitkv-core/orbitte` feature pins
-[OrbiTE `c3700f00`](https://github.com/OrbitInfra/OrbiTE/commit/c3700f00e104626725ea539263f73de640da2f64).
-`PinnedAllocation::orbitte_memory` returns a canonical `Arc<HostMemory>` retaining
+The opt-in `orbitkv-core/orbite` feature pins
+[OrbiTE `8fa03eda`](https://github.com/OrbitInfra/OrbiTE/commit/8fa03eda9cf70e5f9867fedbf9855a09a41d9ac3).
+`PinnedAllocation::orbite_memory` returns a canonical `Arc<HostMemory>` retaining
 that exact allocation and its shared physical CUDA pin. A pool owner alone would keep the mapping alive while
 allowing a slot to be reused. The allocation holds only a weak cached view, so
 concurrent aliases share one access lock without creating a reference cycle.
 The unsafe caller must coordinate CPU, GPU and other process access; this lock
 cannot synchronize unrelated CUDA streams or another process's mapping.
 
-Register these views through OrbitTE's host registration/batch API and retain
+Register these views through OrbiTE's host registration/batch API and retain
 its returned handles. Accepted requests retain the allocation through logical
 cancellation, wait timeout, unregister and a detached batch until the backend
 proves local drain. This first bridge registers allocation ranges; it does not
@@ -969,12 +972,12 @@ Source CI checks the optional feature with the normal CUDA 13 build. Run the
 hardware gate explicitly on an isolated GPU with a compatible CUDA runtime:
 
 ```sh
-cargo test --locked -p orbitkv-core --features orbitte --lib \
-  memory::pool::orbitte_tests -- --ignored --test-threads=1
+cargo test --locked -p orbitkv-core --features orbite --lib \
+  memory::pool::orbite_tests -- --ignored --test-threads=1
 ```
 
 The two tests use the production `PinnedAllocator` (memfd, CUDA host registration
-and real slot reclamation), actual OrbitTE engines and TCP bytes. They cover
+and real slot reclamation), actual OrbiTE engines and TCP bytes. They cover
 concurrent aliases, duplicate/subrange registrations, READ/WRITE integrity,
 blocked transfer cancellation and detach, failed early free, unregister, slot
 exhaustion, allocator drop and eventual owner release. A TCP relay delays the
@@ -989,29 +992,29 @@ machine. Keep exact source/binary/runtime hashes, device identity, resource
 locks, bytes and cleanup outside the checkout; do not infer RDMA, GPU DMA or
 crash recovery from a TCP ownership gate.
 
-## Experimental OrbitTE peer TCP profile
+## Experimental OrbiTE peer TCP profile
 
-An opt-in `orbitte` build can select `--peer-transfer-backend orbitte-tcp`.
+An opt-in `orbite` build can select `--peer-transfer-backend orbite-tcp`.
 The default remains `mooncake`. Build the standalone Rust payload path with:
 
 ```sh
-cargo build --locked -p orbitkv-server --no-default-features --features cuda-13,orbitte
+cargo build --locked -p orbitkv-server --no-default-features --features cuda-13,orbite
 ```
 
 Shared discovery, planning, authorization and completion compile when either
-`mooncake` or `orbitte` selects a payload transport. The standalone profile does
+`mooncake` or `orbite` selects a payload transport. The standalone profile does
 not compile or load Mooncake. It still needs OrbitKV's ordinary CUDA/Python
 prerequisites; this is an experimental source profile, not an installed wheel
 or serving qualification. Select one provider across the tested cluster.
 
 Manager still authorizes residency and holds generation-scoped gRPC tickets.
-The OrbitTE source registers the actual allocations of each accepted grant and
+The OrbiTE source registers the actual allocations of each accepted grant and
 keeps those explicit references with its window/slot/generation. Concurrent
 grants share canonical allocation views and registration references. Expiry
 retains the source. A completion for an older generation cannot retire a newer
-grant. In-flight OrbitTE handlers retain the backing even after logical unregister.
+grant. In-flight OrbiTE handlers retain the backing even after logical unregister.
 
-The requester opens the `orbitte+tcp://IP:port` endpoint with the epoch returned
+The requester opens the `orbite+tcp://IP:port` endpoint with the epoch returned
 by the source grant and uses it unchanged for READ. A refreshed descriptor cannot
 replace that authority. Provider mismatches fail before payload I/O. A blocking
 READ owner retains source tickets and actual destination allocations after caller
@@ -1036,12 +1039,12 @@ loss/retry/cancellation controls, and the unquiesced quarantine control in its
 own exact-filter process. Run the GPU gates explicitly with a compatible runtime:
 
 ```sh
-cargo test --locked -p orbitkv-core --features orbitte --lib \
-  peer::export::tests::orbitte_grant_registrations_share_backing_and_fence_old_completion_generations \
+cargo test --locked -p orbitkv-core --features orbite --lib \
+  peer::export::tests::orbite_grant_registrations_share_backing_and_fence_old_completion_generations \
   -- --exact --ignored --test-threads=1
 ETCD_BIN=/path/to/etcd ORBITKV_METADATA_ARTIFACT_DIR=/var/tmp/orbitkv-peer-gate \
-  cargo test --locked -p orbitkv-server --features orbitte --lib \
-  cluster::tests::p2p_mooncake::p2p_orbitte_remote_fetch_roundtrip \
+  cargo test --locked -p orbitkv-server --features orbite --lib \
+  cluster::tests::p2p_mooncake::p2p_orbite_remote_fetch_roundtrip \
   -- --exact --ignored --test-threads=1
 ```
 
@@ -1060,7 +1063,7 @@ This is a same-host embedded Manager source pilot. It does not qualify an
 installed Manager, serving, CUDA 13 runtime, physical cross-host Manager traffic,
 RDMA or device DMA.
 
-## Experimental OrbitTE peer RDMA profile
+## Experimental OrbiTE peer RDMA profile
 
 Build the explicit single-rail host-staging candidate with GNU C/C++ compilers.
 CI fixes Ubuntu 24.04 with matching Clang/libclang 18 for `ibverbs-sys` binding
@@ -1069,18 +1072,18 @@ generation; use `CLANG_PATH=/usr/bin/clang-18` and
 
 ```sh
 CC=gcc CXX=g++ cargo build --locked -p orbitkv-server --no-default-features \
-  --features cuda-13,orbitte-rdma
+  --features cuda-13,orbite-rdma
 ```
 
-Select `--peer-transfer-backend orbitte-rdma --orbitte-rdma-device mlx5_0
---orbitte-rdma-port 1 --orbitte-rdma-gid-index 3` alongside the ordinary
+Select `--peer-transfer-backend orbite-rdma --orbite-rdma-device mlx5_0
+--orbite-rdma-port 1 --orbite-rdma-gid-index 3` alongside the ordinary
 membership/peer flags. Device/port/GID must match the actual RNIC and route;
 these values describe the supplied RoCE test profile, not device discovery.
 The device is required. The Mooncake `--nics` filter is rejected. Rust users
-set `EngineConfig.orbitte_rdma` with the re-exported `OrbitTeRdmaConfig`.
-The default provider remains TENT; the `orbitte` feature alone does not enable RDMA.
+set `EngineConfig.orbite_rdma` with the re-exported `OrbiteRdmaConfig`.
+The default provider remains TENT; the `orbite` feature alone does not enable RDMA.
 
-The provider advertises `orbitte+rdma://IP:port` and fixes every payload request
+The provider advertises `orbite+rdma://IP:port` and fixes every payload request
 to `Transport::Rdma`. Metadata, descriptor bootstrap and DONE/ACK use TCP;
 payload bytes use RC verbs and private host staging. An unavailable device,
 source or build feature returns an error without selecting TCP or TENT payloads.
@@ -1089,7 +1092,7 @@ successful metadata lookup. A TCP namespace cannot authorize this provider.
 The pinned allocation, grant epoch, registration references, cancellation owner
 and generation-scoped completion remain those described above.
 
-This is the existing OrbitTE staging path: a PD/CQ/QP/MR per slice, up to 64
+This is the existing OrbiTE staging path: a PD/CQ/QP/MR per slice, up to 64
 endpoints and 64 MiB staging per engine by default. These charges are separate
 from source tickets and the process pool budget. The TCP profile's 64 MiB READ,
 16,384-descriptor and 4,096-allocation limits still apply. READ commits after
@@ -1110,16 +1113,16 @@ The explicit host component gate builds with CUDA 13 but never initializes CUDA:
 
 ```sh
 CC=gcc CXX=g++ cargo test --locked -p orbitkv-core --no-default-features \
-  --features cuda-13,orbitte-rdma --lib --no-run
-python3 /path/to/OrbitTE/tests/hardware/run.py \
+  --features cuda-13,orbite-rdma --lib --no-run
+python3 /path/to/OrbiTE/tests/hardware/run.py \
   --profile /external/orbitkv-host-profile.json \
   --binary /external/core-test-binary --output /external/host-run-001
 ```
 
-Use the maintained OrbitTE runner with `runner: "orbitkv-peer-host"`, explicit
+Use the maintained OrbiTE runner with `runner: "orbitkv-peer-host"`, explicit
 RNIC/port/GID, identity-pinned SSH nodes, both kinds `cpu` and transport `rdma`.
 It invokes the ignored exact test
-`peer::orbitte::tests::rdma_host::registered_host_rdma_peer`. Native assertions
+`peer::orbite::tests::rdma_host::registered_host_rdma_peer`. Native assertions
 check fragmented registered READ bytes, all guards, old epochs, protocol mismatch,
 actual requester CQ counts, zero endpoint/staging/registration charges, mapped
 verbs libraries, absent CUDA/TENT libraries and owned shutdown. The controller
@@ -1142,11 +1145,11 @@ The embedded Manager GPU gate is separate and requires a working CUDA 13 runtime
 
 ```sh
 ETCD_BIN=/path/to/etcd ORBITKV_METADATA_ARTIFACT_DIR=/external/manager-rdma \
-ORBITKV_TEST_ORBITTE_RDMA_DEVICE=mlx5_0 ORBITKV_TEST_ORBITTE_RDMA_PORT=1 \
-ORBITKV_TEST_ORBITTE_RDMA_GID_INDEX=3 \
+ORBITKV_TEST_ORBITE_RDMA_DEVICE=mlx5_0 ORBITKV_TEST_ORBITE_RDMA_PORT=1 \
+ORBITKV_TEST_ORBITE_RDMA_GID_INDEX=3 \
   cargo test --locked -p orbitkv-server --no-default-features \
-  --features cuda-13,orbitte-rdma --lib \
-  cluster::tests::p2p_mooncake::p2p_orbitte_rdma_remote_fetch_roundtrip \
+  --features cuda-13,orbite-rdma --lib \
+  cluster::tests::p2p_mooncake::p2p_orbite_rdma_remote_fetch_roundtrip \
   -- --exact --ignored --test-threads=1
 ```
 
@@ -1190,7 +1193,7 @@ CUDA 13.1; that does not make the loaded runtime CUDA 13.1.
 
 Each provider registers two clients through cross-process CUDA IPC, publishes
 source GPU pages, awaits the inventory fence and fetches through the selected
-OrbitTE payload provider. It restores 16,384 GPU bytes and checks every untouched
+OrbiTE payload provider. It restores 16,384 GPU bytes and checks every untouched
 page, exact Save/remote/H2D byte counters and source completion. Four original
 held IPC slots per case change from one to zero before normal Manager exit.
 All client/Manager runtime files match the frozen inputs, RDMA maps real

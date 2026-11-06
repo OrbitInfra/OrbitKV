@@ -17,7 +17,7 @@ peer address, etcd endpoints, a unique stable node ID and the same cluster name.
 
 Client and Manager CUDA ordinals may differ. Registration joins the tensor's full
 GPU UUID to the Manager-visible device and retains that route for Publish/Restore;
-use matching lifecycle-protocol-10 artifacts. NUMA selection uses those visible
+use matching lifecycle-protocol-11 artifacts. NUMA selection uses those visible
 UUIDs. Known payload placement uses `mbind` before first touch and requires the
 selected memory node in the process's allowed nodes. CPU affinity alone cannot
 override an inherited interleave memory policy; inspect actual resident pages.
@@ -77,15 +77,15 @@ The shared backend owns registration, peer/file transfer and shutdown. SSD alway
 uses engine file segments. TENT owns a separate file engine with liburing support;
 its peer engine keeps file transports disabled. `--ssd-io-engine` is removed.
 `auto` storage uses engine CUDA staging/io_uring. `cufile` is native-only GDS:
-OrbitTE requires `orbitte-gds`, and TENT requires a native build with cuFile SDK
+OrbiTE requires `orbite-gds`, and TENT requires a native build with cuFile SDK
 support. Uncertain work retains backing, extents and one of 32 operation permits.
-OrbitTE submits one vector per extent, including padding (64 MiB/1,024 elements).
+OrbiTE submits one vector per extent, including padding (64 MiB/1,024 elements).
 It reuses persistent tensor/codec input registrations and retains caller completion
 on unknown GPU drain. TENT passes aligned vectors directly; its file ABI still
 needs padding/unaligned repair in a bounded TENT-only adapter. Explicit padded
 GDS requests fail without fallback. `gds_enabled` prevents unconfigured cuFile
 loading. GPU/GDS remains unqualified. See `docs/transport.md#ssd-file-transfers`.
-OrbitTE `36516152` uses a one-route Unspec peer policy with
+OrbiTE `8fa03eda` uses a one-route Unspec peer policy with
 failover, HP-TCP, SHM and MNNVL disabled. Historical hardware results below do not
 qualify this new dependency revision. See `docs/transport.md#runtime-transfer-backend`.
 Tensor import registers GPU storage once; aliases share its persistent owner.
@@ -97,22 +97,22 @@ pages through the selected engine. Prepare/Warmup still fill the DRAM tier.
 Do not diagnose a missing DRAM replica after GPU Restore as a publication bug.
 Unknown drain or failed unregister retains actual imported tensors and client
 completion; the worker is fenced and instance cleanup cannot claim drain.
-The `--orbitte-rdma-gpu-direct` option selects strict engine GDR registration,
+The `--orbite-rdma-gpu-direct` option selects strict engine GDR registration,
 requiring `MLX5_SCATTER_TO_CQE=0`; the default uses engine-owned staging. Both
 GPU profiles remain unqualified. See `docs/transport.md#peer-restore-into-gpu`.
-An experimental `orbitte` build can explicitly select
-`--peer-transfer-backend orbitte-tcp`; read `docs/transport.md` for its 64 MiB
+An experimental `orbite` build can explicitly select
+`--peer-transfer-backend orbite-tcp`; read `docs/transport.md` for its 64 MiB
 READ/4,096-region limits, numeric advertised IP and no-RDMA-filter requirement.
-Its `orbitte+tcp://` endpoints must match the selected provider. Keep the
+Its `orbite+tcp://` endpoints must match the selected provider. Keep the
 source-grant epoch unchanged through metadata refresh and payload READ. Source
 registrations belong to the ticket generation; unquiesced work retains source
 tickets and destination buffers. The Manager uses gRPC completion, separately
 from the transfer notification mailbox. A source/H20 CUDA 12.2 pilot is not
 installed serving or CUDA 13 runtime support. Do not switch default deployments
 or infer RDMA/device-DMA qualification from the TCP candidate.
-An experimental `orbitte-rdma` build separately selects `orbitte-rdma` with an
-explicit single `--orbitte-rdma-device`, port and GID index. Its
-`orbitte+rdma://` namespace fixes the payload to RC verbs, with engine CUDA staging by default;
+An experimental `orbite-rdma` build separately selects `orbite-rdma` with an
+explicit single `--orbite-rdma-device`, port and GID index. Its
+`orbite+rdma://` namespace fixes the payload to RC verbs, with engine CUDA staging by default;
 there is no TCP/TENT payload fallback. Staging/endpoint budgets are independent
 of source ticket and process pool charges. Requester-local drain does not prove
 remote source termination: remote cleanup errors retain the actual source

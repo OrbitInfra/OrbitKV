@@ -326,51 +326,51 @@ fn query_control_requires_loopback_before_runtime_initialization() {
     }
 }
 
-#[cfg(feature = "orbitte-rdma")]
+#[cfg(feature = "orbite-rdma")]
 #[test]
-fn orbitte_rdma_cli_requires_explicit_device_and_valid_port() {
+fn orbite_rdma_cli_requires_explicit_device_and_valid_port() {
     let base = [
         "orbitkv-cache-manager",
         "--peer-transfer-backend",
-        "orbitte-rdma",
+        "orbite-rdma",
     ];
     assert!(Cli::try_parse_from(base).is_err());
     assert!(
         Cli::try_parse_from(base.into_iter().chain([
-            "--orbitte-rdma-device",
+            "--orbite-rdma-device",
             "mlx5_0",
-            "--orbitte-rdma-port",
+            "--orbite-rdma-port",
             "0"
         ]))
         .is_err()
     );
     assert!(
-        Cli::try_parse_from(["orbitkv-cache-manager", "--orbitte-rdma-gid-index", "3"]).is_err()
+        Cli::try_parse_from(["orbitkv-cache-manager", "--orbite-rdma-gid-index", "3"]).is_err()
     );
     let cli = Cli::try_parse_from(base.into_iter().chain([
-        "--orbitte-rdma-device",
+        "--orbite-rdma-device",
         "mlx5_0",
-        "--orbitte-rdma-port",
+        "--orbite-rdma-port",
         "1",
-        "--orbitte-rdma-gid-index",
+        "--orbite-rdma-gid-index",
         "3",
     ]))
     .unwrap();
     assert_eq!(
         cli.peer_transfer_backend,
-        orbitkv_core::PeerTransferBackend::OrbitTeRdma
+        orbitkv_core::PeerTransferBackend::OrbiteRdma
     );
-    assert!(!cli.orbitte_rdma_gpu_direct);
-    assert!(Cli::try_parse_from(["orbitkv-cache-manager", "--orbitte-rdma-gpu-direct"]).is_err());
+    assert!(!cli.orbite_rdma_gpu_direct);
+    assert!(Cli::try_parse_from(["orbitkv-cache-manager", "--orbite-rdma-gpu-direct"]).is_err());
     let direct = Cli::try_parse_from(base.into_iter().chain([
-        "--orbitte-rdma-device",
+        "--orbite-rdma-device",
         "mlx5_0",
-        "--orbitte-rdma-gpu-direct",
+        "--orbite-rdma-gpu-direct",
     ]))
     .unwrap();
-    assert!(direct.orbitte_rdma_gpu_direct);
-    assert_eq!(cli.orbitte_rdma_device.as_deref(), Some("mlx5_0"));
-    assert_eq!((cli.orbitte_rdma_port, cli.orbitte_rdma_gid_index), (1, 3));
+    assert!(direct.orbite_rdma_gpu_direct);
+    assert_eq!(cli.orbite_rdma_device.as_deref(), Some("mlx5_0"));
+    assert_eq!((cli.orbite_rdma_port, cli.orbite_rdma_gid_index), (1, 3));
     assert_eq!(
         Cli::try_parse_from(["orbitkv-cache-manager"])
             .unwrap()

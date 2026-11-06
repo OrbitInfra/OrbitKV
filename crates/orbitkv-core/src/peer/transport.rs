@@ -244,7 +244,7 @@ impl TransferBackend for MooncakeTransport {
         self.engine.source_epoch()
     }
     fn accepts_endpoint(&self, endpoint: &str) -> bool {
-        !endpoint.starts_with("orbitte+") && !endpoint.is_empty()
+        !endpoint.starts_with("orbite+") && !endpoint.is_empty()
     }
 
     fn open_file(&self, path: &Path) -> Result<FileSegment, TransferError> {
@@ -266,14 +266,14 @@ impl TransferBackend for MooncakeTransport {
                 "foreign file segment",
             ));
         }
-        #[cfg(feature = "orbitte")]
+        #[cfg(feature = "orbite")]
         let FileSegmentInner::Tent(file) = &file.inner else {
             return Err(TransferError::new(
                 ErrorKind::InvalidRequest,
                 "foreign file provider",
             ));
         };
-        #[cfg(not(feature = "orbitte"))]
+        #[cfg(not(feature = "orbite"))]
         let FileSegmentInner::Tent(file) = &file.inner;
         file.close(deadline).map_err(tent_error)
     }
@@ -293,14 +293,14 @@ impl TransferBackend for MooncakeTransport {
                 "foreign file segment",
             ));
         }
-        #[cfg(feature = "orbitte")]
+        #[cfg(feature = "orbite")]
         let FileSegmentInner::Tent(file) = &file.inner else {
             return Err(TransferError::new(
                 ErrorKind::InvalidRequest,
                 "foreign file provider",
             ));
         };
-        #[cfg(not(feature = "orbitte"))]
+        #[cfg(not(feature = "orbite"))]
         let FileSegmentInner::Tent(file) = &file.inner;
         // SAFETY: FileTransfer retains the actual ranges and extent through physical drain.
         unsafe { file::transfer(file, operation, transport, transfer, deadline, cancellation) }
@@ -458,7 +458,7 @@ impl TransferBackend for MooncakeTransport {
             ));
         }
         #[cfg_attr(
-            not(feature = "orbitte"),
+            not(feature = "orbite"),
             allow(
                 clippy::infallible_destructuring_match,
                 reason = "single-provider builds have one segment variant"
@@ -469,7 +469,7 @@ impl TransferBackend for MooncakeTransport {
                 endpoint,
                 source_epoch,
             } => (endpoint, source_epoch),
-            #[cfg(any(feature = "orbitte", test))]
+            #[cfg(any(feature = "orbite", test))]
             _ => {
                 return Err(TransferError::new(
                     ErrorKind::InvalidRequest,

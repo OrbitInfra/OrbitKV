@@ -646,45 +646,45 @@ impl OrbitKVEngine {
     }
 
     /// Returns true if the peer transfer engine is available.
-    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub fn has_remote_transport(&self) -> bool {
         self.storage.peer_transport().is_some()
     }
 
     /// Returns true if the peer transfer engine is available.
-    #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
+    #[cfg(not(any(feature = "mooncake", feature = "orbite")))]
     pub fn has_remote_transport(&self) -> bool {
         false
     }
 
     /// Shared byte engine used when importing persistent GPU allocations.
     pub fn transfer_backend(&self) -> Option<Arc<dyn crate::transfer_engine::TransferBackend>> {
-        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+        #[cfg(any(feature = "mooncake", feature = "orbite"))]
         {
             self.storage.peer_transport().cloned()
         }
-        #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
+        #[cfg(not(any(feature = "mooncake", feature = "orbite")))]
         {
             None
         }
     }
 
-    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub fn transfer_endpoint(&self) -> Option<&str> {
         self.storage.transfer_endpoint()
     }
 
-    #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
+    #[cfg(not(any(feature = "mooncake", feature = "orbite")))]
     pub fn transfer_endpoint(&self) -> Option<&str> {
         None
     }
 
-    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub fn transfer_source_epoch(&self) -> Option<&str> {
         self.storage.transfer_source_epoch()
     }
 
-    #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
+    #[cfg(not(any(feature = "mooncake", feature = "orbite")))]
     pub fn transfer_source_epoch(&self) -> Option<&str> {
         None
     }

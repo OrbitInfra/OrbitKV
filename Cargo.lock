@@ -2061,9 +2061,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "orbit-te"
+name = "orbite"
 version = "0.1.0-alpha.1"
-source = "git+https://github.com/OrbitInfra/OrbitTE?rev=c3700f00e104626725ea539263f73de640da2f64#c3700f00e104626725ea539263f73de640da2f64"
+source = "git+https://github.com/OrbitInfra/OrbiTE?rev=8fa03eda9cf70e5f9867fedbf9855a09a41d9ac3#8fa03eda9cf70e5f9867fedbf9855a09a41d9ac3"
 dependencies = [
  "bindgen 0.71.1",
  "cc",
@@ -2144,7 +2144,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-prometheus",
  "opentelemetry_sdk",
- "orbit-te",
+ "orbite",
  "orbitkv-catalog",
  "orbitkv-common",
  "orbitkv-proto",

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::SsdReadPath;
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 use crate::cost::{CostEstimateKey, CostObservationKind};
 use crate::storage::ssd::{SsdReadLease, SsdStore};
 
@@ -78,12 +78,12 @@ fn deferred_route(
 }
 
 impl SsdReadPlan<'_> {
-    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub(crate) fn block_count(&self) -> usize {
         self.rows.len()
     }
 
-    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub(crate) fn cost_estimate_key(&self) -> Option<CostEstimateKey> {
         let first = self.rows.first()?.local_ssd()?;
         let resource = first.cost_resource()?;

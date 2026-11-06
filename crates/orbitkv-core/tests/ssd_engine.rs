@@ -1,5 +1,5 @@
 //! Explicit GPU byte gates. Compilation is not hardware qualification.
-#![cfg(any(feature = "mooncake", feature = "orbitte"))]
+#![cfg(any(feature = "mooncake", feature = "orbite"))]
 mod common;
 
 use common::TestEnvBuilder;
@@ -8,8 +8,8 @@ use orbitkv_core::{EngineConfig, PeerTransferBackend, RestoreSource, SsdBackend,
 async fn roundtrip(backend: SsdBackend, padded: bool) {
     let engine = match std::env::var("ORBITKV_SSD_TEST_ENGINE").as_deref() {
         Ok("tent") => PeerTransferBackend::Mooncake,
-        Ok("orbitte") => PeerTransferBackend::OrbitTeTcp,
-        _ => panic!("set ORBITKV_SSD_TEST_ENGINE=tent|orbitte"),
+        Ok("orbite") => PeerTransferBackend::OrbiteTcp,
+        _ => panic!("set ORBITKV_SSD_TEST_ENGINE=tent|orbite"),
     };
     let root = std::env::var_os("ORBITKV_SSD_TEST_ROOT")
         .expect("set a test-owned directory on the qualification SSD");

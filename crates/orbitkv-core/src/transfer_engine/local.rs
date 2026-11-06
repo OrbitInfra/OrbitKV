@@ -12,8 +12,8 @@ use crate::transfer::{CopyDesc, TransferMode};
 #[derive(Clone)]
 pub enum LocalHost {
     Pinned(Arc<PinnedAllocation>),
-    #[cfg(feature = "orbitte")]
-    Imported(Arc<orbit_te::HostMemory>),
+    #[cfg(feature = "orbite")]
+    Imported(Arc<orbite::HostMemory>),
 }
 
 pub trait LocalCompletion: Send {

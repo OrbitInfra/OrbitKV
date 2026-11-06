@@ -8,24 +8,24 @@ use std::fmt;
 use std::path::Path;
 use std::ptr::NonNull;
 use std::sync::Arc;
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 use std::time::Duration;
 use std::time::Instant;
 
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 use crate::PeerTransferBackend;
 use crate::memory::pool::PinnedAllocation;
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 use crate::memory::pool::PinnedAllocator;
 
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 pub(crate) const MAX_REGISTERED_POOLS: usize = 1024;
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 pub(crate) const MAX_REGISTERED_BYTES: u64 = 1 << 40;
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 pub(crate) static REGISTERED_POOLS: Mutex<(usize, u64)> = Mutex::new((0, 0));
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,12 +105,12 @@ unsafe impl Send for TransferSlice {}
 unsafe impl Sync for TransferSlice {}
 
 pub struct PeerSegment {
-    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub(crate) owner_epoch: String,
-    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub(crate) inner: Segment,
 }
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 pub(crate) enum Segment {
     #[cfg(test)]
     Control,
@@ -119,8 +119,8 @@ pub(crate) enum Segment {
         endpoint: String,
         source_epoch: String,
     },
-    #[cfg(feature = "orbitte")]
-    OrbitTe(orbit_te::RemoteSegment),
+    #[cfg(feature = "orbite")]
+    Orbite(orbite::RemoteSegment),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -238,20 +238,20 @@ impl FileExtent {
 
 /// Engine-local file handle. The SSD owner keeps the original fd and extents.
 pub struct FileSegment {
-    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub(crate) owner_epoch: String,
     pub length: u64,
-    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub(crate) inner: FileSegmentInner,
 }
 
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 #[derive(Clone)]
 pub(crate) enum FileSegmentInner {
     #[cfg(feature = "mooncake")]
     Tent(Arc<orbitkv_transfer::files::FileSegment>),
-    #[cfg(feature = "orbitte")]
-    OrbitTe(orbit_te::FileSegment),
+    #[cfg(feature = "orbite")]
+    Orbite(orbite::FileSegment),
 }
 
 pub(crate) enum FileMemory {
@@ -273,10 +273,10 @@ pub struct FileTransfer {
 /// Retains registration, engine and actual backing. Failed cleanup retains all
 /// three and their admission charge. Drop is only legal after transfer drain.
 pub struct Registration {
-    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub(crate) inner: RegistrationInner,
 }
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 pub(crate) enum RegistrationInner {
     #[cfg(test)]
     #[allow(
@@ -286,8 +286,8 @@ pub(crate) enum RegistrationInner {
     Control(Arc<dyn Send + Sync>),
     #[cfg(feature = "mooncake")]
     Tent(crate::peer::transport::TentRegistration),
-    #[cfg(feature = "orbitte")]
-    OrbitTe(crate::peer::orbitte::RegistrationSet),
+    #[cfg(feature = "orbite")]
+    Orbite(crate::peer::orbite::RegistrationSet),
 }
 
 /// Selected once per Manager. Source authority stays in OrbitKV's grant owner.
@@ -398,7 +398,7 @@ pub trait TransferBackend: Send + Sync {
     fn record_nic_load(&self);
 }
 
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 pub(crate) struct PeerReadSlice {
     pub(crate) local: NonNull<u8>,
     pub(crate) remote_address: u64,
@@ -406,17 +406,17 @@ pub(crate) struct PeerReadSlice {
     pub(crate) allocation: Arc<PinnedAllocation>,
 }
 // SAFETY: each descriptor retains its actual allocation; READ owns exclusive access.
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 unsafe impl Send for PeerReadSlice {}
 
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 #[derive(Debug)]
 pub(crate) enum PeerTransferError {
     Timeout,
     Failed(String),
     Unquiesced,
 }
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 impl fmt::Display for PeerTransferError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -426,7 +426,7 @@ impl fmt::Display for PeerTransferError {
         }
     }
 }
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 impl From<TransferError> for PeerTransferError {
     fn from(error: TransferError) -> Self {
         match error.kind {
@@ -437,7 +437,7 @@ impl From<TransferError> for PeerTransferError {
     }
 }
 
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 impl dyn TransferBackend {
     #[allow(
         clippy::mem_forget,
@@ -491,7 +491,7 @@ impl dyn TransferBackend {
     }
 }
 
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 pub(crate) fn remaining(deadline: Instant) -> Result<Duration, TransferError> {
     deadline
         .checked_duration_since(Instant::now())
@@ -523,20 +523,20 @@ pub(crate) fn validate_slices(slices: &[TransferSlice]) -> Result<usize, Transfe
     })
 }
 
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 pub(crate) fn create_transfer_backend(
     backend: PeerTransferBackend,
     nics: &[String],
     allocator: Arc<PinnedAllocator>,
     advertise: &str,
     storage: Option<&crate::SsdCacheConfig>,
-    #[cfg(feature = "orbitte-rdma")] rdma: Option<crate::OrbitTeRdmaConfig>,
+    #[cfg(feature = "orbite-rdma")] rdma: Option<crate::OrbiteRdmaConfig>,
 ) -> Result<Arc<dyn TransferBackend>, String> {
     backend.validate_compiled()?;
-    #[cfg(feature = "orbitte-rdma")]
-    if (backend == PeerTransferBackend::OrbitTeRdma) != rdma.is_some() {
+    #[cfg(feature = "orbite-rdma")]
+    if (backend == PeerTransferBackend::OrbiteRdma) != rdma.is_some() {
         return Err(
-            "OrbitTE RDMA requires an explicit configuration and orbitte-rdma selection".into(),
+            "OrbiTE RDMA requires an explicit configuration and orbite-rdma selection".into(),
         );
     }
     match backend {
@@ -544,21 +544,21 @@ pub(crate) fn create_transfer_backend(
         PeerTransferBackend::Mooncake => Ok(Arc::new(
             crate::peer::transport::MooncakeTransport::new(nics, allocator, advertise, storage)?,
         )),
-        #[cfg(feature = "orbitte")]
-        PeerTransferBackend::OrbitTeTcp | PeerTransferBackend::OrbitTeRdma => {
+        #[cfg(feature = "orbite")]
+        PeerTransferBackend::OrbiteTcp | PeerTransferBackend::OrbiteRdma => {
             if !nics.is_empty() {
-                return Err("OrbitTE does not accept a Mooncake RDMA NIC filter".into());
+                return Err("OrbiTE does not accept a Mooncake RDMA NIC filter".into());
             }
-            Ok(Arc::new(crate::peer::orbitte::OrbitTeTransport::new(
+            Ok(Arc::new(crate::peer::orbite::OrbiteTransport::new(
                 allocator.usage().1,
                 advertise,
-                if backend == PeerTransferBackend::OrbitTeRdma {
-                    orbit_te::Transport::Rdma
+                if backend == PeerTransferBackend::OrbiteRdma {
+                    orbite::Transport::Rdma
                 } else {
-                    orbit_te::Transport::Tcp
+                    orbite::Transport::Tcp
                 },
                 storage,
-                #[cfg(feature = "orbitte-rdma")]
+                #[cfg(feature = "orbite-rdma")]
                 rdma,
             )?))
         }

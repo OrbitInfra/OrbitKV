@@ -54,7 +54,7 @@ orbitkv-cache-manager
 For normal deployment, set the cache path and the intended capacity; leave
 backend selection to the Manager. `--ssd-backend` is an override for diagnosis
 and controlled tests. Every SSD read/write uses the selected transfer engine.
-TENT uses a separate file engine; OrbitTE uses its file segments. cuFile is an
+TENT uses a separate file engine; OrbiTE uses its file segments. cuFile is an
 optional engine dependency, not a service to deploy. See [deployment examples](deployment.md#configure-capacity-then-connect-engines).
 
 - `--ssd-cache-path`: Enable SSD cache by providing cache file path (optional)
@@ -63,8 +63,8 @@ optional engine dependency, not a service to deploy. See [deployment examples](d
 - `--ssd-write-policy`: `all` writes newly saved pages; `reuse` admits foreground-returned pages or repeated publications within a bounded history (default: `all`). Selective admission can require recomputation on the first reuse after DRAM eviction.
 - `--ssd-backend`: `uring` uses pinned DRAM; `auto` (default) additionally uses
   layout vectors with engine-owned CUDA staging/io_uring; `cufile` requires
-  native-only GDS. OrbitTE needs `orbitte-gds`; TENT needs a native CUDA build
-  with cuFile SDK support. Missing build support fails initialization; OrbitTE
+  native-only GDS. OrbiTE needs `orbite-gds`; TENT needs a native CUDA build
+  with cuFile SDK support. Missing build support fails initialization; OrbiTE
   discovers the configured GDS driver lazily at submission. The old
   `--ssd-io-engine` option is removed. Complete GPU state groups use two in-flight
   file receipts per instance/device. TENT alone keeps bounded alignment scratch
@@ -189,27 +189,27 @@ incarnations; it does not restore live leases or old cursors.
 
 ## Experimental peer payload selection
 
-`--peer-transfer-backend` accepts `mooncake` (default), `orbitte-tcp` or
-`orbitte-rdma`. `mooncake` names the TENT implementation. These are runtime
-choices: `cargo build -p orbitkv-server --features orbitte-rdma` includes both
+`--peer-transfer-backend` accepts `mooncake` (default), `orbite-tcp` or
+`orbite-rdma`. `mooncake` names the TENT implementation. These are runtime
+choices: `cargo build -p orbitkv-server --features orbite-rdma` includes both
 providers. An unavailable selection fails before CUDA initialization. The TCP mode
-requires an `orbitte` build, a concrete numeric advertised IP and no `--nics`
-filter. See the [OrbitTE TCP profile](transport.md#experimental-orbitte-peer-tcp-profile)
+requires an `orbite` build, a concrete numeric advertised IP and no `--nics`
+filter. See the [OrbiTE TCP profile](transport.md#experimental-orbite-peer-tcp-profile)
 for its limits and explicit gates. This source candidate does not change the
 installed serving support matrix.
 
-The `orbitte-rdma` feature adds `--orbitte-rdma-device` (required for that mode),
-`--orbitte-rdma-port` and `--orbitte-rdma-gid-index`. It selects the single-rail
+The `orbite-rdma` feature adds `--orbite-rdma-device` (required for that mode),
+`--orbite-rdma-port` and `--orbite-rdma-gid-index`. It selects the single-rail
 host-staging profile without a TCP/native payload fallback; `--nics` remains
-Mooncake-specific. Read the [RDMA profile](transport.md#experimental-orbitte-peer-rdma-profile)
+Mooncake-specific. Read the [RDMA profile](transport.md#experimental-orbite-peer-rdma-profile)
 for separate staging budgets and host versus CUDA 13 Manager qualification.
-The current OrbitTE pin is `df9ded09898217fd6d93bf02bb24d980c3e327a9`;
+The current OrbiTE pin is `8fa03eda9cf70e5f9867fedbf9855a09a41d9ac3`;
 historical hardware results below the [transport contract](transport.md#runtime-transfer-backend)
 do not qualify this revision. SSD can use [engine file segments](transport.md#ssd-file-transfers); local CUDA copies retain their existing
 OrbitKV implementations in this first integration stage.
 
 Peer GPU restores use the selected engine directly; Prepare/Warmup continues to
-fill the DRAM cache tier. For OrbitTE RDMA, `--orbitte-rdma-gpu-direct` selects
+fill the DRAM cache tier. For OrbiTE RDMA, `--orbite-rdma-gpu-direct` selects
 strict GDR registration with `MLX5_SCATTER_TO_CQE=0` set before startup; omission
 uses engine-owned CUDA staging. Neither profile is hardware-qualified at the
 current revision. See [ownership and gates](transport.md#peer-restore-into-gpu).

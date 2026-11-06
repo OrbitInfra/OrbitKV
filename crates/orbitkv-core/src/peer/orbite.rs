@@ -5,7 +5,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use orbit_te::{
+use orbite::{
     EngineConfig, Error, Permission, RegisteredMemory, TransferEngine, TransferOp, TransferRequest,
     Transport,
 };
@@ -20,9 +20,9 @@ use crate::transfer_engine::{
 
 fn prefix(transport: Transport) -> &'static str {
     match transport {
-        Transport::Tcp => "orbitte+tcp://",
-        Transport::Rdma => "orbitte+rdma://",
-        _ => "orbitte+unsupported://",
+        Transport::Tcp => "orbite+tcp://",
+        Transport::Rdma => "orbite+rdma://",
+        _ => "orbite+unsupported://",
     }
 }
 const MAX_BATCH_REQUESTS: usize = 16_384;
@@ -31,12 +31,12 @@ const MAX_BATCH_BYTES: usize = 64 << 20;
 pub(super) fn parse_endpoint(transport: Transport, endpoint: &str) -> Result<SocketAddr, String> {
     endpoint
         .strip_prefix(prefix(transport))
-        .ok_or("peer OrbitTE payload protocol mismatch")?
+        .ok_or("peer OrbiTE payload protocol mismatch")?
         .parse()
-        .map_err(|error| format!("invalid OrbitTE endpoint: {error}"))
+        .map_err(|error| format!("invalid OrbiTE endpoint: {error}"))
 }
 
-pub(crate) struct OrbitTeTransport {
+pub(crate) struct OrbiteTransport {
     engine: Arc<TransferEngine>,
     pub(super) endpoint: String,
     pub(super) epoch: String,
@@ -48,7 +48,7 @@ pub(crate) struct OrbitTeTransport {
 /// Explicit registration references plus the actual allocation and provider
 /// lifetime. Source tickets and requester READ owners hold these together.
 pub(crate) struct RegistrationSet {
-    transport: Arc<OrbitTeTransport>,
+    transport: Arc<OrbiteTransport>,
     regions: Vec<RegisteredMemory>,
     cleanup_failed: bool,
 }
@@ -58,7 +58,7 @@ impl RegistrationSet {
         if self.cleanup_failed {
             return Err(TransferError::new(
                 ErrorKind::Unquiesced,
-                "OrbitTE registration cleanup remains retained",
+                "OrbiTE registration cleanup remains retained",
             ));
         }
         let result = self.transport.unregister(&mut self.regions);
@@ -74,9 +74,7 @@ impl Drop for RegistrationSet {
     )]
     fn drop(&mut self) {
         if let Err(error) = self.unregister() {
-            log::error!(
-                "Retaining OrbitTE registration ownership after unregister failed: {error}"
-            );
+            log::error!("Retaining OrbiTE registration ownership after unregister failed: {error}");
             std::mem::forget((
                 Arc::clone(&self.transport),
                 std::mem::take(&mut self.regions),
@@ -85,24 +83,24 @@ impl Drop for RegistrationSet {
     }
 }
 
-impl OrbitTeTransport {
+impl OrbiteTransport {
     pub(crate) fn new(
         pool_bytes: u64,
         advertise: &str,
         payload: Transport,
         storage: Option<&crate::SsdCacheConfig>,
-        #[cfg(feature = "orbitte-rdma")] rdma: Option<crate::OrbitTeRdmaConfig>,
+        #[cfg(feature = "orbite-rdma")] rdma: Option<crate::OrbiteRdmaConfig>,
     ) -> Result<Self, String> {
         if !matches!(payload, Transport::Tcp | Transport::Rdma) {
-            return Err("unsupported OrbitTE peer payload".into());
+            return Err("unsupported OrbiTE peer payload".into());
         }
-        #[cfg(not(feature = "orbitte-rdma"))]
+        #[cfg(not(feature = "orbite-rdma"))]
         if payload == Transport::Rdma {
-            return Err("OrbitTE RDMA requires the orbitte-rdma build feature".into());
+            return Err("OrbiTE RDMA requires the orbite-rdma build feature".into());
         }
-        #[cfg(feature = "orbitte-rdma")]
+        #[cfg(feature = "orbite-rdma")]
         if (payload == Transport::Rdma) != rdma.is_some() {
-            return Err("OrbitTE RDMA requires an explicit device configuration".into());
+            return Err("OrbiTE RDMA requires an explicit device configuration".into());
         }
         let endpoint = advertise
             .strip_prefix("http://")
@@ -114,29 +112,29 @@ impl OrbitTeTransport {
         let host: IpAddr = host
             .trim_matches(['[', ']'])
             .parse()
-            .map_err(|_| "OrbitTE requires a numeric advertised IP")?;
+            .map_err(|_| "OrbiTE requires a numeric advertised IP")?;
         if host.is_unspecified() {
-            return Err("OrbitTE requires a concrete advertised IP".into());
+            return Err("OrbiTE requires a concrete advertised IP".into());
         }
-        let mut policy = vec![orbit_te::SelectionPolicy {
+        let mut policy = vec![orbite::SelectionPolicy {
             transports: vec![payload],
             ..Default::default()
         }];
         if storage.is_some() {
-            policy.push(orbit_te::SelectionPolicy {
+            policy.push(orbite::SelectionPolicy {
                 name: "ssd".into(),
-                segment_type: orbit_te::SegmentType::File,
+                segment_type: orbite::SegmentType::File,
                 transports: vec![Transport::IoUring, Transport::Gds],
                 ..Default::default()
             });
         }
         if storage.is_some_and(|s| s.backend == crate::SsdBackend::Cufile)
-            && !cfg!(feature = "orbitte-gds")
+            && !cfg!(feature = "orbite-gds")
         {
-            return Err("OrbitTE cuFile requires the orbitte-gds build feature".into());
+            return Err("OrbiTE cuFile requires the orbite-gds build feature".into());
         }
         let config = EngineConfig {
-            #[cfg(feature = "orbitte-rdma")]
+            #[cfg(feature = "orbite-rdma")]
             rdma,
             bind_addr: SocketAddr::new(host, 0),
             max_registered_regions: 4096,
@@ -151,14 +149,14 @@ impl OrbitTeTransport {
             max_allocated_batches: 32,
             max_allocated_requests: 32 * MAX_BATCH_REQUESTS,
             max_file_segments: if storage.is_some() { 256 } else { 0 },
-            #[cfg(feature = "orbitte-gds")]
+            #[cfg(feature = "orbite-gds")]
             gds_require_native: true,
-            #[cfg(feature = "orbitte-gds")]
+            #[cfg(feature = "orbite-gds")]
             gds_enabled: storage.is_some_and(|s| s.backend == crate::SsdBackend::Cufile),
             max_failover_attempts: 0,
             enable_auto_failover_on_poll: false,
             tcp: payload == Transport::Tcp,
-            selector: Some(orbit_te::TransportSelectorConfig {
+            selector: Some(orbite::TransportSelectorConfig {
                 policy,
                 ..Default::default()
             }),
@@ -187,7 +185,7 @@ impl OrbitTeTransport {
             budget.0 += 1;
             budget.1 = bytes;
         }
-        log::info!("OrbitTE peer payload initialized: {endpoint}");
+        log::info!("OrbiTE peer payload initialized: {endpoint}");
         Ok(Self {
             engine,
             endpoint,
@@ -201,7 +199,7 @@ impl OrbitTeTransport {
     fn transfer_target(
         &self,
         operation: crate::transfer_engine::TransferOp,
-        target: orbit_te::TransferTarget<'_>,
+        target: orbite::TransferTarget<'_>,
         transport: Transport,
         slices: &[TransferSlice],
         deadline: Instant,
@@ -232,7 +230,7 @@ impl OrbitTeTransport {
     fn transfer_requests(
         &self,
         operation: crate::transfer_engine::TransferOp,
-        target: orbit_te::TransferTarget<'_>,
+        target: orbite::TransferTarget<'_>,
         requests: &[TransferRequest],
         total: usize,
         deadline: Instant,
@@ -261,7 +259,7 @@ impl OrbitTeTransport {
                 if !status.locally_drained {
                     return Err(TransferError::new(
                         ErrorKind::Unquiesced,
-                        "OrbitTE physical owners remain active",
+                        "OrbiTE physical owners remain active",
                     ));
                 }
                 let submissions = batch
@@ -277,10 +275,10 @@ impl OrbitTeTransport {
                     .iter()
                     .find_map(|report| report.failure.as_ref())
                     .map(|failure| {
-                        if failure.remote_effect == orbit_te::RemoteEffect::Unknown {
+                        if failure.remote_effect == orbite::RemoteEffect::Unknown {
                             TransferError::new(
                                 ErrorKind::Unquiesced,
-                                "OrbitTE remote WRITE effect is unknown",
+                                "OrbiTE remote WRITE effect is unknown",
                             )
                         } else {
                             transfer_error_ref(&failure.error)
@@ -301,7 +299,7 @@ impl OrbitTeTransport {
                 if bytes != total {
                     return Err(TransferError::new(
                         ErrorKind::Backend,
-                        "OrbitTE returned incomplete bytes",
+                        "OrbiTE returned incomplete bytes",
                     ));
                 }
                 return Ok(bytes);
@@ -312,7 +310,7 @@ impl OrbitTeTransport {
                 // must retain registrations, source grants and actual buffers.
                 return Err(TransferError::new(
                     ErrorKind::Unquiesced,
-                    "OrbitTE deadline expired before physical drain",
+                    "OrbiTE deadline expired before physical drain",
                 ));
             };
             match batch.wait(wait.min(Duration::from_millis(5))) {
@@ -336,7 +334,7 @@ impl OrbitTeTransport {
                 // SAFETY: sealed source blocks are immutable. Requester ranges
                 // are newly allocated and handed exclusively to the READ owner.
                 // All aliases use the allocation's canonical shared access lock.
-                let memory = unsafe { allocation.orbitte_memory() }.map_err(transfer_error)?;
+                let memory = unsafe { allocation.orbite_memory() }.map_err(transfer_error)?;
                 let length = memory.len();
                 Ok((memory, 0, length))
             })
@@ -363,11 +361,11 @@ impl OrbitTeTransport {
     }
 }
 
-impl TransferBackend for OrbitTeTransport {
+impl TransferBackend for OrbiteTransport {
     fn local_engine(&self) -> crate::PeerTransferBackend {
         match self.payload {
-            Transport::Rdma => crate::PeerTransferBackend::OrbitTeRdma,
-            _ => crate::PeerTransferBackend::OrbitTeTcp,
+            Transport::Rdma => crate::PeerTransferBackend::OrbiteRdma,
+            _ => crate::PeerTransferBackend::OrbiteTcp,
         }
     }
 
@@ -397,7 +395,7 @@ impl TransferBackend for OrbitTeTransport {
     ) -> Result<Registration, TransferError> {
         self.register(allocations.iter(), permission.into())
             .map(|registration| Registration {
-                inner: RegistrationInner::OrbitTe(registration),
+                inner: RegistrationInner::Orbite(registration),
             })
     }
 
@@ -411,11 +409,11 @@ impl TransferBackend for OrbitTeTransport {
     ) -> Result<Registration, TransferError> {
         // SAFETY: the caller retains the allocation/context and coordinates aliases.
         let memory = Arc::new(
-            unsafe { orbit_te::cuda::CudaMemory::from_raw_parts(address, length, owner) }
+            unsafe { orbite::cuda::CudaMemory::from_raw_parts(address, length, owner) }
                 .map_err(transfer_error)?,
         );
         if !matches!(memory.location(0, length).map_err(transfer_error)?.location,
-            orbit_te::MemoryLocation::Cuda { device: actual, .. } if actual == device)
+            orbite::MemoryLocation::Cuda { device: actual, .. } if actual == device)
         {
             return Err(TransferError::new(
                 ErrorKind::InvalidRequest,
@@ -427,7 +425,7 @@ impl TransferBackend for OrbitTeTransport {
             .register_cuda_memory_batch(&[(memory, 0, length)], permission.into())
             .map_err(transfer_error)?;
         Ok(Registration {
-            inner: RegistrationInner::OrbitTe(RegistrationSet {
+            inner: RegistrationInner::Orbite(RegistrationSet {
                 transport: self,
                 regions,
                 cleanup_failed: false,
@@ -437,7 +435,7 @@ impl TransferBackend for OrbitTeTransport {
 
     unsafe fn unregister(&self, registration: &mut Registration) -> Result<(), TransferError> {
         match &mut registration.inner {
-            RegistrationInner::OrbitTe(registration)
+            RegistrationInner::Orbite(registration)
                 if registration.transport.epoch == self.epoch =>
             {
                 registration.unregister()
@@ -464,7 +462,7 @@ impl TransferBackend for OrbitTeTransport {
             .map_err(transfer_error)?;
         Ok(PeerSegment {
             owner_epoch: self.epoch.clone(),
-            inner: Segment::OrbitTe(peer),
+            inner: Segment::Orbite(peer),
         })
     }
 
@@ -491,7 +489,7 @@ impl TransferBackend for OrbitTeTransport {
             )
         )]
         let peer = match &peer.inner {
-            Segment::OrbitTe(peer) => peer,
+            Segment::Orbite(peer) => peer,
             #[cfg(any(feature = "mooncake", test))]
             _ => {
                 return Err(TransferError::new(
@@ -514,7 +512,7 @@ impl TransferBackend for OrbitTeTransport {
         if !self.files_enabled {
             return Err(TransferError::new(
                 ErrorKind::Unavailable,
-                "OrbitTE file admission is disabled",
+                "OrbiTE file admission is disabled",
             ));
         }
         let path = path.to_str().ok_or_else(|| {
@@ -528,7 +526,7 @@ impl TransferBackend for OrbitTeTransport {
             Ok(info) => Ok(FileSegment {
                 owner_epoch: self.epoch.clone(),
                 length: info.length,
-                inner: FileSegmentInner::OrbitTe(inner),
+                inner: FileSegmentInner::Orbite(inner),
             }),
             Err(error) => {
                 let _ = self.engine.close_file_segment(&inner, Duration::ZERO);
@@ -545,14 +543,14 @@ impl TransferBackend for OrbitTeTransport {
             ));
         }
         #[cfg(feature = "mooncake")]
-        let FileSegmentInner::OrbitTe(inner) = &file.inner else {
+        let FileSegmentInner::Orbite(inner) = &file.inner else {
             return Err(TransferError::new(
                 ErrorKind::InvalidRequest,
                 "foreign file provider",
             ));
         };
         #[cfg(not(feature = "mooncake"))]
-        let FileSegmentInner::OrbitTe(inner) = &file.inner;
+        let FileSegmentInner::Orbite(inner) = &file.inner;
         self.engine
             .close_file_segment(inner, deadline.saturating_duration_since(Instant::now()))
             .map_err(transfer_error)
@@ -578,14 +576,14 @@ impl TransferBackend for OrbitTeTransport {
             ));
         }
         #[cfg(feature = "mooncake")]
-        let FileSegmentInner::OrbitTe(inner) = &file.inner else {
+        let FileSegmentInner::Orbite(inner) = &file.inner else {
             return Err(TransferError::new(
                 ErrorKind::InvalidRequest,
                 "foreign file provider",
             ));
         };
         #[cfg(not(feature = "mooncake"))]
-        let FileSegmentInner::OrbitTe(inner) = &file.inner;
+        let FileSegmentInner::Orbite(inner) = &file.inner;
         remaining(deadline)?;
         if cancellation.is_cancelled() {
             return Err(TransferError::new(
@@ -599,9 +597,9 @@ impl TransferBackend for OrbitTeTransport {
             .iter()
             .map(|element| match *element {
                 FileIoElement::Range { address, length } => {
-                    orbit_te::FileIoElement::Range { address, length }
+                    orbite::FileIoElement::Range { address, length }
                 }
-                FileIoElement::Padding(bytes) => orbit_te::FileIoElement::Padding(bytes),
+                FileIoElement::Padding(bytes) => orbite::FileIoElement::Padding(bytes),
             })
             .collect();
         let total = transfer.extent.bytes()?;
@@ -725,7 +723,7 @@ fn transfer_error(error: Error) -> TransferError {
     transfer_error_ref(&error)
 }
 
-impl Drop for OrbitTeTransport {
+impl Drop for OrbiteTransport {
     #[allow(
         clippy::mem_forget,
         reason = "a failed drain must retain the engine and its process admission until exit"
@@ -735,7 +733,7 @@ impl Drop for OrbitTeTransport {
         let drained = self.shutdown(deadline);
         if let Err(error) = drained {
             log::error!(
-                "Retaining OrbitTE engine and {} source pool budget bytes after drain failed: {error}",
+                "Retaining OrbiTE engine and {} source pool budget bytes after drain failed: {error}",
                 self.pool_bytes
             );
             std::mem::forget(Arc::clone(&self.engine));
@@ -750,5 +748,5 @@ impl Drop for OrbitTeTransport {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/peer/orbitte.rs"]
+#[path = "../../tests/unit/peer/orbite.rs"]
 mod tests;

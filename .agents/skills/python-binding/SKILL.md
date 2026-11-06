@@ -50,7 +50,7 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   Resolve their full physical GPU UUIDs; the native owner retains the Manager's
   resolved ordinal for Publish/Restore. Do not reuse the client's ordinal on the
   Manager or convert a UUID into an ordinal with physical `nvidia-smi` ordering.
-  Lifecycle protocol 10 requires matching installed client and Manager artifacts.
+  Lifecycle protocol 11 requires matching installed client and Manager artifacts.
   The selected Torch 2.13 cudaMalloc IPC storage handle has a version/type
   envelope around the native CUDA handle. Keep the validated 66-byte version-3
   cudaMalloc export unchanged through the importer; bare legacy and expandable
@@ -88,13 +88,13 @@ dependencies and installed-package checks. Freeze native artifacts before GPU
 tests: Cargo can restage shared libraries used by live Managers. Preserve explicit
 CUDA library precedence, and keep the interpreter's standard library before the
 selected package/dependency roots in console and embedded-Python search paths.
-Optional complete-wheel builds may add `--features orbitte` or
-`--features orbitte-rdma`; both retain the default CUDA 13/TENT build and require
-explicit Manager provider selection. See `python/tests/release/test_installed_orbitte.py`
+Optional complete-wheel builds may add `--features orbite` or
+`--features orbite-rdma`; both retain the default CUDA 13/TENT build and require
+explicit Manager provider selection. See `python/tests/release/test_installed_orbite.py`
 for the separate installed IPC/peer-byte gate; its DRAM restore uses the local
 client H2D owner and does not establish Manager IPC Restore or GDR.
 
-For installed OrbitTE qualification, use the explicit runtime profile in
+For installed OrbiTE qualification, use the explicit runtime profile in
 `docs/transport.md#installed-client-and-manager-profile`. Frozen `cudarc` tries
 unversioned `libcudart.so` first; versioned preload alone can still mix runtimes.
 Freeze the private ordinary alias, its target, all import-root absences and

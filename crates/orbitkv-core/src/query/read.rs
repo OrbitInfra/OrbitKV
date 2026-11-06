@@ -2,12 +2,12 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 use std::time::{Duration, Instant};
 use tokio::sync::OnceCell;
 
 use futures::{StreamExt, stream};
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 use log::warn;
 use parking_lot::Mutex;
 
@@ -15,7 +15,7 @@ use crate::QueryMode;
 use crate::block::{QueryResult, RestoreSource, SealedBlock, StateKey};
 use crate::memory::numa::NumaNode;
 use crate::metrics::core_metrics;
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 use crate::peer::read::PeerReader;
 use crate::storage::{MaterializedBlocks, ssd::SsdStore};
 
@@ -25,9 +25,9 @@ use super::tier_attribution::{
 use crate::planning::read::{HostReadRoute, ReadPlan};
 use crate::storage::dram::DramStore;
 
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 const REMOTE_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 const REMOTE_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
@@ -53,7 +53,7 @@ pub(crate) struct ReadCoordinator {
     dram: Arc<DramStore>,
     reads: Mutex<HashMap<ReadKey, Weak<SharedRead>>>,
     ssd_store: Option<Arc<SsdStore>>,
-    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     remote_fetch: Option<Arc<PeerReader>>,
     codec_budget: usize,
 }
@@ -62,9 +62,7 @@ impl ReadCoordinator {
     pub(crate) fn new(
         dram: Arc<DramStore>,
         ssd_store: Option<Arc<SsdStore>>,
-        #[cfg(any(feature = "mooncake", feature = "orbitte"))] remote_fetch: Option<
-            Arc<PeerReader>,
-        >,
+        #[cfg(any(feature = "mooncake", feature = "orbite"))] remote_fetch: Option<Arc<PeerReader>>,
         codec_budget: usize,
     ) -> Self {
         Self {
@@ -72,7 +70,7 @@ impl ReadCoordinator {
             codec_budget,
             reads: Mutex::new(HashMap::new()),
             ssd_store,
-            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             remote_fetch,
         }
     }
@@ -92,9 +90,9 @@ impl ReadCoordinator {
             .map(|hash| StateKey::new(namespace.to_string(), hash.clone()))
             .collect();
         let (hit, prefix_blocks) = self.dram.get_prefix_blocks(&keys, warming);
-        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+        #[cfg(any(feature = "mooncake", feature = "orbite"))]
         let has_remote = self.remote_fetch.is_some();
-        #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
+        #[cfg(not(any(feature = "mooncake", feature = "orbite")))]
         let has_remote = false;
         if hit == keys.len() || (!has_remote && self.ssd_store.is_none()) {
             if !warming && let Some(ssd) = &self.ssd_store {
@@ -264,23 +262,23 @@ impl ReadCoordinator {
         allow_ssd_prefetch: bool,
         destination_nodes: &[NumaNode],
     ) -> (Option<AttributionSource>, Vec<(StateKey, RestoreSource)>) {
-        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+        #[cfg(any(feature = "mooncake", feature = "orbite"))]
         if let Some(remote) = &self.remote_fetch {
             remote.discover(&mut plan.rows);
         }
-        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+        #[cfg(any(feature = "mooncake", feature = "orbite"))]
         let peer_available = self.remote_fetch.is_some();
-        #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
+        #[cfg(not(any(feature = "mooncake", feature = "orbite")))]
         let peer_available = false;
-        #[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
+        #[cfg(not(any(feature = "mooncake", feature = "orbite")))]
         let _ = (req_id, destination_nodes);
 
-        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+        #[cfg(any(feature = "mooncake", feature = "orbite"))]
         let target = plan.target;
         let mut allow_local_ssd = allow_ssd_prefetch;
         for _ in 0..3 {
             match plan.host_route(peer_available, allow_local_ssd, self.codec_budget) {
-                #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+                #[cfg(any(feature = "mooncake", feature = "orbite"))]
                 Some(HostReadRoute::Peer(route)) => {
                     if let Some(remote) = &self.remote_fetch {
                         let result =
@@ -316,7 +314,7 @@ impl ReadCoordinator {
             }
         }
 
-        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+        #[cfg(any(feature = "mooncake", feature = "orbite"))]
         if plan.wait_for_full_prefix
             && let Some(remote) = &self.remote_fetch
         {
@@ -395,7 +393,7 @@ fn build_ready_result(
 #[path = "../../tests/unit/query/read.rs"]
 mod tests;
 
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 async fn fetch_peer(
     remote: &PeerReader,
     route: crate::planning::peer::FetchPlan<'_>,

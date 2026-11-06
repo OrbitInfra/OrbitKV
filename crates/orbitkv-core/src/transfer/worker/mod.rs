@@ -25,7 +25,7 @@ use crate::transfer::layout::{BlockCopies, KVCacheLayout};
 use crate::transfer::{CopyDesc, TransferMode};
 
 mod codec;
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 mod peer;
 mod restore;
 pub(crate) use codec::SaveGroup;
@@ -72,7 +72,7 @@ pub(crate) enum TransferPayload {
         slot_id: usize,
         offset: usize,
     },
-    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     Peer {
         source: crate::peer::restore::PeerRestoreBlock,
         slot_id: usize,
@@ -93,14 +93,14 @@ impl TransferPayload {
     fn is_external(&self) -> bool {
         match self {
             Self::Ssd { .. } => true,
-            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             Self::Peer { .. } => true,
             _ => false,
         }
     }
     pub(crate) fn raw(&self) -> &RawBlock {
         match self {
-            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             Self::Peer { .. } => unreachable!("peer sources do not own host memory"),
             Self::Pending => unreachable!("unallocated save"),
             Self::Ssd { .. } => unreachable!("SSD sources do not own host memory"),
@@ -117,7 +117,7 @@ impl TransferPayload {
     fn host_offset(&self) -> usize {
         match self {
             Self::Ssd { offset, .. } => *offset,
-            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             Self::Peer { offset, .. } => *offset,
             Self::Owned(_) | Self::Pending => 0,
             Self::Cached { offset, .. } => *offset,
@@ -603,7 +603,7 @@ impl GpuWorkerPool {
         let decode_queue_depth = decode_admission.depth;
         task.decode_admission = Some(decode_admission);
         restore::validate_plan(&task.plan, layers)?;
-        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+        #[cfg(any(feature = "mooncake", feature = "orbite"))]
         peer::validate(layers, task.codec_budget).map_err(EngineError::Storage)?;
         let mut ssd_path = task.plan.ssd_path();
         if ssd_path == Some(crate::SsdReadPath::Cufile)
@@ -1081,7 +1081,7 @@ fn terminal_outcome(completed: bool, consumer_closed: bool) -> Outcome {
 fn has_encoded(layers: &[LayerTransferData]) -> bool {
     layers.iter().any(|layer| {
         layer.blocks.iter().any(|block| match &block.block {
-            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             TransferPayload::Peer {
                 source, slot_id, ..
             } => source
@@ -1149,7 +1149,7 @@ fn transfer_key(
         (false, false, true, TransferMode::Direct) => CostObservationKind::GpuSaveDirect,
         (false, false, true, TransferMode::Kernel) => CostObservationKind::GpuSaveKernel,
     };
-    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     let path = if layers
         .iter()
         .flat_map(|layer| &layer.blocks)
@@ -1170,7 +1170,7 @@ fn transfer_key(
     for layer in layers {
         for block in &layer.blocks {
             let metadata = match &block.block {
-                #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+                #[cfg(any(feature = "mooncake", feature = "orbite"))]
                 TransferPayload::Peer {
                     source, slot_id, ..
                 } => source
@@ -1498,12 +1498,12 @@ fn process_save_task(
 #[path = "../../../tests/unit/transfer/worker/mod.rs"]
 mod drain_tests;
 
-#[cfg(not(any(feature = "mooncake", feature = "orbitte")))]
+#[cfg(not(any(feature = "mooncake", feature = "orbite")))]
 fn prepare_peer(command: WorkerCommand, _: &WorkerRuntime) -> Option<WorkerCommand> {
     Some(command)
 }
 
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 fn prepare_peer(command: WorkerCommand, runtime: &WorkerRuntime) -> Option<WorkerCommand> {
     if runtime.unquiesced.get()
         && let WorkerCommand::Save(task, observation) = command
@@ -1556,7 +1556,7 @@ fn prepare_peer(command: WorkerCommand, runtime: &WorkerRuntime) -> Option<Worke
     Some(WorkerCommand::Load(task, observation))
 }
 
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 #[allow(
     clippy::mem_forget,
     reason = "unknown peer drain retains GPU backing, grants, client completion and device admission"

@@ -54,8 +54,8 @@ impl SsdCacheConfig {
                         "TENT GDS allows at most 128 shards (256 IOURING/GDS file handles)".into(),
                     );
                 }
-            } else if !cfg!(feature = "orbitte-gds") {
-                return Err("OrbitTE cuFile requires the orbitte-gds build feature".into());
+            } else if !cfg!(feature = "orbite-gds") {
+                return Err("OrbiTE cuFile requires the orbite-gds build feature".into());
             }
         }
         Ok(())

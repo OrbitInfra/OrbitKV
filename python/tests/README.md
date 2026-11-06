@@ -120,11 +120,11 @@ Follow [package releases](../../docs/releases.md) for the full artifact matrix,
 licenses, loader requirements and publication. A source test or CPU-native
 fixture does not qualify the final CUDA wheel.
 
-### Installed OrbitTE peer candidate
+### Installed OrbiTE peer candidate
 
-Build a complete wheel with `--features orbitte` or `--features orbitte-rdma`
+Build a complete wheel with `--features orbite` or `--features orbite-rdma`
 as described in [release builds](../../docs/releases.md#build-a-candidate).
-`release/test_installed_orbitte.py` is a model-free two-Manager gate for that
+`release/test_installed_orbite.py` is a model-free two-Manager gate for that
 optional artifact. It compares all requested GPU bytes and untouched pages,
 checks actual remote-fetch and H2D byte counters, awaits the source inventory
 fence, and retains the original IPC counter descriptors through normal
@@ -138,11 +138,11 @@ start the installed console through the same `CacheManagerProcess` fixture
 with `extra_args=("--help",)`, requiring exit zero and the compiled RNIC help;
 this covers a fresh console's Python search path without GPU initialization.
 Check the full frozen Rust library-name search order in CPU preflight, then
-select `-m release_smoke tests/release/test_installed_orbitte.py`.
-Set `ORBITKV_TEST_INSTALLED_ORBITTE=1`, `ETCD_BIN`,
+select `-m release_smoke tests/release/test_installed_orbite.py`.
+Set `ORBITKV_TEST_INSTALLED_ORBITE=1`, `ETCD_BIN`,
 `ORBITKV_TEST_STRICT_SHUTDOWN=1` and `PYTHONNOUSERSITE=1`.
-The RDMA case additionally requires `ORBITKV_TEST_ORBITTE_RDMA_DEVICE`,
-`ORBITKV_TEST_ORBITTE_RDMA_PORT` and `ORBITKV_TEST_ORBITTE_RDMA_GID_INDEX`;
+The RDMA case additionally requires `ORBITKV_TEST_ORBITE_RDMA_DEVICE`,
+`ORBITKV_TEST_ORBITE_RDMA_PORT` and `ORBITKV_TEST_ORBITE_RDMA_GID_INDEX`;
 select only the TCP case when no RNIC lease is available.
 Hold the canonical GPU/RNIC and private-domain resource leases through all
 owned process exits; inherit their FDs with `ORBITKV_TEST_GPU_LOCK_FDS`.

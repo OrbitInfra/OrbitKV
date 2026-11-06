@@ -28,7 +28,7 @@ fn regions(payload: usize) -> Vec<(usize, usize, usize)> {
         .collect()
 }
 
-fn finish(transport: OrbitTeTransport, memory: RegisteredMemory) {
+fn finish(transport: OrbiteTransport, memory: RegisteredMemory) {
     transport.engine.close_requester(TIMEOUT).unwrap();
     transport.engine.close_source(TIMEOUT).unwrap();
     transport.engine.unregister_memory(&memory).unwrap();
@@ -61,7 +61,7 @@ fn finish(transport: OrbitTeTransport, memory: RegisteredMemory) {
         !maps.contains("libcudart") && !maps.contains("libcuda.so"),
         "host-only test must not load a CUDA runtime or driver"
     );
-    if let Some(path) = env::var_os("ORBITKV_ORBITTE_MAPS") {
+    if let Some(path) = env::var_os("ORBITKV_ORBITE_MAPS") {
         std::fs::write(path, maps).unwrap();
     }
     println!(
@@ -79,33 +79,30 @@ fn finish(transport: OrbitTeTransport, memory: RegisteredMemory) {
 }
 
 #[test]
-#[ignore = "two-host host-RDMA component gate; use OrbitTE tests/hardware/run.py with runner=orbitkv-peer-host; never initializes CUDA"]
+#[ignore = "two-host host-RDMA component gate; use OrbiTE tests/hardware/run.py with runner=orbitkv-peer-host; never initializes CUDA"]
 fn registered_host_rdma_peer() {
-    let role = env::var("ORBITKV_ORBITTE_ROLE").unwrap();
-    let payload: usize = env::var("ORBITKV_ORBITTE_PAYLOAD")
-        .unwrap()
-        .parse()
-        .unwrap();
-    let seed: u64 = env::var("ORBITKV_ORBITTE_SEED").unwrap().parse().unwrap();
+    let role = env::var("ORBITKV_ORBITE_ROLE").unwrap();
+    let payload: usize = env::var("ORBITKV_ORBITE_PAYLOAD").unwrap().parse().unwrap();
+    let seed: u64 = env::var("ORBITKV_ORBITE_SEED").unwrap().parse().unwrap();
     assert!((128..=8 << 20).contains(&payload));
-    let device = env::var("ORBITKV_ORBITTE_RDMA_DEVICE").unwrap();
-    let port = env::var("ORBITKV_ORBITTE_RDMA_PORT")
+    let device = env::var("ORBITKV_ORBITE_RDMA_DEVICE").unwrap();
+    let port = env::var("ORBITKV_ORBITE_RDMA_PORT")
         .unwrap()
         .parse()
         .unwrap();
-    let gid_index = env::var("ORBITKV_ORBITTE_RDMA_GID_INDEX")
+    let gid_index = env::var("ORBITKV_ORBITE_RDMA_GID_INDEX")
         .unwrap()
         .parse()
         .unwrap();
-    let transport = OrbitTeTransport::new(
+    let transport = OrbiteTransport::new(
         (32 << 20) as u64,
-        &env::var("ORBITKV_ORBITTE_BIND").unwrap(),
+        &env::var("ORBITKV_ORBITE_BIND").unwrap(),
         Transport::Rdma,
         None,
-        Some(crate::OrbitTeRdmaConfig {
+        Some(crate::OrbiteRdmaConfig {
             port: Some(port),
             gid_index: Some(gid_index),
-            ..crate::OrbitTeRdmaConfig::new(device)
+            ..crate::OrbiteRdmaConfig::new(device)
         }),
     )
     .unwrap();
@@ -122,7 +119,7 @@ fn registered_host_rdma_peer() {
             )
             .unwrap();
         println!(
-            "\nORBITTE_READY {} {} {} {}",
+            "\nORBITE_READY {} {} {} {}",
             transport.endpoint,
             transport.epoch,
             memory.base_address(),
@@ -149,7 +146,7 @@ fn registered_host_rdma_peer() {
     }
     assert_eq!(role, "requester");
     let remote: Vec<String> =
-        serde_json::from_str(&env::var("ORBITKV_ORBITTE_REMOTE").unwrap()).unwrap();
+        serde_json::from_str(&env::var("ORBITKV_ORBITE_REMOTE").unwrap()).unwrap();
     assert_eq!(remote.len(), 4);
     let endpoint = &remote[0];
     let epoch = &remote[1];
@@ -231,7 +228,7 @@ fn registered_host_rdma_peer() {
         .engine
         .send_notification(
             &peer,
-            &orbit_te::Notification {
+            &orbite::Notification {
                 name: "host_read_done".into(),
                 message: seed.to_string(),
             },

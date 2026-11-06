@@ -8,12 +8,12 @@ fn cpu_tcp_backend_reads_and_writes_fragmented_bytes_and_drains() {
 
     let make = || {
         Arc::new(
-            OrbitTeTransport::new(
+            OrbiteTransport::new(
                 4096,
                 "127.0.0.1:0",
                 Transport::Tcp,
                 None,
-                #[cfg(feature = "orbitte-rdma")]
+                #[cfg(feature = "orbite-rdma")]
                 None,
             )
             .unwrap(),
@@ -112,7 +112,7 @@ fn cpu_tcp_backend_reads_and_writes_fragmented_bytes_and_drains() {
         assert_eq!(result.unwrap_err().kind, kind);
     }
     let mut registration = Registration {
-        inner: RegistrationInner::OrbitTe(RegistrationSet {
+        inner: RegistrationInner::Orbite(RegistrationSet {
             transport: Arc::clone(&requester),
             regions: vec![local],
             cleanup_failed: false,
@@ -149,12 +149,12 @@ fn peer_protocol_and_granted_epoch_are_preserved_across_source_restart() {
     let endpoint = source.endpoint();
     let granted_epoch = source.source_epoch().to_string();
     let requester: Arc<dyn TransferBackend> = Arc::new(
-        OrbitTeTransport::new(
+        OrbiteTransport::new(
             4096,
             "127.0.0.1:0",
             Transport::Tcp,
             None,
-            #[cfg(feature = "orbitte-rdma")]
+            #[cfg(feature = "orbite-rdma")]
             None,
         )
         .unwrap(),
@@ -194,12 +194,12 @@ fn peer_protocol_and_granted_epoch_are_preserved_across_source_restart() {
 
 #[test]
 fn transfer_rejects_descriptor_and_byte_budgets_before_payload_io() {
-    let requester = OrbitTeTransport::new(
+    let requester = OrbiteTransport::new(
         4096,
         "127.0.0.1:0",
         Transport::Tcp,
         None,
-        #[cfg(feature = "orbitte-rdma")]
+        #[cfg(feature = "orbite-rdma")]
         None,
     )
     .unwrap();
@@ -249,31 +249,31 @@ fn transfer_rejects_descriptor_and_byte_budgets_before_payload_io() {
     source.close(Duration::from_secs(2)).unwrap();
 }
 
-#[cfg(not(feature = "orbitte-rdma"))]
+#[cfg(not(feature = "orbite-rdma"))]
 #[test]
 fn rdma_selection_requires_its_build_feature() {
     assert!(matches!(
-        OrbitTeTransport::new(4096, "127.0.0.1:0", Transport::Rdma, None),
-        Err(reason) if reason.contains("orbitte-rdma build feature")
+        OrbiteTransport::new(4096, "127.0.0.1:0", Transport::Rdma, None),
+        Err(reason) if reason.contains("orbite-rdma build feature")
     ));
 }
 
-#[cfg(feature = "orbitte-rdma")]
+#[cfg(feature = "orbite-rdma")]
 #[test]
 fn unavailable_rdma_never_copies_through_tcp() {
     let source = TransferEngine::new(EngineConfig::default()).unwrap();
     let source_memory = source
         .register_memory(vec![0x42; 64].into_boxed_slice(), Permission::RemoteRead)
         .unwrap();
-    let requester = OrbitTeTransport::new(
+    let requester = OrbiteTransport::new(
         4096,
         "127.0.0.1:0",
         Transport::Rdma,
         None,
-        Some(crate::OrbitTeRdmaConfig::new("orbitkv-test-absent")),
+        Some(crate::OrbiteRdmaConfig::new("orbitkv-test-absent")),
     )
     .unwrap();
-    let host = Arc::new(orbit_te::HostMemory::new(vec![0xcc; 64].into_boxed_slice()).unwrap());
+    let host = Arc::new(orbite::HostMemory::new(vec![0xcc; 64].into_boxed_slice()).unwrap());
     let local =
         requester
             .engine
@@ -297,7 +297,7 @@ fn unavailable_rdma_never_copies_through_tcp() {
                 Err(PeerTransferError::Failed(_))
             ));
         }
-        // Current OrbitTE may reject unavailable verbs at registration, before
+        // Current OrbiTE may reject unavailable verbs at registration, before
         // submission. Neither boundary may silently install a TCP payload route.
         Err(error) => assert!(
             matches!(error, Error::Unavailable(_) | Error::Backend { .. }),
@@ -329,29 +329,29 @@ fn unavailable_rdma_never_copies_through_tcp() {
     source.close_source(Duration::from_secs(2)).unwrap();
 }
 
-#[cfg(feature = "orbitte-rdma")]
+#[cfg(feature = "orbite-rdma")]
 #[test]
 fn rdma_configuration_and_payload_namespaces_are_explicit() {
-    assert!(OrbitTeTransport::new(4096, "127.0.0.1:0", Transport::Rdma, None, None).is_err());
+    assert!(OrbiteTransport::new(4096, "127.0.0.1:0", Transport::Rdma, None, None).is_err());
     assert!(
-        OrbitTeTransport::new(
+        OrbiteTransport::new(
             4096,
             "127.0.0.1:0",
             Transport::Tcp,
             None,
-            Some(crate::OrbitTeRdmaConfig::new("orbitkv-test-absent"))
+            Some(crate::OrbiteRdmaConfig::new("orbitkv-test-absent"))
         )
         .is_err()
     );
     let source = TransferEngine::new(EngineConfig::default()).unwrap();
     let endpoint = source.endpoint();
     let requester: Arc<dyn TransferBackend> = Arc::new(
-        OrbitTeTransport::new(
+        OrbiteTransport::new(
             4096,
             "127.0.0.1:0",
             Transport::Rdma,
             None,
-            Some(crate::OrbitTeRdmaConfig::new("orbitkv-test-absent")),
+            Some(crate::OrbiteRdmaConfig::new("orbitkv-test-absent")),
         )
         .unwrap(),
     );
@@ -378,13 +378,13 @@ fn rdma_configuration_and_payload_namespaces_are_explicit() {
     replacement.close_source(Duration::from_secs(2)).unwrap();
 }
 
-#[cfg(feature = "orbitte-rdma")]
-#[path = "orbitte/rdma_host.rs"]
+#[cfg(feature = "orbite-rdma")]
+#[path = "orbite/rdma_host.rs"]
 mod rdma_host;
 
 // Hardware consumers share the same trait submission as production peer READs.
-#[cfg(feature = "orbitte-rdma")]
-impl OrbitTeTransport {
+#[cfg(feature = "orbite-rdma")]
+impl OrbiteTransport {
     fn read_registered(
         &self,
         endpoint: &str,
@@ -415,7 +415,7 @@ impl OrbitTeTransport {
     }
 }
 
-#[cfg(feature = "orbitte-gds")]
+#[cfg(feature = "orbite-gds")]
 #[test]
 fn compiled_gds_stays_unloaded_without_configuration() {
     for storage in [
@@ -425,12 +425,12 @@ fn compiled_gds_stays_unloaded_without_configuration() {
             ..Default::default()
         }),
     ] {
-        let engine = OrbitTeTransport::new(
+        let engine = OrbiteTransport::new(
             4096,
             "127.0.0.1:0",
             Transport::Tcp,
             storage.as_ref(),
-            #[cfg(feature = "orbitte-rdma")]
+            #[cfg(feature = "orbite-rdma")]
             None,
         )
         .unwrap();

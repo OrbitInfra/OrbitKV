@@ -301,7 +301,7 @@ fn exports() -> (
             None,
             Some(membership.clone()),
             Some("127.0.0.1:12345".into()),
-            #[cfg(feature = "orbitte")]
+            #[cfg(feature = "orbite")]
             None,
             Duration::ZERO,
             1 << 20,
@@ -423,23 +423,23 @@ async fn export_rejects_invalid_evidence_before_reserving_resources() {
     ));
 }
 
-#[cfg(feature = "orbitte")]
+#[cfg(feature = "orbite")]
 #[tokio::test]
-#[ignore = "OrbitTE source registration hardware gate: requires a real CUDA pinned allocator"]
-async fn orbitte_grant_registrations_share_backing_and_fence_old_completion_generations() {
-    use crate::peer::orbitte::{OrbitTeTransport, parse_endpoint};
-    use orbit_te::{
+#[ignore = "OrbiTE source registration hardware gate: requires a real CUDA pinned allocator"]
+async fn orbite_grant_registrations_share_backing_and_fence_old_completion_generations() {
+    use crate::peer::orbite::{OrbiteTransport, parse_endpoint};
+    use orbite::{
         EngineConfig, Permission, TransferEngine, TransferOp, TransferRequest, Transport,
     };
 
     let (mut exports, membership, inventory) = exports();
     let source = Arc::new(
-        OrbitTeTransport::new(
+        OrbiteTransport::new(
             1 << 20,
             "127.0.0.1:0",
             Transport::Tcp,
             None,
-            #[cfg(feature = "orbitte-rdma")]
+            #[cfg(feature = "orbite-rdma")]
             None,
         )
         .unwrap(),
@@ -450,7 +450,7 @@ async fn orbitte_grant_registrations_share_backing_and_fence_old_completion_gene
     let weak = Arc::downgrade(&allocation);
     let address = allocation.as_non_null().as_ptr() as usize as u64;
     // Initialize before publishing immutable source blocks; all later access is READ.
-    let memory = unsafe { allocation.orbitte_memory().unwrap() };
+    let memory = unsafe { allocation.orbite_memory().unwrap() };
     memory.write(0, &[0x42; 4096]).unwrap();
     drop(memory);
     exports.dram.batch_insert(blocks);

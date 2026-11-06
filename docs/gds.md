@@ -20,7 +20,7 @@ the same cache API; no separate cuFile service is needed.
 | --- | --- |
 | `auto` (default) | Direct layout vectors plus engine-owned CUDA staging/io_uring; host materialization remains available for DRAM policy and unsupported layout shapes. |
 | `uring` | Host materialization through engine io_uring. |
-| `cufile` | Native-only GDS. OrbitTE requires `orbitte-gds`; TENT requires a CUDA runtime built with the cuFile SDK. Missing support is an error. |
+| `cufile` | Native-only GDS. OrbiTE requires `orbite-gds`; TENT requires a CUDA runtime built with the cuFile SDK. Missing support is an error. |
 
 The default wheel toolchain does not install the GDS SDK for TENT. Native GDS
 requires the matching source-built runtime, supported filesystem and installed
@@ -48,7 +48,7 @@ ordinary recovery may still select a compatible peer source.
 | Fragmented publication | Seal complete state in DRAM → engine file write |
 | Peer GPU restore | Engine remote READ directly into GPU pages or bounded codec inputs |
 
-OrbitTE consumes one vectored request per extent. Gaps and 4 KiB tails are
+OrbiTE consumes one vectored request per extent. Gaps and 4 KiB tails are
 padding elements, written as zeros or discarded on READ by the engine. The old
 GPU layout slots and zero buffers are deleted. Imported tensors and codec inputs
 retain persistent registrations, while encoded writes retain their actual codec
@@ -59,7 +59,7 @@ TENT submits aligned GPU vectors directly. Its C API lacks padding and unaligned
 vector repair, so a TENT-only adapter uses at most 4 MiB of host or device scratch
 per operation; GPU scratch uses D2D copies, and the engine owns host staging.
 This adapter is removed when the fork provides those missing contracts. Explicit
-GDS with padding is unavailable on both backends. OrbitTE's `gds_enabled` is false
+GDS with padding is unavailable on both backends. OrbiTE's `gds_enabled` is false
 unless `cufile` is configured, even when GDS is compiled.
 
 Each store admits 32 file operations, including retained work, with at most
@@ -79,7 +79,7 @@ for unsubmitted work. Opt-in route costs remain observational.
 
 Run the two explicit `ssd_engine` GPU byte gates from
 [the transport guide](transport.md#ssd-file-transfers) with
-`ORBITKV_SSD_TEST_ENGINE=tent` or `orbitte`, the matching build features and a
+`ORBITKV_SSD_TEST_ENGINE=tent` or `orbite`, the matching build features and a
 test-owned directory on the qualification SSD. The broader `cufile` integration
 tests cover layouts, codec inputs, cancellation and extent lifetime under native
 GDS; compatibility-mode qualification of the removed implementation does not
@@ -286,7 +286,7 @@ functional passes do not satisfy it.
 - `orbitkv_ssd_cufile_read_failures_total` / `orbitkv_ssd_cufile_write_failures_total`: failed or short I/O.
 - `orbitkv_ssd_backend_fallbacks_total`: transitions from automatic cuFile admission to io_uring.
 - `orbitkv_ssd_read_pinned_bytes`: SSD bytes held by restore leases.
-- `orbitkv_ssd_gpu_staging_bytes`: TENT-only device alignment scratch; absent in OrbitTE-only builds.
+- `orbitkv_ssd_gpu_staging_bytes`: TENT-only device alignment scratch; absent in OrbiTE-only builds.
 - `orbitkv_ssd_pinned_write_skips_total`: reservations rejected to protect reads
   or in-flight writes.
 
