@@ -98,6 +98,8 @@ message CudaRegistrationReply {
   int32 manager_device_id = 5;
   bytes registration_generation = 6;
   repeated CudaPayloadArena arenas = 7;
+  // Manager-selected engine also governs client-local raw Restore copies.
+  string transfer_engine = 8;
 }
 
 message CudaPayloadArena {

@@ -16,7 +16,7 @@ use cudarc::driver::{
 };
 use cudarc::nvrtc::compile_ptx;
 
-use super::{CopyDesc, TransferBackend};
+use super::{CopyDesc, TentCopy};
 
 /// Descriptor layout is a flat `u64` array, 3 entries per copy:
 /// `[dst, src, size, dst, src, size, ...]`. A flat array sidesteps any host/
@@ -133,7 +133,7 @@ impl KernelBackend {
     }
 }
 
-impl TransferBackend for KernelBackend {
+impl TentCopy for KernelBackend {
     fn h2d(&self, copies: &[CopyDesc], stream: &Arc<CudaStream>) -> Result<(), String> {
         self.submit(copies, true, stream)
     }

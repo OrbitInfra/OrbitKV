@@ -16,7 +16,11 @@ from pathlib import Path
 
 import pytest
 
-from tests.support.cache_manager import CacheManagerProcess, ClientContext, find_available_port
+from tests.support.cache_manager import (
+    CacheManagerProcess,
+    ClientContext,
+    find_available_port,
+)
 from tests.support.cluster import etcd_server
 from tests.support.installed_artifacts import distribution_snapshot
 from tests.support.ipc_credit import hold_counters, release_receipt
@@ -25,8 +29,9 @@ from tests.support.runtime_checks import capture_process_runtime, identity
 pytestmark = [pytest.mark.release_smoke, pytest.mark.gpu]
 
 
+@pytest.mark.parametrize("copy_mode", ["direct", "kernel"])
 @pytest.mark.parametrize("provider", ["orbitte-tcp", "orbitte-rdma"])
-def test_installed_orbitte_peer_restores_cuda_ipc_bytes(provider, tmp_path, monkeypatch):
+def test_installed_orbitte_peer_restores_cuda_ipc_bytes(provider, copy_mode, tmp_path, monkeypatch):
     if os.environ.get("ORBITKV_TEST_INSTALLED_ORBITTE") != "1":
         pytest.skip("select ORBITKV_TEST_INSTALLED_ORBITTE=1 with leased runtime resources")
     import torch
@@ -115,7 +120,7 @@ def test_installed_orbitte_peer_restores_cuda_ipc_bytes(provider, tmp_path, monk
             )
             contexts.append(context)
             processes.callback(retire, index, context)
-            context.register_kv_caches()
+            context.register_kv_caches(transfer_backend=copy_mode)
             handoff = directory / "original.credit-owner.json"
             handoff.write_text(
                 json.dumps(
@@ -227,13 +232,14 @@ def test_installed_orbitte_peer_restores_cuda_ipc_bytes(provider, tmp_path, monk
         )
         report.update(
             payload_bytes=payload_bytes,
+            local_copy_mode=copy_mode,
             inventory_fence=fence,
             before=[before_source, before_target],
             after=[after_source, after_target],
             requested_bytes_equal=True,
             unrequested_pages_unchanged=True,
             registration_and_publish="cross-process CUDA IPC",
-            restore="client-local DRAM H2D executor",
+            restore="client-local OrbiTE local copy engine",
         )
     after = distribution_snapshot(importlib.metadata.distribution("orbitkv-llm"), "orbitkv")
     assert before == after, "installed package changed during qualification"

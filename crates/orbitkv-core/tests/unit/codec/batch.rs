@@ -257,7 +257,7 @@ fn gpu_mixed_batches_reuse_scratch_and_crc_failure_precedes_all_target_writes() 
         })
         .collect();
     assert_eq!(
-        unsafe { codec.decode_host_batch(&stream, &host_inputs, retained) }.unwrap(),
+        unsafe { codec.decode_host_batch(&stream, &host_inputs, retained, None) }.unwrap(),
         inputs.len()
     );
     for (i, target) in targets.iter().enumerate() {
@@ -395,7 +395,7 @@ fn gpu_batch_limits_make_progress_and_raw_exact_needs_no_arena() {
             meta,
         })
         .collect();
-    let count = unsafe { codec.decode_host_batch(&stream, &restores, budget) }.unwrap();
+    let count = unsafe { codec.decode_host_batch(&stream, &restores, budget, None) }.unwrap();
     assert!((1..restores.len()).contains(&count));
     assert!(codec.scratch_bytes() <= budget);
     let batch = unsafe { codec.encode_batch(&stream, &inputs, 0) }.unwrap();
@@ -438,6 +438,7 @@ fn gpu_batch_limits_make_progress_and_raw_exact_needs_no_arena() {
                 meta: &meta,
             }],
             0,
+            None,
         )
     }
     .unwrap();
@@ -462,7 +463,7 @@ fn gpu_batch_limits_make_progress_and_raw_exact_needs_no_arena() {
         },
     ];
     assert_eq!(
-        unsafe { codec.decode_host_batch(&stream, &mixed, retained) }.unwrap(),
+        unsafe { codec.decode_host_batch(&stream, &mixed, retained, None) }.unwrap(),
         2
     );
     assert!(codec.scratch_bytes() <= retained);
@@ -533,7 +534,7 @@ fn gpu_ans_batches_restore_with_the_encode_reservation() {
         })
         .collect();
     assert_eq!(
-        unsafe { codec.decode_host_batch(&stream, &restore, retained) }.unwrap(),
+        unsafe { codec.decode_host_batch(&stream, &restore, retained, None) }.unwrap(),
         inputs.len()
     );
     assert_eq!(codec.scratch_bytes(), retained);
@@ -664,7 +665,7 @@ fn gpu_decode_rejects_overlapping_targets_and_device_sources_before_writes() {
                 meta: &meta,
             })
             .collect();
-        let error = unsafe { codec.decode_host_batch(&stream, &host, budget) }.unwrap_err();
+        let error = unsafe { codec.decode_host_batch(&stream, &host, budget, None) }.unwrap_err();
         assert!(error.contains("target ranges overlap"), "{error}");
         assert_eq!(stream.clone_dtoh(&target).unwrap(), sentinel);
         let device: Vec<_> = offsets

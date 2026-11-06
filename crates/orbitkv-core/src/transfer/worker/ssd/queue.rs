@@ -2,7 +2,6 @@ use std::collections::VecDeque;
 use std::sync::{Arc, mpsc as std_mpsc};
 use std::time::{Duration, Instant};
 
-use cudarc::driver::{CudaEvent, result, sys};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::EngineError;
@@ -16,7 +15,7 @@ use crate::storage::ssd::layout::{FILE_INFLIGHT, IoBatch};
 use crate::transfer_engine::{CudaRegistration, ErrorKind, FileMemory, TransferError, TransferOp};
 
 use super::decode::{DecodeCommand, DecodeRange, DecodeReply};
-use crate::transfer::finish_gpu_transfer;
+use crate::transfer_engine::local::LocalCompletion;
 
 use super::super::{
     LoadTask, SaveTask, WorkerCommand, WorkerRuntime, build_copy_descs, finish_load,
@@ -68,7 +67,7 @@ struct Job {
     error: Option<String>,
     uncertain: bool,
     prepared: bool,
-    host_completion: Option<CudaEvent>,
+    host_completion: Option<Box<dyn LocalCompletion>>,
     started: Instant,
     bytes: usize,
     observation: Observation,
@@ -178,26 +177,23 @@ impl Job {
         };
         let (copies, bytes) = build_copy_descs(layers)?;
         if !copies.is_empty() {
-            let event = runtime
-                .stream
-                .context()
-                .new_event(None)
-                .map_err(|error| EngineError::Storage(error.to_string()))?;
             self.observation.submitted();
-            let submitted = if self.is_write() {
-                runtime.backend.d2h(&copies, &runtime.stream)
-            } else {
-                runtime.backend.h2d(&copies, &runtime.stream)
-            };
-            if let Err(error) = submitted.and_then(|()| {
-                event
-                    .record(&runtime.stream)
-                    .map_err(|error| error.to_string())
-            }) {
-                // Partial submission still owns the job's host and GPU pages.
-                return finish_gpu_transfer(&runtime.stream, Err(error));
-            }
-            self.host_completion = Some(event);
+            // SAFETY: the pending job retains all layer/grant owners through poll_host.
+            self.host_completion = Some(
+                unsafe {
+                    runtime.backend.submit(
+                        &copies,
+                        &super::super::host_owners(layers),
+                        !self.is_write(),
+                    )
+                }
+                .map_err(|e| {
+                    if e.kind == ErrorKind::Unquiesced {
+                        crate::transfer::retain_gpu_work();
+                    }
+                    EngineError::Storage(e.to_string())
+                })?,
+            );
         }
         if !self.is_write() {
             self.bytes += bytes;
@@ -206,23 +202,21 @@ impl Job {
         Ok(())
     }
 
-    fn poll_host(&mut self, runtime: &WorkerRuntime) {
-        let Some(event) = &self.host_completion else {
+    fn poll_host(&mut self, _runtime: &WorkerRuntime) {
+        let Some(completion) = self.host_completion.as_mut() else {
             return;
         };
-        // This event covers only this job. A later copy on the shared stream
-        // must not delay its completion or block cuFile submission/polling.
-        match unsafe { result::event::query(event.cu_event()) } {
-            Ok(()) => {
+        match completion.poll() {
+            Ok(true) => {
                 #[cfg(feature = "test-hooks")]
                 if crate::test_faults::active("ssd_host_completion") {
                     return;
                 }
                 self.host_completion = None;
             }
-            Err(error) if error.0 == sys::CUresult::CUDA_ERROR_NOT_READY => {}
+            Ok(false) => {}
+            Err(error) if error.kind == ErrorKind::Unquiesced => crate::transfer::retain_gpu_work(),
             Err(error) => {
-                let _ = finish_gpu_transfer(&runtime.stream, Ok(()));
                 self.host_completion = None;
                 self.fail(error.to_string());
             }

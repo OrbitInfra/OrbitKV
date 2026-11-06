@@ -246,7 +246,11 @@ pub(super) fn restore(
         if !batch.decodes.is_empty() {
             let mut codec = runtime.codec.borrow_mut();
             if codec.is_none() {
-                *codec = Some(GpuCodec::new(runtime.stream.context()).map_err(fail)?);
+                *codec = Some(
+                    GpuCodec::new(runtime.stream.context())
+                        .map_err(fail)?
+                        .with_transfer(runtime.engine.clone()),
+                );
             }
             for decode in &batch.decodes {
                 // SAFETY: engine-complete input and actual targets outlive the codec drain.

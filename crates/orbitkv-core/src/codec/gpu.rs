@@ -31,14 +31,8 @@ pub(crate) struct EncodedBatch<'a> {
 }
 
 impl EncodedBatch<'_> {
-    pub(crate) fn backing(&self) -> Option<(u64, usize, Arc<dyn Send + Sync>)> {
-        self._owner.arena.as_ref().map(|arena| {
-            (
-                arena.allocation,
-                arena.bytes,
-                arena.clone() as Arc<dyn Send + Sync>,
-            )
-        })
+    pub(crate) fn backing(&self) -> Option<Arc<crate::transfer_engine::CudaRegistration>> {
+        self._owner.registration.clone()
     }
 }
 
@@ -49,6 +43,8 @@ pub(crate) struct DecodeInput<'a> {
     pub target_bytes: usize,
     pub meta: &'a EncodedSegment,
 }
+
+type PayloadUpload<'a> = dyn Fn(&[(u64, &[u8])]) -> Result<(), String> + 'a;
 
 pub(crate) struct HostDecodeInput<'a> {
     pub source: &'a [u8],
@@ -89,6 +85,8 @@ pub(crate) struct GpuCodec {
     codebooks: Vec<f32>,
     ans: Option<ans::Library>,
     arena: Option<Arc<Arena>>,
+    transfer: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
+    registration: Option<Arc<crate::transfer_engine::CudaRegistration>>,
     upload: Vec<u8>,
     readback: Vec<u8>,
 }
@@ -373,9 +371,30 @@ impl GpuCodec {
             codebooks,
             ans: None,
             arena: None,
+            transfer: None,
+            registration: None,
             upload: Vec::new(),
             readback: Vec::new(),
         })
+    }
+
+    pub(crate) fn with_transfer(
+        mut self,
+        transfer: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
+    ) -> Self {
+        self.transfer = transfer;
+        self
+    }
+
+    fn release_arena(&mut self) -> Result<(), String> {
+        if let Some(registration) = &self.registration {
+            registration
+                .close()
+                .map_err(crate::transfer_engine::local::failure)?;
+        }
+        self.registration = None;
+        self.arena = None;
+        Ok(())
     }
 
     fn ans(&mut self) -> Result<&ans::Library, String> {
@@ -397,7 +416,7 @@ impl GpuCodec {
                 return Err("GPU codec must stay on its worker stream".into());
             }
             if arena.bytes > budget {
-                self.arena = None;
+                self.release_arena()?;
             }
         }
         Ok(())
@@ -415,7 +434,7 @@ impl GpuCodec {
         if self.arena.as_ref().is_none_or(|a| a.bytes < bytes) {
             // Release the previous high-water allocation first so growth itself
             // never temporarily doubles the configured resident GPU budget.
-            self.arena = None;
+            self.release_arena()?;
             // cuMemAlloc (not the async pool) also permits cuFileBufRegister.
             let allocation = unsafe { result::malloc_sync(bytes) }.map_err(|e| e.to_string())?;
             let base = allocation.next_multiple_of(ALIGNMENT as u64);
@@ -431,6 +450,26 @@ impl GpuCodec {
             crate::metrics::core_metrics()
                 .storage_codec_workspace_allocations
                 .add(1, &[]);
+            if let (Some(transfer), Some(arena)) = (&self.transfer, &self.arena) {
+                // SAFETY: registration retains the actual synchronous allocation and stream.
+                let registered = unsafe {
+                    crate::transfer_engine::CudaRegistration::new(
+                        Some(transfer.clone()),
+                        allocation,
+                        bytes,
+                        self.ctx.ordinal() as i32,
+                        arena.clone(),
+                    )
+                };
+                match registered {
+                    Ok(registration) => self.registration = Some(registration),
+                    Err(error) => {
+                        let message = crate::transfer_engine::local::failure(error);
+                        self.arena = None;
+                        return Err(message);
+                    }
+                }
+            }
         }
         self.arena
             .as_ref()
@@ -730,6 +769,7 @@ impl GpuCodec {
         stream: &Arc<CudaStream>,
         inputs: &[HostDecodeInput<'_>],
         budget: usize,
+        upload: Option<&PayloadUpload<'_>>,
     ) -> Result<usize, String> {
         let mut inputs = &inputs[..inputs.len().min(MAX_BATCH_SEGMENTS)];
         let mut device_inputs: Vec<_> = inputs
@@ -788,32 +828,29 @@ impl GpuCodec {
         let mut guard = Drain::new(stream);
         if !entries.is_empty() {
             self.upload_header(stream, &layout, base)?;
-            for e in &entries {
-                // SAFETY: inputs outlive the drain, and each upload has a
-                // separate, checked arena slot with sufficient capacity.
-                unsafe {
-                    result::memcpy_htod_async(
-                        e.source,
-                        &inputs[e.index].source[..e.stored],
-                        stream.cu_stream(),
-                    )
-                }
-                .map_err(|e| e.to_string())?;
+        }
+        let uploads: Vec<_> = entries
+            .iter()
+            .map(|e| (e.source, &inputs[e.index].source[..e.stored]))
+            .chain(
+                inputs
+                    .iter()
+                    .filter(|input| input.meta.format == StorageFormat::Exact)
+                    .map(|input| (input.target, &input.source[..input.meta.stored_bytes])),
+            )
+            .collect();
+        if let Some(upload) = upload {
+            upload(&uploads)?;
+        } else if self.transfer.is_some() {
+            return Err("codec payload upload requires its selected transfer engine".into());
+        } else {
+            for (target, source) in &uploads {
+                // SAFETY: standalone codec controls retain inputs until this method drains.
+                unsafe { result::memcpy_htod_async(*target, source, stream.cu_stream()) }
+                    .map_err(|e| e.to_string())?;
             }
         }
         record_batch("decode", inputs.len());
-        for input in inputs {
-            if input.meta.format == StorageFormat::Exact {
-                unsafe {
-                    result::memcpy_htod_async(
-                        input.target,
-                        &input.source[..input.meta.stored_bytes],
-                        stream.cu_stream(),
-                    )
-                }
-                .map_err(|e| e.to_string())?;
-            }
-        }
         if !entries.is_empty() {
             self.launch_groups(stream, &entries, &groups, &layout, base, false)?;
             self.download_results(stream, &layout, base)?;

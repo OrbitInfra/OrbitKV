@@ -153,7 +153,10 @@ impl Storage {
         // Mooncake must be created after the allocator so it can register the
         // pinned pool. An empty rail filter lets Mooncake choose TCP fallback.
         #[cfg(any(feature = "mooncake", feature = "orbitte"))]
-        let peer_transport = if global_index.is_some() || engine_ssd {
+        let peer_transport = if global_index.is_some()
+            || engine_ssd
+            || config.peer_transfer_backend != crate::PeerTransferBackend::Mooncake
+        {
             let advertise = config
                 .membership
                 .as_ref()

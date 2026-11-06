@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use cudarc::driver::{CudaContext, CudaEvent, CudaStream, sys};
-use orbitkv_core::transfer::{CopyDesc, KernelBackend, MemcpyBackend, TransferBackend};
+use orbitkv_core::transfer::{CopyDesc, KernelBackend, MemcpyBackend, TentCopy};
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use serde::Serialize;
@@ -325,7 +325,7 @@ fn monotonic_ns() -> u64 {
 }
 
 fn submit(
-    backend: &dyn TransferBackend,
+    backend: &dyn TentCopy,
     copies: &[CopyDesc],
     stream: &Arc<CudaStream>,
     h2d: bool,
@@ -459,7 +459,13 @@ fn main() {
     let context = CudaContext::new(0).expect("CUDA context");
     let device_uuid = format!(
         "GPU-{}",
-        Uuid::from_bytes(context.uuid().expect("CUDA UUID").bytes.map(|v| v as u8))
+        Uuid::from_bytes(
+            context
+                .uuid()
+                .expect("CUDA UUID")
+                .bytes
+                .map(|v| v.to_ne_bytes()[0])
+        )
     );
     let mut device_file = OpenOptions::new()
         .write(true)
@@ -477,7 +483,7 @@ fn main() {
     let stream = context.new_stream().expect("dedicated CUDA stream");
     let kernel = KernelBackend::new(&context).expect("production kernel backend");
     let dma = MemcpyBackend::new(&context).expect("production DMA backend");
-    let backends: [&dyn TransferBackend; 2] = [&kernel, &dma];
+    let backends: [&dyn TentCopy; 2] = [&kernel, &dma];
     let events = Events::new(&context);
     let max_pitch = usize::try_from(
         context

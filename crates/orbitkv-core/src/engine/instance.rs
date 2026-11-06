@@ -339,8 +339,11 @@ impl GpuContext {
         transfer_mode: TransferMode,
         kv_caches: HashMap<String, KVCacheLayout>,
         layer_groups: HashMap<String, u32>,
+        transfer_engine: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
     ) -> Result<Self, EngineError> {
-        let worker_pool = GpuWorkerPool::new(device_id, numa_node, transfer_mode)?;
+        let owner = kv_caches.values().find_map(|layout| layout.owner.clone());
+        let worker_pool =
+            GpuWorkerPool::new(device_id, numa_node, transfer_mode, owner, transfer_engine)?;
 
         Ok(Self {
             device_id,
@@ -438,6 +441,7 @@ pub struct InstanceContext {
 
     /// Registration state and GPU contexts protected by a single mutex.
     state: Mutex<RegistrationState>,
+    transfer_engine: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
 }
 
 impl InstanceContext {
@@ -451,6 +455,7 @@ impl InstanceContext {
         tp_size: usize,
         world_size: usize,
         page_first: bool,
+        transfer_engine: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
     ) -> Result<Self, String> {
         if tp_size == 0 || world_size == 0 {
             return Err("tp_size and world_size must be > 0".into());
@@ -459,6 +464,7 @@ impl InstanceContext {
         Ok(Self {
             id,
             generation: uuid::Uuid::new_v4(),
+            transfer_engine,
             namespace,
             tp_size,
             world_size,
@@ -826,6 +832,7 @@ impl InstanceContext {
             transfer_mode,
             kv_caches,
             layer_groups,
+            self.transfer_engine.clone(),
         )?))
     }
 

@@ -88,7 +88,7 @@ See [transport](transport.md), [engine-local restore](engine-local-restore.md)
 and [adapter contracts](adapters.md).
 
 - [x] Runtime transfer-backend boundary for TENT and OrbitTE, retaining peer
-  grants and completion ownership, with OrbitTE pinned at `36516152` and one
+  grants and completion ownership, with OrbitTE pinned at `c3700f00` and one
   shared registry `cudarc` 0.19.8. READ/WRITE, registration, cancellation and
   shutdown contracts are implemented; hardware and installed qualification at
   this pin remain open. The prior profile results below do not qualify this
@@ -117,7 +117,7 @@ and [adapter contracts](adapters.md).
   and exposing asynchronous terminal evidence without weakening physical drain.
   Real-file CPU gates cover both providers; GPU/GDS/installed qualification
   remains open. See [file contracts](transport.md#ssd-file-transfers).
-- [x] A2 is implemented pending review: OrbitTE `36516152` consumes one file
+- [x] A2 was independently accepted and merged as `25ebc535`: OrbitTE consumes one file
   vector per extent with `Padding` for gaps/tails, and `gds_enabled` prevents
   unconfigured cuFile loading. `storage/ssd/gpu.rs` and its zero buffers are
   deleted. Persistent tensor/codec input registrations and actual codec arena
@@ -125,11 +125,14 @@ and [adapter contracts](adapters.md).
   native vectors for aligned ranges; only its bounded padding/unaligned repair
   adapter remains until the fork adds those contracts. CPU real-file and owner
   gates cover both providers; GPU/GDS/installed profiles remain unqualified.
-- [ ] C follows A2: consume OrbitTE's `cuda::local_copy` API from #156, binding
-  one `LocalCopyEngine` per worker stream and retaining each submitted completion
-  until its bytes can be reused. See OrbitTE's `docs/local-copy.md`. TENT keeps
-  the existing Memcpy/Kernel implementation behind the shared backend boundary;
-  OrbitTE must never call those implementations.
+- [x] C is implemented pending independent review: OrbiTE `c3700f00` owns
+  Manager and client local GPU↔DRAM payload copies through one `LocalCopyEngine`
+  per worker stream. Completions retain registrations and pinned slots through
+  drain; TENT keeps Memcpy/Kernel behind the same boundary. Lifecycle 10 carries
+  the Manager-selected engine to the client. CPU CUDA-shim byte/retention controls
+  and installed direct/kernel gates are written; installed GPU profiles remain
+  unqualified. See [local copy contracts](transport.md#local-gpudram-copies).
+  The repository/crate/feature/environment rename remains a separate PR.
 
 - [x] Explicit registration identity and failure propagation; retry ownership
   retained after failed unregister.

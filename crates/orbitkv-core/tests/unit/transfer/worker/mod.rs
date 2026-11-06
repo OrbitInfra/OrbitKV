@@ -1,7 +1,7 @@
 use super::*;
 
 fn empty_save_instance() -> Arc<InstanceContext> {
-    Arc::new(InstanceContext::new("cpu-save".into(), "cpu-save".into(), 1, 1, false).unwrap())
+    Arc::new(InstanceContext::new("cpu-save".into(), "cpu-save".into(), 1, 1, false, None).unwrap())
 }
 
 #[test]
@@ -149,6 +149,9 @@ async fn shared_admission_saturation_falls_back_before_worker_submission() {
         let (load_tx, _load_rx) = mpsc::unbounded_channel();
         let (save_tx, mut save_rx) = mpsc::unbounded_channel();
         let pool = GpuWorkerPool {
+            local_device: None,
+            engine: None,
+
             device_id: i32::MAX - 3,
             numa_node: NumaNode::UNKNOWN,
             transfer_mode: TransferMode::Direct,
@@ -196,6 +199,8 @@ fn managed_restore_rejects_overlapping_targets_before_dispatch() {
     let (load_tx, mut load_rx) = mpsc::unbounded_channel();
     let (save_tx, _save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
+        local_device: None,
+        engine: None,
         device_id: 0,
         numa_node: NumaNode::UNKNOWN,
         transfer_mode: TransferMode::Direct,
@@ -258,6 +263,8 @@ fn restore_plan_must_target_the_worker_device() {
     let (load_tx, mut load_rx) = mpsc::unbounded_channel();
     let (save_tx, _save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
+        local_device: None,
+        engine: None,
         device_id: 0,
         numa_node: NumaNode::UNKNOWN,
         transfer_mode: TransferMode::Direct,
@@ -304,6 +311,8 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     let cufile_admission = Arc::new(Semaphore::new(1));
     let cufile_owner = Arc::clone(&cufile_admission).try_acquire_owned().unwrap();
     let pool = Arc::new(GpuWorkerPool {
+        local_device: None,
+        engine: None,
         device_id: 0,
         numa_node: NumaNode::UNKNOWN,
         transfer_mode: TransferMode::Direct,
@@ -631,7 +640,7 @@ fn managed_restore_retains_sources_and_reservations_through_partial_submission_d
         gate: Mutex<Option<Gate>>,
         submitted: std_mpsc::Sender<()>,
     }
-    impl TransferBackend for PartialBackend {
+    impl crate::transfer::TentCopy for PartialBackend {
         fn h2d(&self, copies: &[CopyDesc], stream: &Arc<CudaStream>) -> Result<(), String> {
             let gate = Box::into_raw(Box::new(self.gate.lock().take().unwrap()));
             // SAFETY: the callback owns the gate until it returns and does not call CUDA.
@@ -647,7 +656,7 @@ fn managed_restore_retains_sources_and_reservations_through_partial_submission_d
                 unsafe { drop(Box::from_raw(gate)) };
                 return Err(error.to_string());
             }
-            MemcpyBackend::new(stream.context())?.h2d(copies, stream)?;
+            crate::transfer::MemcpyBackend::new(stream.context())?.h2d(copies, stream)?;
             self.submitted.send(()).unwrap();
             Err("injected failure after accepting a copy".into())
         }
@@ -721,14 +730,17 @@ fn managed_restore_retains_sources_and_reservations_through_partial_submission_d
         .unwrap();
     drop(sender);
     let worker = std::thread::spawn(move || {
-        let mut runtime = init_worker(0, TransferMode::Direct).unwrap();
-        runtime.backend = Box::new(PartialBackend {
-            gate: Mutex::new(Some(Gate {
-                entered: entered_tx,
-                release: release_rx,
-            })),
-            submitted: submitted_tx,
-        });
+        let mut runtime = init_worker(0, TransferMode::Direct, None, None).unwrap();
+        runtime.backend = crate::transfer_engine::local::TentLocalCopy::control(
+            runtime.stream.clone(),
+            Box::new(PartialBackend {
+                gate: Mutex::new(Some(Gate {
+                    entered: entered_tx,
+                    release: release_rx,
+                })),
+                submitted: submitted_tx,
+            }),
+        );
         worker_loop(0, receiver, runtime);
     });
     entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -762,6 +774,8 @@ async fn submitted_save_reply_loss_is_not_a_completed_error() {
     let (load_tx, _load_rx) = mpsc::unbounded_channel();
     let (save_tx, mut save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
+        local_device: None,
+        engine: None,
         device_id: i32::MAX - 31,
         numa_node: NumaNode::UNKNOWN,
         transfer_mode: TransferMode::Direct,
@@ -811,6 +825,8 @@ async fn save_completion_receipt_releases_admission_after_queued_no_dma_work() {
     let (load_tx, _load_rx) = mpsc::unbounded_channel();
     let (save_tx, mut save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
+        local_device: None,
+        engine: None,
         device_id: i32::MAX - 32,
         numa_node: NumaNode::UNKNOWN,
         transfer_mode: TransferMode::Direct,
@@ -884,6 +900,8 @@ async fn save_queue_admission_child() {
     let (load_tx, _load_rx) = mpsc::unbounded_channel();
     let (save_tx, mut save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
+        local_device: None,
+        engine: None,
         device_id: i32::MAX - 33,
         numa_node: NumaNode::UNKNOWN,
         transfer_mode: TransferMode::Direct,
