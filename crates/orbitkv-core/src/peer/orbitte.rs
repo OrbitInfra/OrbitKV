@@ -1,3 +1,4 @@
+mod local;
 use std::collections::HashSet;
 use std::mem::ManuallyDrop;
 use std::net::{IpAddr, SocketAddr};
@@ -363,6 +364,22 @@ impl OrbitTeTransport {
 }
 
 impl TransferBackend for OrbitTeTransport {
+    fn local_engine(&self) -> crate::PeerTransferBackend {
+        match self.payload {
+            Transport::Rdma => crate::PeerTransferBackend::OrbitTeRdma,
+            _ => crate::PeerTransferBackend::OrbitTeTcp,
+        }
+    }
+
+    fn bind_local(
+        self: Arc<Self>,
+        stream: Arc<cudarc::driver::CudaStream>,
+        mode: crate::transfer::TransferMode,
+        device: u64,
+    ) -> Result<Box<dyn crate::transfer_engine::local::LocalCopy>, TransferError> {
+        Ok(Box::new(local::Copies::new(self, stream, mode, device)?))
+    }
+
     fn transfer_endpoint(&self) -> &str {
         &self.endpoint
     }

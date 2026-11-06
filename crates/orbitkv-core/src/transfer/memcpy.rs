@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use cudarc::driver::{CudaContext, CudaStream, sys};
 
-use super::{CopyDesc, TransferBackend};
+use super::{CopyDesc, TentCopy};
 
 mod ranges;
 pub(super) use ranges::dma_copies;
@@ -97,7 +97,7 @@ impl MemcpyBackend {
     }
 }
 
-impl TransferBackend for MemcpyBackend {
+impl TentCopy for MemcpyBackend {
     fn h2d(&self, copies: &[CopyDesc], stream: &Arc<CudaStream>) -> Result<(), String> {
         self.submit(copies, stream, true)
     }

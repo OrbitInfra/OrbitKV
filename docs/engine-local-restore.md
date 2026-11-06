@@ -5,7 +5,8 @@
 Unencoded DRAM Restore now submits CUDA work inside the inference process.
 The Manager prepares a pointer-free plan and retains the exact source
 allocations and query byte reservations. A native engine worker imports the
-shared payload arenas, copies into the engine's retained tensors, and reports
+shared payload arenas, submits to the Manager-selected transfer engine for copies
+into retained tensors, and reports
 whole-operation completion after its copy stream drains. Both vLLM and SGLang
 hand their tensors and destination readiness stream to this worker.
 
@@ -20,7 +21,8 @@ start that layer while later copies continue. All source, destination, query and
 event owners remain retained through a separate whole-operation drain. Large raw
 plans execute in bounded parts under that same ownership fence. Manager-owned
 SSD/codec execution still publishes consumer events only after its final drain.
-The frozen single-GPU native/fault bundle passed **38 tests**, with **30 cuFile cases skipped** because that
+The following historical results predate the OrbiTE local-copy integration and
+do not qualify it. The frozen single-GPU native/fault bundle passed **38 tests**, with **30 cuFile cases skipped** because that
 configuration was not selected. This includes the new local Restore lifecycle
 cases; the caller CUDA-context preservation test also passed. See the
 [recorded artifacts and scoped results](fault-qualification.md#engine-local-raw-restore-gates).
@@ -37,7 +39,8 @@ qualification remain open. Correctness alone does not establish a serving speedu
    Manager physical routes. The native client validates destination geometry
    and keeps these objects alive.
 2. A successful GPU registration reply transfers the Manager's payload arena
-   FDs over authenticated UDS with `SCM_RIGHTS`. The engine independently maps
+   FDs and the selected byte engine over authenticated UDS with `SCM_RIGHTS`.
+   Lifecycle 10 requires matching artifacts. The engine independently maps
    each size-sealed memfd and registers that mapping with its CUDA primary
    context. Registration is per arena and GPU binding, not per restored block.
 3. `start_restore(..., ready_stream=...)` reserves native operation ownership
@@ -57,9 +60,10 @@ qualification remain open. Correctness alone does not establish a serving speedu
    layer's final range across all parts; cache schema 10 rejects mismatched clients.
 5. The Manager installs the grant owner before publishing `Granted`. The native
    worker wins `Granted → Active`, copies the plan locally, validates source
-   and destination ranges, and submits through the existing memcpy or mapped
-   memory kernel backend. Direct DMA groups contiguous ranges or explicit
-   equal-width strided rows within one CUDA host registration and GPU allocation.
+   and destination ranges, and submits through the shared local-copy boundary.
+   OrbiTE owns its local DMA/kernel implementation; TENT keeps OrbitKV's existing
+   implementation. Both preserve contiguous/strided rows within physical
+   registration and GPU allocation bounds.
    Each source allocation retains its own generation, checked bounds and lease;
    no gaps or unlisted rows become accessible through coalescing.
 6. Each layer event is recorded after all its required ranges. The native

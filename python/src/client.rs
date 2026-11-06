@@ -926,8 +926,18 @@ impl PyCacheManagerClient {
                     TransferMode::Kernel => LocalTransferMode::Kernel,
                 };
                 let arena_count = arenas.len();
-                let executor = LocalRestoreExecutor::new(device, bindings, arenas, mode)
-                    .map_err(OrbitKVInternal::new_err)?;
+                let executor = LocalRestoreExecutor::with_engine(
+                    device,
+                    bindings,
+                    arenas,
+                    mode,
+                    receipt
+                        .transfer_engine
+                        .parse()
+                        .map_err(OrbitKVInternal::new_err)?,
+                    exporter_owners.clone(),
+                )
+                .map_err(OrbitKVInternal::new_err)?;
                 LocalRestoreWorker::new(
                     Arc::clone(&self.inner),
                     executor,

@@ -304,6 +304,21 @@ jobs:
           LIBCLANG_PATH: /usr/lib/llvm-18/lib
           CLANG_PATH: /usr/bin/clang-18
 
+      - name: OrbiTE local-copy CPU CUDA-shim byte and ownership gates
+        run: |
+          mkdir -p "$RUNNER_TEMP/orbitkv-local-copy-control"
+          c++ -std=c++20 -Wall -Wextra -Werror -shared -fPIC crates/orbitkv-core/tests/native/local_copy_cuda_shim.cpp -o "$RUNNER_TEMP/orbitkv-local-copy-control/libcuda.so.1"
+          ln -s libcuda.so.1 "$RUNNER_TEMP/orbitkv-local-copy-control/libcuda.so"
+          # Driver calls move CPU fixture bytes, not hardware-qualified GPU bytes.
+          export LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-local-copy-control:$RUNNER_TEMP/orbitkv-cpu-host-control"
+          export ORBITKV_REQUIRE_LOCAL_COPY_SHIM=1
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte-gds --lib peer::orbitte::local::tests -- --ignored --test-threads=1
+          cargo test --locked -p orbitkv-core --features orbitte --lib peer::orbitte::local::tests -- --ignored --test-threads=1
+        env:
+          CUDA_PATH: /usr/local/cuda
+          LIBCLANG_PATH: /usr/lib/llvm-18/lib
+          CLANG_PATH: /usr/bin/clang-18
+
       - name: SSD engine real-file byte and ownership gates
         run: |
           CC=gcc CXX=g++ cargo clippy --locked -p orbitkv-server -p orbitkv-core --all-targets --no-default-features --features cuda-13,orbitte-gds -- -D warnings

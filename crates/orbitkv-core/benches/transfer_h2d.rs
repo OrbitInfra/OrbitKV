@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use cudarc::driver::{CudaContext, CudaStream, sys};
-use orbitkv_core::transfer::{CopyDesc, KernelBackend, MemcpyBackend, TransferBackend};
+use orbitkv_core::transfer::{CopyDesc, KernelBackend, MemcpyBackend, TentCopy};
 
 const SEG: usize = 4096;
 const STRIDE_FACTOR: usize = 2;
@@ -48,7 +48,7 @@ impl Direction {
 
     fn submit(
         self,
-        backend: &dyn TransferBackend,
+        backend: &dyn TentCopy,
         copies: &[CopyDesc],
         stream: &Arc<CudaStream>,
     ) -> Result<(), String> {
@@ -315,7 +315,7 @@ fn shuffled_slots(n: usize) -> Vec<usize> {
 }
 
 fn measure(
-    backend: &dyn TransferBackend,
+    backend: &dyn TentCopy,
     direction: Direction,
     copies: &[CopyDesc],
     stream: &Arc<CudaStream>,
@@ -342,7 +342,7 @@ fn print_result(
     layout: FragmentLayout,
     blocks: usize,
     direction: Direction,
-    backend: &dyn TransferBackend,
+    backend: &dyn TentCopy,
     avg_ms: f64,
     gibps: f64,
 ) {
@@ -380,7 +380,7 @@ fn main() {
         "layout", "blocks", "total", "direction", "backend", "avg_ms", "GiB/s"
     );
 
-    let backends: [&dyn TransferBackend; 2] = [&memcpy, &kernel];
+    let backends: [&dyn TentCopy; 2] = [&memcpy, &kernel];
 
     for &layout in LAYOUTS {
         for &blocks in BLOCK_COUNTS {

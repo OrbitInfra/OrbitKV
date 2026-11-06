@@ -91,7 +91,7 @@ fn kernel_matches_direct_both_directions() {
         assert_eq!(copies.len(), N);
         assert_eq!(copies.iter().map(|copy| copy.size).sum::<usize>(), total);
         for round in 0..4 {
-            let backend: &dyn TransferBackend = if round % 2 == 0 { &kernel } else { &memcpy };
+            let backend: &dyn TentCopy = if round % 2 == 0 { &kernel } else { &memcpy };
             // Include descriptor identity and the round so stale data or
             // misrouted ranges cannot hide behind a short repeating byte pattern.
             for (index, byte) in pattern.iter_mut().enumerate() {

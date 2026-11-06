@@ -1,4 +1,4 @@
-//! GPU<->CPU KV-cache transfer backends.
+//! TENT local GPU<->CPU copy implementations and KV layout planning.
 //!
 //! A transfer is a batch of independent contiguous copies, each described by a
 //! [`CopyDesc`] (`device` address, `host` address, `size`). The same batch can
@@ -12,7 +12,8 @@
 //!   number of fragments; best when the batch is highly fragmented and the
 //!   per-call launch latency of the memcpy path dominates.
 //!
-//! Both backends only *enqueue* onto the caller's stream and never synchronize,
+//! The shared `transfer_engine::TransferBackend` selects the stream binding.
+//! Only its TENT implementation uses these native backends. Both only *enqueue* onto the caller's stream and never synchronize,
 //! so a caller can batch many layers and synchronize exactly once.
 
 mod kernel;
@@ -34,7 +35,7 @@ use cudarc::driver::CudaStream;
 /// address used by CUDA memcpy. `host_device` is the device-visible address for
 /// the same mapped pinned memory, queried at allocation time; registered and
 /// write-combined host memory must not assume host and device pointer values are
-/// identical. The direction is fixed by which [`TransferBackend`] method is
+/// identical. The direction is fixed by which [`TentCopy`] method is
 /// called, not stored.
 #[derive(Clone, Copy)]
 pub struct CopyDesc {
@@ -54,7 +55,7 @@ unsafe impl Send for CopyDesc {}
 
 /// Enqueue a batch of copies onto a CUDA stream. Implementations must only
 /// submit work; synchronization is the caller's responsibility.
-pub trait TransferBackend: Send {
+pub trait TentCopy: Send {
     /// Host -> device.
     fn h2d(&self, copies: &[CopyDesc], stream: &Arc<CudaStream>) -> Result<(), String>;
     /// Device -> host.
@@ -63,7 +64,7 @@ pub trait TransferBackend: Send {
     fn name(&self) -> &'static str;
 }
 
-/// Which [`TransferBackend`] an instance's GPU worker pools use. The connector
+/// Which [`TentCopy`] an instance's GPU worker pools use. The connector
 /// picks this per model (kernel for MLA, direct otherwise) and sends it with
 /// the registration; the pools are spawned per (instance, GPU), so each
 /// instance can run a different backend.
@@ -90,7 +91,7 @@ pub(crate) fn retain_gpu_work() -> ! {
     }
 }
 
-pub(super) fn contain_gpu_unwind<R>(operation: impl FnOnce() -> R) -> R {
+pub(crate) fn contain_gpu_unwind<R>(operation: impl FnOnce() -> R) -> R {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)) {
         Ok(result) => result,
         Err(_) => retain_gpu_work(),
@@ -139,24 +140,30 @@ fn raw_copy_shape(
 
 /// Manager raw batches keep their original enqueue and physical drain boundary.
 pub(crate) fn copy_and_drain(
-    backend: &dyn TransferBackend,
+    backend: &dyn crate::transfer_engine::local::LocalCopy,
     stream: &Arc<CudaStream>,
     copies: &[CopyDesc],
+    hosts: &[crate::transfer_engine::local::LocalHost],
     to_device: bool,
     max_pitch: usize,
 ) -> Result<(), crate::EngineError> {
     let diagnostic = orbitkv_common::timeline::diagnostic_enabled() && !copies.is_empty();
     let started = diagnostic.then(std::time::Instant::now);
     let submitted = contain_gpu_unwind(|| {
-        if to_device {
-            backend.h2d(copies, stream)
-        } else {
-            backend.d2h(copies, stream)
-        }
+        // SAFETY: worker owns source grants, GPU registrations and host slots until drain.
+        unsafe { backend.submit(copies, hosts, to_device) }
     });
     let cpu_submit_ns = started.map(|started| started.elapsed().as_nanos() as u64);
     let drain_started = diagnostic.then(std::time::Instant::now);
-    let result = finish_gpu_transfer(stream, submitted);
+    let submitted = match submitted {
+        Err(error) if error.kind == crate::transfer_engine::ErrorKind::Unquiesced => {
+            retain_gpu_work()
+        }
+        result => result,
+    };
+    let result = submitted
+        .and_then(|mut completion| crate::transfer_engine::local::drain(completion.as_mut()))
+        .map_err(|e| crate::EngineError::Storage(e.to_string()));
     if let (Some(cpu_submit_ns), Some(drain_started)) = (cpu_submit_ns, drain_started) {
         let host_drain_ns = drain_started.elapsed().as_nanos() as u64;
         let mut fields = raw_copy_shape(copies, max_pitch);

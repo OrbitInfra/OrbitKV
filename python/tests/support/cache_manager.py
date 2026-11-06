@@ -273,7 +273,7 @@ class ClientContext:
         self._registered = False
         self.registration = None
 
-    def register_kv_caches(self) -> None:
+    def register_kv_caches(self, *, transfer_backend: str = "direct") -> None:
         """Register KV cache tensors with the engine server (like WorkerAdapter.register_kv_caches)."""
 
         if self._registered:
@@ -324,7 +324,7 @@ class ClientContext:
             bytes_per_block_list,
             kv_stride_bytes_list,
             segments_list,
-            "direct",
+            transfer_backend,
             False,
             tensors=list(kv_caches.values()),
             layer_attention=[

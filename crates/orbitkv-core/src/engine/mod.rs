@@ -209,6 +209,7 @@ impl OrbitKVEngine {
             tp_size,
             world_size,
             page_first,
+            self.transfer_backend(),
         )
         .map_err(EngineError::InvalidArgument)?;
 

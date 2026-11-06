@@ -22,7 +22,7 @@ use crate::memory::numa::{NumaNode, pin_thread_to_numa_node};
 use crate::metrics::core_metrics;
 use crate::planning::restore::RestorePlan;
 use crate::transfer::layout::{BlockCopies, KVCacheLayout};
-use crate::transfer::{CopyDesc, KernelBackend, MemcpyBackend, TransferBackend, TransferMode};
+use crate::transfer::{CopyDesc, TransferMode};
 
 mod codec;
 #[cfg(any(feature = "mooncake", feature = "orbitte"))]
@@ -160,6 +160,8 @@ pub(crate) struct GpuWorkerPool {
     device_id: i32,
     numa_node: NumaNode,
     pub(crate) transfer_mode: TransferMode,
+    local_device: Option<Arc<crate::transfer_engine::CudaRegistration>>,
+    engine: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
     ssd_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     ssd_host_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     codec_write_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
@@ -417,13 +419,31 @@ impl GpuWorkerPool {
         device_id: i32,
         numa_node: NumaNode,
         transfer_mode: TransferMode,
+        local_device: Option<Arc<crate::transfer_engine::CudaRegistration>>,
+        engine: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
     ) -> Result<Self, EngineError> {
         Ok(Self {
             device_id,
             numa_node,
             transfer_mode,
-            load_tx: spawn_worker(device_id, numa_node, transfer_mode, "load")?,
-            save_tx: spawn_worker(device_id, numa_node, transfer_mode, "save")?,
+            load_tx: spawn_worker(
+                device_id,
+                numa_node,
+                transfer_mode,
+                "load",
+                local_device.clone(),
+                engine.clone(),
+            )?,
+            save_tx: spawn_worker(
+                device_id,
+                numa_node,
+                transfer_mode,
+                "save",
+                local_device.clone(),
+                engine.clone(),
+            )?,
+            local_device,
+            engine,
             ssd_tx: Mutex::new(None),
             ssd_host_tx: Mutex::new(None),
             codec_write_tx: Mutex::new(None),
@@ -460,6 +480,8 @@ impl GpuWorkerPool {
                     self.numa_node,
                     self.transfer_mode,
                     "encoded-writeback",
+                    self.local_device.clone(),
+                    self.engine.clone(),
                 ) {
                     Ok(worker) => *sender = Some(worker),
                     Err(error) => {
@@ -475,7 +497,7 @@ impl GpuWorkerPool {
         } else if matches!(&command, WorkerCommand::Load(task, _) if task.plan.ssd_path() == Some(crate::SsdReadPath::Uring)) {
             let mut sender = self.ssd_host_tx.lock();
             if sender.is_none() {
-                match spawn_worker(self.device_id, self.numa_node, self.transfer_mode, "ssd-host") {
+                match spawn_worker(self.device_id, self.numa_node, self.transfer_mode, "ssd-host", self.local_device.clone(), self.engine.clone()) {
                     Ok(worker) => *sender = Some(worker),
                     Err(error) => {
                         reject(command);
@@ -487,7 +509,7 @@ impl GpuWorkerPool {
         } else if disk {
             let mut sender = self.ssd_tx.lock();
             if sender.is_none() {
-                match spawn_worker(self.device_id, self.numa_node, self.transfer_mode, "ssd") {
+                match spawn_worker(self.device_id, self.numa_node, self.transfer_mode, "ssd", self.local_device.clone(), self.engine.clone()) {
                     Ok(worker) => *sender = Some(worker),
                     Err(error) => {
                         reject(command);
@@ -775,6 +797,8 @@ fn spawn_worker(
     numa: NumaNode,
     mode: TransferMode,
     name: &str,
+    local_device: Option<Arc<crate::transfer_engine::CudaRegistration>>,
+    engine: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
 ) -> Result<mpsc::UnboundedSender<WorkerCommand>, EngineError> {
     let (sender, receiver) = mpsc::unbounded_channel();
     let (ready_tx, ready_rx) = std_mpsc::channel();
@@ -787,7 +811,7 @@ fn spawn_worker(
             {
                 warn!("Failed to pin GPU worker: {error}");
             }
-            match init_worker(device_id, mode) {
+            match init_worker(device_id, mode, local_device, engine) {
                 Ok(runtime) => {
                     let _ = ready_tx.send(Ok(()));
                     if storage {
@@ -809,8 +833,9 @@ fn spawn_worker(
 }
 
 struct WorkerRuntime {
+    engine: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
     stream: Arc<CudaStream>,
-    backend: Box<dyn TransferBackend>,
+    backend: Box<dyn crate::transfer_engine::local::LocalCopy>,
     max_dma_pitch: usize,
     unquiesced: std::cell::Cell<bool>,
     peer_input: std::cell::RefCell<Option<Arc<crate::transfer_engine::CudaRegistration>>>,
@@ -822,6 +847,7 @@ impl WorkerRuntime {
         if self.unquiesced.get() {
             return Err("GPU transfer has not drained".into());
         }
+        self.backend.close().map_err(|e| e.to_string())?;
         if let Some(input) = self.peer_input.borrow().as_ref() {
             input.close().map_err(|e| e.to_string())?;
         }
@@ -837,7 +863,13 @@ impl WorkerRuntime {
     }
 }
 
-fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRuntime, EngineError> {
+fn init_worker(
+    device_id: i32,
+    transfer_mode: TransferMode,
+    local_device: Option<Arc<crate::transfer_engine::CudaRegistration>>,
+    engine: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
+) -> Result<WorkerRuntime, EngineError> {
+    let address = local_device.as_ref().map_or(0, |owner| owner.address);
     // Initialize CUDA context for this thread
     let ctx = CudaContext::new(device_id as usize)
         .map_err(|e| EngineError::CudaInit(format!("Failed to create CUDA context: {e:?}")))?;
@@ -848,12 +880,12 @@ fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRunt
     // Set thread-local diagnostic info
     ThreadLocalDiagnostic::insert("device_id", device_id.to_string());
 
-    let direct = MemcpyBackend::new(&ctx).map_err(EngineError::CudaInit)?;
-    let max_dma_pitch = direct.max_pitch;
-    let backend: Box<dyn TransferBackend> = match transfer_mode {
-        TransferMode::Direct => Box::new(direct),
-        TransferMode::Kernel => Box::new(KernelBackend::new(&ctx).map_err(EngineError::CudaInit)?),
-    };
+    let max_dma_pitch = ctx
+        .attribute(cudarc::driver::sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MAX_PITCH)
+        .map_err(|e| EngineError::CudaInit(e.to_string()))? as usize;
+    let backend =
+        crate::transfer_engine::local::bind(engine.clone(), stream.clone(), transfer_mode, address)
+            .map_err(|e| EngineError::CudaInit(e.to_string()))?;
 
     info!(
         "GPU worker initialized: device={} backend={}",
@@ -862,6 +894,7 @@ fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRunt
     );
 
     Ok(WorkerRuntime {
+        engine,
         stream,
         backend,
         max_dma_pitch,
@@ -953,6 +986,7 @@ fn worker_loop(
                             runtime.backend.as_ref(),
                             &runtime.stream,
                             &copies,
+                            &host_owners(layers),
                             true,
                             runtime.max_dma_pitch,
                         )?;
@@ -1300,6 +1334,19 @@ pub(crate) fn append_copy_descs(
     }
 }
 
+fn host_owners(layers: &[LayerTransferData]) -> Vec<crate::transfer_engine::local::LocalHost> {
+    let mut seen = std::collections::HashSet::new();
+    layers
+        .iter()
+        .flat_map(|layer| &layer.blocks)
+        .filter(|block| !block.block.is_external())
+        .flat_map(|block| block.block.raw().allocations())
+        .filter(|allocation| seen.insert(Arc::as_ptr(allocation) as usize))
+        .cloned()
+        .map(crate::transfer_engine::local::LocalHost::Pinned)
+        .collect()
+}
+
 /// Encoded/SSD restore and Publish retain layer payloads until their physical route
 /// is ready; compile their remaining raw ranges with the same source-bound checks.
 fn build_copy_descs(layers: &[LayerTransferData]) -> Result<(Vec<CopyDesc>, usize), EngineError> {
@@ -1417,7 +1464,14 @@ fn process_save_task(
         observation,
     );
     observation.submitted();
-    copy_and_drain(backend, stream, &copies, false, runtime.max_dma_pitch)?;
+    copy_and_drain(
+        backend,
+        stream,
+        &copies,
+        &host_owners(layers),
+        false,
+        runtime.max_dma_pitch,
+    )?;
 
     let elapsed = start.elapsed();
     let bandwidth_gbps = if elapsed.as_secs_f64() > 0.0 {

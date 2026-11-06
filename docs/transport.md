@@ -36,7 +36,7 @@ lookup. Both adapters capture it when queuing their producing step. The native
 client validates the original client and generation after acquiring its worker
 lock, so a wait or late callback cannot bind a replacement registration. Each
 Publish chunk carries the captured generation; the Core owner rechecks the same
-retained instance before topology or GPU pointer binding. Matching lifecycle 9
+retained instance before topology or GPU pointer binding. Matching lifecycle 10
 and cache schema 10 artifacts remain required; retired schemas are rejected.
 
 This is registration lifetime fencing, not allocation/page generation or a
@@ -629,7 +629,7 @@ the terminal query and six file functions through a separate TENT file engine.
 
 ## Runtime transfer backend
 
-`orbitkv-core::transfer_engine::TransferBackend` is the consumed peer and file transfer
+`orbitkv-core::transfer_engine::TransferBackend` is the consumed peer, file and local transfer
 boundary: retained pinned/CUDA registrations, explicit unregister, epoch-bound
 peer open, READ/WRITE batches with an absolute deadline and cancellation, typed
 errors, and irreversible shutdown/drain. The existing `--peer-transfer-backend`
@@ -643,7 +643,7 @@ registration because the pinned C ABI has no per-range permission argument.
 OrbitKV source grants remain authoritative for peer access in both profiles.
 
 OrbitTE is pinned to
-[`36516152f768b77837f9b3e1d0787f1f3fd0f4ce`](https://github.com/OrbitInfra/OrbitTE/commit/36516152f768b77837f9b3e1d0787f1f3fd0f4ce).
+[`c3700f00e104626725ea539263f73de640da2f64`](https://github.com/OrbitInfra/OrbiTE/commit/c3700f00e104626725ea539263f73de640da2f64).
 Run the same OrbitKV build on both peers.
 Requests use `Transport::Unspec` with a one-route selector policy, an absolute
 deadline, and no automatic failover. HP-TCP, SHM, NVLink, MNNVL and remote CUDA
@@ -662,7 +662,8 @@ slicing belongs to the engine. TENT retains its native batch/descriptor budgets 
 cached peer segments at 1,024. Process-wide registered owners retain their
 1,024-pool/1 TiB admission even after failed shutdown. The CUDA registration
 contract requires the actual allocation and CUDA context owner, completed
-producers and coordinated aliases; it is not a stream-ordered local copy API.
+producers and coordinated aliases. Local stream ordering uses the separate
+completion contract below.
 
 A cancellation only requests termination. An expired wait with active physical
 owners returns `Unquiesced`; registrations, source tickets and destination
@@ -880,12 +881,75 @@ native route. OrbitTE sets `EngineConfig::gds_enabled` only for configured
 `uring` or `auto` engines. Configured GDS discovers the driver lazily on its first
 eligible file submission; a missing runtime SDK fails that request.
 
+## Local GPU↔DRAM copies
+
+The selected engine also owns local payload movement in Manager Publish/Restore,
+codec payload uploads/downloads, mixed SSD jobs, and the native client's raw DRAM
+Restore. `TransferBackend::bind_local` binds once to each worker stream using a
+persistent tensor registration. TENT uses OrbitKV's existing MemcpyBackend and
+KernelBackend behind this method. OrbiTE uses `cuda::local_copy::LocalCopyEngine`;
+its path never constructs or calls either OrbitKV copy implementation. Existing
+`direct`/`kernel` instance choices map to OrbiTE DMA/kernel selection. Rust callers
+must supply owned tensor registrations for OrbiTE; unowned layouts fail binding.
+The native TENT helper trait is named `TentCopy`; `TransferBackend` is the shared
+engine boundary.
+
+OrbitKV supplies checked block/layer ranges. OrbiTE compiles contiguous and
+strided rows and owns descriptor uploads, copy kernels, events and DMA. A worker
+admits windows of at most 1,024 descriptors and 128 MiB; larger layouts drain
+preceding windows before submitting the next. Each binding has eight native
+slots and a 256 MiB payload/descriptor budget. Admission waits for completed slots
+and bytes before enqueueing; the client retains at most eight completion handles.
+Host registrations and tensor/codec registrations also consume the existing engine limits. No uncertain window is
+replayed. A failed submit, timeout or cancelled wait never authorizes byte reuse.
+A failed drain retains the source grant, slot, tensor, stream and completion.
+
+Each physical pinned pool has one `PinnedHostRegistration`, retaining its actual
+mapping independently of the allocator. Canonical `HostMemory` views additionally
+retain the specific allocator slot. Codec arenas keep registrations until they
+are replaced or released after drain; a stream binding anchors a persistent
+tensor so it cannot retain an obsolete codec arena. CPU decode writes into a
+charged pinned output slot. Codec kernels, descriptor/codebook uploads and status
+readback remain codec compute; they do not implement payload transport.
+
+Lifecycle **10** returns the Manager's selected engine with the registration
+receipt, requiring matching client/Manager artifacts. The client registers its
+actual retained tensor exporters and imported arena pins once. It records each
+framework layer event after that layer's engine submission and holds native
+completions through the whole-operation drain before publishing `Drained`.
+Existing readiness waits fence the producer before grant admission; compute on
+the worker stream is already ordered, so submission needs no extra ProducerEvent.
+OrbiTE still rejects overlapping active local-copy loans, including read aliases;
+callers must drain before reusing such ranges. Its general host registration API
+also follows the selected RDMA memory profile; it has no separate local-only
+native-registration profile. The default staged host profile needs no local-copy MR.
+
+CI builds `tests/native/local_copy_cuda_shim.cpp` as a private `libcuda.so.1` and
+requires `ORBITKV_REQUIRE_LOCAL_COPY_SHIM=1` for the ignored
+`peer::orbitte::local::tests` controls. They exercise production OrbiTE DMA/kernel
+owners with CPU bytes: 2D gaps, bounded windows, partial submission, client layer
+events/context restoration across thirteen layers, delayed slot retention and
+failed completion query.
+These controls provide no GPU qualification. The installed gate now covers both
+copy modes; with the private runtime and resources described in the installed
+profile, run:
+
+```sh
+ORBITKV_TEST_INSTALLED_ORBITTE=1 ORBITKV_TEST_STRICT_SHUTDOWN=1 \
+  python -m pytest -m release_smoke tests/release/test_installed_orbitte.py \
+  -k orbitte-tcp
+```
+
+This gate remains unrun for this revision. GPU, RDMA, GDS, serving and fault
+qualification remain separate. The dependency keeps the `orbit-te` crate,
+`orbit_te` imports and existing features/configuration names until the rename PR.
+
 ## Experimental OrbitTE allocation bridge
 
 The opt-in `orbitkv-core/orbitte` feature pins
-[OrbitTE `36516152`](https://github.com/OrbitInfra/OrbitTE/commit/36516152f768b77837f9b3e1d0787f1f3fd0f4ce).
+[OrbiTE `c3700f00`](https://github.com/OrbitInfra/OrbiTE/commit/c3700f00e104626725ea539263f73de640da2f64).
 `PinnedAllocation::orbitte_memory` returns a canonical `Arc<HostMemory>` retaining
-that exact allocation. A pool owner alone would keep the mapping alive while
+that exact allocation and its shared physical CUDA pin. A pool owner alone would keep the mapping alive while
 allowing a slot to be reused. The allocation holds only a weak cached view, so
 concurrent aliases share one access lock without creating a reference cycle.
 The unsafe caller must coordinate CPU, GPU and other process access; this lock

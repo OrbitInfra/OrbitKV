@@ -2,6 +2,7 @@
 
 mod cuda;
 pub use cuda::CudaRegistration;
+pub mod local;
 
 use std::fmt;
 use std::path::Path;
@@ -291,6 +292,21 @@ pub(crate) enum RegistrationInner {
 
 /// Selected once per Manager. Source authority stays in OrbitKV's grant owner.
 pub trait TransferBackend: Send + Sync {
+    fn local_engine(&self) -> crate::PeerTransferBackend {
+        crate::PeerTransferBackend::Mooncake
+    }
+
+    fn bind_local(
+        self: Arc<Self>,
+        _stream: Arc<cudarc::driver::CudaStream>,
+        _mode: crate::transfer::TransferMode,
+        _device: u64,
+    ) -> Result<Box<dyn local::LocalCopy>, TransferError> {
+        Err(TransferError::new(
+            ErrorKind::Unavailable,
+            "selected engine has no local copy implementation",
+        ))
+    }
     fn transfer_endpoint(&self) -> &str;
     fn source_epoch(&self) -> &str;
     fn accepts_endpoint(&self, endpoint: &str) -> bool;

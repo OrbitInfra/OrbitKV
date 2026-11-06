@@ -50,7 +50,7 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   Resolve their full physical GPU UUIDs; the native owner retains the Manager's
   resolved ordinal for Publish/Restore. Do not reuse the client's ordinal on the
   Manager or convert a UUID into an ordinal with physical `nvidia-smi` ordering.
-  Lifecycle protocol 9 requires matching installed client and Manager artifacts.
+  Lifecycle protocol 10 requires matching installed client and Manager artifacts.
   The selected Torch 2.13 cudaMalloc IPC storage handle has a version/type
   envelope around the native CUDA handle. Keep the validated 66-byte version-3
   cudaMalloc export unchanged through the importer; bare legacy and expandable

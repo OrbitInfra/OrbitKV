@@ -113,6 +113,10 @@ pub(crate) struct Segment {
 }
 
 impl Segment {
+    pub(crate) fn allocation(&self) -> &Arc<PinnedAllocation> {
+        &self._allocation
+    }
+
     pub(crate) fn host_ptr(&self) -> NonNull<u8> {
         self.ptr.host()
     }

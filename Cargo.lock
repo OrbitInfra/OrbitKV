@@ -2063,7 +2063,7 @@ dependencies = [
 [[package]]
 name = "orbit-te"
 version = "0.1.0-alpha.1"
-source = "git+https://github.com/OrbitInfra/OrbitTE?rev=36516152f768b77837f9b3e1d0787f1f3fd0f4ce#36516152f768b77837f9b3e1d0787f1f3fd0f4ce"
+source = "git+https://github.com/OrbitInfra/OrbitTE?rev=c3700f00e104626725ea539263f73de640da2f64#c3700f00e104626725ea539263f73de640da2f64"
 dependencies = [
  "bindgen 0.71.1",
  "cc",

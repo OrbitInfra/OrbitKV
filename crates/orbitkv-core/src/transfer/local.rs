@@ -8,10 +8,13 @@ use std::sync::Arc;
 use cudarc::driver::{CudaContext, CudaEvent, CudaStream, result, sys};
 
 use super::layout::{KVCacheGeometry, KVCacheLayout};
-use super::{CopyDesc, KernelBackend, MemcpyBackend, TransferBackend, TransferMode};
+use super::{CopyDesc, TransferMode};
 use crate::PayloadArena;
 
+#[cfg(feature = "orbitte")]
+mod orbitte;
 mod trace;
+use crate::transfer_engine::local::{LocalCompletion, LocalCopy, LocalHost};
 use trace::LocalCopyTrace;
 
 pub const MAX_PLAN_BYTES: usize = 1024 * 1024;
@@ -176,6 +179,8 @@ pub struct LocalTensor {
     address: u64,
     bytes: usize,
     allocation: usize,
+    #[cfg(feature = "orbitte")]
+    allocation_end: u64,
 }
 
 impl LocalTensor {
@@ -183,6 +188,7 @@ impl LocalTensor {
         clippy::too_many_arguments,
         reason = "validates the registered tensor geometry"
     )]
+    /// `allocation` identifies the storage; OrbiTE requires its actual base address.
     pub fn new(
         name: String,
         address: u64,
@@ -211,6 +217,10 @@ impl LocalTensor {
             address,
             bytes: extent,
             allocation,
+            #[cfg(feature = "orbitte")]
+            allocation_end: address
+                .checked_add(bytes as u64)
+                .ok_or("tensor allocation overflow")?,
         })
     }
 }
@@ -226,6 +236,8 @@ struct ImportedArena {
 // SAFETY: the mapping is stable, shared and CUDA registered for its lifetime.
 // Only the serialized executor submits reads, and drains before dropping it.
 unsafe impl Send for ImportedArena {}
+// SAFETY: accesses are serialized by the executor and its source grant.
+unsafe impl Sync for ImportedArena {}
 
 impl ImportedArena {
     fn new(arena: PayloadArena, context: Arc<CudaContext>) -> Result<Self, String> {
@@ -313,9 +325,11 @@ pub struct LocalRestoreExecutor {
     context: Arc<CudaContext>,
     stream: Arc<CudaStream>,
     readiness: CudaEvent,
-    backend: Box<dyn TransferBackend>,
+    backend: Box<dyn LocalCopy>,
     tensors: HashMap<String, LocalTensor>,
-    arenas: HashMap<u64, ImportedArena>,
+    arenas: HashMap<u64, Arc<ImportedArena>>,
+    hosts: Vec<LocalHost>,
+    _registrations: Vec<Arc<crate::transfer_engine::CudaRegistration>>,
     trace: Option<LocalCopyTrace>,
 }
 
@@ -353,6 +367,28 @@ impl LocalRestoreExecutor {
         arenas: Vec<PayloadArena>,
         mode: TransferMode,
     ) -> Result<Self, String> {
+        Self::build(device, tensors, arenas, mode, None)
+    }
+
+    /// Bind the Manager-selected engine and retain the actual tensor exporters.
+    pub fn with_engine(
+        device: usize,
+        tensors: Vec<LocalTensor>,
+        arenas: Vec<PayloadArena>,
+        mode: TransferMode,
+        engine: crate::PeerTransferBackend,
+        owner: Arc<dyn Send + Sync>,
+    ) -> Result<Self, String> {
+        Self::build(device, tensors, arenas, mode, Some((engine, owner)))
+    }
+
+    fn build(
+        device: usize,
+        tensors: Vec<LocalTensor>,
+        arenas: Vec<PayloadArena>,
+        mode: TransferMode,
+        engine: Option<(crate::PeerTransferBackend, Arc<dyn Send + Sync>)>,
+    ) -> Result<Self, String> {
         let _caller_context = CallerContext::capture()?;
         let context = CudaContext::new(device).map_err(|e| e.to_string())?;
         let mut bindings = HashMap::new();
@@ -386,21 +422,47 @@ impl LocalRestoreExecutor {
             if imported.contains_key(&id) {
                 return Err("duplicate payload arena identity".into());
             }
-            imported.insert(id, ImportedArena::new(arena, Arc::clone(&context))?);
+            imported.insert(
+                id,
+                Arc::new(ImportedArena::new(arena, Arc::clone(&context))?),
+            );
         }
         let stream = context.new_stream().map_err(|e| e.to_string())?;
         let readiness = context
             .new_event(Some(sys::CUevent_flags::CU_EVENT_BLOCKING_SYNC))
             .map_err(|e| e.to_string())?;
-        let backend: Box<dyn TransferBackend> = match mode {
-            TransferMode::Direct => Box::new(MemcpyBackend::new(&context)?),
-            TransferMode::Kernel => Box::new(KernelBackend::new(&context)?),
+        let (backend, hosts, registrations) = match engine {
+            Some((
+                crate::PeerTransferBackend::OrbitTeTcp | crate::PeerTransferBackend::OrbitTeRdma,
+                owner,
+            )) => {
+                #[cfg(feature = "orbitte")]
+                {
+                    orbitte::bind(&bindings, &imported, stream.clone(), mode, owner)?
+                }
+                #[cfg(not(feature = "orbitte"))]
+                {
+                    let _ = owner;
+                    return Err(
+                        "Manager selected orbitte, but this client was built without it".into(),
+                    );
+                }
+            }
+            _ => (
+                crate::transfer_engine::local::bind(None, stream.clone(), mode, 0)
+                    .map_err(|e| e.to_string())?,
+                Vec::new(),
+                Vec::new(),
+            ),
         };
         let limit = orbitkv_common::timeline::diagnostic_event_limit();
         let trace = (limit > 0).then(|| {
             LocalCopyTrace::new(
                 device,
-                MemcpyBackend::new(&context).map(|dma| dma.max_pitch),
+                context
+                    .attribute(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MAX_PITCH)
+                    .map(|pitch| pitch as usize)
+                    .map_err(|e| e.to_string()),
                 limit,
             )
         });
@@ -411,6 +473,8 @@ impl LocalRestoreExecutor {
             backend,
             tensors: bindings,
             arenas: imported,
+            hosts,
+            _registrations: registrations,
             trace,
         })
     }
@@ -562,6 +626,7 @@ impl LocalRestoreExecutor {
             });
             batches[index].1.push(copy);
         }
+        let mut completions: VecDeque<Box<dyn LocalCompletion>> = VecDeque::new();
         let submitted = (|| -> Result<(), String> {
             for (layer, mut copies) in batches {
                 copies.sort_unstable_by_key(|copy| copy.device);
@@ -571,22 +636,38 @@ impl LocalRestoreExecutor {
                     .and_then(|trace| trace.begin_batch(&copies, self.backend.name()));
                 let started = captured.map(|_| std::time::Instant::now());
                 let enqueue_result = (|| -> Result<(), String> {
+                    let mut enqueue = |copies: &[CopyDesc]| -> Result<(), String> {
+                        if completions.len() == 8
+                            && let Some(mut oldest) = completions.pop_front()
+                        {
+                            crate::transfer_engine::local::drain(oldest.as_mut())
+                                .map_err(|error| error.to_string())?;
+                        }
+                        let submitted = super::contain_gpu_unwind(|| {
+                            // SAFETY: Active source grant and actual tensor owners
+                            // survive every completion, including partial failures.
+                            unsafe { self.backend.submit(copies, &self.hosts, true) }
+                        });
+                        completions
+                            .push_back(submitted.map_err(crate::transfer_engine::local::failure)?);
+                        Ok(())
+                    };
                     #[cfg(feature = "test-hooks")]
                     if !copies.is_empty()
                         && (crate::test_faults::active("local_restore_dma")
                             || crate::test_faults::active("local_restore_error"))
                     {
-                        self.backend.h2d(&copies[..1], &self.stream)?;
+                        enqueue(&copies[..1])?;
                         crate::test_faults::pause_blocking("local_restore_dma");
                         if crate::test_faults::active("local_restore_error") {
                             return Err("injected failure after first local Restore enqueue".into());
                         }
-                        self.backend.h2d(&copies[1..], &self.stream)?;
+                        enqueue(&copies[1..])?;
                     } else {
-                        self.backend.h2d(&copies, &self.stream)?;
+                        enqueue(&copies)?;
                     }
                     #[cfg(not(feature = "test-hooks"))]
-                    self.backend.h2d(&copies, &self.stream)?;
+                    enqueue(&copies)?;
                     Ok(())
                 })();
                 if let (Some(trace), Some(index), Some(started)) =
@@ -628,6 +709,12 @@ impl LocalRestoreExecutor {
         if let Err(error) = self.stream.synchronize() {
             log::error!("Cannot establish engine-local Restore drain: {error}; terminating engine");
             std::process::abort();
+        }
+        let mut submitted = submitted;
+        for mut completion in completions {
+            if let Err(error) = crate::transfer_engine::local::drain(completion.as_mut()) {
+                submitted = Err(error.to_string());
+            }
         }
         if let (Some(trace), Some(started)) = (self.trace.as_mut(), drain_started) {
             trace.finish_part(started.elapsed().as_nanos() as u64, submitted.is_ok());

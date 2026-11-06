@@ -87,6 +87,18 @@ unsafe impl Send for PinnedAllocation {}
 unsafe impl Sync for PinnedAllocation {}
 
 impl PinnedAllocation {
+    pub(crate) fn contains(&self, address: u64, bytes: usize) -> bool {
+        address >= self.ptr.as_ptr() as u64
+            && address
+                .checked_add(bytes as u64)
+                .is_some_and(|end| end <= self.ptr.as_ptr() as u64 + self.size_bytes())
+    }
+    pub(crate) fn allocate_sibling(&self, bytes: usize) -> Option<Arc<Self>> {
+        self.pool
+            .allocate(NonZeroU64::new(bytes as u64)?)
+            .map(Arc::new)
+    }
+
     /// Shares this allocation and its access lock with OrbitTE registrations.
     /// Retaining the returned memory keeps this exact allocator slot occupied,
     /// even after the allocator, registration or batch handle is dropped.
@@ -109,7 +121,12 @@ impl PinnedAllocation {
         // its Drop is the only path returning this slot to the allocator. The
         // caller coordinates accesses outside the shared OrbitTE lock.
         let memory = Arc::new(unsafe {
-            orbit_te::HostMemory::from_raw_parts(self.ptr, length, self.clone())?
+            orbit_te::HostMemory::from_cuda_registered_parts(
+                self.ptr,
+                length,
+                self.clone(),
+                self.pool.local_pin.clone(),
+            )?
         });
         *cached = Arc::downgrade(&memory);
         Ok(memory)
@@ -199,14 +216,24 @@ impl Drop for PinnedAllocation {
 }
 
 /// Manages a CUDA pinned memory pool and a byte-addressable allocator.
-#[derive(Debug)]
 pub(crate) struct PinnedMemoryPool {
     id: u64,
     next_allocation_id: AtomicU64,
     /// Backing pinned memory (handles mmap + cudaHostRegister)
-    backing: PinnedMemory,
+    backing: Arc<PinnedMemory>,
+    #[cfg(feature = "orbitte")]
+    local_pin: Arc<orbit_te::cuda::local_copy::PinnedHostRegistration>,
     allocator: Mutex<ScaledOffsetAllocator>,
     allocatable_bytes: u64,
+}
+
+impl std::fmt::Debug for PinnedMemoryPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PinnedMemoryPool")
+            .field("id", &self.id)
+            .field("bytes", &self.allocatable_bytes)
+            .finish_non_exhaustive()
+    }
 }
 
 impl PinnedMemoryPool {
@@ -249,8 +276,20 @@ impl PinnedMemoryPool {
             PagePolicy::Regular
         };
         info!("Allocating shared pinned pool on {} with {:?}", node, pages);
-        let backing = PinnedMemory::allocate(pool_size, pages, node)
-            .expect("Failed to allocate shared pinned memory pool");
+        let backing = Arc::new(
+            PinnedMemory::allocate(pool_size, pages, node)
+                .expect("Failed to allocate shared pinned memory pool"),
+        );
+        #[cfg(feature = "orbitte")]
+        // SAFETY: backing owns the physical CUDA pin until the last local loan.
+        let local_pin = unsafe {
+            orbit_te::cuda::local_copy::PinnedHostRegistration::from_raw_parts(
+                NonNull::new(backing.as_ptr().cast_mut()).expect("pinned base"),
+                backing.size(),
+                backing.clone(),
+            )
+        }
+        .expect("valid pinned pool");
 
         let actual_size = backing.size() as u64;
         let unit_size = Self::compute_unit_size(actual_size, unit_size_hint);
@@ -295,6 +334,8 @@ impl PinnedMemoryPool {
                 .expect("payload arena identity exhausted"),
             next_allocation_id: AtomicU64::new(1),
             backing,
+            #[cfg(feature = "orbitte")]
+            local_pin,
             allocator: Mutex::new(allocator),
             allocatable_bytes,
         }

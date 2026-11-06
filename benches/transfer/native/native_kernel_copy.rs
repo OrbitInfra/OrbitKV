@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use cudarc::driver::{CudaContext, CudaStream, sys};
-use orbitkv_core::transfer::{CopyDesc, KernelBackend, MemcpyBackend, TransferBackend};
+use orbitkv_core::transfer::{CopyDesc, KernelBackend, MemcpyBackend, TentCopy};
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use serde_json::json;
@@ -116,7 +116,7 @@ fn cases() -> Vec<Case> {
 }
 
 fn submit(
-    backend: &dyn TransferBackend,
+    backend: &dyn TentCopy,
     copies: &[CopyDesc],
     stream: &Arc<CudaStream>,
     h2d: bool,
@@ -191,7 +191,7 @@ fn main() {
                 .uuid()
                 .expect("CUDA device UUID")
                 .bytes
-                .map(|v| v as u8)
+                .map(|v| v.to_ne_bytes()[0])
         )
     );
     let mut device_file = OpenOptions::new()
@@ -214,7 +214,7 @@ fn main() {
     let stream = context.default_stream();
     let kernel = KernelBackend::new(&context).expect("native kernel");
     let dma = MemcpyBackend::new(&context).expect("native DMA");
-    let backends: [&dyn TransferBackend; 2] = [&kernel, &dma];
+    let backends: [&dyn TentCopy; 2] = [&kernel, &dma];
     let mut selected = match (fragment_bytes, blocks) {
         (None, None) => cases(),
         (Some(size), Some(count)) => {

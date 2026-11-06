@@ -228,6 +228,15 @@ impl Drop for TentRegistration {
 }
 
 impl TransferBackend for MooncakeTransport {
+    fn bind_local(
+        self: Arc<Self>,
+        stream: Arc<cudarc::driver::CudaStream>,
+        mode: crate::transfer::TransferMode,
+        _device: u64,
+    ) -> Result<Box<dyn crate::transfer_engine::local::LocalCopy>, TransferError> {
+        crate::transfer_engine::local::TentLocalCopy::bind(stream, mode)
+    }
+
     fn transfer_endpoint(&self) -> &str {
         &self.transfer_endpoint
     }

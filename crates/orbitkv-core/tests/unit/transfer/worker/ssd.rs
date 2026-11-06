@@ -231,7 +231,8 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
     )
     .unwrap();
     layout.storage_format = format;
-    let worker = GpuWorkerPool::new(0, NumaNode::UNKNOWN, TransferMode::Direct).unwrap();
+    let worker =
+        GpuWorkerPool::new(0, NumaNode::UNKNOWN, TransferMode::Direct, None, None).unwrap();
     // Host staging works before any cuFile operation and again after its success.
     for (index, path) in [SsdReadPath::Uring, SsdReadPath::Cufile, SsdReadPath::Uring]
         .into_iter()

@@ -18,8 +18,8 @@ Standalone operation needs neither etcd nor a peer gRPC listener.
 
 | Path | Control/ownership | Payload |
 | --- | --- | --- |
-| Local raw DRAM Restore | Native client keeps destination/source holds and readiness dependencies | Engine-local DMA or selected copy kernel |
-| Publish and SSD/codec Restore | Manager workers retain accepted-operation resources | CUDA IPC plus storage/codec execution |
+| Local raw DRAM Restore | Native client keeps destination/source holds and readiness dependencies | Selected engine local-copy implementation and completion |
+| Publish and SSD/codec Restore | Manager workers retain accepted-operation resources | Selected engine local/file transfers; GPU codec compute |
 | Peer cached state | Local candidates, authoritative source grant and completion reconciliation | Selected engine READ into GPU restore pages, or DRAM for cache-tier fills |
 | Current-request P/D | Official engine lifecycle/backend; independent cache adapter | vLLM NIXL/MultiConnector or SGLang native disaggregation |
 

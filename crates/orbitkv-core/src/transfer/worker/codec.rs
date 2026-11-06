@@ -4,7 +4,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use cudarc::driver::result;
 use opentelemetry::KeyValue;
 use orbitkv_state::StorageFormat;
 
@@ -23,7 +22,7 @@ use crate::{
     metrics::core_metrics,
     storage::Storage,
     storage::ssd::layout::{CopyRange, plan_writes},
-    transfer::{finish_gpu_transfer, layout::BlockCopies},
+    transfer::layout::BlockCopies,
 };
 
 /// A complete independently restorable object, with blocks in storage-slot order.
@@ -93,7 +92,11 @@ pub(super) fn save(
     let storage = storage.ok_or_else(|| EngineError::Storage("missing codec allocator".into()))?;
     let mut owner = runtime.codec.borrow_mut();
     if owner.is_none() {
-        *owner = Some(GpuCodec::new(runtime.stream.context()).map_err(EngineError::Storage)?);
+        *owner = Some(
+            GpuCodec::new(runtime.stream.context())
+                .map_err(EngineError::Storage)?
+                .with_transfer(runtime.engine.clone()),
+        );
     }
     let codec = owner.as_mut().expect("initialized codec");
     let _reservation = Reservation::new(storage.codec_budget, "encode");
@@ -235,24 +238,23 @@ fn save_blocks(
                 },
             ));
         }
-        let copied = crate::transfer::contain_gpu_unwind(|| {
-            for (source, saved) in &allocated {
-                // SAFETY: all pinned destinations are exclusive and retained through drain.
-                unsafe {
-                    result::memcpy_dtoh_async(
-                        std::slice::from_raw_parts_mut(
-                            saved.segment.host_ptr().as_ptr(),
-                            saved.meta.stored_bytes,
-                        ),
-                        *source,
-                        stream.cu_stream(),
-                    )
-                }
-                .map_err(|e| e.to_string())?;
-            }
-            Ok(())
-        });
-        finish_gpu_transfer(stream, copied)?;
+        let hosts: Vec<_> = allocated
+            .iter()
+            .map(|(_, saved)| {
+                crate::transfer_engine::local::LocalHost::Pinned(saved.segment.allocation().clone())
+            })
+            .collect();
+        let ranges: Vec<_> = allocated
+            .iter()
+            .map(|(source, saved)| {
+                (
+                    *source,
+                    saved.segment.host_ptr().as_ptr(),
+                    saved.meta.stored_bytes,
+                )
+            })
+            .collect();
+        copy_payload(runtime, &ranges, &hosts, false)?;
         for (index, (_, mut saved_segment)) in allocated.into_iter().enumerate() {
             let input = &inputs[offset + index];
             transferred += saved_segment.meta.stored_bytes as u64;
@@ -391,7 +393,7 @@ fn write_gpu(
     blocks: &[(usize, usize)],
     layers: &[LayerTransferData],
     devices: Vec<Option<Vec<(u64, usize)>>>,
-    backing: Option<(u64, usize, Arc<dyn Send + Sync>)>,
+    backing: Option<Arc<CudaRegistration>>,
 ) -> Result<(), EngineError> {
     let Some(store) = &storage.ssd_store else {
         return Ok(());
@@ -433,31 +435,7 @@ fn write_gpu(
         .iter()
         .filter_map(|layer| layer.layout.owner.clone())
         .collect();
-    let mut arena_registration = None;
-    if let Some((address, length, backing)) = backing {
-        // SAFETY: the codec arena is held independently of its worker through file drain.
-        let registered = unsafe {
-            CudaRegistration::new(
-                Some(Arc::clone(&file.file.backend)),
-                address,
-                length,
-                runtime.stream.context().ordinal() as i32,
-                backing,
-            )
-        };
-        match registered {
-            Ok(owner) => {
-                arena_registration = Some(Arc::clone(&owner));
-                owners.push(owner);
-            }
-            Err(error) => {
-                if error.kind == ErrorKind::Unquiesced {
-                    runtime.unquiesced.set(true);
-                }
-                return Err(EngineError::Storage(error.to_string()));
-            }
-        }
-    }
+    owners.extend(backing);
     let result = (|| {
         for batch in batches {
             #[cfg(feature = "test-hooks")]
@@ -513,14 +491,6 @@ fn write_gpu(
         }
         Ok(())
     })();
-    // Temporary encoded output registration must report cleanup before the
-    // codec can reuse its arena. Drop-only cleanup cannot fence that reuse.
-    if let Some(registration) = arena_registration
-        && let Err(error) = registration.close()
-    {
-        runtime.unquiesced.set(true);
-        return Err(EngineError::Storage(error.to_string()));
-    }
     result?;
     lease.commit();
     Ok(())
@@ -587,12 +557,17 @@ pub(super) fn restore(
     if inputs.is_empty() {
         return Ok(0);
     }
+    let hosts = super::host_owners(layers);
     let budget = runtime.codec_budget(budget);
     let _reservation = Reservation::new(budget, "decode");
     let stream = &runtime.stream;
     let mut owner = runtime.codec.borrow_mut();
     if owner.is_none() {
-        *owner = Some(GpuCodec::new(stream.context()).map_err(EngineError::Storage)?);
+        *owner = Some(
+            GpuCodec::new(stream.context())
+                .map_err(EngineError::Storage)?
+                .with_transfer(runtime.engine.clone()),
+        );
     }
     let codec = owner.as_mut().expect("initialized codec");
     let mut total = 0;
@@ -619,15 +594,41 @@ pub(super) fn restore(
                 .meta
                 .validate(input.source)
                 .map_err(EngineError::Storage)?;
-            let mut decoded = vec![0; input.meta.logical_bytes];
-            if !crate::codec::cpu::decode(input.meta.format, input.source, &mut decoded) {
+            let source_owner = hosts
+                .iter()
+                .find_map(|host| match host {
+                    crate::transfer_engine::local::LocalHost::Pinned(owner)
+                        if owner.contains(input.source.as_ptr() as u64, input.source.len()) =>
+                    {
+                        Some(owner)
+                    }
+                    _ => None,
+                })
+                .ok_or_else(|| EngineError::Storage("missing codec source allocation".into()))?;
+            let decoded_owner = source_owner
+                .allocate_sibling(input.meta.logical_bytes)
+                .ok_or_else(|| {
+                    EngineError::Storage("pinned pool exhausted during CPU decode".into())
+                })?;
+            // SAFETY: this newly allocated codec output is exclusively held here through drain.
+            let decoded = unsafe {
+                std::slice::from_raw_parts_mut(
+                    decoded_owner.mapped_ptr().host().as_ptr(),
+                    input.meta.logical_bytes,
+                )
+            };
+            if !crate::codec::cpu::decode(input.meta.format, input.source, decoded) {
                 return Err(EngineError::Storage("CPU FP8 decode mismatch".into()));
             }
             observation.submitted();
-            let copied =
-                unsafe { result::memcpy_htod_async(input.target, &decoded, stream.cu_stream()) }
-                    .map_err(|e| e.to_string());
-            finish_gpu_transfer(stream, copied)?;
+            copy_payload(
+                runtime,
+                &[(input.target, decoded.as_mut_ptr(), decoded.len())],
+                &[crate::transfer_engine::local::LocalHost::Pinned(
+                    decoded_owner.clone(),
+                )],
+                true,
+            )?;
             total += input.meta.logical_bytes;
             transferred += decoded.len();
             offset += 1;
@@ -638,8 +639,23 @@ pub(super) fn restore(
                 .map_or(inputs.len(), |n| offset + n);
             observation.submitted();
             // SAFETY: source host allocations and destination pages are owned by this task.
-            let count = unsafe { codec.decode_host_batch(stream, &inputs[offset..end], budget) }
-                .map_err(EngineError::Storage)?;
+            let count = unsafe {
+                codec.decode_host_batch(
+                    stream,
+                    &inputs[offset..end],
+                    budget,
+                    Some(&|uploads| {
+                        let ranges: Vec<_> = uploads
+                            .iter()
+                            .map(|(target, source)| {
+                                (*target, source.as_ptr().cast_mut(), source.len())
+                            })
+                            .collect();
+                        copy_payload(runtime, &ranges, &hosts, true).map_err(|e| e.to_string())
+                    }),
+                )
+            }
+            .map_err(EngineError::Storage)?;
             if count == 0 {
                 return Err(EngineError::Storage(
                     "codec restore made no progress".into(),
@@ -656,4 +672,53 @@ pub(super) fn restore(
         .storage_codec_transfer_bytes
         .add(transferred as u64, &[KeyValue::new("direction", "h2d")]);
     Ok(total)
+}
+
+/// Bind codec payload ranges to their actual pinned slots and the selected engine.
+fn copy_payload(
+    runtime: &WorkerRuntime,
+    ranges: &[(u64, *mut u8, usize)],
+    hosts: &[crate::transfer_engine::local::LocalHost],
+    to_device: bool,
+) -> Result<(), EngineError> {
+    let copies = ranges
+        .iter()
+        .enumerate()
+        .map(|(index, &(device, host, size))| {
+            let owner = hosts
+                .iter()
+                .find_map(|memory| match memory {
+                    crate::transfer_engine::local::LocalHost::Pinned(owner)
+                        if owner.contains(host as u64, size) =>
+                    {
+                        Some(owner)
+                    }
+                    _ => None,
+                })
+                .ok_or_else(|| {
+                    EngineError::Storage("codec payload exceeds its pinned owner".into())
+                })?;
+            let mapped = owner.mapped_ptr_for_host_range(
+                std::ptr::NonNull::new(host)
+                    .ok_or_else(|| EngineError::Storage("null codec input".into()))?,
+                size,
+            );
+            Ok(crate::transfer::CopyDesc {
+                device,
+                host,
+                host_device: mapped.device().as_ptr() as u64,
+                size,
+                device_allocation: index,
+                host_registration: owner.registration_id(),
+            })
+        })
+        .collect::<Result<Vec<_>, EngineError>>()?;
+    crate::transfer::copy_and_drain(
+        runtime.backend.as_ref(),
+        &runtime.stream,
+        &copies,
+        hosts,
+        to_device,
+        runtime.max_dma_pitch,
+    )
 }
