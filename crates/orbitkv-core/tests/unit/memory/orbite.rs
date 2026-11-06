@@ -6,12 +6,12 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use orbit_te::{EngineConfig, Permission, TransferEngine, TransferOp, TransferRequest, Transport};
+use orbite::{EngineConfig, Permission, TransferEngine, TransferOp, TransferRequest, Transport};
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 #[test]
-#[ignore = "OrbitTE allocator hardware gate: requires a real CUDA runtime and GPU"]
+#[ignore = "OrbiTE allocator hardware gate: requires a real CUDA runtime and GPU"]
 fn pinned_aliases_transfer_bytes_and_release_the_actual_slot() {
     let allocator = PinnedAllocator::new_global(1024, 1, false, None);
     let source_allocation = allocator
@@ -24,13 +24,13 @@ fn pinned_aliases_transfer_bytes_and_release_the_actual_slot() {
     let destination_weak = Arc::downgrade(&destination_allocation);
     let generation = source_allocation.id;
     let aliases = thread::scope(|scope| {
-        let first = scope.spawn(|| unsafe { source_allocation.orbitte_memory().unwrap() });
-        let second = scope.spawn(|| unsafe { source_allocation.orbitte_memory().unwrap() });
+        let first = scope.spawn(|| unsafe { source_allocation.orbite_memory().unwrap() });
+        let second = scope.spawn(|| unsafe { source_allocation.orbite_memory().unwrap() });
         [first.join().unwrap(), second.join().unwrap()]
     });
     assert!(Arc::ptr_eq(&aliases[0], &aliases[1]));
-    // No CPU/device access outside these canonical OrbitTE views is active.
-    let destination_memory = unsafe { destination_allocation.orbitte_memory().unwrap() };
+    // No CPU/device access outside these canonical OrbiTE views is active.
+    let destination_memory = unsafe { destination_allocation.orbite_memory().unwrap() };
     let original = (0..512)
         .map(|index| (index % 251) as u8)
         .collect::<Vec<_>>();
@@ -129,7 +129,7 @@ fn pinned_aliases_transfer_bytes_and_release_the_actual_slot() {
 }
 
 #[test]
-#[ignore = "OrbitTE allocator hardware gate: requires a real CUDA runtime and GPU"]
+#[ignore = "OrbiTE allocator hardware gate: requires a real CUDA runtime and GPU"]
 fn detached_transfer_retains_pinned_slot_after_cancel_unregister_and_wait_timeout() {
     let allocator = PinnedAllocator::new_global(512, 1, false, None);
     let allocation = allocator
@@ -137,8 +137,8 @@ fn detached_transfer_retains_pinned_slot_after_cancel_unregister_and_wait_timeou
         .unwrap();
     let weak_allocation = Arc::downgrade(&allocation);
     let weak_pool = Arc::downgrade(&allocation.pool);
-    // The test owns this allocation exclusively outside the OrbitTE access lock.
-    let memory = unsafe { allocation.orbitte_memory().unwrap() };
+    // The test owns this allocation exclusively outside the OrbiTE access lock.
+    let memory = unsafe { allocation.orbite_memory().unwrap() };
     let source = TransferEngine::new(EngineConfig::default()).unwrap();
     let remote = source
         .register_memory(vec![0x7b; 512].into_boxed_slice(), Permission::RemoteRead)
@@ -168,14 +168,14 @@ fn detached_transfer_retains_pinned_slot_after_cancel_unregister_and_wait_timeou
     gate.started.recv_timeout(TIMEOUT).unwrap();
     assert!(matches!(
         batch.wait(Duration::from_millis(10)),
-        Err(orbit_te::Error::Timeout)
+        Err(orbite::Error::Timeout)
     ));
     assert!(batch.cancel(0).unwrap());
     assert!(!batch.status().unwrap().locally_drained);
     assert!(batch.free().is_err());
     assert!(matches!(
         requester.close_requester(Duration::ZERO),
-        Err(orbit_te::Error::Timeout)
+        Err(orbite::Error::Timeout)
     ));
     requester.unregister_memory(&local).unwrap();
     drop((batch, local, memory, allocation));
@@ -206,7 +206,7 @@ fn detached_transfer_retains_pinned_slot_after_cancel_unregister_and_wait_timeou
 }
 
 /// Forwards the actual engine's metadata, then delays its data connection.
-/// No OrbitTE wire format or transfer behavior is duplicated here.
+/// No OrbiTE wire format or transfer behavior is duplicated here.
 struct GatedPeer {
     endpoint: SocketAddr,
     started: Receiver<()>,

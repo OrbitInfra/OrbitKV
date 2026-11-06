@@ -87,14 +87,14 @@ workers. Extend these owners; do not introduce a Python coordinator or facade.
 See [transport](transport.md), [engine-local restore](engine-local-restore.md)
 and [adapter contracts](adapters.md).
 
-- [x] Runtime transfer-backend boundary for TENT and OrbitTE, retaining peer
-  grants and completion ownership, with OrbitTE pinned at `c3700f00` and one
+- [x] Runtime transfer-backend boundary for TENT and OrbiTE, retaining peer
+  grants and completion ownership, with OrbiTE pinned at `8fa03eda` and one
   shared registry `cudarc` 0.19.8. READ/WRITE, registration, cancellation and
   shutdown contracts are implemented; hardware and installed qualification at
   this pin remain open. The prior profile results below do not qualify this
   upgrade. See the
   [runtime contract and CPU gates](transport.md#runtime-transfer-backend).
-- [x] OrbitTE SSD file-segment integration implemented for io_uring, CUDA staging
+- [x] OrbiTE SSD file-segment integration implemented for io_uring, CUDA staging
   and opt-in native-only GDS, preserving OrbitKV placement, extents and index
   publication. A3 below removes the temporary native fallback. CPU file/lifetime
   gates are required in CI; GPU/GDS
@@ -117,7 +117,7 @@ and [adapter contracts](adapters.md).
   and exposing asynchronous terminal evidence without weakening physical drain.
   Real-file CPU gates cover both providers; GPU/GDS/installed qualification
   remains open. See [file contracts](transport.md#ssd-file-transfers).
-- [x] A2 was independently accepted and merged as `25ebc535`: OrbitTE consumes one file
+- [x] A2 was independently accepted and merged as `25ebc535`: OrbiTE consumes one file
   vector per extent with `Padding` for gaps/tails, and `gds_enabled` prevents
   unconfigured cuFile loading. `storage/ssd/gpu.rs` and its zero buffers are
   deleted. Persistent tensor/codec input registrations and actual codec arena
@@ -125,42 +125,43 @@ and [adapter contracts](adapters.md).
   native vectors for aligned ranges; only its bounded padding/unaligned repair
   adapter remains until the fork adds those contracts. CPU real-file and owner
   gates cover both providers; GPU/GDS/installed profiles remain unqualified.
-- [x] C is implemented pending independent review: OrbiTE `c3700f00` owns
+- [x] C was independently accepted and merged as `73570259`: OrbiTE owns
   Manager and client local GPU↔DRAM payload copies through one `LocalCopyEngine`
   per worker stream. Completions retain registrations and pinned slots through
-  drain; TENT keeps Memcpy/Kernel behind the same boundary. Lifecycle 10 carries
+  drain; TENT keeps Memcpy/Kernel behind the same boundary. Lifecycle 11 carries
   the Manager-selected engine to the client. CPU CUDA-shim byte/retention controls
   and installed direct/kernel gates are written; installed GPU profiles remain
   unqualified. See [local copy contracts](transport.md#local-gpudram-copies).
-  The repository/crate/feature/environment rename remains a separate PR.
+  The dependency, feature, configuration and environment names use `orbite`;
+  matching pre-release clients and Managers upgrade together.
 
 - [x] Explicit registration identity and failure propagation; retry ownership
   retained after failed unregister.
 - [x] Prepared Save handles, Rust batching, bounded producer admission and
   normal-path installed byte/engine controls within recorded profiles.
-- [x] Experimental `orbitte` allocation bridge: each canonical host view retains
+- [x] Experimental `orbite` allocation bridge: each canonical host view retains
   the actual `PinnedAllocation` and access lock. The weak cache avoids a cycle;
   unregister, cancellation, wait timeout and dropped batches cannot return its
-  slot while OrbitTE still retains accepted work. The source build and explicit
-  real-CUDA allocator gate are described in [transport](transport.md#experimental-orbitte-allocation-bridge).
+  slot while OrbiTE still retains accepted work. The source build and explicit
+  real-CUDA allocator gate are described in [transport](transport.md#experimental-orbite-allocation-bridge).
   The TCP peer consumer candidate follows below. Whole-pool registration,
   transfer-mailbox integration and installed serving remain open; the default
   transport is still TENT.
-- [x] Experimental OrbitTE TCP peer candidate: explicit provider selection,
+- [x] Experimental OrbiTE TCP peer candidate: explicit provider selection,
   allocation registrations retained by source tickets, grant-supplied epochs,
   shared peer planning and gRPC generation completion. Cancellation keeps the
   blocking owner; a locally unquiesced outcome retains ticket/buffers/admission.
-  See the [profile, limits and gates](transport.md#experimental-orbitte-peer-tcp-profile).
+  See the [profile, limits and gates](transport.md#experimental-orbite-peer-tcp-profile).
   Independent source review and reruns passed for the same-host H20/CUDA 12.2
   source-grant and embedded Manager GPU Save/Restore profile at `5a50d092`.
   See [OrbitKV #304](https://github.com/OrbitInfra/OrbitKV/pull/304) for the
   external evidence locations. That historical CUDA 12.2 pilot does not qualify
   installed Manager/serving, CUDA 13, physical cross-host or RDMA/device DMA;
   the later CUDA 13 and installed scopes follow below.
-- [x] Experimental OrbitTE RDMA source candidate: explicit single RNIC/port/GID,
+- [x] Experimental OrbiTE RDMA source candidate: explicit single RNIC/port/GID,
   distinct payload namespace and no transport fallback. It shares the TCP
   candidate's allocation/grant/completion owners and uses the existing owned
-  host-staging verbs path. See the [profile and separate gates](transport.md#experimental-orbitte-peer-rdma-profile).
+  host-staging verbs path. See the [profile and separate gates](transport.md#experimental-orbite-peer-rdma-profile).
   The host-only two-node component gate exercises registered READ execution;
   it is separate from pinned allocation and Manager GPU qualification. Independent
   source/CPU review and two-host reruns pass at consumer `660f893d`, including
@@ -171,15 +172,15 @@ and [adapter contracts](adapters.md).
   `660f893d` additionally pass pinned source grants and embedded Manager GPU
   Save/Restore through TCP and same-RNIC RDMA staging. R535 with supported
   compatibility libraries is not a CUDA 13 exclusion; see the
-  [runtime profile](transport.md#experimental-orbitte-peer-rdma-profile).
+  [runtime profile](transport.md#experimental-orbite-peer-rdma-profile).
   Installed serving, physical cross-host Manager/GPU, RNIC faults, GDR, multirail
   and full TENT parity remain unqualified; the installed IPC substage follows. B-node
   compute remains untested while GPU leases are busy. Historical CUDA 12.2
   pilots remain separate from this CUDA 13.1 source evidence.
-- [x] Optional complete-wheel feature forwarding for `orbitte` and `orbitte-rdma`.
+- [x] Optional complete-wheel feature forwarding for `orbite` and `orbite-rdma`.
   The default wheel/provider stays CUDA 13 + TENT; optional RDMA wheel CI checks
   the installed console's compiled RNIC requirement. The maintained
-  `test_installed_orbitte_peer_restores_cuda_ipc_bytes` gate covers matching
+  `test_installed_orbite_peer_restores_cuda_ipc_bytes` gate covers matching
   installed client/Manager IPC registration/Publish, actual peer bytes and
   original export-credit retirement. Independent H20 reruns at `eb1cc90f` pass
   installed TCP and same-RNIC RDMA: each restores 16,384 GPU bytes, repays four

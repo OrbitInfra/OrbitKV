@@ -36,9 +36,9 @@ pub use engine::{
 };
 pub use memory::numa::NumaNode;
 pub use memory::pool::{PayloadArena, PinnedAllocation};
-#[cfg(feature = "orbitte-rdma")]
-pub use orbit_te::transport::rdma::{
-    RdmaConfig as OrbitTeRdmaConfig, RdmaCudaMemory as OrbitTeRdmaCudaMemory,
+#[cfg(feature = "orbite-rdma")]
+pub use orbite::transport::rdma::{
+    RdmaConfig as OrbiteRdmaConfig, RdmaCudaMemory as OrbiteRdmaCudaMemory,
 };
 pub use orbitkv_state::{
     BundleComponent, RecoveryContract, StateBundle, StateComponent, StateDescriptor, StateFormat,

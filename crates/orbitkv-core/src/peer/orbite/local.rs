@@ -3,11 +3,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cudarc::driver::CudaStream;
-use orbit_te::cuda::local_copy::{
+use orbite::cuda::local_copy::{
     CopyDirection, LocalCopyBackend, LocalCopyConfig, LocalCopyDesc, LocalCopyEngine,
 };
 
-use super::{OrbitTeTransport, RegistrationSet, transfer_error};
+use super::{OrbiteTransport, RegistrationSet, transfer_error};
 use crate::transfer::{CopyDesc, TransferMode};
 use crate::transfer_engine::local::{LocalCompletion, LocalCopy, LocalHost};
 use crate::transfer_engine::{ErrorKind, TransferError};
@@ -16,13 +16,13 @@ const DESCRIPTORS: usize = 1024;
 const BYTES: usize = 256 << 20;
 
 pub(super) struct Copies {
-    transport: Arc<OrbitTeTransport>,
+    transport: Arc<OrbiteTransport>,
     mode: TransferMode,
     bound: LocalCopyEngine,
 }
 impl Copies {
     pub(super) fn new(
-        transport: Arc<OrbitTeTransport>,
+        transport: Arc<OrbiteTransport>,
         stream: Arc<CudaStream>,
         mode: TransferMode,
         device: u64,
@@ -73,7 +73,7 @@ impl Copies {
             let memory = match host {
                 // SAFETY: submit's caller coordinates all aliases until drain.
                 LocalHost::Pinned(allocation) => {
-                    unsafe { allocation.orbitte_memory() }.map_err(transfer_error)?
+                    unsafe { allocation.orbite_memory() }.map_err(transfer_error)?
                 }
                 LocalHost::Imported(memory) => (*memory).clone(),
             };
@@ -94,7 +94,7 @@ impl Copies {
         let regions = self
             .transport
             .engine
-            .register_host_memory_batch(&ranges, orbit_te::Permission::LocalOnly)
+            .register_host_memory_batch(&ranges, orbite::Permission::LocalOnly)
             .map_err(transfer_error)?;
         let mut completion = Completion {
             native: None,
@@ -244,7 +244,7 @@ fn invalid_range() -> TransferError {
 }
 
 struct Completion {
-    native: Option<orbit_te::cuda::local_copy::LocalCopyCompletion>,
+    native: Option<orbite::cuda::local_copy::LocalCopyCompletion>,
     registration: Option<RegistrationSet>,
     drained: bool,
 }
@@ -276,5 +276,5 @@ impl Drop for Completion {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/peer/orbitte_local.rs"]
+#[path = "../../../tests/unit/peer/orbite_local.rs"]
 mod tests;

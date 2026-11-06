@@ -148,7 +148,7 @@ int cuMemHostUnregister(void *) { return 0; }
 int cuMemHostGetDevicePointer_v2(Address *out, void *host, unsigned) { *out = reinterpret_cast<Address>(host); return 0; }
 int cuModuleLoadData(void **module, const void *) { *module = reinterpret_cast<void *>(0x4567); return 0; }
 int cuModuleGetFunction(void **function, void *, const char *name) {
-  if (std::strcmp(name, "orbitte_batch_copy")) return 500;
+  if (std::strcmp(name, "orbite_batch_copy")) return 500;
   *function = reinterpret_cast<void *>(0x5678); return 0;
 }
 int cuModuleUnload(void *) { return 0; }

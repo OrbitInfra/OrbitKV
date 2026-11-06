@@ -55,14 +55,14 @@ impl Shim {
     }
 }
 
-fn engine(bytes: usize) -> Arc<OrbitTeTransport> {
+fn engine(bytes: usize) -> Arc<OrbiteTransport> {
     Arc::new(
-        OrbitTeTransport::new(
+        OrbiteTransport::new(
             bytes as u64,
             "127.0.0.1:0",
-            orbit_te::Transport::Tcp,
+            orbite::Transport::Tcp,
             None,
-            #[cfg(feature = "orbitte-rdma")]
+            #[cfg(feature = "orbite-rdma")]
             None,
         )
         .unwrap(),
@@ -305,7 +305,7 @@ fn local_copy_shim_client_restore_layers_and_context() {
         tensors,
         allocator.payload_arenas().unwrap(),
         TransferMode::Kernel,
-        crate::PeerTransferBackend::OrbitTeTcp,
+        crate::PeerTransferBackend::OrbiteTcp,
         device.clone(),
     )
     .unwrap();
@@ -357,7 +357,7 @@ fn local_copy_shim_unknown_completion_retains_backing() {
         let status = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "peer::orbitte::local::tests::local_copy_shim_unknown_completion_retains_backing",
+                "peer::orbite::local::tests::local_copy_shim_unknown_completion_retains_backing",
                 "--ignored",
                 "--test-threads=1",
             ])

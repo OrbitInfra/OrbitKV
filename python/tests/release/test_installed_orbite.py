@@ -1,6 +1,6 @@
-"""Installed CUDA IPC and same-host OrbitTE peer bytes, without an inference engine.
+"""Installed CUDA IPC and same-host OrbiTE peer bytes, without an inference engine.
 
-Trigger: optional wheel features or OrbitTE Manager integration. Requires a complete
+Trigger: optional wheel features or OrbiTE Manager integration. Requires a complete
 wheel, Torch, ETCD_BIN, a leased GPU and a private ORBITKV_CHANNEL_CONFIG domain.
 The RDMA case additionally requires a leased RNIC and explicit device/port/GID.
 """
@@ -30,10 +30,10 @@ pytestmark = [pytest.mark.release_smoke, pytest.mark.gpu]
 
 
 @pytest.mark.parametrize("copy_mode", ["direct", "kernel"])
-@pytest.mark.parametrize("provider", ["orbitte-tcp", "orbitte-rdma"])
-def test_installed_orbitte_peer_restores_cuda_ipc_bytes(provider, copy_mode, tmp_path, monkeypatch):
-    if os.environ.get("ORBITKV_TEST_INSTALLED_ORBITTE") != "1":
-        pytest.skip("select ORBITKV_TEST_INSTALLED_ORBITTE=1 with leased runtime resources")
+@pytest.mark.parametrize("provider", ["orbite-tcp", "orbite-rdma"])
+def test_installed_orbite_peer_restores_cuda_ipc_bytes(provider, copy_mode, tmp_path, monkeypatch):
+    if os.environ.get("ORBITKV_TEST_INSTALLED_ORBITE") != "1":
+        pytest.skip("select ORBITKV_TEST_INSTALLED_ORBITE=1 with leased runtime resources")
     import torch
 
     import orbitkv
@@ -50,11 +50,11 @@ def test_installed_orbitte_peer_restores_cuda_ipc_bytes(provider, copy_mode, tmp
     assert channel.is_absolute() and channel.resolve(strict=True) == channel
     assert os.environ.get("ORBITKV_TEST_STRICT_SHUTDOWN") == "1"
     assert os.environ.get("PYTHONNOUSERSITE") == "1"
-    device = os.environ.get("ORBITKV_TEST_ORBITTE_RDMA_DEVICE")
-    if provider == "orbitte-rdma" and not device:
+    device = os.environ.get("ORBITKV_TEST_ORBITE_RDMA_DEVICE")
+    if provider == "orbite-rdma" and not device:
         pytest.skip("RDMA requires an explicitly selected and leased RNIC")
     monkeypatch.chdir(tmp_path)
-    cluster = f"installed-orbitte-{uuid.uuid4().hex}"
+    cluster = f"installed-orbite-{uuid.uuid4().hex}"
     managers, contexts, credits = [], [], {}
     report = {"provider": provider, "client": identity(os.getpid()), "package": str(package)}
 
@@ -84,14 +84,14 @@ def test_installed_orbitte_peer_restores_cuda_ipc_bytes(provider, copy_mode, tmp
                 provider,
                 "--enable-prometheus",
             ]
-            if provider == "orbitte-rdma":
+            if provider == "orbite-rdma":
                 args += [
-                    "--orbitte-rdma-device",
+                    "--orbite-rdma-device",
                     device,
-                    "--orbitte-rdma-port",
-                    os.environ["ORBITKV_TEST_ORBITTE_RDMA_PORT"],
-                    "--orbitte-rdma-gid-index",
-                    os.environ["ORBITKV_TEST_ORBITTE_RDMA_GID_INDEX"],
+                    "--orbite-rdma-port",
+                    os.environ["ORBITKV_TEST_ORBITE_RDMA_PORT"],
+                    "--orbite-rdma-gid-index",
+                    os.environ["ORBITKV_TEST_ORBITE_RDMA_GID_INDEX"],
                 ]
             port = find_available_port()
             server = CacheManagerProcess(
@@ -206,20 +206,20 @@ def test_installed_orbitte_peer_restores_cuda_ipc_bytes(provider, copy_mode, tmp
             (tmp_path / str(index) / "manager-maps.txt").write_text(maps)
             assert str(package / "orbitkv-cache-manager-py") in maps
             assert "libcudart.so.13" in maps and "libcuda.so" in maps
-            marker = "OrbitTE peer payload initialized: "
+            marker = "OrbiTE peer payload initialized: "
             endpoints = [
                 line.partition(marker)[2].strip()
                 for line in server.read_logs().splitlines()
                 if marker in line
             ]
             assert len(endpoints) == 1 and endpoints[0].startswith(
-                provider.replace("orbitte-", "orbitte+") + "://"
+                provider.replace("orbite-", "orbite+") + "://"
             )
             (tmp_path / str(index) / "peer-endpoint.json").write_text(
                 json.dumps({"provider": provider, "endpoint": endpoints[0]}) + "\n"
             )
             assert "libtent" not in maps and "libmooncake" not in maps
-            if provider == "orbitte-rdma":
+            if provider == "orbite-rdma":
                 assert "libibverbs" in maps and "libmlx5" in maps
         (tmp_path / "client-runtime.json").write_text(
             json.dumps(

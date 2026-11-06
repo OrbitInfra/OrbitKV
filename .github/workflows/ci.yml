@@ -181,9 +181,9 @@ jobs:
         run: |
           cargo clippy --workspace --exclude orbitkv-py --all-targets -- -D warnings
           cargo clippy -p orbitkv-server --all-targets --features test-hooks -- -D warnings
-          cargo clippy -p orbitkv-core --all-targets --features orbitte -- -D warnings
-          cargo clippy -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbitte -- -D warnings
-          CC=gcc CXX=g++ cargo clippy -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbitte-rdma -- -D warnings
+          cargo clippy -p orbitkv-core --all-targets --features orbite -- -D warnings
+          cargo clippy -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbite -- -D warnings
+          CC=gcc CXX=g++ cargo clippy -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbite-rdma -- -D warnings
         env:
           LIBCLANG_PATH: /usr/lib/llvm-18/lib
           CLANG_PATH: /usr/bin/clang-18
@@ -271,16 +271,16 @@ jobs:
       - name: Run cargo check
         run: |
           cargo check -p orbitkv-core
-          cargo check -p orbitkv-core --features orbitte
-          cargo check -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbitte
-          CC=gcc CXX=g++ cargo clippy --locked -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbitte-rdma -- -D warnings
-          CC=gcc CXX=g++ cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte-rdma --lib peer::orbitte::tests
-          CC=gcc CXX=g++ cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbitte-rdma --lib tests::orbitte_rdma_cli_requires_explicit_device_and_valid_port -- --exact
+          cargo check -p orbitkv-core --features orbite
+          cargo check -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbite
+          CC=gcc CXX=g++ cargo clippy --locked -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbite-rdma -- -D warnings
+          CC=gcc CXX=g++ cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-rdma --lib peer::orbite::tests
+          CC=gcc CXX=g++ cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbite-rdma --lib tests::orbite_rdma_cli_requires_explicit_device_and_valid_port -- --exact
           cargo check -p orbitkv-server --all-targets --no-default-features --features cuda-13
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13 --lib storage::tests::unavailable_rdma_backend_is_rejected_before_pinned_allocation -- --exact
-          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib peer::orbitte::tests
-          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib peer::completion::tests
-          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib peer::completion::tests::unquiesced_transfer_retains_source_ticket_and_actual_buffer_owner -- --exact --ignored
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib peer::orbite::tests
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib peer::completion::tests
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib peer::completion::tests::unquiesced_transfer_retains_source_ticket_and_actual_buffer_owner -- --exact --ignored
           cargo check -p orbitkv-server --all-targets
         env:
           CUDA_PATH: /usr/local/cuda
@@ -291,12 +291,12 @@ jobs:
           mkdir -p "$RUNNER_TEMP/orbitkv-cpu-host-control"
           c++ -std=c++20 -shared -fPIC -DORBITKV_CPU_HOST_CONTROL -x c++ crates/orbitkv-core/tests/native/source_owner_host_shim.cu -o "$RUNNER_TEMP/orbitkv-cpu-host-control/libcudart.so"
           # The shim exercises host ownership only; it is not CUDA evidence.
-          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib peer::
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib peer::
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --lib peer::
-          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --features orbitte --lib peer::
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --features orbite --lib peer::
           cargo test --locked -p orbitkv-transfer --no-default-features --lib
           cargo test --locked -p orbitkv-mooncake-sys --no-default-features --lib
-          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib query::read::tests
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib query::read::tests
           cargo test --locked -p orbitkv-core --lib query::read::tests
           cargo test --locked -p orbitkv-server --lib registry::tests::tensor_owner_survives_registry_removal -- --exact
         env:
@@ -312,8 +312,8 @@ jobs:
           # Driver calls move CPU fixture bytes, not hardware-qualified GPU bytes.
           export LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-local-copy-control:$RUNNER_TEMP/orbitkv-cpu-host-control"
           export ORBITKV_REQUIRE_LOCAL_COPY_SHIM=1
-          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte-gds --lib peer::orbitte::local::tests -- --ignored --test-threads=1
-          cargo test --locked -p orbitkv-core --features orbitte --lib peer::orbitte::local::tests -- --ignored --test-threads=1
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib peer::orbite::local::tests -- --ignored --test-threads=1
+          cargo test --locked -p orbitkv-core --features orbite --lib peer::orbite::local::tests -- --ignored --test-threads=1
         env:
           CUDA_PATH: /usr/local/cuda
           LIBCLANG_PATH: /usr/lib/llvm-18/lib
@@ -321,18 +321,18 @@ jobs:
 
       - name: SSD engine real-file byte and ownership gates
         run: |
-          CC=gcc CXX=g++ cargo clippy --locked -p orbitkv-server -p orbitkv-core --all-targets --no-default-features --features cuda-13,orbitte-gds -- -D warnings
+          CC=gcc CXX=g++ cargo clippy --locked -p orbitkv-server -p orbitkv-core --all-targets --no-default-features --features cuda-13,orbite-gds -- -D warnings
           # CUDA host-registration is a CPU fixture; io_uring and file bytes are real.
-          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=orbitte cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte-gds --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
-          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=orbitte ORBITKV_SSD_TEST_ROOT=/dev/shm cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=orbite cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=orbite ORBITKV_SSD_TEST_ROOT=/dev/shm cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=tent cargo test --locked -p orbitkv-core --no-default-features --features mooncake,cudarc/cuda-13000,cudarc/nvrtc --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=tent ORBITKV_SSD_TEST_ROOT=/dev/shm cargo test --locked -p orbitkv-core --no-default-features --features mooncake,cudarc/cuda-13000,cudarc/nvrtc --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
           # Both selections must work in the same binary, with separate file owners.
-          for engine in tent orbitte; do
-            LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE="$engine" cargo test --locked -p orbitkv-core --no-default-features --features mooncake,orbitte,cudarc/cuda-13000,cudarc/nvrtc --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
+          for engine in tent orbite; do
+            LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE="$engine" cargo test --locked -p orbitkv-core --no-default-features --features mooncake,orbite,cudarc/cuda-13000,cudarc/nvrtc --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
           done
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --lib storage::ssd:: -- --test-threads=1
-          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbitte-gds --lib peer::orbitte::tests::compiled_gds_stays_unloaded_without_configuration -- --exact
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib peer::orbite::tests::compiled_gds_stays_unloaded_without_configuration -- --exact
           cargo test --locked -p orbitkv-core --lib transfer::worker::ssd:: -- --test-threads=1
           cargo test --locked -p orbitkv-server --lib tests::ssd_uses_selected_engine_and_rejects_removed_legacy_switch -- --exact
         env:
@@ -371,9 +371,9 @@ jobs:
           - check-name: build Python 3.14 wheel (CUDA 13)
             features: ""
             artifact: orbitkv-wheel-ci
-          - check-name: build Python 3.14 wheel (CUDA 13, OrbitTE RDMA)
-            features: orbitte-rdma
-            artifact: orbitkv-wheel-ci-orbitte-rdma
+          - check-name: build Python 3.14 wheel (CUDA 13, OrbiTE RDMA)
+            features: orbite-rdma
+            artifact: orbitkv-wheel-ci-orbite-rdma
     needs: [cargo-check, version-consistency-check]
     if: needs.version-consistency-check.outputs.native == 'true'
     runs-on: ubuntu-24.04
@@ -430,7 +430,7 @@ jobs:
         run: |
           if [[ -n "$WHEEL_FEATURES" ]]; then
             CC=gcc CXX=g++ ./scripts/build-wheel.sh --release --features "$WHEEL_FEATURES"
-            python scripts/check-wheel.py target/wheels/*.whl --install-smoke --require-orbitte-rdma
+            python scripts/check-wheel.py target/wheels/*.whl --install-smoke --require-orbite-rdma
           else
             ./scripts/build-wheel.sh --release
           fi

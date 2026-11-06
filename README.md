@@ -30,7 +30,7 @@ Qwen3-8B dense TP=1/PP=1 DRAM or io_uring recovery and check the
 [support matrix](docs/compatibility.md) before extending the deployment.
 Version 0.1.0 is not yet published; interfaces may change before 1.0.
 
-The experimental OrbitTE backend also moves SSD bytes through file segments;
+The experimental OrbiTE backend also moves SSD bytes through file segments;
 TENT retains its configured SSD fallback. See [SSD transfer contracts](docs/transport.md#ssd-file-transfers)
 for CPU gates and the unqualified GPU/GDS scope.
 
@@ -40,13 +40,13 @@ for CPU gates and the unqualified GPU/GDS scope.
   GPU eviction or an engine restart while the Manager stays alive.
 - **Share cache capacity:** connect multiple local engines to one Manager or
   fetch compatible peer replicas through Mooncake TENT TCP/RDMA.
-  Opt-in [OrbitTE TCP](docs/transport.md#experimental-orbitte-peer-tcp-profile) and
-  [RDMA development profiles](docs/transport.md#experimental-orbitte-peer-rdma-profile)
+  Opt-in [OrbiTE TCP](docs/transport.md#experimental-orbite-peer-tcp-profile) and
+  [RDMA development profiles](docs/transport.md#experimental-orbite-peer-rdma-profile)
   use the same transfer-backend contract and peer owners. A build with both
   providers selects one at startup; TENT remains the default. Peer restores
   target GPU memory through the engine; DRAM cache fills retain a host target.
   GPU/GDR qualification for this path remains open. The current
-  OrbitTE revision requires fresh hardware qualification; installed serving remains unqualified.
+  OrbiTE revision requires fresh hardware qualification; installed serving remains unqualified.
 - **Rust ownership:** native cache and transfer owners manage byte budgets,
   reservations and completion; Python connects engine callbacks and layouts.
 - **Local discovery:** bounded inventory streams maintain covered indexes;

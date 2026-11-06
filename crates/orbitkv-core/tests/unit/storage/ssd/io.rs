@@ -29,7 +29,7 @@ pub(in crate::storage::ssd) fn queued_io() -> SsdIo {
     }
 }
 
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 mod engine {
     use super::*;
     use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
@@ -63,8 +63,8 @@ mod engine {
     fn selected_backend() -> crate::PeerTransferBackend {
         match std::env::var("ORBITKV_SSD_TEST_ENGINE").as_deref() {
             Ok("tent") => crate::PeerTransferBackend::Mooncake,
-            Ok("orbitte") => crate::PeerTransferBackend::OrbitTeTcp,
-            _ => panic!("select the tested engine with ORBITKV_SSD_TEST_ENGINE=tent|orbitte"),
+            Ok("orbite") => crate::PeerTransferBackend::OrbiteTcp,
+            _ => panic!("select the tested engine with ORBITKV_SSD_TEST_ENGINE=tent|orbite"),
         }
     }
 
@@ -273,7 +273,7 @@ mod engine {
             .await
             .unwrap()
             .unwrap_err();
-        // The native file owner pins its admitted length; OrbitTE refreshes it.
+        // The native file owner pins its admitted length; OrbiTE refreshes it.
         let bytes =
             unsafe { std::slice::from_raw_parts(destination.mapped_ptr().host().as_ptr(), 2048) };
         if selected_backend() == crate::PeerTransferBackend::Mooncake {

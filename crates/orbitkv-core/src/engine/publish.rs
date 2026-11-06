@@ -741,7 +741,7 @@ impl OrbitKVEngine {
                     .into_iter()
                     .map(|transfer_block| match transfer_block.block {
                         TransferPayload::Owned(block) => block,
-                        #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+                        #[cfg(any(feature = "mooncake", feature = "orbite"))]
                         TransferPayload::Peer { .. } => panic!("peer source returned from save"),
                         TransferPayload::Pending
                         | TransferPayload::Cached { .. }

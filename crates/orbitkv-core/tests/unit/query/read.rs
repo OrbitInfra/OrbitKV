@@ -106,7 +106,7 @@ async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
         let scheduler = ReadCoordinator::new(
             cache.clone(),
             Some(store),
-            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             None,
             0,
         );
@@ -156,7 +156,7 @@ async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
     }
 }
 
-#[cfg(any(feature = "mooncake", feature = "orbitte"))]
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
 #[tokio::test]
 async fn peer_ready_prefix_never_becomes_a_dram_cache_insert() {
     use crate::peer::restore::tests::{Control, source};

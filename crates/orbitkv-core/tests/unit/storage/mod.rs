@@ -1,16 +1,16 @@
 use super::*;
 
-#[cfg(not(feature = "orbitte-rdma"))]
+#[cfg(not(feature = "orbite-rdma"))]
 #[test]
 fn unavailable_rdma_backend_is_rejected_before_pinned_allocation() {
     let config = EngineConfig {
-        peer_transfer_backend: crate::PeerTransferBackend::OrbitTeRdma,
+        peer_transfer_backend: crate::PeerTransferBackend::OrbiteRdma,
         ..EngineConfig::default()
     };
     let Err(error) = Storage::new_with_config(4096, false, config, &[]) else {
         panic!("an unavailable RDMA backend must be rejected");
     };
-    assert!(error.contains("orbitte-rdma build feature"), "{error}");
+    assert!(error.contains("orbite-rdma build feature"), "{error}");
 }
 
 fn make_engine() -> Arc<Storage> {

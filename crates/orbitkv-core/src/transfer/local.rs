@@ -11,8 +11,8 @@ use super::layout::{KVCacheGeometry, KVCacheLayout};
 use super::{CopyDesc, TransferMode};
 use crate::PayloadArena;
 
-#[cfg(feature = "orbitte")]
-mod orbitte;
+#[cfg(feature = "orbite")]
+mod orbite;
 mod trace;
 use crate::transfer_engine::local::{LocalCompletion, LocalCopy, LocalHost};
 use trace::LocalCopyTrace;
@@ -179,7 +179,7 @@ pub struct LocalTensor {
     address: u64,
     bytes: usize,
     allocation: usize,
-    #[cfg(feature = "orbitte")]
+    #[cfg(feature = "orbite")]
     allocation_end: u64,
 }
 
@@ -217,7 +217,7 @@ impl LocalTensor {
             address,
             bytes: extent,
             allocation,
-            #[cfg(feature = "orbitte")]
+            #[cfg(feature = "orbite")]
             allocation_end: address
                 .checked_add(bytes as u64)
                 .ok_or("tensor allocation overflow")?,
@@ -433,18 +433,18 @@ impl LocalRestoreExecutor {
             .map_err(|e| e.to_string())?;
         let (backend, hosts, registrations) = match engine {
             Some((
-                crate::PeerTransferBackend::OrbitTeTcp | crate::PeerTransferBackend::OrbitTeRdma,
+                crate::PeerTransferBackend::OrbiteTcp | crate::PeerTransferBackend::OrbiteRdma,
                 owner,
             )) => {
-                #[cfg(feature = "orbitte")]
+                #[cfg(feature = "orbite")]
                 {
-                    orbitte::bind(&bindings, &imported, stream.clone(), mode, owner)?
+                    orbite::bind(&bindings, &imported, stream.clone(), mode, owner)?
                 }
-                #[cfg(not(feature = "orbitte"))]
+                #[cfg(not(feature = "orbite"))]
                 {
                     let _ = owner;
                     return Err(
-                        "Manager selected orbitte, but this client was built without it".into(),
+                        "Manager selected orbite, but this client was built without it".into(),
                     );
                 }
             }

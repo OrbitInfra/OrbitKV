@@ -13,9 +13,9 @@ test-hooks = []
 default = ["cuda-13", "mooncake"]
 cuda-13 = ["cudarc/cuda-13000", "cudarc/nvrtc", "orbitkv-transfer?/cuda-13"]
 mooncake = ["dep:orbitkv-transfer"]
-orbitte = ["dep:orbit-te", "orbit-te/cuda", "orbit-te/io-uring"]
-orbitte-gds = ["orbitte", "orbit-te/gds"]
-orbitte-rdma = ["orbitte", "orbit-te/rdma"]
+orbite = ["dep:orbite", "orbite/cuda", "orbite/io-uring"]
+orbite-gds = ["orbite", "orbite/gds"]
+orbite-rdma = ["orbite", "orbite/rdma"]
 tracing = ["fastrace"]
 
 [dependencies]
@@ -49,7 +49,7 @@ smallvec.workspace = true
 orbitkv-proto = { path = "../orbitkv-proto" }
 orbitkv-transfer = { path = "../orbitkv-transfer", default-features = false, optional = true }
 mea.workspace = true
-orbit-te = { git = "https://github.com/OrbitInfra/OrbitTE", rev = "c3700f00e104626725ea539263f73de640da2f64", default-features = false, optional = true }
+orbite = { git = "https://github.com/OrbitInfra/OrbiTE", rev = "8fa03eda9cf70e5f9867fedbf9855a09a41d9ac3", default-features = false, optional = true }
 
 [dev-dependencies]
 opentelemetry_sdk.workspace = true

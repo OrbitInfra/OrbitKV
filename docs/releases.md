@@ -64,17 +64,17 @@ non-editable environment. The initial maturin output uses a Linux tag; only the
 whole-wheel audit selects the final manylinux tag. Auditing the extension alone
 misses libraries loaded dynamically by TENT and the embedded-Python Manager.
 
-An experimental wheel can additionally compile OrbitTE TCP and RDMA:
+An experimental wheel can additionally compile OrbiTE TCP and RDMA:
 
 ```bash
 CC=gcc CXX=g++ PYO3_PYTHON=/absolute/path/to/python3.11 \
-  ./scripts/build-wheel.sh --release --features orbitte-rdma --locked
-python3 scripts/check-wheel.py target/wheels/*.whl --install-smoke --require-orbitte-rdma
+  ./scripts/build-wheel.sh --release --features orbite-rdma --locked
+python3 scripts/check-wheel.py target/wheels/*.whl --install-smoke --require-orbite-rdma
 ```
 
-`--features orbitte` enables only the TCP candidate. Complete wheels still
+`--features orbite` enables only the TCP candidate. Complete wheels still
 include CUDA 13 and TENT, and default to TENT; choose the experimental provider
-explicitly at Manager startup as described in [transport](transport.md#experimental-orbitte-peer-rdma-profile).
+explicitly at Manager startup as described in [transport](transport.md#experimental-orbite-peer-rdma-profile).
 These build options do not create a second Python distribution. The installed
 CLI smoke checks compiled RDMA arguments before any GPU access. Separate
 independent H20 byte/lifetime reruns qualify the CPython 3.11 single-runtime

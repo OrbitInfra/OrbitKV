@@ -545,7 +545,7 @@ impl PreparedRestore {
                                 slot_id: layer.slot_id,
                                 offset: layer.host_offset,
                             },
-                            #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+                            #[cfg(any(feature = "mooncake", feature = "orbite"))]
                             RestoreSource::Peer(source) => TransferPayload::Peer {
                                 source: source.clone(),
                                 slot_id: layer.slot_id,

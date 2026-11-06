@@ -84,12 +84,12 @@ impl SsdReadCandidate {
         }))
     }
 
-    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub(crate) fn cost_resource(&self) -> Option<ExecutionResource> {
         Some(self.store.upgrade()?.io.cost_resource)
     }
 
-    #[cfg(any(feature = "mooncake", feature = "orbitte"))]
+    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub(crate) fn replica_metadata(&self) -> orbitkv_state::ReplicaMetadata {
         self.entry.replica_metadata()
     }

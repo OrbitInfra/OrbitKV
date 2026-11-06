@@ -7,8 +7,8 @@ use crate::SsdCacheConfig;
 pub enum PeerTransferBackend {
     #[default]
     Mooncake,
-    OrbitTeTcp,
-    OrbitTeRdma,
+    OrbiteTcp,
+    OrbiteRdma,
 }
 
 impl std::str::FromStr for PeerTransferBackend {
@@ -17,9 +17,9 @@ impl std::str::FromStr for PeerTransferBackend {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "mooncake" => Ok(Self::Mooncake),
-            "orbitte-tcp" => Ok(Self::OrbitTeTcp),
-            "orbitte-rdma" => Ok(Self::OrbitTeRdma),
-            _ => Err("peer transfer backend must be mooncake, orbitte-tcp or orbitte-rdma".into()),
+            "orbite-tcp" => Ok(Self::OrbiteTcp),
+            "orbite-rdma" => Ok(Self::OrbiteRdma),
+            _ => Err("peer transfer backend must be mooncake, orbite-tcp or orbite-rdma".into()),
         }
     }
 }
@@ -29,8 +29,8 @@ impl PeerTransferBackend {
     pub fn validate_compiled(self) -> Result<(), String> {
         let (compiled, feature) = match self {
             Self::Mooncake => (cfg!(feature = "mooncake"), "mooncake"),
-            Self::OrbitTeTcp => (cfg!(feature = "orbitte"), "orbitte"),
-            Self::OrbitTeRdma => (cfg!(feature = "orbitte-rdma"), "orbitte-rdma"),
+            Self::OrbiteTcp => (cfg!(feature = "orbite"), "orbite"),
+            Self::OrbiteRdma => (cfg!(feature = "orbite-rdma"), "orbite-rdma"),
         };
         if compiled {
             Ok(())
@@ -64,11 +64,11 @@ pub struct EngineConfig {
     /// Optional Mooncake RDMA rail filter. Empty means that Mooncake selects
     /// the available transport, including TCP fallback.
     pub mooncake_nic_names: Vec<String>,
-    /// Explicit peer payload provider. OrbitTE profiles are experimental.
+    /// Explicit peer payload provider. OrbiTE profiles are experimental.
     pub peer_transfer_backend: PeerTransferBackend,
-    /// Explicit single-rail staging configuration, consumed only by OrbitTE RDMA.
-    #[cfg(feature = "orbitte-rdma")]
-    pub orbitte_rdma: Option<crate::OrbitTeRdmaConfig>,
+    /// Explicit single-rail staging configuration, consumed only by OrbiTE RDMA.
+    #[cfg(feature = "orbite-rdma")]
+    pub orbite_rdma: Option<crate::OrbiteRdmaConfig>,
     /// Enable NUMA-aware memory allocation.
     pub enable_numa_affinity: bool,
     /// Allocate each block separately instead of contiguous batch allocation.
@@ -100,8 +100,8 @@ impl Default for EngineConfig {
             codec_budget: 64 * 1024 * 1024,
             mooncake_nic_names: Vec::new(),
             peer_transfer_backend: PeerTransferBackend::default(),
-            #[cfg(feature = "orbitte-rdma")]
-            orbitte_rdma: None,
+            #[cfg(feature = "orbite-rdma")]
+            orbite_rdma: None,
             enable_numa_affinity: true,
             blockwise_alloc: false,
             transfer_lock_timeout: Duration::from_secs(120),

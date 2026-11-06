@@ -194,8 +194,8 @@ impl LifecycleService {
             .unwrap_or_default()
         {
             orbitkv_core::PeerTransferBackend::Mooncake => "mooncake",
-            orbitkv_core::PeerTransferBackend::OrbitTeTcp => "orbitte-tcp",
-            orbitkv_core::PeerTransferBackend::OrbitTeRdma => "orbitte-rdma",
+            orbitkv_core::PeerTransferBackend::OrbiteTcp => "orbite-tcp",
+            orbitkv_core::PeerTransferBackend::OrbiteRdma => "orbite-rdma",
         }
     }
     pub(crate) fn payload_arenas(&self) -> Result<Vec<orbitkv_core::PayloadArena>, ControlError> {

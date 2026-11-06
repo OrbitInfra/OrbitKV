@@ -9,7 +9,7 @@ use std::{
     },
 };
 
-#[cfg(feature = "orbitte")]
+#[cfg(feature = "orbite")]
 use std::sync::Weak;
 
 use bytesize::ByteSize;
@@ -76,8 +76,8 @@ pub struct PinnedAllocation {
     ptr: NonNull<u8>,
     device_ptr: NonNull<u8>,
     pool: Arc<PinnedMemoryPool>,
-    #[cfg(feature = "orbitte")]
-    orbitte_memory: Mutex<Weak<orbit_te::HostMemory>>,
+    #[cfg(feature = "orbite")]
+    orbite_memory: Mutex<Weak<orbite::HostMemory>>,
 }
 
 // SAFETY: PinnedAllocation points to CUDA pinned memory which is fixed in physical
@@ -99,29 +99,28 @@ impl PinnedAllocation {
             .map(Arc::new)
     }
 
-    /// Shares this allocation and its access lock with OrbitTE registrations.
+    /// Shares this allocation and its access lock with OrbiTE registrations.
     /// Retaining the returned memory keeps this exact allocator slot occupied,
     /// even after the allocator, registration or batch handle is dropped.
     ///
     /// # Safety
     /// Until the last returned memory, registration and admitted transfer releases
     /// this allocation, coordinate all external CPU, CUDA and process accesses
-    /// with OrbitTE. No conflicting Rust references or unsynchronized device
-    /// accesses may remain. All OrbitTE aliases must be obtained through this
+    /// with OrbiTE. No conflicting Rust references or unsynchronized device
+    /// accesses may remain. All OrbiTE aliases must be obtained through this
     /// method so they share the same access lock.
-    #[cfg(feature = "orbitte")]
-    pub unsafe fn orbitte_memory(self: &Arc<Self>) -> orbit_te::Result<Arc<orbit_te::HostMemory>> {
-        let mut cached = self.orbitte_memory.lock();
+    #[cfg(feature = "orbite")]
+    pub unsafe fn orbite_memory(self: &Arc<Self>) -> orbite::Result<Arc<orbite::HostMemory>> {
+        let mut cached = self.orbite_memory.lock();
         if let Some(memory) = cached.upgrade() {
             return Ok(memory);
         }
-        let length =
-            usize::try_from(self.size_bytes()).map_err(|_| orbit_te::Error::InvalidRange)?;
+        let length = usize::try_from(self.size_bytes()).map_err(|_| orbite::Error::InvalidRange)?;
         // SAFETY: this Arc retains the actual allocation and its pinned pool;
         // its Drop is the only path returning this slot to the allocator. The
-        // caller coordinates accesses outside the shared OrbitTE lock.
+        // caller coordinates accesses outside the shared OrbiTE lock.
         let memory = Arc::new(unsafe {
-            orbit_te::HostMemory::from_cuda_registered_parts(
+            orbite::HostMemory::from_cuda_registered_parts(
                 self.ptr,
                 length,
                 self.clone(),
@@ -221,8 +220,8 @@ pub(crate) struct PinnedMemoryPool {
     next_allocation_id: AtomicU64,
     /// Backing pinned memory (handles mmap + cudaHostRegister)
     backing: Arc<PinnedMemory>,
-    #[cfg(feature = "orbitte")]
-    local_pin: Arc<orbit_te::cuda::local_copy::PinnedHostRegistration>,
+    #[cfg(feature = "orbite")]
+    local_pin: Arc<orbite::cuda::local_copy::PinnedHostRegistration>,
     allocator: Mutex<ScaledOffsetAllocator>,
     allocatable_bytes: u64,
 }
@@ -280,10 +279,10 @@ impl PinnedMemoryPool {
             PinnedMemory::allocate(pool_size, pages, node)
                 .expect("Failed to allocate shared pinned memory pool"),
         );
-        #[cfg(feature = "orbitte")]
+        #[cfg(feature = "orbite")]
         // SAFETY: backing owns the physical CUDA pin until the last local loan.
         let local_pin = unsafe {
-            orbit_te::cuda::local_copy::PinnedHostRegistration::from_raw_parts(
+            orbite::cuda::local_copy::PinnedHostRegistration::from_raw_parts(
                 NonNull::new(backing.as_ptr().cast_mut()).expect("pinned base"),
                 backing.size(),
                 backing.clone(),
@@ -334,7 +333,7 @@ impl PinnedMemoryPool {
                 .expect("payload arena identity exhausted"),
             next_allocation_id: AtomicU64::new(1),
             backing,
-            #[cfg(feature = "orbitte")]
+            #[cfg(feature = "orbite")]
             local_pin,
             allocator: Mutex::new(allocator),
             allocatable_bytes,
@@ -394,8 +393,8 @@ impl PinnedMemoryPool {
             ptr,
             device_ptr,
             pool: Arc::clone(self),
-            #[cfg(feature = "orbitte")]
-            orbitte_memory: Mutex::new(Weak::new()),
+            #[cfg(feature = "orbite")]
+            orbite_memory: Mutex::new(Weak::new()),
         })
     }
 
@@ -890,6 +889,6 @@ unsafe impl Sync for PinnedAllocator {}
 #[path = "../../tests/unit/memory/pool.rs"]
 mod tests;
 
-#[cfg(all(test, feature = "orbitte"))]
-#[path = "../../tests/unit/memory/orbitte.rs"]
-mod orbitte_tests;
+#[cfg(all(test, feature = "orbite"))]
+#[path = "../../tests/unit/memory/orbite.rs"]
+mod orbite_tests;

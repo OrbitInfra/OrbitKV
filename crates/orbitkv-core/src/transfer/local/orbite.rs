@@ -1,6 +1,7 @@
 //! Client mappings and exporter owners for the Manager-selected local engine.
 use super::*;
 use crate::transfer_engine::{CudaRegistration, TransferBackend};
+use ::orbite::{HostMemory, Transport, cuda::local_copy::PinnedHostRegistration};
 
 type Binding = (
     Box<dyn LocalCopy>,
@@ -22,12 +23,12 @@ pub(super) fn bind(
     })?;
     // This process has its own addresses and registration authority. Peer
     // transport is unused; no RDMA devices or storage SDKs are configured here.
-    let engine: Arc<dyn TransferBackend> = Arc::new(crate::peer::orbitte::OrbitTeTransport::new(
+    let engine: Arc<dyn TransferBackend> = Arc::new(crate::peer::orbite::OrbiteTransport::new(
         pool_bytes,
         "127.0.0.1:0",
-        orbit_te::Transport::Tcp,
+        Transport::Tcp,
         None,
-        #[cfg(feature = "orbitte-rdma")]
+        #[cfg(feature = "orbite-rdma")]
         None,
     )?);
     let mut ranges = HashMap::<usize, (u64, u64)>::new();
@@ -62,22 +63,13 @@ pub(super) fn bind(
     for arena in arenas.values() {
         // SAFETY: one pin owner per physical cuMemHostRegister, retaining mmap/fd.
         let pin = unsafe {
-            orbit_te::cuda::local_copy::PinnedHostRegistration::from_raw_parts(
-                arena.pointer,
-                arena.size,
-                arena.clone(),
-            )
+            PinnedHostRegistration::from_raw_parts(arena.pointer, arena.size, arena.clone())
         }
         .map_err(|e| e.to_string())?;
         // SAFETY: whole-arena aliases share this memory/access lock. Active source
         // grants are held by execute until all completions drain, including errors.
         let memory = unsafe {
-            orbit_te::HostMemory::from_cuda_registered_parts(
-                arena.pointer,
-                arena.size,
-                arena.clone(),
-                pin,
-            )
+            HostMemory::from_cuda_registered_parts(arena.pointer, arena.size, arena.clone(), pin)
         }
         .map_err(|e| e.to_string())?;
         hosts.push(LocalHost::Imported(Arc::new(memory)));
