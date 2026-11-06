@@ -53,11 +53,66 @@ mod engine {
         let root = std::env::var_os("ORBITKV_SSD_TEST_ROOT")
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir);
-        tempfile::tempdir_in(root).unwrap()
+        let directory = tempfile::tempdir_in(root).unwrap();
+        let fd = File::open(directory.path()).unwrap();
+        let mut info = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        // SAFETY: fd is live and info has space for the kernel's statfs output.
+        assert_eq!(
+            unsafe { libc::fstatfs(fd.as_raw_fd(), info.as_mut_ptr()) },
+            0
+        );
+        // SAFETY: successful fstatfs initialized info.
+        let magic = unsafe { info.assume_init() }.f_type as u64;
+        let expected = match std::env::var("ORBITKV_SSD_TEST_FS").as_deref() {
+            Ok("ext4") => 0xef53,
+            Ok("tmpfs") => 0x0102_1994,
+            _ => panic!(
+                "select ORBITKV_SSD_TEST_FS=ext4|tmpfs; do not silently substitute a filesystem"
+            ),
+        };
+        assert_eq!(magic, expected, "wrong real-file test filesystem");
+        directory
     }
 
     fn buffered(file: &File) -> File {
-        File::open(format!("/proc/self/fd/{}", file.as_raw_fd())).unwrap()
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(format!("/proc/self/fd/{}", file.as_raw_fd()))
+            .unwrap()
+    }
+
+    fn assert_engine_direct(file: &File) {
+        use std::os::unix::fs::MetadataExt;
+        if std::env::var("ORBITKV_SSD_TEST_FS").as_deref() != Ok("ext4") {
+            return; // tmpfs is the separate memory-filesystem profile.
+        }
+        let inode = file.metadata().unwrap();
+        let direct = std::fs::read_dir("/proc/self/fd")
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|entry| {
+                let Some(fd) = entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|s| s.parse::<i32>().ok())
+                else {
+                    return false;
+                };
+                if fd == file.as_raw_fd() {
+                    return false;
+                }
+                let Ok(metadata) = std::fs::metadata(entry.path()) else {
+                    return false;
+                };
+                // SAFETY: F_GETFL only observes this fd; a concurrently closed fd returns -1.
+                let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+                metadata.dev() == inode.dev()
+                    && metadata.ino() == inode.ino()
+                    && flags >= 0
+                    && flags & libc::O_DIRECT != 0
+            });
+        assert!(direct, "engine must retain its own O_DIRECT fd on ext4");
     }
 
     fn selected_backend() -> crate::PeerTransferBackend {
@@ -280,12 +335,60 @@ mod engine {
             assert_eq!(error.kind, ErrorKind::Backend);
             assert_eq!(&bytes[..512], &[0x47; 512]);
             assert!(error.message.contains("512 bytes"), "{error}");
-            // O_DIRECT can zero the requested suffix beyond a short result.
-            // Only the returned prefix is valid; bytes outside the request stay intact.
-            assert_eq!(&bytes[1024..], &[0xa5; 1024]);
+            // submitv scatters only the completed prefix, including on O_DIRECT.
+            assert_eq!(&bytes[512..], &[0xa5; 1536]);
         } else {
             assert_eq!(error.kind, ErrorKind::InvalidRequest);
             assert_eq!(bytes, &[0xa5; 2048]);
+        }
+        // EOF falls inside padding, then inside a data range. The TENT vector
+        // receipt counts the file prefix (including padding); only that prefix
+        // may be scattered. OrbiTE rejects the shortened file at preflight.
+        for range_bytes in [128, 512] {
+            // SAFETY: the previous READ physically drained before reinitialization.
+            unsafe { std::ptr::write_bytes(destination.as_non_null().as_ptr(), 0xa5, 2048) };
+            let error = file
+                .submit(
+                    TransferOp::Read,
+                    FileTransport::IoUring,
+                    FileExtent {
+                        offset: 0,
+                        elements: vec![
+                            FileIoElement::Padding(256),
+                            FileIoElement::Range {
+                                address: destination.as_non_null().as_ptr() as u64,
+                                length: range_bytes,
+                            },
+                            FileIoElement::Padding(896 - 256 - range_bytes),
+                            FileIoElement::Range {
+                                address: destination.as_non_null().as_ptr() as u64 + 1024,
+                                length: 128,
+                            },
+                        ],
+                    },
+                    FileMemory::Pinned(vec![Arc::clone(&destination)]),
+                    Arc::new(()),
+                )
+                .unwrap()
+                .await
+                .unwrap()
+                .unwrap_err();
+            // SAFETY: the failed request has an independent physical drain receipt.
+            let bytes =
+                unsafe { std::slice::from_raw_parts(destination.as_non_null().as_ptr(), 2048) };
+            let copied = if selected_backend() == crate::PeerTransferBackend::Mooncake {
+                assert_eq!(error.kind, ErrorKind::Backend);
+                assert!(error.message.contains("512 bytes"), "{error}");
+                range_bytes.min(256)
+            } else {
+                assert_eq!(error.kind, ErrorKind::InvalidRequest);
+                0
+            };
+            assert!(bytes[..copied].iter().all(|&b| b == 0x47));
+            assert!(
+                bytes[copied..].iter().all(|&b| b == 0xa5),
+                "short READ overwrote its suffix"
+            );
         }
         assert_eq!(file.admission.available_permits(), MAX_OPERATIONS);
     }
@@ -427,6 +530,10 @@ mod engine {
             ],
         };
         let owners = || FileMemory::Pinned(vec![Arc::clone(&first), Arc::clone(&second)]);
+        // A skipped padding WRITE must fail even on a freshly allocated shard.
+        buffered(&store._files[0])
+            .write_all_at(&vec![0xcc; total], 0)
+            .unwrap();
         assert_eq!(
             file.submit(
                 TransferOp::Write,
@@ -441,6 +548,7 @@ mod engine {
             .unwrap(),
             total
         );
+        assert_engine_direct(&store._files[0]);
         assert_eq!(
             backend.calls.load(Ordering::Relaxed),
             1,
@@ -508,7 +616,7 @@ mod engine {
         assert_eq!(
             error.kind,
             ErrorKind::Unavailable,
-            "explicit GDS padding must reject before touching bytes"
+            "unconfigured native GDS must reject before touching host bytes"
         );
         buffered(&store._files[0])
             .read_exact_at(&mut disk, 0)

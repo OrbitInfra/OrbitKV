@@ -30,7 +30,7 @@ later without changing cache or framework code.
 
 - repository: [OrbitInfra/Mooncake](https://github.com/OrbitInfra/Mooncake)
 - branch: `orbitkv-integration-v0.3.14`
-- pinned commit: `85c270db5ad7b9a8a91a851e4a4c7ef684939760`
+- pinned commit: `1198515dc7d4b234a990ae7d8919f13e4404e585`
 - upstream base: `v0.3.14`, `e1ea5d31bb5e46ff2df9f90e7c2fbaf52fcdee8c`
 
 The gitlink selects an immutable integration commit; builds never resolve a moving
@@ -38,10 +38,11 @@ branch head. The fork carries the previously consumed TCP copy/context,
 worker ownership, source drain/epoch and registration ownership fixes as ordinary
 commits. Cargo copies this source into its private build directory and invokes
 CMake directly. It does not apply patches or rewrite the submodule.
-See the [integration branch guide](https://github.com/OrbitInfra/Mooncake/blob/85c270db5ad7b9a8a91a851e4a4c7ef684939760/ORBITKV_INTEGRATION.md)
+See the [integration branch guide](https://github.com/OrbitInfra/Mooncake/blob/1198515dc7d4b234a990ae7d8919f13e4404e585/ORBITKV_INTEGRATION.md)
 for upstream origins and the update policy. The v0.3.14 port preserves those
 ownership contracts and the original 23 C function signatures. The consumer also
-loads six file functions and `tent_terminal_result`. This upgrade
+loads six file functions (using `tent_file_submitv` in place of
+`tent_file_submit`) and `tent_terminal_result`. This upgrade
 grants no new hardware qualification.
 
 Install the CLI11 headers (`libcli11-dev`) and liburing headers/library

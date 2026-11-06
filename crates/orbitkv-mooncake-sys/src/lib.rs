@@ -19,7 +19,7 @@ use libloading::os::unix::{Library, RTLD_GLOBAL, RTLD_NOW};
 pub mod files;
 
 pub const SOURCE_VERSION: &str = "v0.3.14+orbitkv.1";
-pub const SOURCE_REVISION: &str = "85c270db5ad7b9a8a91a851e4a4c7ef684939760";
+pub const SOURCE_REVISION: &str = "1198515dc7d4b234a990ae7d8919f13e4404e585";
 #[cfg(feature = "cuda")]
 const WORKSPACE_RUNTIME_LIB_DIR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),

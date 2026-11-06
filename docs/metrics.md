@@ -493,7 +493,6 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
 - **orbitkv_ssd_cufile_read_seconds** (Histogram) - Async submission-to-completion latency, including GPU scatter and polling; excludes waiting for a slot.
 - **orbitkv_ssd_cufile_read_failures_total** (Counter) - Failed or short cuFile reads.
 - **orbitkv_ssd_read_pinned_bytes** (Gauge) - SSD extents owned by restore leases.
-- **orbitkv_ssd_gpu_staging_bytes** (Gauge) - TENT-only GPU file alignment scratch, separate from engine-owned staging; absent in OrbiTE-only builds.
 - **orbitkv_ssd_cufile_inflight_batches** (Gauge) - Occupied staging slots until I/O and scatter completion, at most two per instance/device.
 - **orbitkv_ssd_gpu_write_fallbacks_total** (Counter) - Write jobs using host publication after the eight-job GPU write admission limit is reached.
 - **orbitkv_ssd_gpu_read_fallbacks_total** (Counter) - Automatically selected cuFile restores changed to io_uring before submission because another instance owns this CUDA device's persistent staging. Explicit cuFile routes do not increment this counter or switch paths.

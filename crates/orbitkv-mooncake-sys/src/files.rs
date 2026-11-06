@@ -10,6 +10,8 @@ pub const IOURING: c_int = 6;
 pub const GDS: c_int = 5;
 pub const READ_WRITE: c_int = 3;
 pub const UNQUIESCED: c_int = 8;
+pub const RANGE: c_int = 0;
+pub const PADDING: c_int = 1;
 
 #[repr(C)]
 pub struct FileOptions {
@@ -21,7 +23,8 @@ pub struct FileOptions {
 }
 
 #[repr(C)]
-pub struct FileRange {
+pub struct FileElement {
+    pub kind: c_int,
     pub address: *mut c_void,
     pub length: u64,
 }
@@ -63,12 +66,12 @@ pub struct FileApi {
         *mut u64,
         *mut u64,
     ) -> c_int,
-    pub submit: unsafe extern "C" fn(
+    pub submitv: unsafe extern "C" fn(
         NativeEngine,
         u64,
         c_int,
         u64,
-        *const FileRange,
+        *const FileElement,
         usize,
         *const FileOwner,
         *mut u64,
@@ -86,7 +89,7 @@ impl FileApi {
             Ok(Self {
                 create: symbol(library, b"tent_create_engine_with_files\0")?,
                 open: symbol(library, b"tent_file_open\0")?,
-                submit: symbol(library, b"tent_file_submit\0")?,
+                submitv: symbol(library, b"tent_file_submitv\0")?,
                 drain: symbol(library, b"tent_file_drain\0")?,
                 release: symbol(library, b"tent_file_release_batch\0")?,
                 close: symbol(library, b"tent_file_close\0")?,
