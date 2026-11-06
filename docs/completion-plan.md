@@ -442,12 +442,36 @@ for user navigation while retaining OrbitKV's Rust owners and website identity.
   existing transport qualification limits are unchanged.
 - [ ] Build final Manager/engine images and wheels, preserve licenses/provenance,
   and qualify clean installed artifacts on claimed hosts and profiles.
-- [ ] Publish only within release authorization. The 0.1.0 package remains
-  unpublished; a wheel CI build does not establish a published release.
+- [ ] Re-qualify the current data path before any publication. Qualifications
+  recorded before engine-routed SSD, direct peer→GPU restore, removal of
+  `storage/ssd/gpu.rs`, and OrbiTE local copies do **not** carry over. Preserve
+  those records as historical evidence; they cannot qualify the new path.
+- [ ] Before release, replace the OrbiTE git revision with the crates.io release
+  (`orbite = "0.1"`) and document the exact pinned `OrbitInfra/Mooncake`
+  `orbitkv-integration-v0.3.14` fork head in the release provenance.
+- [ ] Publish only after GPU re-qualification and maintainer authorization.
+  **0.1.0 is OrbitKV's first release.** `orbitkv-llm` stays unpublished until
+  then; wheel CI and candidate artifacts do not authorize publication.
+
+Once hardware returns, use this order:
+
+1. OrbiTE **0.1.0**.
+2. Re-run OrbitKV's claimed profiles with **installed wheels on both backends**:
+   vLLM **0.31.0** and SGLang **0.5.22**, dense **TP=1/PP=1**, DRAM plus
+   io_uring SSD, and the accepted scoped peer profiles. Record current artifacts,
+   bytes, ownership/drain and fault evidence; do not expand a scoped claim.
+3. Build **0.1.0rc1**.
+4. Perform clean installed-artifact qualification on the claimed hosts.
+5. **0.1.0**.
+
+OrbiTE becomes the default only if it matches or beats TENT in matched serving
+and transfer benchmarks **and** passes the fault controls. Otherwise 0.1.0 ships
+with **TENT as the default and OrbiTE opt-in**. Freeze the chosen defaults and
+matching dependency artifacts for the candidate and final installed gates.
 
 Maintain concise README, quickstart, configuration and benchmark guidance with
-each future behavior change. Publication and final artifact qualification remain
-open independently of this documentation cleanup.
+each future behavior change. Publication remains the maintainer's action;
+implementation and CI results do not authorize it.
 
 ## Review contract for every delivery
 
