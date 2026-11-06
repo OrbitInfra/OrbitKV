@@ -1,5 +1,6 @@
 use crate::memory::numa::NumaNode;
 use crate::planning::peer::{FetchPlan, FetchSegment};
+use crate::transfer_engine::TransferOptions;
 
 use crate::block::{SealedBlock, StateKey};
 #[cfg(test)]
@@ -52,6 +53,7 @@ pub(super) trait SegmentFetcher {
         &self,
         segment: &FetchSegment,
         mode: AuthorizationMode,
+        options: TransferOptions,
     ) -> Result<Self::Grant, AuthorizationError>;
 
     /// Destination admission happens here, after the preceding READ drains.
@@ -69,6 +71,7 @@ pub(super) async fn execute_fetch_plan<F: SegmentFetcher>(
     mut plan: FetchPlan<'_>,
     req_id: &str,
     destination_nodes: &[NumaNode],
+    options: TransferOptions,
 ) -> FetchResult<F::Block> {
     let mut fetched = Vec::with_capacity(plan.block_count());
     let mut attempts = 0;
@@ -85,7 +88,7 @@ pub(super) async fn execute_fetch_plan<F: SegmentFetcher>(
             };
             attempts += 1;
             let authorization = fetcher
-                .authorize_segment(&segment, AuthorizationMode::Demand)
+                .authorize_segment(&segment, AuthorizationMode::Demand, options)
                 .await;
             (segment, authorization)
         };
@@ -117,7 +120,7 @@ pub(super) async fn execute_fetch_plan<F: SegmentFetcher>(
             };
             attempts += 1;
             fetcher
-                .authorize_segment(next, AuthorizationMode::Lookahead)
+                .authorize_segment(next, AuthorizationMode::Lookahead, options)
                 .await
         };
         let (returned, next_grant) = {

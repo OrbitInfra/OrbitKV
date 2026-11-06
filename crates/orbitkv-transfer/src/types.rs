@@ -27,8 +27,17 @@ impl TransferOp {
     }
 }
 
+/// TENT's C ABI priority values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(i32)]
+pub enum TransferPriority {
+    High = 0,
+    Low = 2,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct TransferSlice {
+    pub priority: TransferPriority,
     pub local: NonNull<u8>,
     pub remote_address: u64,
     pub length: usize,

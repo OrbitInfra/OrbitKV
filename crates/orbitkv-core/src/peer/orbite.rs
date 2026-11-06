@@ -15,11 +15,27 @@ use crate::transfer_engine::{
     Cancellation, ErrorKind, FileIoElement, FileMemory, FileSegment, FileSegmentInner,
     FileTransfer, FileTransport, MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, PeerSegment,
     REGISTERED_POOLS, Registration, RegistrationInner, Segment, TransferBackend, TransferError,
-    TransferSlice, remaining, validate_slices,
+    TransferOptions, TransferSlice, remaining, validate_slices,
 };
+
+fn request_options(request: TransferRequest, options: TransferOptions) -> TransferRequest {
+    use crate::transfer_engine::{TransferIntent, TransferPriority};
+    request
+        .with_deadline(options.deadline)
+        .with_intent(match options.intent {
+            TransferIntent::ForegroundGet => orbite::IntentType::ForegroundGet,
+            TransferIntent::BackgroundPrefetch => orbite::IntentType::BackgroundPrefetch,
+            TransferIntent::Checkpoint => orbite::IntentType::Checkpoint,
+        })
+        .with_priority(match options.intent.priority() {
+            TransferPriority::High => orbite::Priority::High,
+            TransferPriority::Low => orbite::Priority::Low,
+        })
+}
 
 fn prefix(transport: Transport) -> &'static str {
     match transport {
+        Transport::Unspec => "orbite://",
         Transport::Tcp => "orbite+tcp://",
         Transport::Rdma => "orbite+rdma://",
         _ => "orbite+unsupported://",
@@ -28,9 +44,10 @@ fn prefix(transport: Transport) -> &'static str {
 const MAX_BATCH_REQUESTS: usize = 16_384;
 const MAX_BATCH_BYTES: usize = 64 << 20;
 
-pub(super) fn parse_endpoint(transport: Transport, endpoint: &str) -> Result<SocketAddr, String> {
-    endpoint
-        .strip_prefix(prefix(transport))
+pub(super) fn parse_endpoint(endpoint: &str) -> Result<SocketAddr, String> {
+    ["orbite://", "orbite+tcp://", "orbite+rdma://"]
+        .into_iter()
+        .find_map(|scheme| endpoint.strip_prefix(scheme))
         .ok_or("peer OrbiTE payload protocol mismatch")?
         .parse()
         .map_err(|error| format!("invalid OrbiTE endpoint: {error}"))
@@ -91,7 +108,10 @@ impl OrbiteTransport {
         storage: Option<&crate::SsdCacheConfig>,
         #[cfg(feature = "orbite-rdma")] rdma: Option<crate::OrbiteRdmaConfig>,
     ) -> Result<Self, String> {
-        if !matches!(payload, Transport::Tcp | Transport::Rdma) {
+        if !matches!(
+            payload,
+            Transport::Unspec | Transport::Tcp | Transport::Rdma
+        ) {
             return Err("unsupported OrbiTE peer payload".into());
         }
         #[cfg(not(feature = "orbite-rdma"))]
@@ -99,7 +119,9 @@ impl OrbiteTransport {
             return Err("OrbiTE RDMA requires the orbite-rdma build feature".into());
         }
         #[cfg(feature = "orbite-rdma")]
-        if (payload == Transport::Rdma) != rdma.is_some() {
+        if (payload == Transport::Rdma && rdma.is_none())
+            || (payload == Transport::Tcp && rdma.is_some())
+        {
             return Err("OrbiTE RDMA requires an explicit device configuration".into());
         }
         let endpoint = advertise
@@ -117,7 +139,7 @@ impl OrbiteTransport {
             return Err("OrbiTE requires a concrete advertised IP".into());
         }
         let mut policy = vec![orbite::SelectionPolicy {
-            transports: vec![payload],
+            transports: Vec::new(),
             ..Default::default()
         }];
         if storage.is_some() {
@@ -155,12 +177,12 @@ impl OrbiteTransport {
             gds_enabled: storage.is_some_and(|s| s.backend == crate::SsdBackend::Cufile),
             max_failover_attempts: 0,
             enable_auto_failover_on_poll: false,
-            tcp: payload == Transport::Tcp,
+            tcp: payload != Transport::Rdma,
             selector: Some(orbite::TransportSelectorConfig {
                 policy,
                 ..Default::default()
             }),
-            // No implicit expansion of the qualified payload namespace.
+            // Auto selection uses only enabled providers; extra transports stay opt-in.
             hp_tcp: Default::default(),
             shm: Default::default(),
             nvlink: false,
@@ -202,9 +224,10 @@ impl OrbiteTransport {
         target: orbite::TransferTarget<'_>,
         transport: Transport,
         slices: &[TransferSlice],
-        deadline: Instant,
+        options: TransferOptions,
         cancellation: &Cancellation,
     ) -> Result<usize, TransferError> {
+        let deadline = options.deadline;
         let total = validate_profile(slices)?;
         if cancellation.is_cancelled() {
             return Err(TransferError::new(
@@ -215,13 +238,15 @@ impl OrbiteTransport {
         let requests: Vec<_> = slices
             .iter()
             .map(|slice| {
-                TransferRequest::new(
-                    transport,
-                    slice.local.as_ptr() as u64,
-                    slice.remote_address,
-                    slice.length,
+                request_options(
+                    TransferRequest::new(
+                        transport,
+                        slice.local.as_ptr() as u64,
+                        slice.remote_address,
+                        slice.length,
+                    ),
+                    options,
                 )
-                .with_deadline(deadline)
             })
             .collect();
         self.transfer_requests(operation, target, &requests, total, deadline, cancellation)
@@ -364,6 +389,7 @@ impl OrbiteTransport {
 impl TransferBackend for OrbiteTransport {
     fn local_engine(&self) -> crate::PeerTransferBackend {
         match self.payload {
+            Transport::Unspec => crate::PeerTransferBackend::Orbite,
             Transport::Rdma => crate::PeerTransferBackend::OrbiteRdma,
             _ => crate::PeerTransferBackend::OrbiteTcp,
         }
@@ -385,7 +411,7 @@ impl TransferBackend for OrbiteTransport {
         &self.epoch
     }
     fn accepts_endpoint(&self, endpoint: &str) -> bool {
-        parse_endpoint(self.payload, endpoint).is_ok()
+        parse_endpoint(endpoint).is_ok()
     }
 
     fn register_pinned(
@@ -453,7 +479,7 @@ impl TransferBackend for OrbiteTransport {
         expected_epoch: &str,
         deadline: Instant,
     ) -> Result<PeerSegment, TransferError> {
-        let endpoint = parse_endpoint(self.payload, endpoint)
+        let endpoint = parse_endpoint(endpoint)
             .map_err(|e| TransferError::new(ErrorKind::InvalidRequest, e))?;
         let epoch = expected_epoch.parse().map_err(transfer_error)?;
         let peer = self
@@ -471,7 +497,7 @@ impl TransferBackend for OrbiteTransport {
         operation: crate::transfer_engine::TransferOp,
         peer: &PeerSegment,
         slices: &[TransferSlice],
-        deadline: Instant,
+        options: TransferOptions,
         cancellation: &Cancellation,
     ) -> Result<usize, TransferError> {
         validate_profile(slices)?;
@@ -498,14 +524,16 @@ impl TransferBackend for OrbiteTransport {
                 ));
             }
         };
-        self.transfer_target(
+        let bytes = self.transfer_target(
             operation,
             peer.into(),
-            Transport::Unspec,
+            self.payload,
             slices,
-            deadline,
+            options,
             cancellation,
-        )
+        )?;
+        self.record_nic_load();
+        Ok(bytes)
     }
 
     fn open_file(&self, path: &std::path::Path) -> Result<FileSegment, TransferError> {
@@ -566,9 +594,10 @@ impl TransferBackend for OrbiteTransport {
         file: &FileSegment,
         transport: FileTransport,
         transfer: Arc<FileTransfer>,
-        deadline: Instant,
+        options: TransferOptions,
         cancellation: &Cancellation,
     ) -> Result<usize, TransferError> {
+        let deadline = options.deadline;
         if file.owner_epoch != self.epoch {
             return Err(TransferError::new(
                 ErrorKind::InvalidRequest,
@@ -603,16 +632,19 @@ impl TransferBackend for OrbiteTransport {
             })
             .collect();
         let total = transfer.extent.bytes()?;
-        let request = TransferRequest::file_vectored(
-            match transport {
-                FileTransport::IoUring => Transport::IoUring,
-                FileTransport::Gds => Transport::Gds,
-            },
-            transfer.extent.offset,
-            &elements,
-        )
-        .map_err(transfer_error)?
-        .with_deadline(deadline);
+        let request = request_options(
+            TransferRequest::file_vectored(
+                match transport {
+                    FileTransport::Auto => Transport::Unspec,
+                    FileTransport::IoUring => Transport::IoUring,
+                    FileTransport::Gds => Transport::Gds,
+                },
+                transfer.extent.offset,
+                &elements,
+            )
+            .map_err(transfer_error)?,
+            options,
+        );
         let registration = match &transfer.memory {
             FileMemory::Pinned(allocations) if allocations.is_empty() => Ok(None),
             FileMemory::Pinned(allocations) => Arc::clone(&self)
@@ -670,7 +702,21 @@ impl TransferBackend for OrbiteTransport {
             .map_err(transfer_error)
     }
     fn invalidate_segment(&self, _endpoint: &str) {}
-    fn record_nic_load(&self) {}
+    fn record_nic_load(&self) {
+        #[cfg(feature = "orbite-rdma")]
+        if let Ok(stats) = self.engine.nic_load_stats() {
+            let metrics = crate::metrics::core_metrics();
+            for stat in stats {
+                let attributes = [opentelemetry::KeyValue::new("nic", stat.device_name)];
+                metrics
+                    .orbite_nic_inflight_bytes
+                    .record(stat.inflight_bytes as u64, &attributes);
+                metrics
+                    .orbite_nic_bandwidth_bytes_per_second
+                    .record(stat.ewma_bandwidth_bps, &attributes);
+            }
+        }
+    }
 }
 
 impl From<crate::transfer_engine::Permission> for Permission {

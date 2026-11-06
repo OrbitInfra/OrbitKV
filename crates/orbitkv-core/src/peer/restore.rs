@@ -3,7 +3,6 @@
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::Arc,
-    time::Instant,
 };
 
 use super::{
@@ -16,7 +15,7 @@ use super::{
 use crate::planning::peer::{FetchPlan, FetchSegment};
 use crate::transfer_engine::{
     Cancellation, CudaRegistration, ErrorKind, PeerTransferError, TransferBackend, TransferOp,
-    TransferSlice,
+    TransferOptions, TransferSlice,
 };
 use crate::{SlotMeta, block::StateKey, memory::numa::NumaNode};
 
@@ -39,7 +38,7 @@ struct Grant {
     transfer: Arc<dyn TransferBackend>,
     endpoint: String,
     epoch: String,
-    deadline: Instant,
+    options: TransferOptions,
     membership: Arc<orbitkv_catalog::MembershipView>,
     source_owner: orbitkv_state::CacheOwner,
 }
@@ -102,7 +101,7 @@ impl PeerRestoreBlock {
                 "peer GPU source membership is fenced".into(),
             ));
         }
-        crate::transfer_engine::remaining(grant.deadline)?;
+        crate::transfer_engine::remaining(grant.options.deadline)?;
         let total = crate::transfer_engine::validate_slices(slices)?;
         if slices.len() > 16_384 || total > 64 << 20 || owners.len() != slices.len() {
             return Err(PeerTransferError::Failed(
@@ -125,9 +124,10 @@ impl PeerRestoreBlock {
             .iter()
             .map(|owner| owner.loan(&grant.transfer))
             .collect::<Result<Vec<_>, _>>()?;
-        let peer = grant
-            .transfer
-            .open_peer(&grant.endpoint, &grant.epoch, grant.deadline)?;
+        let peer =
+            grant
+                .transfer
+                .open_peer(&grant.endpoint, &grant.epoch, grant.options.deadline)?;
         let result = catch_unwind(AssertUnwindSafe(|| {
             // SAFETY: registrations and source authority are held through physical drain.
             unsafe {
@@ -135,7 +135,7 @@ impl PeerRestoreBlock {
                     TransferOp::Read,
                     &peer,
                     slices,
-                    grant.deadline,
+                    grant.options,
                     &Cancellation::default(),
                 )
             }
@@ -170,10 +170,11 @@ impl SegmentFetcher for RestoreReader<'_> {
         &self,
         segment: &FetchSegment,
         _mode: AuthorizationMode,
+        options: TransferOptions,
     ) -> Result<Self::Grant, AuthorizationError> {
         // This is source admission, not a completed HostReady route sample.
         self.0
-            .authorize_segment(segment, AuthorizationMode::Lookahead)
+            .authorize_segment(segment, AuthorizationMode::Lookahead, options)
             .await
     }
 
@@ -212,7 +213,10 @@ impl SegmentFetcher for RestoreReader<'_> {
             transfer: Arc::clone(&self.0.transfer),
             endpoint: grant.response.transfer_endpoint,
             epoch: grant.response.native_source_epoch,
-            deadline,
+            options: TransferOptions {
+                deadline: grant.options.deadline.min(deadline),
+                ..grant.options
+            },
             membership: Arc::clone(&self.0.membership),
             source_owner: segment.owner.clone(),
         });
@@ -290,8 +294,16 @@ impl PeerReader {
         plan: FetchPlan<'_>,
         req_id: &str,
         nodes: &[NumaNode],
+        options: TransferOptions,
     ) -> FetchResult<PeerRestoreBlock> {
-        execute_fetch_plan(&RestoreReader(self), plan.for_gpu_restore(), req_id, nodes).await
+        execute_fetch_plan(
+            &RestoreReader(self),
+            plan.for_gpu_restore(),
+            req_id,
+            nodes,
+            options,
+        )
+        .await
     }
 }
 

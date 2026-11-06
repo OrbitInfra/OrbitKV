@@ -234,6 +234,7 @@ impl BenchFixture {
                     req_id,
                     hashes,
                     orbitkv_core::QueryMode::Demand,
+                    std::time::Instant::now() + std::time::Duration::from_secs(30),
                 )
                 .await
                 .expect("query");

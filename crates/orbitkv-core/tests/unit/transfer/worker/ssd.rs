@@ -212,7 +212,7 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
     let sources = store
         .discover(std::slice::from_ref(&key))
         .into_iter()
-        .map_while(|candidate| candidate?.pin())
+        .map_while(|candidate| candidate?.pin(crate::transfer_engine::tests::demand()))
         .collect::<Vec<_>>();
     assert_eq!(sources.len(), 1);
     let source = Arc::clone(&sources[0]);
@@ -294,7 +294,7 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
         let current = store
             .discover(std::slice::from_ref(&key))
             .into_iter()
-            .map_while(|candidate| candidate?.pin())
+            .map_while(|candidate| candidate?.pin(crate::transfer_engine::tests::demand()))
             .collect::<Vec<_>>();
         assert_eq!(current.len(), 1);
         assert_eq!(

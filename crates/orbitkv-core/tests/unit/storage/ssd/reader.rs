@@ -60,7 +60,7 @@ async fn cancelled_batch_retains_extent_until_the_last_reader_releases_its_conte
     let lease = store
         .discover(std::slice::from_ref(&key))
         .into_iter()
-        .map_while(|candidate| candidate?.pin())
+        .map_while(|candidate| candidate?.pin(crate::transfer_engine::tests::demand()))
         .collect::<Vec<_>>()
         .pop()
         .unwrap();

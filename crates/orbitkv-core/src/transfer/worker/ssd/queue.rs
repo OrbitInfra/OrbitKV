@@ -30,6 +30,7 @@ enum Task {
 }
 
 struct Work {
+    options: crate::transfer_engine::TransferOptions,
     file: Arc<GpuFile>,
     extent: Arc<dyn Send + Sync>,
     batch: IoBatch,
@@ -113,6 +114,13 @@ impl Job {
                         for batch in batches {
                             job.bytes += batch.copies.iter().map(|copy| copy.bytes).sum::<usize>();
                             job.work.push_back(Work {
+                                options: extents
+                                    .iter()
+                                    .map(|lease| lease.options)
+                                    .min_by_key(|options| options.deadline)
+                                    .ok_or_else(|| {
+                                        EngineError::Storage("SSD read has no extent owner".into())
+                                    })?,
                                 file: Arc::clone(&file),
                                 extent: extents.clone(),
                                 batch,
@@ -136,6 +144,7 @@ impl Job {
                             job.work.push_back(Work {
                                 file: Arc::clone(&file),
                                 extent: write.lease.clone(),
+                                options: write.lease.options,
                                 batch,
                                 write: Some(index),
                                 encoded: false,
@@ -470,6 +479,12 @@ impl Decode {
             job.work.push_back(Work {
                 file: Arc::clone(self.reads[0].source.file().map_err(|e| e.to_string())?),
                 extent: self.reads[0].source.clone(),
+                options: self
+                    .reads
+                    .iter()
+                    .map(|read| read.source.options)
+                    .min_by_key(|options| options.deadline)
+                    .ok_or("encoded read has no source deadline")?,
                 batch,
                 write: None,
                 encoded: true,
@@ -800,6 +815,7 @@ pub(in crate::transfer::worker) fn run(
                             context: Arc::clone(runtime.stream.context()),
                         },
                         work.extent,
+                        work.options,
                     )
                     .map_err(|e| e.to_string())
             })();

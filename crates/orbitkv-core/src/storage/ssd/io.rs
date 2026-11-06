@@ -19,11 +19,11 @@ use crate::cost::{
 use crate::memory::pool::PinnedAllocation;
 use crate::transfer_engine::{
     Cancellation, ErrorKind, FileExtent, FileIoElement, FileMemory, FileSegment, FileTransfer,
-    FileTransport, MAX_FILE_ELEMENTS, TransferBackend, TransferError, TransferOp,
+    FileTransport, MAX_FILE_ELEMENTS, TransferBackend, TransferError, TransferOp, TransferOptions,
 };
 
 const MAX_OPERATIONS: usize = 32;
-const DEADLINE: Duration = Duration::from_secs(30);
+pub(super) const DEADLINE: Duration = Duration::from_secs(30);
 
 pub(crate) type Receipt = oneshot::Receiver<Result<usize, TransferError>>;
 
@@ -73,6 +73,7 @@ impl EngineFile {
         extent: FileExtent,
         memory: FileMemory,
         lease: Arc<dyn Send + Sync>,
+        options: TransferOptions,
     ) -> Result<Receipt, TransferError> {
         validate(&extent)?;
         let owns = |address, length| match &memory {
@@ -102,7 +103,6 @@ impl EngineFile {
         }
         let permit = admit(&self.admission)?;
         let file = Arc::clone(self);
-        let deadline = Instant::now() + DEADLINE;
         let (tx, rx) = oneshot::channel();
         self.runtime.spawn_blocking(move || {
             let owners = DrainOwner::new(Arc::new(FileTransfer {
@@ -110,7 +110,7 @@ impl EngineFile {
                 memory,
                 _lease: Arc::new((Arc::clone(&file), lease, permit)),
             }));
-            let result = file.execute(operation, transport, owners, deadline);
+            let result = file.execute(operation, transport, owners, options);
             let _ = tx.send(result);
         });
         Ok(rx)
@@ -121,7 +121,7 @@ impl EngineFile {
         operation: TransferOp,
         transport: FileTransport,
         owners: DrainOwner<Arc<FileTransfer>>,
-        deadline: Instant,
+        options: TransferOptions,
     ) -> Result<usize, TransferError> {
         let bytes = owners.value.extent.bytes()?;
         let elements = owners.value.extent.elements.len();
@@ -169,7 +169,7 @@ impl EngineFile {
                         &self.segment,
                         transport,
                         Arc::clone(&owners.value),
-                        deadline,
+                        options,
                         &Cancellation::default(),
                     )
                 }
@@ -268,6 +268,7 @@ impl Drop for EngineFile {
 }
 
 pub(super) struct SsdIo {
+    transport: FileTransport,
     files: Vec<Arc<EngineFile>>,
     pub(super) cost_resource: ExecutionResource,
 }
@@ -276,6 +277,7 @@ impl SsdIo {
     pub(super) fn new(
         files: &[Arc<File>],
         transfer: Arc<dyn TransferBackend>,
+        transport: FileTransport,
     ) -> std::io::Result<Self> {
         let admission = Arc::new(Semaphore::new(MAX_OPERATIONS));
         let mut handles = Vec::with_capacity(files.len());
@@ -308,6 +310,7 @@ impl SsdIo {
             &handles.iter().map(|f| f.cost_resource).collect::<Vec<_>>(),
         ));
         Ok(Self {
+            transport,
             files: handles,
             cost_resource,
         })
@@ -324,16 +327,18 @@ impl SsdIo {
         extent: FileExtent,
         allocations: Vec<Arc<PinnedAllocation>>,
         lease: Arc<dyn Send + Sync>,
+        options: TransferOptions,
     ) -> Result<Receipt, TransferError> {
         self.files
             .get(shard)
             .ok_or_else(|| TransferError::new(ErrorKind::InvalidRequest, "invalid SSD shard"))?
             .submit(
                 operation,
-                FileTransport::IoUring,
+                self.transport,
                 extent,
                 FileMemory::Pinned(allocations),
                 lease,
+                options,
             )
     }
 }

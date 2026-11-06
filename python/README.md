@@ -49,7 +49,7 @@ cache adapters and Manager peer-cache traffic through TENT.
 that retains actual tensor/exporter objects in registration order.
 Explicit registration exports storage IPC metadata in the native
 client; Python supplies retained tensors and layouts, without serialized pickle
-wrappers. Matching lifecycle-11 packages are required. Storage and view offsets,
+wrappers. Matching lifecycle-12 packages are required. Storage and view offsets,
 GPU UUID, dtype/layout, counter and readiness fields are validated before import.
 Scoped installed GPU/adapter and export-error ownership gates are independently
 accepted; see S3 in the [completion plan](../docs/completion-plan.md). Physical

@@ -511,7 +511,7 @@ impl TransferEngine {
                 target_id: segment,
                 target_offset: slice.remote_address,
                 length: slice.length as u64,
-                priority: 0,
+                priority: slice.priority as i32,
                 transport_hint: 0,
                 expected_source_epoch: expected_epoch,
             })

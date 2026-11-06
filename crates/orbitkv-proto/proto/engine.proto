@@ -171,6 +171,8 @@ message QueryBlocksForTransferRequest {
   string owner_incarnation = 3;        // Runtime UUID from discovery
   repeated uint64 residency_sequences = 4; // Parallel to block_hashes; exact insertions
   TransferTicket ticket = 5;           // Known before sending authorization
+  bool background_prefetch = 6;       // Otherwise foreground_get
+  uint32 transfer_timeout_millis = 7;  // Remaining requester budget; zero is rejected
 }
 
 message QueryBlocksForTransferResponse {

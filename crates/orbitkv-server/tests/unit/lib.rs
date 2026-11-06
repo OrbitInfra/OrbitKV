@@ -401,3 +401,28 @@ fn ssd_uses_selected_engine_and_rejects_removed_legacy_switch() {
         );
     }
 }
+
+#[test]
+fn orbite_auto_is_opt_in_and_explicit_transport_hints_remain_available() {
+    use orbitkv_core::PeerTransferBackend;
+    for (value, expected) in [
+        ("orbite", PeerTransferBackend::Orbite),
+        ("orbite-tcp", PeerTransferBackend::OrbiteTcp),
+        ("orbite-rdma", PeerTransferBackend::OrbiteRdma),
+    ] {
+        let mut args = vec!["orbitkv-cache-manager", "--peer-transfer-backend", value];
+        if value == "orbite-rdma" && cfg!(feature = "orbite-rdma") {
+            args.extend(["--orbite-rdma-device", "mlx5_0"]);
+        }
+        assert_eq!(
+            Cli::try_parse_from(args).unwrap().peer_transfer_backend,
+            expected
+        );
+    }
+    assert_eq!(
+        Cli::try_parse_from(["orbitkv-cache-manager"])
+            .unwrap()
+            .peer_transfer_backend,
+        PeerTransferBackend::Mooncake
+    );
+}

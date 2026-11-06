@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 #[cfg(any(feature = "mooncake", feature = "orbite"))]
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
 use tokio::sync::OnceCell;
 
 use futures::{StreamExt, stream};
@@ -18,6 +19,7 @@ use crate::metrics::core_metrics;
 #[cfg(any(feature = "mooncake", feature = "orbite"))]
 use crate::peer::read::PeerReader;
 use crate::storage::{MaterializedBlocks, ssd::SsdStore};
+use crate::transfer_engine::TransferOptions;
 
 use super::tier_attribution::{
     AttributionSource, TierAttribution, record_cache_tier_block_requests,
@@ -46,6 +48,7 @@ struct ReadKey {
     allow_ssd_prefetch: bool,
     destination_nodes: Vec<NumaNode>,
     host_ready: bool,
+    deadline: Instant,
 }
 type SharedRead = OnceCell<MaterializedRead>;
 
@@ -82,7 +85,9 @@ impl ReadCoordinator {
         hashes: &[Vec<u8>],
         mode: QueryMode,
         destination_nodes: &[NumaNode],
+        deadline: Instant,
     ) -> QueryResult {
+        let options = TransferOptions::read(mode, deadline);
         let warming = matches!(mode, QueryMode::Warmup | QueryMode::Prepare);
         let wait_for_full_prefix = mode == QueryMode::WaitForFullPrefix;
         let keys: Vec<StateKey> = hashes
@@ -114,7 +119,7 @@ impl ReadCoordinator {
         {
             let path = route.path;
             let allow_uring_fallback = route.allow_uring_fallback;
-            if let Some(leases) = route.acquire(self.codec_budget) {
+            if let Some(leases) = route.acquire(self.codec_budget, options) {
                 let count = hit + leases.len();
                 ssd.ingest_batch(keys.iter().zip(&prefix_blocks), true);
                 record_tier_attribution(
@@ -150,6 +155,7 @@ impl ReadCoordinator {
             allow_ssd_prefetch,
             destination_nodes: destination_nodes.to_vec(),
             host_ready: warming,
+            deadline,
         };
         let read = {
             let mut reads = self.reads.lock();
@@ -166,7 +172,13 @@ impl ReadCoordinator {
         let result = read
             .get_or_init(|| async {
                 let (source, blocks) = self
-                    .materialize(&mut plan, req_id, allow_ssd_prefetch, destination_nodes)
+                    .materialize(
+                        &mut plan,
+                        req_id,
+                        allow_ssd_prefetch,
+                        destination_nodes,
+                        options,
+                    )
                     .await;
                 let mut result =
                     build_ready_result(prefix_blocks, keys.len(), source, &keys[hit..], blocks);
@@ -220,6 +232,7 @@ impl ReadCoordinator {
         hashes: &[Vec<u8>],
         mode: crate::QueryMode,
         destination_nodes: &[NumaNode],
+        deadline: Instant,
     ) -> Vec<Option<crate::RestoreSource>> {
         let keys: Vec<StateKey> = hashes
             .iter()
@@ -244,6 +257,7 @@ impl ReadCoordinator {
                         std::slice::from_ref(&hash),
                         mode,
                         destination_nodes,
+                        deadline,
                     )
                     .await
                     .blocks
@@ -261,6 +275,7 @@ impl ReadCoordinator {
         req_id: &str,
         allow_ssd_prefetch: bool,
         destination_nodes: &[NumaNode],
+        options: TransferOptions,
     ) -> (Option<AttributionSource>, Vec<(StateKey, RestoreSource)>) {
         #[cfg(any(feature = "mooncake", feature = "orbite"))]
         if let Some(remote) = &self.remote_fetch {
@@ -282,7 +297,8 @@ impl ReadCoordinator {
                 Some(HostReadRoute::Peer(route)) => {
                     if let Some(remote) = &self.remote_fetch {
                         let result =
-                            fetch_peer(remote, route, target, req_id, destination_nodes).await;
+                            fetch_peer(remote, route, target, req_id, destination_nodes, options)
+                                .await;
                         if !result.can_replan() {
                             return (Some(AttributionSource::Remote), result.blocks);
                         }
@@ -293,7 +309,7 @@ impl ReadCoordinator {
                 }
                 Some(HostReadRoute::Ssd(route)) => {
                     if let Some(ssd) = &self.ssd_store
-                        && let Some(leases) = route.acquire(self.codec_budget)
+                        && let Some(leases) = route.acquire(self.codec_budget, options)
                     {
                         return (
                             Some(AttributionSource::Ssd),
@@ -319,7 +335,7 @@ impl ReadCoordinator {
             && let Some(remote) = &self.remote_fetch
         {
             let started_at = Instant::now();
-            while started_at.elapsed() < REMOTE_WAIT_TIMEOUT {
+            while Instant::now() < options.deadline.min(started_at + REMOTE_WAIT_TIMEOUT) {
                 tokio::time::sleep(REMOTE_WAIT_POLL_INTERVAL).await;
                 remote.discover(&mut plan.rows);
                 if let Some(HostReadRoute::Peer(route)) =
@@ -327,7 +343,8 @@ impl ReadCoordinator {
                 {
                     // A submitted payload failure completes this query; only
                     // missing advertisements participate in producer waiting.
-                    let result = fetch_peer(remote, route, target, req_id, destination_nodes).await;
+                    let result =
+                        fetch_peer(remote, route, target, req_id, destination_nodes, options).await;
                     if !result.can_replan() {
                         return (Some(AttributionSource::Remote), result.blocks);
                     }
@@ -400,10 +417,11 @@ async fn fetch_peer(
     target: crate::planning::read::ReadTarget,
     req_id: &str,
     nodes: &[NumaNode],
+    options: TransferOptions,
 ) -> crate::peer::execute::FetchResult<RestoreSource> {
     use crate::peer::execute::FetchResult;
     if target == crate::planning::read::ReadTarget::EngineRestore {
-        let result = remote.restore_plan(route, req_id, nodes).await;
+        let result = remote.restore_plan(route, req_id, nodes, options).await;
         FetchResult {
             blocks: result
                 .blocks
@@ -415,7 +433,7 @@ async fn fetch_peer(
             completed_segments: result.completed_segments,
         }
     } else {
-        let result = remote.fetch_plan(route, req_id, nodes).await;
+        let result = remote.fetch_plan(route, req_id, nodes, options).await;
         FetchResult {
             blocks: result
                 .blocks

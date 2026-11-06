@@ -120,6 +120,21 @@ impl Engine for P2pTransferService {
         request: Request<QueryBlocksForTransferRequest>,
     ) -> Result<Response<QueryBlocksForTransferResponse>, Status> {
         let req = request.into_inner();
+        if req.transfer_timeout_millis == 0 {
+            return Err(Status::invalid_argument(
+                "missing transfer deadline; upgrade peers together",
+            ));
+        }
+        let options = orbitkv_core::transfer_engine::TransferOptions::read(
+            if req.background_prefetch {
+                orbitkv_core::QueryMode::Prepare
+            } else {
+                orbitkv_core::QueryMode::Demand
+            },
+            std::time::Instant::now()
+                + std::time::Duration::from_millis(u64::from(req.transfer_timeout_millis))
+                    .min(std::time::Duration::from_secs(30)),
+        );
 
         if !self.engine.has_remote_transport() {
             return Err(Status::failed_precondition(
@@ -151,7 +166,7 @@ impl Engine for P2pTransferService {
         let found_blocks = self
             .engine
             .peer_exports()
-            .authorize(owner, ticket, &records)
+            .authorize(owner, ticket, &records, options)
             .await
             .map_err(Self::authorization_error)?;
 

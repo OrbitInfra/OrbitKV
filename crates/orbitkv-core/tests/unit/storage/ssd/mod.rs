@@ -209,7 +209,10 @@ fn export_pins_exact_ssd_evidence_and_accounts_staging_allocations() {
     let record = inventory.page(None).unwrap().pop().unwrap();
     let readers = Arc::clone(&store.inner.lock().ring.get(&key).unwrap().readers);
     let leases = store
-        .pin_residencies(std::slice::from_ref(&record))
+        .pin_residencies(
+            std::slice::from_ref(&record),
+            crate::transfer_engine::tests::demand(),
+        )
         .unwrap();
     assert_eq!(readers.load(Ordering::Acquire), 1);
     assert_eq!(store.staging_footprint(&leases), Some(SSD_ALIGNMENT as u64));
@@ -226,11 +229,18 @@ fn export_pins_exact_ssd_evidence_and_accounts_staging_allocations() {
         }),
     );
     let leases = store
-        .pin_residencies(std::slice::from_ref(&record))
+        .pin_residencies(
+            std::slice::from_ref(&record),
+            crate::transfer_engine::tests::demand(),
+        )
         .unwrap();
     drop(leases);
     inventory.change(&key, orbitkv_state::ReplicaMedium::Ssd, None);
-    assert!(store.pin_residencies(&[record]).is_none());
+    assert!(
+        store
+            .pin_residencies(&[record], crate::transfer_engine::tests::demand())
+            .is_none()
+    );
     assert_eq!(readers.load(Ordering::Acquire), 0);
 }
 
@@ -281,7 +291,12 @@ async fn cancelled_ssd_authorization_keeps_admission_with_queued_batch() {
         1,
     )
     .unwrap();
-    let mut authorization = Box::pin(exports.authorize(owner.incarnation, ticket, &records));
+    let mut authorization = Box::pin(exports.authorize(
+        owner.incarnation,
+        ticket,
+        &records,
+        crate::transfer_engine::tests::demand(),
+    ));
     assert!(futures::poll!(authorization.as_mut()).is_pending());
     let batch = queued.recv().await.unwrap();
     assert_eq!(exports.transfer_accounting(), (1, SSD_ALIGNMENT as u64));
@@ -308,7 +323,9 @@ async fn candidates_do_not_pin_and_cannot_authorize_a_replaced_generation() {
     assert_eq!(candidate.entry.readers.load(Ordering::Acquire), 0);
     assert!(!candidate.cufile_eligible(64 * 1024));
     assert_eq!(queued.len(), 0, "discovery must not enqueue payload reads");
-    let lease = candidate.pin().unwrap();
+    let lease = candidate
+        .pin(crate::transfer_engine::tests::demand())
+        .unwrap();
     assert!(Arc::ptr_eq(&lease.entry.readers, &candidate.entry.readers));
     assert_eq!(candidate.entry.readers.load(Ordering::Acquire), 1);
     drop(lease);
@@ -331,16 +348,20 @@ async fn candidates_do_not_pin_and_cannot_authorize_a_replaced_generation() {
         candidate.entry.file_offset
     );
     drop(inner);
-    assert!(candidate.pin().is_none());
+    assert!(
+        candidate
+            .pin(crate::transfer_engine::tests::demand())
+            .is_none()
+    );
     assert_eq!(candidate.entry.readers.load(Ordering::Acquire), 0);
     let fresh = store
         .discover(std::slice::from_ref(&key))
         .pop()
         .unwrap()
         .unwrap();
-    assert!(fresh.pin().is_some());
+    assert!(fresh.pin(crate::transfer_engine::tests::demand()).is_some());
     drop(store);
-    assert!(fresh.pin().is_none());
+    assert!(fresh.pin(crate::transfer_engine::tests::demand()).is_none());
 }
 
 #[tokio::test]
@@ -393,7 +414,9 @@ async fn host_routes_preserve_source_priority_permissions_and_complete_coverage(
                         Some(HostReadRoute::Ssd(ssd)) => {
                             assert!(allow_ssd && !expected_peer);
                             assert_eq!(readers.load(Ordering::Acquire), 0);
-                            let leases = ssd.acquire(0).unwrap();
+                            let leases = ssd
+                                .acquire(0, crate::transfer_engine::tests::demand())
+                                .unwrap();
                             assert_eq!(leases.len(), 1);
                             assert!(Arc::ptr_eq(&leases[0].entry.readers, &readers));
                             assert_eq!(readers.load(Ordering::Acquire), 1);
@@ -461,7 +484,11 @@ async fn peer_ssd_route_is_explicit_and_follows_local_ssd_priority() {
             assert!(inner.ring.commit(&next, true));
         }
     }
-    assert!(local_route.acquire(0).is_none());
+    assert!(
+        local_route
+            .acquire(0, crate::transfer_engine::tests::demand())
+            .is_none()
+    );
     let Some(HostReadRoute::Peer(fallback)) = local.host_route(true, false, 0) else {
         panic!("stale local SSD evidence must preserve the peer SSD fallback");
     };
@@ -577,7 +604,7 @@ async fn consumed_restore_plan_deduplicates_sources_and_rejects_mixed_paths() {
         .pop()
         .unwrap()
         .unwrap()
-        .pin()
+        .pin(crate::transfer_engine::tests::demand())
         .unwrap();
     let cufile = crate::RestoreSource::Ssd {
         lease: Arc::clone(&lease),
@@ -621,7 +648,7 @@ async fn cancelled_host_read_keeps_the_same_generation_owned_by_its_queue() {
     let lease = store
         .discover(std::slice::from_ref(&key))
         .into_iter()
-        .map_while(|candidate| candidate?.pin())
+        .map_while(|candidate| candidate?.pin(crate::transfer_engine::tests::demand()))
         .collect::<Vec<_>>()
         .pop()
         .unwrap();
@@ -646,7 +673,7 @@ async fn cancelled_host_read_keeps_the_same_generation_owned_by_its_queue() {
     let lease = store
         .discover(std::slice::from_ref(&key))
         .into_iter()
-        .map_while(|candidate| candidate?.pin())
+        .map_while(|candidate| candidate?.pin(crate::transfer_engine::tests::demand()))
         .collect::<Vec<_>>()
         .pop()
         .unwrap();
@@ -686,7 +713,9 @@ async fn ssd_planning_preserves_default_preparation_and_explicit_route_rules() {
         assert_eq!(queued.len(), 0, "planning cannot read payloads");
         if let Some(plan) = plan {
             assert_eq!(plan.path, SsdReadPath::Uring);
-            let sources = plan.acquire(64 * 1024).unwrap();
+            let sources = plan
+                .acquire(64 * 1024, crate::transfer_engine::tests::demand())
+                .unwrap();
             assert_eq!(version.load(Ordering::Acquire), 1);
             drop(sources);
             assert_eq!(version.load(Ordering::Acquire), 0);
@@ -711,7 +740,13 @@ async fn ssd_plan_revalidates_versions_and_requires_complete_selected_prefixes()
     );
     let partial_read = ReadPlan::new(&keys, QueryMode::Demand, Some(&store));
     let partial = partial_read.deferred_ssd(&store, 64 * 1024).unwrap();
-    assert_eq!(partial.acquire(64 * 1024).unwrap().len(), 1);
+    assert_eq!(
+        partial
+            .acquire(64 * 1024, crate::transfer_engine::tests::demand())
+            .unwrap()
+            .len(),
+        1
+    );
 
     let plan_read = ReadPlan::new(&keys[..1], QueryMode::Demand, Some(&store));
     let plan = plan_read.deferred_ssd(&store, 64 * 1024).unwrap();
@@ -725,7 +760,10 @@ async fn ssd_plan_revalidates_versions_and_requires_complete_selected_prefixes()
         assert!(inner.ring.commit(next, true));
     }
     drop(inner);
-    assert!(plan.acquire(64 * 1024).is_none());
+    assert!(
+        plan.acquire(64 * 1024, crate::transfer_engine::tests::demand())
+            .is_none()
+    );
     assert_eq!(old.readers.load(Ordering::Acquire), 0);
 
     // A later source can disappear after discovery. Strict acquisition must
@@ -751,9 +789,14 @@ async fn ssd_plan_revalidates_versions_and_requires_complete_selected_prefixes()
     let partial_read = ReadPlan::new(&keys, QueryMode::Demand, Some(&store));
     let partial = partial_read.deferred_ssd(&store, 64 * 1024).unwrap();
     store.inner.lock().ring.invalidate_encoded(&missing, &last);
-    assert!(full.acquire(64 * 1024).is_none());
+    assert!(
+        full.acquire(64 * 1024, crate::transfer_engine::tests::demand())
+            .is_none()
+    );
     assert_eq!(first.readers.load(Ordering::Acquire), 0);
-    let prefix = partial.acquire(64 * 1024).unwrap();
+    let prefix = partial
+        .acquire(64 * 1024, crate::transfer_engine::tests::demand())
+        .unwrap();
     assert_eq!(prefix.len(), 1);
     assert_eq!(first.readers.load(Ordering::Acquire), 1);
     drop(prefix);
@@ -791,7 +834,11 @@ async fn batched_host_reads_hold_selected_generations_and_reject_foreign_stores(
         (slots, versions)
     };
     let plan = ReadPlan::new(&keys, QueryMode::Prepare, Some(&store));
-    let leases = plan.ssd(SsdReadPath::Uring, 0).unwrap().acquire(0).unwrap();
+    let leases = plan
+        .ssd(SsdReadPath::Uring, 0)
+        .unwrap()
+        .acquire(0, crate::transfer_engine::tests::demand())
+        .unwrap();
     assert_eq!(leases.len(), 2);
     assert!(other.read_host_batch(leases.clone()).await.is_err());
     assert!(other_queue.is_empty());
@@ -870,7 +917,11 @@ async fn peer_rejection_updates_request_evidence_without_discarding_ssd_versions
         2,
         "a short peer plan must not truncate other evidence"
     );
-    let leases = plan.ssd(SsdReadPath::Uring, 0).unwrap().acquire(0).unwrap();
+    let leases = plan
+        .ssd(SsdReadPath::Uring, 0)
+        .unwrap()
+        .acquire(0, crate::transfer_engine::tests::demand())
+        .unwrap();
     assert_eq!(leases.len(), 1);
     assert!(
         queued.is_empty(),

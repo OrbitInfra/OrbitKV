@@ -451,6 +451,7 @@ fn write_gpu(
                     context: Arc::clone(runtime.stream.context()),
                 },
                 lease.clone(),
+                lease.options,
             );
             let mut receipt = submitted.map_err(|e| EngineError::Storage(e.to_string()))?;
             let result = loop {

@@ -283,6 +283,7 @@ pub(crate) async fn execute_query(
                     } else {
                         QueryMode::Demand
                     },
+                    input.control.deadline(),
                 )
                 .await?;
             let complete = status.blocks.len() == hashes.len();
@@ -297,6 +298,7 @@ pub(crate) async fn execute_query(
                     &input.request_id,
                     input.group_id,
                     hashes,
+                    input.control.deadline(),
                 )
                 .await?;
             hit_positions.extend(0..status.blocks.len() as u32);
@@ -315,6 +317,7 @@ pub(crate) async fn execute_query(
                     } else {
                         QueryMode::Demand
                     },
+                    input.control.deadline(),
                 )
                 .await?;
             for (position, block) in hits.into_iter().enumerate() {

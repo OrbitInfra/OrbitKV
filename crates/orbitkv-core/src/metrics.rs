@@ -168,6 +168,10 @@ pub(crate) struct CoreMetrics {
     pub remote_stage_duration_seconds: Histogram<f64>,
     #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub remote_fetch_bytes: Counter<u64>,
+    #[cfg(feature = "orbite-rdma")]
+    pub orbite_nic_inflight_bytes: Histogram<u64>,
+    #[cfg(feature = "orbite-rdma")]
+    pub orbite_nic_bandwidth_bytes_per_second: Histogram<f64>,
     #[cfg(feature = "mooncake")]
     pub tent_nic_inflight_bytes: Histogram<u64>,
     #[cfg(feature = "mooncake")]
@@ -709,6 +713,18 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .u64_counter("orbitkv_remote_fetch_bytes")
                 .with_unit("bytes")
                 .with_description("Total bytes fetched via Mooncake from remote nodes")
+                .build(),
+            #[cfg(feature = "orbite-rdma")]
+            orbite_nic_inflight_bytes: meter
+                .u64_histogram("orbitkv_orbite_nic_inflight_bytes")
+                .with_unit("bytes")
+                .with_description("OrbiTE live RDMA rail inflight-byte snapshot after a peer batch")
+                .build(),
+            #[cfg(feature = "orbite-rdma")]
+            orbite_nic_bandwidth_bytes_per_second: meter
+                .f64_histogram("orbitkv_orbite_nic_bandwidth_bytes_per_second")
+                .with_unit("By/s")
+                .with_description("OrbiTE RDMA rail EWMA bandwidth snapshot after a peer batch")
                 .build(),
             #[cfg(feature = "mooncake")]
             tent_nic_inflight_bytes: meter

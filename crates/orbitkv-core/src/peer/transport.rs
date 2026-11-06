@@ -10,7 +10,7 @@ use crate::transfer_engine::{
     Cancellation, ErrorKind, FileIoElement, FileMemory, FileSegment, FileSegmentInner,
     FileTransfer, FileTransport, MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, PeerSegment,
     Permission, REGISTERED_POOLS, Registration, RegistrationInner, Segment, TransferBackend,
-    TransferError, TransferOp, TransferSlice, remaining, validate_slices,
+    TransferError, TransferOp, TransferOptions, TransferSlice, remaining, validate_slices,
 };
 
 struct RetainedSource {
@@ -282,9 +282,10 @@ impl TransferBackend for MooncakeTransport {
         file: &FileSegment,
         transport: FileTransport,
         transfer: Arc<FileTransfer>,
-        deadline: Instant,
+        options: TransferOptions,
         cancellation: &Cancellation,
     ) -> Result<usize, TransferError> {
+        let deadline = options.deadline;
         if file.owner_epoch != self.source_epoch() {
             return Err(TransferError::new(
                 ErrorKind::InvalidRequest,
@@ -311,7 +312,9 @@ impl TransferBackend for MooncakeTransport {
             }
         };
         let transport = match transport {
-            FileTransport::IoUring => orbitkv_transfer::files::FileTransport::IoUring,
+            FileTransport::Auto | FileTransport::IoUring => {
+                orbitkv_transfer::files::FileTransport::IoUring
+            }
             FileTransport::Gds => {
                 orbitkv_transfer::files::FileTransport::Gds(context.ok_or_else(|| {
                     TransferError::new(
@@ -497,9 +500,10 @@ impl TransferBackend for MooncakeTransport {
         operation: TransferOp,
         peer: &PeerSegment,
         slices: &[TransferSlice],
-        deadline: Instant,
+        options: TransferOptions,
         cancellation: &Cancellation,
     ) -> Result<usize, TransferError> {
+        let deadline = options.deadline;
         let total = validate_slices(slices)?;
         if peer.owner_epoch != self.source_epoch() {
             return Err(TransferError::new(
@@ -536,6 +540,14 @@ impl TransferBackend for MooncakeTransport {
         let native = slices
             .iter()
             .map(|s| orbitkv_transfer::TransferSlice {
+                priority: match options.intent.priority() {
+                    crate::transfer_engine::TransferPriority::High => {
+                        orbitkv_transfer::TransferPriority::High
+                    }
+                    crate::transfer_engine::TransferPriority::Low => {
+                        orbitkv_transfer::TransferPriority::Low
+                    }
+                },
                 local: s.local,
                 remote_address: s.remote_address,
                 length: s.length,
@@ -562,6 +574,7 @@ impl TransferBackend for MooncakeTransport {
                 "TENT returned incomplete bytes",
             ));
         }
+        self.record_nic_load();
         Ok(bytes)
     }
     fn shutdown(&self, deadline: Instant) -> Result<(), TransferError> {

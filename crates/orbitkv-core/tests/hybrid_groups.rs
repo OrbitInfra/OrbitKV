@@ -92,6 +92,7 @@ async fn recurrent_group_seals_final_block_save() {
             0,
             &prefix_hashes,
             orbitkv_core::QueryMode::Demand,
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
         )
         .await
         .expect("query group 0 membership");
@@ -110,6 +111,7 @@ async fn recurrent_group_seals_final_block_save() {
             1,
             &prefix_hashes,
             orbitkv_core::QueryMode::Demand,
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
         )
         .await
         .expect("query group 1 membership");
@@ -217,6 +219,7 @@ async fn single_group_instances_are_unaffected() {
             0,
             &hashes[0..4],
             orbitkv_core::QueryMode::Demand,
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
         )
         .await
         .expect("membership");
@@ -234,7 +237,8 @@ async fn single_group_instances_are_unaffected() {
                 "membership",
                 7,
                 &hashes[0..1],
-                orbitkv_core::QueryMode::Demand
+                orbitkv_core::QueryMode::Demand,
+                std::time::Instant::now() + std::time::Duration::from_secs(30),
             )
             .await
             .is_err()
@@ -309,7 +313,13 @@ async fn recurrent_membership_fetch_is_all_or_nothing() {
     {
         let QueryResult { blocks, missing } = env
             .engine
-            .query_group_membership_with_fetch(&env.instance_id, "pd-req-full", 1, &want)
+            .query_group_membership_with_fetch(
+                &env.instance_id,
+                "pd-req-full",
+                1,
+                &want,
+                std::time::Instant::now() + std::time::Duration::from_secs(30),
+            )
             .await
             .expect("want-set query");
         assert_eq!(blocks.len(), 2, "full want-set must resolve completely");
@@ -326,7 +336,13 @@ async fn recurrent_membership_fetch_is_all_or_nothing() {
     {
         let QueryResult { blocks, missing } = env
             .engine
-            .query_group_membership_with_fetch(&env.instance_id, "pd-req-short", 1, &short)
+            .query_group_membership_with_fetch(
+                &env.instance_id,
+                "pd-req-short",
+                1,
+                &short,
+                std::time::Instant::now() + std::time::Duration::from_secs(30),
+            )
             .await
             .expect("short want-set query");
         assert!(
@@ -342,7 +358,13 @@ async fn recurrent_membership_fetch_is_all_or_nothing() {
     {
         let QueryResult { blocks, missing } = env
             .engine
-            .query_group_membership_with_fetch(&env.instance_id, "pd-req-cross", 1, &cross)
+            .query_group_membership_with_fetch(
+                &env.instance_id,
+                "pd-req-cross",
+                1,
+                &cross,
+                std::time::Instant::now() + std::time::Duration::from_secs(30),
+            )
             .await
             .expect("cross-group query");
         assert_eq!(blocks.len(), 0);

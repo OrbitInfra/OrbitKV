@@ -134,6 +134,7 @@ async fn ssd_sources_restore_split_and_page_first_layouts_without_host_materiali
                 "prepare",
                 &hashes,
                 QueryMode::Prepare,
+                std::time::Instant::now() + std::time::Duration::from_secs(30),
             )
             .await
             .unwrap();
@@ -385,6 +386,7 @@ impl EncodedFixture {
                     .map(|&id| self.hashes[id].clone())
                     .collect::<Vec<_>>(),
                 QueryMode::Demand,
+                std::time::Instant::now() + std::time::Duration::from_secs(30),
             )
             .await
             .unwrap()

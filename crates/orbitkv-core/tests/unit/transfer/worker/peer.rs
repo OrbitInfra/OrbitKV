@@ -234,6 +234,14 @@ async fn restores(count: usize, block_bytes: usize) {
         );
     }
     assert_eq!(control.reads.load(Ordering::SeqCst), count);
+    let observed = control.options.lock().unwrap();
+    assert_eq!(observed.len(), count);
+    assert_eq!(
+        *observed,
+        *control.admissions.lock().unwrap(),
+        "restores must not refresh the grant deadline"
+    );
+
     assert_eq!(control.registrations.load(Ordering::SeqCst), 1);
     assert_eq!(control.cleanups.load(Ordering::SeqCst), 0);
     let target = backing.lock().unwrap();

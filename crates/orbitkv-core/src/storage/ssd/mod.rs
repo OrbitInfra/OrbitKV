@@ -44,6 +44,7 @@ use writer::{SsdWriteBatch, SsdWriteCommand, ssd_writer_loop};
 
 /// Owns an immutable SSD source until the last query/GPU consumer releases it.
 pub struct SsdReadLease {
+    pub(crate) options: crate::transfer_engine::TransferOptions,
     pub(crate) entry: SsdIndexEntry,
     pub(crate) key: StateKey,
     pub(crate) store: Arc<SsdStore>,
@@ -64,7 +65,10 @@ impl SsdReadCandidate {
             .is_some_and(|store| store.cufile_eligible(&self.entry, codec_budget))
     }
 
-    pub(crate) fn pin(&self) -> Option<Arc<SsdReadLease>> {
+    pub(crate) fn pin(
+        &self,
+        options: crate::transfer_engine::TransferOptions,
+    ) -> Option<Arc<SsdReadLease>> {
         let store = self.store.upgrade()?;
         let inner = store.inner.lock();
         let current = inner.ring.get(&self.key)?;
@@ -78,6 +82,7 @@ impl SsdReadCandidate {
         let entry = current.clone();
         drop(inner);
         Some(Arc::new(SsdReadLease {
+            options,
             entry,
             key: self.key.clone(),
             store,
@@ -134,6 +139,7 @@ impl Drop for SsdReadLease {
 /// An unpublished extent. Dropping a failed/unsubmitted write rolls it back;
 /// host/GPU workers commit only after every file chunk has completed.
 pub(crate) struct WriteLease {
+    pub(crate) options: crate::transfer_engine::TransferOptions,
     pub(crate) entry: SsdIndexEntry,
     key: StateKey,
     committed: AtomicBool,
@@ -274,6 +280,9 @@ impl SsdStore {
         drop(inner);
         self.retire_inventory(retired);
         Some(Arc::new(WriteLease {
+            options: crate::transfer_engine::TransferOptions::checkpoint(
+                std::time::Instant::now() + io::DEADLINE,
+            ),
             entry,
             key,
             committed: AtomicBool::new(false),
@@ -333,7 +342,15 @@ impl SsdStore {
             &mut OpenOptions::new(),
         )?;
         let files = files.into_iter().map(Arc::new).collect::<Vec<_>>();
-        let io = Arc::new(SsdIo::new(&files, transfer)?);
+        let io = Arc::new(SsdIo::new(
+            &files,
+            transfer,
+            if config.backend == SsdBackend::Auto {
+                crate::transfer_engine::FileTransport::Auto
+            } else {
+                crate::transfer_engine::FileTransport::IoUring
+            },
+        )?);
         let cufile_files = if try_gpu {
             (0..files.len())
                 .map(|shard| {
@@ -341,7 +358,9 @@ impl SsdStore {
                         file: io
                             .engine_file(shard)
                             .ok_or_else(|| std::io::Error::other("missing engine file"))?,
-                        transport: if config.backend == SsdBackend::Cufile {
+                        transport: if config.backend == SsdBackend::Auto {
+                            crate::transfer_engine::FileTransport::Auto
+                        } else if config.backend == SsdBackend::Cufile {
                             crate::transfer_engine::FileTransport::Gds
                         } else {
                             crate::transfer_engine::FileTransport::IoUring
@@ -444,6 +463,7 @@ impl SsdStore {
     pub(crate) fn pin_residencies(
         self: &Arc<Self>,
         records: &[orbitkv_state::InventoryRecord],
+        options: crate::transfer_engine::TransferOptions,
     ) -> Option<Vec<Arc<SsdReadLease>>> {
         let inner = self.inner.lock();
         let inventory = self.inventory.as_ref()?;
@@ -467,6 +487,7 @@ impl SsdStore {
                     .ssd_read_pinned_bytes
                     .add(entry.len as i64, &[]);
                 Arc::new(SsdReadLease {
+                    options,
                     entry,
                     key: record.key.clone(),
                     store: Arc::clone(self),
@@ -673,11 +694,14 @@ impl SsdStore {
                         orbitkv_common::timeline::DiagnosticFields::default().blocks(len),
                     );
                 }
-                permit.send(SsdWriteCommand::Write(SsdWriteBatch {
+                permit.send(SsdWriteCommand::Write(Box::new(SsdWriteBatch {
+                    options: crate::transfer_engine::TransferOptions::checkpoint(
+                        std::time::Instant::now() + io::DEADLINE,
+                    ),
                     blocks: admitted,
                     observation,
                     diagnostic: diagnostic.map(Box::new),
-                }));
+                })));
             }
             Err(_) => {
                 warn!("SSD write queue full, dropping {len} blocks");

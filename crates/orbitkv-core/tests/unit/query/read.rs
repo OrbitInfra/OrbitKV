@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Duration;
 
 fn key(n: u8) -> StateKey {
     StateKey::new("ns".to_string(), vec![n])
@@ -78,7 +79,10 @@ fn ready_result_stops_at_first_missing_prefetch_key() {
 async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
     use crate::SsdReadPath;
 
-    for (read_path, mode, existing_permission, existing_node, existing_host, share) in [
+    for (
+        (read_path, mode, existing_permission, existing_node, existing_host, share),
+        same_deadline,
+    ) in [
         (None, QueryMode::Demand, true, NumaNode(1), false, true),
         (None, QueryMode::Demand, true, NumaNode(1), true, false),
         (None, QueryMode::Prepare, true, NumaNode(1), true, true),
@@ -100,7 +104,10 @@ async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
             false,
         ),
         (None, QueryMode::Prepare, true, NumaNode(0), true, false),
-    ] {
+    ]
+    .into_iter()
+    .flat_map(|case| [(case, true), (case, false)])
+    {
         let (store, _queued) = crate::storage::ssd::tests::query_store(read_path);
         let cache = Arc::new(DramStore::new(4096, false, None, None, 0));
         let scheduler = ReadCoordinator::new(
@@ -110,6 +117,7 @@ async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
             None,
             0,
         );
+        let deadline = Instant::now() + Duration::from_secs(30);
         let shared = Arc::new(SharedRead::new());
         scheduler.reads.lock().insert(
             ReadKey {
@@ -119,6 +127,11 @@ async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
                 allow_ssd_prefetch: existing_permission,
                 destination_nodes: vec![existing_node],
                 host_ready: existing_host,
+                deadline: if same_deadline {
+                    deadline
+                } else {
+                    deadline + Duration::from_secs(1)
+                },
             },
             Arc::downgrade(&shared),
         );
@@ -135,8 +148,8 @@ async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
         assert!(futures::poll!(initializing.as_mut()).is_pending());
         let hashes = [vec![1]];
         let mut read =
-            Box::pin(scheduler.read_prefix("query", "ns", &hashes, mode, &[NumaNode(1)]));
-        if share {
+            Box::pin(scheduler.read_prefix("query", "ns", &hashes, mode, &[NumaNode(1)], deadline));
+        if share && same_deadline {
             assert!(futures::poll!(read.as_mut()).is_pending());
             release.send(()).unwrap();
             initializing.await;

@@ -287,6 +287,7 @@ async fn wait_for_cache(
                 "wait-for-cache",
                 block_hashes,
                 orbitkv_core::QueryMode::Demand,
+                std::time::Instant::now() + std::time::Duration::from_secs(30),
             )
             .await
             .expect("count_prefix_hit_blocks_with_prefetch");
@@ -325,6 +326,7 @@ async fn restore_cached_image(
             request_id,
             block_hashes,
             orbitkv_core::QueryMode::Demand,
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
         )
         .await
         .expect("query local cache");
@@ -608,6 +610,9 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
         generation: 1,
     };
     let authorization = QueryBlocksForTransferRequest {
+        background_prefetch: false,
+        transfer_timeout_millis: 30_000,
+
         namespace: cache_namespace.clone(),
         block_hashes: stored_hashes[..grant_blocks].to_vec(),
         ticket: Some(ticket.clone()),
@@ -617,6 +622,15 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
             .map(|r| r.replicas[0].sequence)
             .collect(),
     };
+    let mut no_deadline = authorization.clone();
+    no_deadline.transfer_timeout_millis = 0;
+    assert_eq!(
+        peer.query_blocks_for_transfer(no_deadline)
+            .await
+            .unwrap_err()
+            .code(),
+        tonic::Code::InvalidArgument
+    );
     let mut stale_runtime = authorization.clone();
     stale_runtime.owner_incarnation = uuid::Uuid::new_v4().to_string();
     let mut stale_residency = authorization.clone();
@@ -645,6 +659,9 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
         engine_a.transfer_endpoint().unwrap()
     );
     match backend {
+        PeerTransferBackend::Orbite => {
+            assert!(granted.transfer_endpoint.starts_with("orbite://"));
+        }
         PeerTransferBackend::OrbiteTcp => {
             assert!(granted.transfer_endpoint.starts_with("orbite+tcp://"));
         }
@@ -809,6 +826,7 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
         "req-wait-for-producer",
         &delayed_hashes,
         orbitkv_core::QueryMode::WaitForFullPrefix,
+        std::time::Instant::now() + std::time::Duration::from_secs(30),
     ));
     assert!(
         tokio::time::timeout(Duration::from_millis(20), &mut waiting)
@@ -887,6 +905,7 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
             "populate-dram",
             &delayed_hashes,
             QueryMode::Prepare,
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
         )
         .await
         .unwrap();
@@ -976,6 +995,9 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
     // ── 10. Load from Engine B cache → GPU ──
     let fresh = locate(&stores, &cache_namespace, &stored_hashes);
     let fresh_authorization = QueryBlocksForTransferRequest {
+        background_prefetch: false,
+        transfer_timeout_millis: 30_000,
+
         namespace: cache_namespace.clone(),
         block_hashes: stored_hashes[..grant_blocks].to_vec(),
         ticket: Some(TransferTicket {
@@ -1021,6 +1043,7 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
             "fenced-local-hit",
             &delayed_hashes,
             orbitkv_core::QueryMode::Demand,
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
         )
         .await
         .unwrap();
@@ -1035,6 +1058,7 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
             "fenced-remote-miss",
             &block_hashes,
             orbitkv_core::QueryMode::Demand,
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
         )
         .await
         .unwrap();
@@ -1548,7 +1572,13 @@ async fn encoded_peer_roundtrip(backend: PeerTransferBackend) {
             (&target, &gpu_target, "target"),
         ] {
             let result = engine
-                .count_prefix_hit_blocks_with_prefetch(id, "codec", &hashes, QueryMode::Demand)
+                .count_prefix_hit_blocks_with_prefetch(
+                    id,
+                    "codec",
+                    &hashes,
+                    QueryMode::Demand,
+                    std::time::Instant::now() + std::time::Duration::from_secs(30),
+                )
                 .await
                 .unwrap();
             assert_eq!(result.blocks.len(), 1);

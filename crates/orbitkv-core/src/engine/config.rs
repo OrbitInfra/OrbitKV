@@ -7,6 +7,7 @@ use crate::SsdCacheConfig;
 pub enum PeerTransferBackend {
     #[default]
     Mooncake,
+    Orbite,
     OrbiteTcp,
     OrbiteRdma,
 }
@@ -17,9 +18,12 @@ impl std::str::FromStr for PeerTransferBackend {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "mooncake" => Ok(Self::Mooncake),
+            "orbite" => Ok(Self::Orbite),
             "orbite-tcp" => Ok(Self::OrbiteTcp),
             "orbite-rdma" => Ok(Self::OrbiteRdma),
-            _ => Err("peer transfer backend must be mooncake, orbite-tcp or orbite-rdma".into()),
+            _ => Err(
+                "peer transfer backend must be mooncake, orbite, orbite-tcp or orbite-rdma".into(),
+            ),
         }
     }
 }
@@ -29,7 +33,7 @@ impl PeerTransferBackend {
     pub fn validate_compiled(self) -> Result<(), String> {
         let (compiled, feature) = match self {
             Self::Mooncake => (cfg!(feature = "mooncake"), "mooncake"),
-            Self::OrbiteTcp => (cfg!(feature = "orbite"), "orbite"),
+            Self::Orbite | Self::OrbiteTcp => (cfg!(feature = "orbite"), "orbite"),
             Self::OrbiteRdma => (cfg!(feature = "orbite-rdma"), "orbite-rdma"),
         };
         if compiled {

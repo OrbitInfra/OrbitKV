@@ -24,6 +24,7 @@ fn unknown_drain_retains_actual_owners_and_exhausts_admission() {
 pub(in crate::storage::ssd) fn queued_io() -> SsdIo {
     // Metadata/queue controls never start a reader or submit byte I/O.
     SsdIo {
+        transport: FileTransport::Auto,
         files: Vec::new(),
         cost_resource: ExecutionResource::SsdStore(resource_id(&"queued SSD")),
     }
@@ -203,7 +204,7 @@ mod engine {
                 .discover(std::slice::from_ref(&key))
                 .remove(0)
                 .unwrap()
-                .pin()
+                .pin(crate::transfer_engine::tests::demand())
                 .unwrap();
             assert_eq!(lease.entry.slots.len(), 2);
             assert_eq!(lease.entry.slots[0].encoding.is_some(), encoded);
@@ -277,6 +278,7 @@ mod engine {
                 file_extent(slices),
                 FileMemory::Pinned(vec![memory]),
                 Arc::new(()),
+                crate::transfer_engine::tests::demand(),
             )
         };
         assert_eq!(
@@ -368,6 +370,7 @@ mod engine {
                     },
                     FileMemory::Pinned(vec![Arc::clone(&destination)]),
                     Arc::new(()),
+                    crate::transfer_engine::tests::demand(),
                 )
                 .unwrap()
                 .await
@@ -427,7 +430,7 @@ mod engine {
                         memory: FileMemory::Pinned(vec![Arc::clone(&source)]),
                         _lease: Arc::new(Arc::clone(&file)),
                     }),
-                    deadline,
+                    TransferOptions::checkpoint(deadline),
                     cancellation,
                 )
             }
@@ -453,6 +456,7 @@ mod engine {
                 file_extent(slices.to_vec()),
                 FileMemory::Pinned(vec![source]),
                 extent,
+                crate::transfer_engine::tests::demand(),
             )
             .unwrap();
         drop(receiver);
@@ -498,6 +502,7 @@ mod engine {
             kind: None,
             short: false,
             calls: AtomicUsize::new(0),
+            options: std::sync::Mutex::new(Vec::new()),
         });
         let file = Arc::new(EngineFile {
             backend: backend.clone(),
@@ -537,10 +542,11 @@ mod engine {
         assert_eq!(
             file.submit(
                 TransferOp::Write,
-                FileTransport::IoUring,
+                FileTransport::Auto,
                 vector(),
                 owners(),
-                Arc::new(())
+                Arc::new(()),
+                crate::transfer_engine::tests::demand(),
             )
             .unwrap()
             .await
@@ -575,10 +581,11 @@ mod engine {
         assert_eq!(
             file.submit(
                 TransferOp::Read,
-                FileTransport::IoUring,
+                FileTransport::Auto,
                 vector(),
                 owners(),
-                Arc::new(())
+                Arc::new(()),
+                crate::transfer_engine::tests::demand(),
             )
             .unwrap()
             .await
@@ -608,6 +615,7 @@ mod engine {
                 vector(),
                 owners(),
                 Arc::new(()),
+                crate::transfer_engine::tests::demand(),
             )
             .unwrap()
             .await
@@ -626,13 +634,14 @@ mod engine {
             assert_eq!(
                 file.submit(
                     op,
-                    FileTransport::IoUring,
+                    FileTransport::Auto,
                     FileExtent {
                         offset: 0,
                         elements: vec![FileIoElement::Padding(total)]
                     },
                     FileMemory::Pinned(Vec::new()),
-                    Arc::new(())
+                    Arc::new(()),
+                    crate::transfer_engine::tests::demand(),
                 )
                 .unwrap()
                 .await
@@ -652,6 +661,7 @@ mod engine {
         kind: Option<ErrorKind>,
         short: bool,
         calls: std::sync::atomic::AtomicUsize,
+        options: std::sync::Mutex<Vec<TransferOptions>>,
     }
 
     impl TransferBackend for Fault {
@@ -704,7 +714,7 @@ mod engine {
             _: TransferOp,
             _: &crate::transfer_engine::PeerSegment,
             _: &[TransferSlice],
-            _: Instant,
+            _: crate::transfer_engine::TransferOptions,
             _: &Cancellation,
         ) -> Result<usize, TransferError> {
             Err(TransferError::new(
@@ -726,9 +736,10 @@ mod engine {
             file: &FileSegment,
             transport: FileTransport,
             transfer: Arc<FileTransfer>,
-            deadline: Instant,
+            options: crate::transfer_engine::TransferOptions,
             cancel: &Cancellation,
         ) -> Result<usize, TransferError> {
+            self.options.lock().unwrap().push(options);
             self.calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             match (self.short, self.kind) {
@@ -737,7 +748,7 @@ mod engine {
                     // SAFETY: this forwards the unchanged, registered descriptors and owners.
                     unsafe {
                         Arc::clone(&self.real)
-                            .transfer_file(operation, file, transport, transfer, deadline, cancel)
+                            .transfer_file(operation, file, transport, transfer, options, cancel)
                     }
                     .map(|bytes| if self.short { bytes / 2 } else { bytes })
                 }
@@ -763,6 +774,7 @@ mod engine {
                 kind: Some(kind),
                 short,
                 calls: AtomicUsize::new(0),
+                options: std::sync::Mutex::new(Vec::new()),
             });
             let file = Arc::new(EngineFile {
                 backend: backend.clone(),
@@ -793,7 +805,9 @@ mod engine {
                     )
                     .unwrap()
             };
+            let options = TransferOptions::checkpoint(Instant::now() + Duration::from_secs(10));
             let lease = Arc::new(crate::storage::ssd::WriteLease {
+                options,
                 entry,
                 key: key.clone(),
                 committed: AtomicBool::new(false),
@@ -815,11 +829,13 @@ mod engine {
                     file_extent(slices),
                     FileMemory::Pinned(vec![source]),
                     lease,
+                    options,
                 )
                 .unwrap()
                 .await
                 .unwrap()
                 .unwrap_err();
+            assert_eq!(*backend.options.lock().unwrap(), [options]);
             assert_eq!(error.kind == ErrorKind::Unquiesced, retained);
             assert_eq!(
                 backend.calls.load(Ordering::Relaxed),

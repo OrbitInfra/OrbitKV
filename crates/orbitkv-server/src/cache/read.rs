@@ -21,6 +21,10 @@ impl ReadControl {
         }
     }
 
+    pub(crate) fn deadline(&self) -> Instant {
+        self.deadline
+    }
+
     pub(crate) fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
     }

@@ -219,18 +219,19 @@ impl TransferCompletions {
         &self,
         segment: &FetchSegment,
         requester: Uuid,
+        options: crate::transfer_engine::TransferOptions,
     ) -> Result<(TransferLockGuard, QueryBlocksForTransferResponse), Status> {
         // Capture before submitting: the rejected attempt's own empty close
         // must not look like progress that has freed an older source slab.
         let releases = self.pending_releases(&segment.owner);
-        let result = self.authorize_once(segment, requester).await;
+        let result = self.authorize_once(segment, requester, options).await;
         if matches!(&result, Err(error) if error.code() == tonic::Code::ResourceExhausted)
             && let Some(releases) = releases
             && releases.wait().await
         {
             // One retry after actual ACKs. An outage times out the waiter while
             // the independent completion owner retains and retries its ticket.
-            return self.authorize_once(segment, requester).await;
+            return self.authorize_once(segment, requester, options).await;
         }
         result
     }
@@ -254,7 +255,16 @@ impl TransferCompletions {
         &self,
         segment: &FetchSegment,
         requester: Uuid,
+        options: crate::transfer_engine::TransferOptions,
     ) -> Result<(TransferLockGuard, QueryBlocksForTransferResponse), Status> {
+        let remaining = || {
+            options
+                .deadline
+                .checked_duration_since(std::time::Instant::now())
+                .filter(|duration| !duration.is_zero())
+                .ok_or_else(|| Status::deadline_exceeded("transfer admission deadline expired"))
+        };
+        remaining()?;
         let guard = self.reserve(&segment.owner, requester).await?;
         let completion = guard
             .completion
@@ -266,11 +276,15 @@ impl TransferCompletions {
             owner_incarnation: segment.owner.incarnation.to_string(),
             residency_sequences: segment.records.iter().map(|r| r.sequence).collect(),
             ticket: completion.ticket(),
+            background_prefetch: options.intent
+                == crate::transfer_engine::TransferIntent::BackgroundPrefetch,
+            transfer_timeout_millis: remaining()?.as_millis().min(u32::MAX as u128) as u32,
         };
         let timeout = match segment.source {
             PeerSource::Dram => RPC_TIMEOUT,
             PeerSource::Ssd => SSD_AUTHORIZATION_TIMEOUT,
-        };
+        }
+        .min(remaining()?);
         // The ticket is already known: dropping this future can safely close it
         // even if the RPC is still queued or its successful reply never arrives.
         let response = tokio::time::timeout(

@@ -297,6 +297,8 @@ jobs:
           cargo test --locked -p orbitkv-transfer --no-default-features --lib
           cargo test --locked -p orbitkv-mooncake-sys --no-default-features --lib
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib query::read::tests
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib transfer_engine::tests
+          cargo test --locked -p orbitkv-server --lib tests::orbite_auto_is_opt_in_and_explicit_transport_hints_remain_available -- --exact
           cargo test --locked -p orbitkv-core --lib query::read::tests
           cargo test --locked -p orbitkv-server --lib registry::tests::tensor_owner_survives_registry_removal -- --exact
         env:
@@ -314,6 +316,7 @@ jobs:
           export ORBITKV_REQUIRE_LOCAL_COPY_SHIM=1
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib peer::orbite::local::tests -- --ignored --test-threads=1
           cargo test --locked -p orbitkv-core --features orbite --lib peer::orbite::local::tests -- --ignored --test-threads=1
+          cargo test --locked -p orbitkv-server --features orbite,test-hooks --lib -- --test-threads=1
         env:
           CUDA_PATH: /usr/local/cuda
           LIBCLANG_PATH: /usr/lib/llvm-18/lib
