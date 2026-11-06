@@ -112,6 +112,7 @@ impl PeerExports {
         owner: Uuid,
         ticket: TransferTicket,
         records: &[orbitkv_state::InventoryRecord],
+        options: crate::transfer_engine::TransferOptions,
     ) -> Result<Vec<(StateKey, Arc<SealedBlock>)>, PeerError> {
         self.validate_owner(owner)?;
         let first = records
@@ -139,7 +140,7 @@ impl PeerExports {
 
         let ssd = self.ssd.as_ref().ok_or(PeerError::StaleReplica)?;
         let leases = ssd
-            .pin_residencies(records)
+            .pin_residencies(records, options)
             .ok_or(PeerError::StaleReplica)?;
         let staging_bytes = ssd
             .staging_footprint(&leases)

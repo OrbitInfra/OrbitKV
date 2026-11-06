@@ -17,7 +17,7 @@ peer address, etcd endpoints, a unique stable node ID and the same cluster name.
 
 Client and Manager CUDA ordinals may differ. Registration joins the tensor's full
 GPU UUID to the Manager-visible device and retains that route for Publish/Restore;
-use matching lifecycle-protocol-11 artifacts. NUMA selection uses those visible
+use matching lifecycle-protocol-12 artifacts. NUMA selection uses those visible
 UUIDs. Known payload placement uses `mbind` before first touch and requires the
 selected memory node in the process's allowed nodes. CPU affinity alone cannot
 override an inherited interleave memory policy; inspect actual resident pages.
@@ -86,7 +86,11 @@ with 4 MiB windows/64 MiB staging charged to its separate file engine; the
 OrbitKV scratch adapter is deleted. Its native GDS accepts padded GPU vectors,
 while OrbiTE rejects explicit GDS padding without fallback. `gds_enabled` prevents unconfigured cuFile
 loading. GPU/GDS remains unqualified. See `docs/transport.md#ssd-file-transfers`.
-OrbiTE `8fa03eda` uses a one-route Unspec peer policy with
+OrbiTE `6c530773` uses Unspec selection in `--peer-transfer-backend orbite`;
+`orbite-tcp` and `orbite-rdma` remain explicit hints. Read deadlines survive
+queues and grants; Demand is foreground/high, Prepare/Warmup is background/low,
+and SSD write-back is checkpoint/low. Lifecycle 12 requires matching clients
+and Managers, and all peers must upgrade for the new authorization budget. It keeps
 failover, HP-TCP, SHM and MNNVL disabled. Historical hardware results below do not
 qualify this new dependency revision. See `docs/transport.md#runtime-transfer-backend`.
 Tensor import registers GPU storage once; aliases share its persistent owner.
@@ -104,7 +108,7 @@ GPU profiles remain unqualified. See `docs/transport.md#peer-restore-into-gpu`.
 An experimental `orbite` build can explicitly select
 `--peer-transfer-backend orbite-tcp`; read `docs/transport.md` for its 64 MiB
 READ/4,096-region limits, numeric advertised IP and no-RDMA-filter requirement.
-Its `orbite+tcp://` endpoints must match the selected provider. Keep the
+The requester accepts all OrbiTE endpoint schemes and keeps its own transport hint. Keep the
 source-grant epoch unchanged through metadata refresh and payload READ. Source
 registrations belong to the ticket generation; unquiesced work retains source
 tickets and destination buffers. The Manager uses gRPC completion, separately

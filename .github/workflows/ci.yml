@@ -297,6 +297,8 @@ jobs:
           cargo test --locked -p orbitkv-transfer --no-default-features --lib
           cargo test --locked -p orbitkv-mooncake-sys --no-default-features --lib
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib query::read::tests
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib transfer_engine::tests
+          cargo test --locked -p orbitkv-server --lib tests::orbite_auto_is_opt_in_and_explicit_transport_hints_remain_available -- --exact
           cargo test --locked -p orbitkv-core --lib query::read::tests
           cargo test --locked -p orbitkv-server --lib registry::tests::tensor_owner_survives_registry_removal -- --exact
         env:

@@ -2,7 +2,7 @@ use super::*;
 use crate::transfer_engine::PeerTransferError;
 
 #[test]
-fn cpu_tcp_backend_reads_and_writes_fragmented_bytes_and_drains() {
+fn cpu_auto_backend_reads_and_writes_fragmented_bytes_and_drains() {
     use crate::transfer_engine::TransferOp as Operation;
     use std::ptr::NonNull;
 
@@ -11,7 +11,7 @@ fn cpu_tcp_backend_reads_and_writes_fragmented_bytes_and_drains() {
             OrbiteTransport::new(
                 4096,
                 "127.0.0.1:0",
-                Transport::Tcp,
+                Transport::Unspec,
                 None,
                 #[cfg(feature = "orbite-rdma")]
                 None,
@@ -59,7 +59,10 @@ fn cpu_tcp_backend_reads_and_writes_fragmented_bytes_and_drains() {
                 Operation::Read,
                 &peer,
                 &slices,
-                Instant::now() + Duration::from_secs(3),
+                crate::transfer_engine::TransferOptions::read(
+                    crate::QueryMode::Demand,
+                    Instant::now() + Duration::from_secs(3),
+                ),
                 &cancel,
             )
         }
@@ -80,7 +83,10 @@ fn cpu_tcp_backend_reads_and_writes_fragmented_bytes_and_drains() {
                 Operation::Write,
                 &peer,
                 &slices[..2],
-                Instant::now() + Duration::from_secs(3),
+                crate::transfer_engine::TransferOptions::read(
+                    crate::QueryMode::Demand,
+                    Instant::now() + Duration::from_secs(3),
+                ),
                 &cancel,
             )
         }
@@ -107,8 +113,15 @@ fn cpu_tcp_backend_reads_and_writes_fragmented_bytes_and_drains() {
                 Duration::from_secs(3)
             };
         // SAFETY: retained registrations; preflight must reject before any copy.
-        let result =
-            unsafe { backend.transfer(Operation::Read, &peer, &slices, deadline, &cancellation) };
+        let result = unsafe {
+            backend.transfer(
+                Operation::Read,
+                &peer,
+                &slices,
+                crate::transfer_engine::TransferOptions::read(crate::QueryMode::Demand, deadline),
+                &cancellation,
+            )
+        };
         assert_eq!(result.unwrap_err().kind, kind);
     }
     let mut registration = Registration {
@@ -161,12 +174,20 @@ fn peer_protocol_and_granted_epoch_are_preserved_across_source_restart() {
     );
     let named_endpoint = format!("{}{endpoint}", prefix(Transport::Tcp));
     assert!(matches!(
-        requester.read(&endpoint.to_string(), &[], Duration::from_secs(2), &granted_epoch),
+        requester.read(&endpoint.to_string(), &[], crate::transfer_engine::TransferOptions::read(crate::QueryMode::Demand, std::time::Instant::now() + Duration::from_secs(2)), &granted_epoch),
         Err(PeerTransferError::Failed(reason)) if reason.contains("protocol mismatch")
     ));
     assert_eq!(
         requester
-            .read(&named_endpoint, &[], Duration::from_secs(2), &granted_epoch)
+            .read(
+                &named_endpoint,
+                &[],
+                crate::transfer_engine::TransferOptions::read(
+                    crate::QueryMode::Demand,
+                    std::time::Instant::now() + Duration::from_secs(2)
+                ),
+                &granted_epoch
+            )
             .unwrap(),
         0
     );
@@ -180,12 +201,20 @@ fn peer_protocol_and_granted_epoch_are_preserved_across_source_restart() {
     let fresh_epoch = replacement.source_epoch().to_string();
     assert_ne!(granted_epoch, fresh_epoch);
     assert!(matches!(
-        requester.read(&named_endpoint, &[], Duration::from_secs(2), &granted_epoch),
+        requester.read(&named_endpoint, &[], crate::transfer_engine::TransferOptions::read(crate::QueryMode::Demand, std::time::Instant::now() + Duration::from_secs(2)), &granted_epoch),
         Err(PeerTransferError::Failed(reason)) if reason.contains("epoch")
     ));
     assert_eq!(
         requester
-            .read(&named_endpoint, &[], Duration::from_secs(2), &fresh_epoch)
+            .read(
+                &named_endpoint,
+                &[],
+                crate::transfer_engine::TransferOptions::read(
+                    crate::QueryMode::Demand,
+                    std::time::Instant::now() + Duration::from_secs(2)
+                ),
+                &fresh_epoch
+            )
             .unwrap(),
         0
     );
@@ -238,7 +267,10 @@ fn transfer_rejects_descriptor_and_byte_budgets_before_payload_io() {
                 crate::transfer_engine::TransferOp::Read,
                 &peer,
                 &requests,
-                Instant::now() + Duration::from_secs(1),
+                crate::transfer_engine::TransferOptions::read(
+                    crate::QueryMode::Demand,
+                    Instant::now() + Duration::from_secs(1),
+                ),
                 &Cancellation::default(),
             )
         }
@@ -355,13 +387,21 @@ fn rdma_configuration_and_payload_namespaces_are_explicit() {
         )
         .unwrap(),
     );
-    assert!(!requester.accepts_endpoint(&format!("{}{endpoint}", prefix(Transport::Tcp))));
+    assert!(requester.accepts_endpoint(&format!("{}{endpoint}", prefix(Transport::Tcp))));
     assert!(requester.accepts_endpoint(&format!("{}{endpoint}", prefix(Transport::Rdma))));
     let named = format!("{}{endpoint}", prefix(Transport::Rdma));
     let old_epoch = source.source_epoch().to_string();
     assert_eq!(
         requester
-            .read(&named, &[], Duration::from_secs(2), &old_epoch)
+            .read(
+                &named,
+                &[],
+                crate::transfer_engine::TransferOptions::read(
+                    crate::QueryMode::Demand,
+                    std::time::Instant::now() + Duration::from_secs(2)
+                ),
+                &old_epoch
+            )
             .unwrap(),
         0
     );
@@ -373,7 +413,7 @@ fn rdma_configuration_and_payload_namespaces_are_explicit() {
     })
     .unwrap();
     assert!(
-        matches!(requester.read(&named, &[], Duration::from_secs(2), &old_epoch), Err(PeerTransferError::Failed(reason)) if reason.contains("epoch"))
+        matches!(requester.read(&named, &[], crate::transfer_engine::TransferOptions::read(crate::QueryMode::Demand, std::time::Instant::now() + Duration::from_secs(2)), &old_epoch), Err(PeerTransferError::Failed(reason)) if reason.contains("epoch"))
     );
     replacement.close_source(Duration::from_secs(2)).unwrap();
 }
@@ -407,7 +447,7 @@ impl OrbiteTransport {
                 crate::transfer_engine::TransferOp::Read,
                 &peer,
                 &slices,
-                deadline,
+                crate::transfer_engine::TransferOptions::read(crate::QueryMode::Demand, deadline),
                 &Cancellation::default(),
             )
         }
@@ -443,4 +483,115 @@ fn compiled_gds_stays_unloaded_without_configuration() {
             "compiling GDS must not load cuFile for the default/auto profile"
         );
     }
+}
+
+#[test]
+fn kv_options_drive_unspec_policy_on_real_tcp() {
+    use crate::transfer_engine::{TransferIntent, TransferOptions};
+    let source = TransferEngine::new(EngineConfig::default()).unwrap();
+    let remote = source
+        .register_memory(
+            Vec::from(*b"intent!!").into_boxed_slice(),
+            Permission::RemoteRead,
+        )
+        .unwrap();
+    let cases = [
+        (
+            TransferIntent::ForegroundGet,
+            orbite::IntentType::ForegroundGet,
+            orbite::Priority::High,
+        ),
+        (
+            TransferIntent::BackgroundPrefetch,
+            orbite::IntentType::BackgroundPrefetch,
+            orbite::Priority::Low,
+        ),
+        (
+            TransferIntent::Checkpoint,
+            orbite::IntentType::Checkpoint,
+            orbite::Priority::Low,
+        ),
+    ];
+    let mut policy = cases
+        .iter()
+        .map(|(_, intent, priority)| orbite::SelectionPolicy {
+            name: format!("{intent:?}"),
+            intent_type: Some(*intent),
+            priority: Some(*priority),
+            transports: vec![Transport::Tcp],
+            ..Default::default()
+        })
+        .collect::<Vec<_>>();
+    // A dropped or wrong scheduling field selects an unavailable route.
+    policy.push(orbite::SelectionPolicy {
+        name: "reject-unmapped".into(),
+        transports: vec![Transport::Rdma],
+        ..Default::default()
+    });
+    let requester = TransferEngine::new(EngineConfig {
+        selector: Some(orbite::TransportSelectorConfig {
+            policy,
+            ..Default::default()
+        }),
+        ..Default::default()
+    })
+    .unwrap();
+    let peer = requester
+        .open_segment(
+            source.endpoint(),
+            source.source_epoch(),
+            Duration::from_secs(3),
+        )
+        .unwrap();
+    let local = requester
+        .register_memory(vec![0; 8].into_boxed_slice(), Permission::LocalOnly)
+        .unwrap();
+    let plain = TransferRequest::new(
+        Transport::Unspec,
+        local.base_address(),
+        remote.base_address(),
+        8,
+    );
+    for (intent, native_intent, priority) in cases {
+        let options = TransferOptions {
+            intent,
+            deadline: Instant::now() + Duration::from_secs(3),
+        };
+        let request = request_options(plain.clone(), options);
+        assert_eq!(
+            (request.intent, request.priority, request.deadline),
+            (native_intent, priority, Some(options.deadline))
+        );
+        let outcome = requester
+            .submit_and_wait(
+                TransferOp::Read,
+                &peer,
+                std::slice::from_ref(&request),
+                Duration::from_secs(3),
+            )
+            .unwrap();
+        assert!(outcome.is_complete());
+        let mut bytes = [0; 8];
+        local.read(0, &mut bytes).unwrap();
+        assert_eq!(&bytes, b"intent!!");
+        assert!(
+            requester
+                .submit_and_wait(
+                    TransferOp::Read,
+                    &peer,
+                    &[request.with_priority(orbite::Priority::Medium)],
+                    Duration::from_secs(3)
+                )
+                .is_err()
+        );
+        let stats = requester.stats().unwrap();
+        assert_eq!((stats.inflight_batches, stats.inflight_bytes), (0, 0));
+    }
+    assert!(
+        requester
+            .submit_and_wait(TransferOp::Read, &peer, &[plain], Duration::from_secs(3))
+            .is_err()
+    );
+    requester.unregister_memory(&local).unwrap();
+    source.unregister_memory(&remote).unwrap();
 }

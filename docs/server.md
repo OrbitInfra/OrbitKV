@@ -189,7 +189,7 @@ incarnations; it does not restore live leases or old cursors.
 
 ## Experimental peer payload selection
 
-`--peer-transfer-backend` accepts `mooncake` (default), `orbite-tcp` or
+`--peer-transfer-backend` accepts `mooncake` (default), `orbite` (automatic transport), `orbite-tcp` or
 `orbite-rdma`. `mooncake` names the TENT implementation. These are runtime
 choices: `cargo build -p orbitkv-server --features orbite-rdma` includes both
 providers. An unavailable selection fails before CUDA initialization. The TCP mode
@@ -198,15 +198,19 @@ filter. See the [OrbiTE TCP profile](transport.md#experimental-orbite-peer-tcp-p
 for its limits and explicit gates. This source candidate does not change the
 installed serving support matrix.
 
+The `orbite` mode submits Unspec requests to the engine selector. TCP is enabled;
+`--orbite-rdma-device` additionally enables RDMA when compiled. The transport-specific
+modes are strict operator hints.
+
 The `orbite-rdma` feature adds `--orbite-rdma-device` (required for that mode),
 `--orbite-rdma-port` and `--orbite-rdma-gid-index`. It selects the single-rail
 host-staging profile without a TCP/native payload fallback; `--nics` remains
 Mooncake-specific. Read the [RDMA profile](transport.md#experimental-orbite-peer-rdma-profile)
 for separate staging budgets and host versus CUDA 13 Manager qualification.
-The current OrbiTE pin is `8fa03eda9cf70e5f9867fedbf9855a09a41d9ac3`;
+The current OrbiTE pin is `6c53077332467d78f80c8211d60bf7a9f11b3ccc`;
 historical hardware results below the [transport contract](transport.md#runtime-transfer-backend)
-do not qualify this revision. SSD can use [engine file segments](transport.md#ssd-file-transfers); local CUDA copies retain their existing
-OrbitKV implementations in this first integration stage.
+do not qualify this revision. SSD can use [engine file segments](transport.md#ssd-file-transfers); OrbiTE local CUDA copies use its local-copy engine, while TENT keeps the
+OrbitKV copy implementations behind the backend boundary.
 
 Peer GPU restores use the selected engine directly; Prepare/Warmup continues to
 fill the DRAM cache tier. For OrbiTE RDMA, `--orbite-rdma-gpu-direct` selects

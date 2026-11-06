@@ -11,6 +11,7 @@ use std::time::Instant;
 
 /// Batch of sealed blocks to write to SSD
 pub(super) struct SsdWriteBatch {
+    pub options: crate::transfer_engine::TransferOptions,
     pub blocks: Vec<(StateKey, Weak<SealedBlock>)>,
     pub observation: Observation,
     pub diagnostic: Option<Box<PublishDiagnostic>>,
@@ -52,12 +53,13 @@ fn complete_write_batch(
 
 /// Commands sent to the SSD writer task.
 pub(super) enum SsdWriteCommand {
-    Write(SsdWriteBatch),
+    Write(Box<SsdWriteBatch>),
     Flush(tokio::sync::oneshot::Sender<()>),
 }
 
 /// Internal: single block write task
 struct WriteTask {
+    options: crate::transfer_engine::TransferOptions,
     key: StateKey,
     block: Arc<SealedBlock>,
 }
@@ -182,7 +184,7 @@ pub(super) async fn ssd_writer_loop(
                         let mut outcome = Outcome::Completed;
                         for (key, weak) in b.blocks {
                             if let Some(block) = weak.upgrade() {
-                                pending.push_back(WriteTask { key, block });
+                                pending.push_back(WriteTask { key, block, options: b.options });
                             } else {
                                 s.inner.lock().pending_writes.remove(&key);
                                 outcome = Outcome::Cancelled;
@@ -297,6 +299,7 @@ async fn execute_write(task: WriteTask, store: Weak<SsdStore>, io: Arc<SsdIo>) -
         return (key, false, start.elapsed().as_secs_f64(), 0);
     };
     let lease = Arc::new(super::WriteLease {
+        options: task.options,
         entry: entry.clone(),
         key: key.clone(),
         committed: std::sync::atomic::AtomicBool::new(false),
@@ -333,6 +336,7 @@ async fn execute_write(task: WriteTask, store: Weak<SsdStore>, io: Arc<SsdIo>) -
                 extent,
                 task.block.allocations().cloned().collect(),
                 lease.clone(),
+                task.options,
             )
         })
     };

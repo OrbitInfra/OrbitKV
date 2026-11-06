@@ -25,7 +25,7 @@ use crate::memory::AllocateFn;
 use crate::metrics::core_metrics;
 use crate::planning::peer::{FetchPlan, FetchSegment, PeerSource};
 use crate::storage::MaterializedBlocks;
-use crate::transfer_engine::{PeerReadSlice, PeerTransferError, TransferBackend};
+use crate::transfer_engine::{PeerReadSlice, PeerTransferError, TransferBackend, TransferOptions};
 use orbitkv_catalog::GlobalIndex;
 
 /// Minimum usable transfer timeout. If the server's lock timeout minus the
@@ -54,6 +54,7 @@ pub(crate) struct PeerReader {
 }
 
 pub(super) struct AuthorizedSegment {
+    pub(super) options: TransferOptions,
     pub(super) response: QueryBlocksForTransferResponse,
     pub(super) lock_guard: TransferLockGuard,
     pub(super) authorized_at: Instant,
@@ -89,6 +90,7 @@ impl SegmentFetcher for PeerReader {
         &self,
         segment: &FetchSegment,
         mode: AuthorizationMode,
+        options: TransferOptions,
     ) -> Result<Self::Grant, AuthorizationError> {
         if !self.membership.permits(&segment.owner) {
             return Err(AuthorizationError::Rejected);
@@ -129,7 +131,7 @@ impl SegmentFetcher for PeerReader {
         authorization_observation.submitted();
         let authorization = self
             .completions
-            .authorize(segment, self.membership.owner().incarnation)
+            .authorize(segment, self.membership.owner().incarnation, options)
             .await;
         authorization_observation.finish(
             match &authorization {
@@ -205,6 +207,7 @@ impl SegmentFetcher for PeerReader {
         }
 
         Ok(AuthorizedSegment {
+            options,
             response,
             lock_guard,
             authorized_at: Instant::now(),
@@ -222,6 +225,7 @@ impl SegmentFetcher for PeerReader {
         destination_nodes: &[NumaNode],
     ) -> Result<MaterializedBlocks, ()> {
         let AuthorizedSegment {
+            mut options,
             response,
             lock_guard,
             authorized_at,
@@ -235,7 +239,9 @@ impl SegmentFetcher for PeerReader {
         let namespace = &segment.records[0].key.namespace;
 
         // peer READ all blocks + build SealedBlocks.
-        let transfer_timeout = transfer_timeout_from_server(response.lock_timeout_secs);
+        options.deadline = options
+            .deadline
+            .min(authorized_at + transfer_timeout_from_server(response.lock_timeout_secs));
         let blocks = response.blocks;
         let total_bytes: u64 = blocks
             .iter()
@@ -250,7 +256,7 @@ impl SegmentFetcher for PeerReader {
             &response.native_source_epoch,
             &blocks,
             destination_nodes,
-            transfer_timeout,
+            options,
             lock_guard,
             resource,
         )
@@ -302,7 +308,6 @@ impl SegmentFetcher for PeerReader {
         m.remote_fetch_duration_seconds
             .record(elapsed.as_secs_f64(), ok);
         m.remote_fetch_bytes.add(total_bytes, ok);
-        self.transfer.record_nic_load();
         for (stage, duration) in [
             ("prepared_wait", prepared_wait),
             ("allocation", transfer_timing.build_transfer_tasks),
@@ -365,10 +370,11 @@ impl PeerReader {
         plan: FetchPlan<'_>,
         req_id: &str,
         destination_nodes: &[NumaNode],
+        options: TransferOptions,
     ) -> FetchResult {
         let planned_blocks = plan.block_count();
         let started_at = Instant::now();
-        let result = execute_fetch_plan(self, plan, req_id, destination_nodes).await;
+        let result = execute_fetch_plan(self, plan, req_id, destination_nodes, options).await;
         let metrics = core_metrics();
         metrics
             .remote_fetch_plan_segments
@@ -412,7 +418,7 @@ async fn fetch_blocks_via_peer(
     native_source_epoch: &str,
     blocks: &[TransferBlockInfo],
     destination_nodes: &[NumaNode],
-    transfer_timeout: Duration,
+    options: TransferOptions,
     lock_guard: TransferLockGuard,
     resource: ExecutionResource,
 ) -> Result<(MaterializedBlocks, TransferTiming), String> {
@@ -557,7 +563,7 @@ async fn fetch_blocks_via_peer(
             let result = transfer.read(
                 &transfer_endpoint,
                 &all_descs,
-                transfer_timeout,
+                options,
                 &native_source_epoch,
             );
             let (outcome, actual_bytes) = match &result {

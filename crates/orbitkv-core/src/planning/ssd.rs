@@ -119,11 +119,15 @@ impl SsdReadPlan<'_> {
         ))
     }
 
-    pub(crate) fn acquire(self, codec_budget: usize) -> Option<Vec<Arc<SsdReadLease>>> {
+    pub(crate) fn acquire(
+        self,
+        codec_budget: usize,
+        options: crate::transfer_engine::TransferOptions,
+    ) -> Option<Vec<Arc<SsdReadLease>>> {
         let leases: Vec<_> = self
             .rows
             .iter()
-            .map_while(|row| row.local_ssd()?.pin())
+            .map_while(|row| row.local_ssd()?.pin(options))
             .collect();
         if leases.len() < self.required
             || (self.path == SsdReadPath::Cufile

@@ -17,6 +17,7 @@ struct Source {
     locks: Arc<TransferLockManager>,
     opens: AtomicUsize,
     queries: AtomicUsize,
+    scheduling: Mutex<Vec<(bool, u32)>>,
     releases: AtomicUsize,
     released_blocks: AtomicUsize,
     failures: AtomicUsize,
@@ -37,6 +38,7 @@ impl Default for Source {
             locks: Arc::new(TransferLockManager::new(Duration::ZERO, 1)),
             opens: AtomicUsize::new(0),
             queries: AtomicUsize::new(0),
+            scheduling: Mutex::new(Vec::new()),
             releases: AtomicUsize::new(0),
             released_blocks: AtomicUsize::new(0),
             failures: AtomicUsize::new(0),
@@ -104,7 +106,12 @@ impl Engine for Service {
             if let Some(delay) = delay {
                 delay.notified().await;
             }
-            let ticket = native(request.into_inner().ticket.unwrap());
+            let request = request.into_inner();
+            source
+                .scheduling
+                .lock()
+                .push((request.background_prefetch, request.transfer_timeout_millis));
+            let ticket = native(request.ticket.unwrap());
             // Emulate a slab budget that fits exactly one source grant, even
             // though the fixture's payloads do not require CUDA allocations.
             if source.reject_when_pinned.load(Ordering::SeqCst) && source.locks.accounting().0 > 0 {
@@ -269,7 +276,11 @@ async fn source_pressure_waits_for_older_release_not_rejected_ticket_and_is_canc
         let budget = Arc::new(TransferCompletions::default());
         let requester = Uuid::new_v4();
         let (first, _) = budget
-            .authorize(&fixture.segment(), requester)
+            .authorize(
+                &fixture.segment(),
+                requester,
+                crate::transfer_engine::tests::demand(),
+            )
             .await
             .unwrap();
         let gate = hold_release(&fixture, &first);
@@ -278,7 +289,11 @@ async fn source_pressure_waits_for_older_release_not_rejected_ticket_and_is_canc
         let task = {
             let budget = budget.clone();
             let segment = fixture.segment();
-            tokio::spawn(async move { budget.authorize(&segment, requester).await })
+            tokio::spawn(async move {
+                budget
+                    .authorize(&segment, requester, crate::transfer_engine::tests::demand())
+                    .await
+            })
         };
         // The rejected attempt's empty close succeeds first. It must not cause
         // re-authorization while the preceding READ's slab is still pinned.
@@ -322,7 +337,11 @@ async fn pressure_wait_timeout_keeps_cleanup_owner_and_does_not_retry_forever() 
     let budget = TransferCompletions::default();
     let requester = Uuid::new_v4();
     let (first, _) = budget
-        .authorize(&fixture.segment(), requester)
+        .authorize(
+            &fixture.segment(),
+            requester,
+            crate::transfer_engine::tests::demand(),
+        )
         .await
         .unwrap();
     let gate = hold_release(&fixture, &first);
@@ -330,7 +349,11 @@ async fn pressure_wait_timeout_keeps_cleanup_owner_and_does_not_retry_forever() 
     fixture.source.release_started.notified().await;
     let result = tokio::time::timeout(
         RPC_TIMEOUT + Duration::from_secs(2),
-        budget.authorize(&fixture.segment(), requester),
+        budget.authorize(
+            &fixture.segment(),
+            requester,
+            crate::transfer_engine::tests::demand(),
+        ),
     )
     .await
     .unwrap();
@@ -350,7 +373,11 @@ async fn release_snapshot_survives_ack_before_wait_and_slot_reuse_without_waitin
     let budget = TransferCompletions::default();
     let requester = Uuid::new_v4();
     let (first, _) = budget
-        .authorize(&fixture.segment(), requester)
+        .authorize(
+            &fixture.segment(),
+            requester,
+            crate::transfer_engine::tests::demand(),
+        )
         .await
         .unwrap();
     assert!(
@@ -365,7 +392,11 @@ async fn release_snapshot_survives_ack_before_wait_and_slot_reuse_without_waitin
     unblock_release(&fixture, &gate);
     settled(&budget).await;
     let (next, _) = budget
-        .authorize(&fixture.segment(), requester)
+        .authorize(
+            &fixture.segment(),
+            requester,
+            crate::transfer_engine::tests::demand(),
+        )
         .await
         .unwrap();
     let next_completion = next.completion.as_ref().unwrap();
@@ -392,7 +423,11 @@ async fn lost_authorization_reply_releases_pins_and_reuses_window_and_slot() {
         .store(true, Ordering::SeqCst);
     assert!(
         budget
-            .authorize(&fixture.segment(), Uuid::new_v4())
+            .authorize(
+                &fixture.segment(),
+                Uuid::new_v4(),
+                crate::transfer_engine::tests::demand()
+            )
             .await
             .is_err()
     );
@@ -405,7 +440,11 @@ async fn lost_authorization_reply_releases_pins_and_reuses_window_and_slot() {
         .lose_authorization
         .store(false, Ordering::SeqCst);
     let (guard, _) = budget
-        .authorize(&fixture.segment(), Uuid::new_v4())
+        .authorize(
+            &fixture.segment(),
+            Uuid::new_v4(),
+            crate::transfer_engine::tests::demand(),
+        )
         .await
         .unwrap();
     assert_eq!(guard.completion.as_ref().unwrap().generation, 2);
@@ -428,7 +467,16 @@ async fn cancellation_closes_ticket_before_delayed_authorization_and_slot_reuse(
     let task = {
         let budget = budget.clone();
         let segment = fixture.segment();
-        tokio::spawn(async move { budget.authorize(&segment, Uuid::new_v4()).await.is_ok() })
+        tokio::spawn(async move {
+            budget
+                .authorize(
+                    &segment,
+                    Uuid::new_v4(),
+                    crate::transfer_engine::tests::demand(),
+                )
+                .await
+                .is_ok()
+        })
     };
     fixture.source.started.notified().await;
     task.abort();
@@ -439,7 +487,11 @@ async fn cancellation_closes_ticket_before_delayed_authorization_and_slot_reuse(
     // Reuse before the first queued request executes.
     *fixture.source.delay.lock() = None;
     let (new_read, _) = budget
-        .authorize(&fixture.segment(), Uuid::new_v4())
+        .authorize(
+            &fixture.segment(),
+            Uuid::new_v4(),
+            crate::transfer_engine::tests::demand(),
+        )
         .await
         .unwrap();
     fixture.source.finished.notified().await;
@@ -465,7 +517,11 @@ async fn lost_setup_reply_and_idle_eviction_recover_without_payload_leaks() {
     fixture.source.lose_setup.store(true, Ordering::SeqCst);
     assert!(
         budget
-            .authorize(&fixture.segment(), Uuid::new_v4())
+            .authorize(
+                &fixture.segment(),
+                Uuid::new_v4(),
+                crate::transfer_engine::tests::demand()
+            )
             .await
             .is_err()
     );
@@ -475,7 +531,11 @@ async fn lost_setup_reply_and_idle_eviction_recover_without_payload_leaks() {
     fixture.source.lose_setup.store(false, Ordering::SeqCst);
     drop(
         budget
-            .authorize(&fixture.segment(), Uuid::new_v4())
+            .authorize(
+                &fixture.segment(),
+                Uuid::new_v4(),
+                crate::transfer_engine::tests::demand(),
+            )
             .await
             .unwrap(),
     );
@@ -484,12 +544,16 @@ async fn lost_setup_reply_and_idle_eviction_recover_without_payload_leaks() {
         fixture.source.locks.open(Uuid::new_v4()).unwrap();
     }
     assert!(
-        matches!(budget.authorize(&fixture.segment(), Uuid::new_v4()).await, Err(error) if error.code() == tonic::Code::NotFound)
+        matches!(budget.authorize(&fixture.segment(), Uuid::new_v4(), crate::transfer_engine::tests::demand()).await, Err(error) if error.code() == tonic::Code::NotFound)
     );
     settled(&budget).await;
     drop(
         budget
-            .authorize(&fixture.segment(), Uuid::new_v4())
+            .authorize(
+                &fixture.segment(),
+                Uuid::new_v4(),
+                crate::transfer_engine::tests::demand(),
+            )
             .await
             .unwrap(),
     );
@@ -503,7 +567,11 @@ async fn cancellation_keeps_buffers_and_source_pin_until_blocking_transfer_finis
     let fixture = Fixture::new().await;
     let budget = TransferCompletions::default();
     let (guard, _) = budget
-        .authorize(&fixture.segment(), Uuid::new_v4())
+        .authorize(
+            &fixture.segment(),
+            Uuid::new_v4(),
+            crate::transfer_engine::tests::demand(),
+        )
         .await
         .unwrap();
     let buffer = Arc::new(());
@@ -532,7 +600,11 @@ async fn cancellation_keeps_buffers_and_source_pin_until_blocking_transfer_finis
     assert_eq!(fixture.source.released_blocks.load(Ordering::SeqCst), 1);
     // Unwind before READ also closes its single-use ticket.
     let (guard, _) = budget
-        .authorize(&fixture.segment(), Uuid::new_v4())
+        .authorize(
+            &fixture.segment(),
+            Uuid::new_v4(),
+            crate::transfer_engine::tests::demand(),
+        )
         .await
         .unwrap();
     assert!(
@@ -554,7 +626,11 @@ async fn completion_survives_prolonged_lost_acknowledgements() {
     let budget = TransferCompletions::default();
     drop(
         budget
-            .authorize(&fixture.segment(), Uuid::new_v4())
+            .authorize(
+                &fixture.segment(),
+                Uuid::new_v4(),
+                crate::transfer_engine::tests::demand(),
+            )
             .await
             .unwrap(),
     );
@@ -593,7 +669,11 @@ async fn admission_is_bounded_and_unreachable_peer_does_not_block_other_peers() 
     );
     drop(
         budget
-            .authorize(&healthy.segment(), Uuid::new_v4())
+            .authorize(
+                &healthy.segment(),
+                Uuid::new_v4(),
+                crate::transfer_engine::tests::demand(),
+            )
             .await
             .unwrap(),
     );
@@ -741,10 +821,11 @@ impl crate::peer::execute::SegmentFetcher for PipelineReader {
         &self,
         segment: &FetchSegment,
         mode: crate::peer::execute::AuthorizationMode,
+        options: crate::transfer_engine::TransferOptions,
     ) -> Result<Self::Grant, crate::peer::execute::AuthorizationError> {
         let result = self
             .budget
-            .authorize(segment, self.requester)
+            .authorize(segment, self.requester, options)
             .await
             .map(|(guard, _)| guard)
             .map_err(|_| crate::peer::execute::AuthorizationError::Rejected);
@@ -832,7 +913,14 @@ fn pipeline_reader(
                 .collect::<Vec<_>>();
             let plan =
                 crate::planning::peer::FetchPlan::new(&mut rows, 1, PeerSource::Dram).unwrap();
-            crate::peer::execute::execute_fetch_plan(reader.as_ref(), plan, "tickets", &[]).await
+            crate::peer::execute::execute_fetch_plan(
+                reader.as_ref(),
+                plan,
+                "tickets",
+                &[],
+                crate::transfer_engine::tests::demand(),
+            )
+            .await
         })
     };
     (reader, finish, task)
@@ -922,7 +1010,11 @@ async fn unquiesced_transfer_retains_source_ticket_and_actual_buffer_owner() {
     let fixture = Fixture::new().await;
     let budget = TransferCompletions::default();
     let (guard, _) = budget
-        .authorize(&fixture.segment(), Uuid::new_v4())
+        .authorize(
+            &fixture.segment(),
+            Uuid::new_v4(),
+            crate::transfer_engine::tests::demand(),
+        )
         .await
         .unwrap();
     let buffer = Arc::new(vec![0x5au8; 4096]);
@@ -938,4 +1030,41 @@ async fn unquiesced_transfer_retains_source_ticket_and_actual_buffer_owner() {
     assert_eq!(fixture.source.releases.load(Ordering::SeqCst), 0);
     assert_eq!(budget.slots.available_permits(), MAX_COMPLETIONS - 1);
     assert_eq!(fixture.source.locks.accounting().0, 1);
+}
+
+#[tokio::test]
+async fn source_authorization_carries_intent_and_remaining_deadline() {
+    use crate::transfer_engine::TransferOptions;
+    let fixture = Fixture::new().await;
+    let budget = TransferCompletions::default();
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    for (mode, background) in [
+        (crate::QueryMode::Demand, false),
+        (crate::QueryMode::Prepare, true),
+    ] {
+        let (guard, _) = budget
+            .authorize(
+                &fixture.segment(),
+                Uuid::new_v4(),
+                TransferOptions::read(mode, deadline),
+            )
+            .await
+            .unwrap();
+        let seen = *fixture.source.scheduling.lock().last().unwrap();
+        assert_eq!(seen.0, background);
+        assert!((1..=2000).contains(&seen.1));
+        drop(guard);
+        settled(&budget).await;
+    }
+    let error = budget
+        .authorize(
+            &fixture.segment(),
+            Uuid::new_v4(),
+            TransferOptions::read(crate::QueryMode::Demand, std::time::Instant::now()),
+        )
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.code(), tonic::Code::DeadlineExceeded);
+    assert_eq!(fixture.source.queries.load(Ordering::SeqCst), 2);
 }

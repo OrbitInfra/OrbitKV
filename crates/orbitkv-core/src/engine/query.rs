@@ -1,4 +1,5 @@
 use orbitkv_state::group_hash;
+use std::time::Instant;
 
 use super::{EngineError, OrbitKVEngine};
 use crate::block::{QueryResult, RestoreSource};
@@ -26,6 +27,7 @@ impl OrbitKVEngine {
         req_id: &str,
         block_hashes: &[Vec<u8>],
         mode: QueryMode,
+        deadline: Instant,
     ) -> Result<QueryResult, EngineError> {
         let instance = self.get_instance(instance_id)?;
         let topology = instance.sealed_topology()?;
@@ -44,6 +46,7 @@ impl OrbitKVEngine {
                 &encoded,
                 mode,
                 topology.group_slot_numa(0)?,
+                deadline,
             )
             .await;
 
@@ -137,6 +140,7 @@ impl OrbitKVEngine {
         req_id: &str,
         group_id: u32,
         block_hashes: &[Vec<u8>],
+        deadline: Instant,
     ) -> Result<QueryResult, EngineError> {
         let instance = self.get_instance(instance_id)?;
         let topology = instance.sealed_topology()?;
@@ -159,6 +163,7 @@ impl OrbitKVEngine {
                 &encoded,
                 QueryMode::WaitForFullPrefix,
                 topology.group_slot_numa(group_id)?,
+                deadline,
             )
             .await;
 
@@ -191,6 +196,7 @@ impl OrbitKVEngine {
         group_id: u32,
         block_hashes: &[Vec<u8>],
         mode: QueryMode,
+        deadline: Instant,
     ) -> Result<Vec<Option<RestoreSource>>, EngineError> {
         let instance = self.get_instance(instance_id)?;
         let topology = instance.sealed_topology()?;
@@ -212,6 +218,7 @@ impl OrbitKVEngine {
                 &encoded,
                 mode,
                 topology.group_slot_numa(group_id)?,
+                deadline,
             )
             .await)
     }

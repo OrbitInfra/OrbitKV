@@ -36,7 +36,7 @@ lookup. Both adapters capture it when queuing their producing step. The native
 client validates the original client and generation after acquiring its worker
 lock, so a wait or late callback cannot bind a replacement registration. Each
 Publish chunk carries the captured generation; the Core owner rechecks the same
-retained instance before topology or GPU pointer binding. Matching lifecycle 11
+retained instance before topology or GPU pointer binding. Matching lifecycle 12
 and cache schema 10 artifacts remain required; retired schemas are rejected.
 
 This is registration lifetime fencing, not allocation/page generation or a
@@ -633,9 +633,10 @@ the terminal query and six file functions through a separate TENT file engine.
 boundary: retained pinned/CUDA registrations, explicit unregister, epoch-bound
 peer open, READ/WRITE batches with an absolute deadline and cancellation, typed
 errors, and irreversible shutdown/drain. The existing `--peer-transfer-backend`
-selects TENT (`mooncake`, default), `orbite-tcp`, or `orbite-rdma` at startup.
+selects TENT (`mooncake`, default) or OrbiTE (`orbite`) at startup.
+`orbite-tcp` and `orbite-rdma` are explicit operator transport hints.
 Both implementations can be compiled together. Missing features fail before
-Manager CUDA initialization. No transport fallback crosses these namespaces.
+Manager CUDA initialization. No fallback crosses the engine boundary.
 WRITE is available at the byte-transfer boundary; this does not implement cache
 replication or authorize writes to immutable source grants.
 OrbiTE enforces registration permissions; TENT retains its existing whole-pool
@@ -643,10 +644,15 @@ registration because the pinned C ABI has no per-range permission argument.
 OrbitKV source grants remain authoritative for peer access in both profiles.
 
 OrbiTE is pinned to
-[`8fa03eda9cf70e5f9867fedbf9855a09a41d9ac3`](https://github.com/OrbitInfra/OrbiTE/commit/8fa03eda9cf70e5f9867fedbf9855a09a41d9ac3).
+[`6c53077332467d78f80c8211d60bf7a9f11b3ccc`](https://github.com/OrbitInfra/OrbiTE/commit/6c53077332467d78f80c8211d60bf7a9f11b3ccc).
 Run the same OrbitKV build on both peers.
-Requests use `Transport::Unspec` with a one-route selector policy, an absolute
-deadline, and no automatic failover. HP-TCP, SHM, NVLink, MNNVL and remote CUDA
+The `orbite` mode uses `Transport::Unspec` and the engine selector chooses from
+enabled providers; TCP is enabled and RDMA requires an explicit device config.
+An explicit `orbite-tcp` or `orbite-rdma` selection pins that request transport.
+The endpoint scheme (`orbite://`, `orbite+tcp://`, `orbite+rdma://`) identifies
+the source configuration; all three use the same OrbiTE handshake. The requester
+keeps its own transport hint and opens its own `RemoteSegment`. Requests carry
+an absolute deadline, and automatic failover remains disabled. HP-TCP, SHM, NVLink, MNNVL and remote CUDA
 staging are disabled, including when `MC_ENABLE_MNNVL` is set in the environment.
 `orbite` enables CUDA registration and `io-uring`; `orbite-rdma`
 additionally enables RDMA. `orbite-gds` separately enables the runtime-loaded
@@ -681,7 +687,7 @@ compatible dependency range accepts OrbitKV's regenerated bindings, so no
 separate Git dependency identity is needed. Only raw addresses and retained
 owners cross the boundary; OrbiTE source is not patched.
 
-The CPU gate `peer::orbite::tests::cpu_tcp_backend_reads_and_writes_fragmented_bytes_and_drains`
+The CPU gate `peer::orbite::tests::cpu_auto_backend_reads_and_writes_fragmented_bytes_and_drains`
 uses real TCP, two engines, fragmented/merged READ and WRITE, byte guards,
 pre-submit cancellation/deadlines, unregister and normal drain. CI runs the
 existing peer suite with TENT, OrbiTE and both features using an explicitly
@@ -690,8 +696,7 @@ The existing epoch-restart and isolated unquiesced-completion tests remain gates
 GPU, RDMA, GDS, installed serving and cross-host operation at the new revision
 remain unqualified; historical results below apply only to their recorded pins.
 
-Local GPU↔DRAM copies retain OrbitKV's existing stream-ordered implementations.
-Their interface migration is tracked in the [completion plan](completion-plan.md).
+Local GPU↔DRAM copies use the selected backend's [local-copy implementation](#local-gpudram-copies).
 
 ## Peer restore into GPU
 
@@ -772,6 +777,55 @@ Run it separately with `ORBITKV_TEST_ORBITE_GPU_DIRECT=1` and
 separately. The raw gate verifies direct GPU bytes without DRAM cache insertion,
 then explicitly populates and restores the DRAM tier. The existing installed
 CUDA IPC peer gate remains required; no source/CPU result qualifies that boundary.
+
+### Scheduling metadata
+
+| KV operation | Engine intent | Priority |
+| --- | --- | --- |
+| Demand / WaitForFullPrefix restore | `foreground_get` | High |
+| Prepare / Warmup DRAM-tier fill | `background_prefetch` | Low |
+| SSD save / write-back | `checkpoint` | Low |
+
+Checkpoint describes persisting sealed KV state. Placement and eviction remain
+OrbitKV decisions; these writes do not perform an engine migration.
+The Manager's read-admission deadline reaches source authorization, SSD queues,
+peer grants and the final READ descriptors without being reset. Shared reads
+require the same deadline and placement; sharing cannot replace one caller's
+budget with another's. Source grants may shorten the deadline further. Write-back
+has no request scheduler owner, so its existing 30-second budget starts at queue
+admission and is shared by every extent. Expiry remains a logical outcome, never
+a physical release receipt.
+
+Peer gRPC carries foreground/background intent and the remaining read budget in
+milliseconds. A source caps that relative budget at 30 seconds for materializing
+its SSD export; the requester still enforces its original absolute deadline.
+This does not assume synchronized host clocks. A missing/zero budget is rejected.
+Upgrade all peers together; lifecycle 12 also requires matching clients and
+Managers and rejects lifecycle 11.
+
+OrbiTE receives all three fields on peer and file requests. `--ssd-backend auto`
+uses Unspec file selection; explicit io_uring/GDS choices remain hints. Only
+configured providers are enabled, so auto does not load cuFile. TENT's peer C
+requests carry High=0 / Low=2 priority. Its pinned C API exposes neither intent
+nor a scheduler deadline, and its file API exposes no priority/intent. TENT keeps
+its existing wrapper deadline/cancel/drain behavior. Local stream copies have
+no QoS fields in either consumed API and retain caller-stream ordering.
+
+CPU/TCP priorities are advisory. Neither consumed engine API exposes per-priority
+CPU queue/dispatch statistics, so the CPU tests prove field mapping, policy
+consumption and real bytes, not foreground-before-background service. RDMA
+priority ordering and serving improvements require installed hardware controls.
+The real TCP selector test rejects an unmapped intent or priority instead of
+quietly selecting the same route.
+
+OrbiTE RDMA NIC load is read from `nic_load_stats` and exported as
+`orbitkv_orbite_nic_inflight_bytes` and
+`orbitkv_orbite_nic_bandwidth_bytes_per_second`, alongside the existing TENT NIC
+snapshots. These aggregate engine statistics cannot replace the cost module's
+per-KV-path latency samples. Codec, SSD and restore observations remain; replacing
+pure transfer-leg latency estimates needs a per-transfer engine timing API and
+is a follow-up. Membership-driven OrbiTE `close_segment` is the separate C1b
+change; the pin alone does not install peer-retirement callbacks.
 
 ## SSD file transfers
 
@@ -922,7 +976,7 @@ tensor so it cannot retain an obsolete codec arena. CPU decode writes into a
 charged pinned output slot. Codec kernels, descriptor/codebook uploads and status
 readback remain codec compute; they do not implement payload transport.
 
-Lifecycle **11** returns the Manager's selected engine with the registration
+Lifecycle **12** returns the Manager's selected engine with the registration
 receipt, requiring matching client/Manager artifacts. The client registers its
 actual retained tensor exporters and imported arena pins once. It records each
 framework layer event after that layer's engine submission and holds native
@@ -952,15 +1006,15 @@ ORBITKV_TEST_INSTALLED_ORBITE=1 ORBITKV_TEST_STRICT_SHUTDOWN=1 \
 
 This gate remains unrun for this revision. GPU, RDMA, GDS, serving and fault
 qualification remain separate. The git dependency uses the `orbite` crate and imports, with `orbite`,
-`orbite-rdma` and `orbite-gds` features. Lifecycle 11 carries the renamed
-`orbite-tcp`/`orbite-rdma` selection; pre-release clients and Managers must
-upgrade together. Peer endpoints likewise use `orbite+tcp://`/`orbite+rdma://`;
+`orbite-rdma` and `orbite-gds` features. Lifecycle 12 adds the automatic `orbite` selection to the existing explicit
+`orbite-tcp`/`orbite-rdma` hints; pre-release clients and Managers must
+upgrade together. Peer endpoints use `orbite://`, `orbite+tcp://` or `orbite+rdma://`;
 run matching builds across the cluster. No old-name aliases are accepted.
 
 ## Experimental OrbiTE allocation bridge
 
 The opt-in `orbitkv-core/orbite` feature pins
-[OrbiTE `8fa03eda`](https://github.com/OrbitInfra/OrbiTE/commit/8fa03eda9cf70e5f9867fedbf9855a09a41d9ac3).
+[OrbiTE `6c530773`](https://github.com/OrbitInfra/OrbiTE/commit/6c53077332467d78f80c8211d60bf7a9f11b3ccc).
 `PinnedAllocation::orbite_memory` returns a canonical `Arc<HostMemory>` retaining
 that exact allocation and its shared physical CUDA pin. A pool owner alone would keep the mapping alive while
 allowing a slot to be reused. The allocation holds only a weak cached view, so

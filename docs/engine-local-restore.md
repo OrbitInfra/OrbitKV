@@ -40,7 +40,7 @@ qualification remain open. Correctness alone does not establish a serving speedu
    and keeps these objects alive.
 2. A successful GPU registration reply transfers the Manager's payload arena
    FDs and the selected byte engine over authenticated UDS with `SCM_RIGHTS`.
-   Lifecycle 11 requires matching artifacts. The engine independently maps
+   Lifecycle 12 requires matching artifacts. The engine independently maps
    each size-sealed memfd and registers that mapping with its CUDA primary
    context. Registration is per arena and GPU binding, not per restored block.
 3. `start_restore(..., ready_stream=...)` reserves native operation ownership

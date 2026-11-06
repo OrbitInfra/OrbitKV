@@ -530,6 +530,7 @@ impl PyMooncakeTransferEngine {
                     return Err(PyValueError::new_err("slice length must be positive"));
                 }
                 Ok(TransferSlice {
+                    priority: orbitkv_transfer::TransferPriority::High,
                     local: pointer(local, "local address")?,
                     remote_address: remote,
                     length,

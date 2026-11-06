@@ -219,7 +219,7 @@ fn registered_host_rdma_peer() {
     let peer = transport
         .engine
         .open_segment(
-            parse_endpoint(Transport::Rdma, endpoint).unwrap(),
+            parse_endpoint(endpoint).unwrap(),
             epoch.parse().unwrap(),
             TIMEOUT,
         )

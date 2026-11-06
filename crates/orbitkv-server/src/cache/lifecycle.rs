@@ -194,6 +194,7 @@ impl LifecycleService {
             .unwrap_or_default()
         {
             orbitkv_core::PeerTransferBackend::Mooncake => "mooncake",
+            orbitkv_core::PeerTransferBackend::Orbite => "orbite",
             orbitkv_core::PeerTransferBackend::OrbiteTcp => "orbite-tcp",
             orbitkv_core::PeerTransferBackend::OrbiteRdma => "orbite-rdma",
         }

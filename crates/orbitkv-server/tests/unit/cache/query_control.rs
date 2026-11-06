@@ -639,6 +639,7 @@ async fn real_query_control_replays_claims_and_fences_replaced_registrations() {
                     "late-finish-control",
                     &hashes[..1],
                     QueryMode::Demand,
+                    std::time::Instant::now() + std::time::Duration::from_secs(30),
                 )
                 .await
                 .unwrap()

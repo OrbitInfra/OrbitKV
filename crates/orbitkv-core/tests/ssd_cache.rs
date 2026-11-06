@@ -221,6 +221,7 @@ async fn selective_ssd_admission_preserves_demand_and_ignores_warming() {
                     "warming",
                     &target,
                     QueryMode::Warmup,
+                    std::time::Instant::now() + std::time::Duration::from_secs(30),
                 )
                 .await
                 .unwrap(),

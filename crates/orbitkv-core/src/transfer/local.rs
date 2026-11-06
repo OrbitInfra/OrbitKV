@@ -433,7 +433,9 @@ impl LocalRestoreExecutor {
             .map_err(|e| e.to_string())?;
         let (backend, hosts, registrations) = match engine {
             Some((
-                crate::PeerTransferBackend::OrbiteTcp | crate::PeerTransferBackend::OrbiteRdma,
+                crate::PeerTransferBackend::Orbite
+                | crate::PeerTransferBackend::OrbiteTcp
+                | crate::PeerTransferBackend::OrbiteRdma,
                 owner,
             )) => {
                 #[cfg(feature = "orbite")]

@@ -211,6 +211,7 @@ impl BatchContext {
 
 /// Internal: single block prefetch task with per-slot allocated memory.
 struct PrefetchTask {
+    options: crate::transfer_engine::TransferOptions,
     key: StateKey,
     entry: SsdIndexEntry,
     /// One per slot (parallel to `entry.slots`), each from the correct NUMA pool.
@@ -329,6 +330,7 @@ async fn dispatch_prefetch_batch(
     let mut iter = ctx.leases.iter().zip(block_slots);
     while let Some((req, slots)) = iter.next() {
         let task = PrefetchTask {
+            options: req.options,
             key: req.key.clone(),
             entry: req.entry.clone(),
             slots,
@@ -484,6 +486,7 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<SsdIo>) -> SingleMateriali
                     .flat_map(|slot| slot.allocations().cloned())
                     .collect(),
                 ctx.clone(),
+                task.options,
             )
         })
     };

@@ -141,8 +141,9 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
         .open_notification_scope("loopback")
         .expect("open notification scope");
     let destination = unsafe { base.byte_add(4096) };
-    let slices: Vec<_> = (0..4)
+    let mut slices: Vec<_> = (0..4)
         .map(|index| TransferSlice {
+            priority: crate::TransferPriority::High,
             local: unsafe { base.byte_add(index * 1024) },
             remote_address: unsafe { destination.byte_add(index * 1024) }.as_ptr() as u64,
             length: 1024,
@@ -192,6 +193,26 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
     std::thread::sleep(Duration::from_millis(10));
     engine.close_notification_scope("cancelled", cancelled_generation);
     assert_eq!(waiter.join().expect("join waiter").unwrap(), None);
+    for priority in [crate::TransferPriority::Low, crate::TransferPriority::High] {
+        for slice in &mut slices {
+            slice.priority = priority;
+        }
+        memory[..4096].fill(0);
+        assert_eq!(
+            engine
+                .submit_and_wait_cancellable(
+                    TransferOp::Read,
+                    &segment,
+                    &slices,
+                    Duration::from_secs(5),
+                    None,
+                    &std::sync::atomic::AtomicBool::new(false),
+                )
+                .unwrap(),
+            4096
+        );
+        assert_eq!(&memory[..4096], &memory[4096..]);
+    }
     let _ = engine.nic_load_stats().expect("query TENT NIC load stats");
     peer_registration
         .try_unregister()
@@ -295,6 +316,7 @@ fn grant_epoch_rejects_first_read_after_same_endpoint_restart() {
     };
     requester.open_segment(&endpoint).unwrap();
     let slices = [TransferSlice {
+        priority: crate::TransferPriority::High,
         local: destination_pointer,
         remote_address: source_pointer.as_ptr() as u64,
         length: source.len(),
@@ -538,6 +560,7 @@ fn native_tcp_rejection_child() {
     let remote = destination_ptr.as_ptr() as u64 + 4096;
     std::thread::spawn(move || {
         let slice = TransferSlice {
+            priority: crate::TransferPriority::High,
             local: NonNull::new(local as *mut u8).unwrap(),
             remote_address: remote,
             length: 4096,

@@ -34,6 +34,59 @@ pub enum TransferOp {
     Write,
 }
 
+/// KV purpose supplied to the engine, independently of byte layout or transport.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TransferIntent {
+    ForegroundGet,
+    BackgroundPrefetch,
+    Checkpoint,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransferPriority {
+    High,
+    Low,
+}
+
+impl TransferIntent {
+    pub fn priority(self) -> TransferPriority {
+        match self {
+            Self::ForegroundGet => TransferPriority::High,
+            Self::BackgroundPrefetch | Self::Checkpoint => TransferPriority::Low,
+        }
+    }
+}
+
+/// One admission deadline, preserved across queueing and all extent submissions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TransferOptions {
+    pub intent: TransferIntent,
+    pub deadline: Instant,
+}
+
+impl TransferOptions {
+    pub fn read(mode: crate::QueryMode, deadline: Instant) -> Self {
+        Self {
+            intent: match mode {
+                crate::QueryMode::Prepare | crate::QueryMode::Warmup => {
+                    TransferIntent::BackgroundPrefetch
+                }
+                crate::QueryMode::Demand | crate::QueryMode::WaitForFullPrefix => {
+                    TransferIntent::ForegroundGet
+                }
+            },
+            deadline,
+        }
+    }
+
+    pub fn checkpoint(deadline: Instant) -> Self {
+        Self {
+            intent: TransferIntent::Checkpoint,
+            deadline,
+        }
+    }
+}
+
 /// Requested native access. TENT retains its existing whole-pool registration;
 /// per-allocation authorization remains the responsibility of source grants.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,6 +178,7 @@ pub(crate) enum Segment {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileTransport {
+    Auto,
     IoUring,
     Gds,
 }
@@ -336,7 +390,7 @@ pub trait TransferBackend: Send + Sync {
         _file: &FileSegment,
         _transport: FileTransport,
         _transfer: Arc<FileTransfer>,
-        _deadline: Instant,
+        _options: TransferOptions,
         _cancellation: &Cancellation,
     ) -> Result<usize, TransferError> {
         Err(TransferError::new(
@@ -387,7 +441,7 @@ pub trait TransferBackend: Send + Sync {
         operation: TransferOp,
         peer: &PeerSegment,
         slices: &[TransferSlice],
-        deadline: Instant,
+        options: TransferOptions,
         cancellation: &Cancellation,
     ) -> Result<usize, TransferError>;
 
@@ -447,12 +501,10 @@ impl dyn TransferBackend {
         self: &Arc<Self>,
         endpoint: &str,
         slices: &[PeerReadSlice],
-        timeout: Duration,
+        options: TransferOptions,
         expected_epoch: &str,
     ) -> Result<usize, PeerTransferError> {
-        let deadline = Instant::now()
-            .checked_add(timeout)
-            .ok_or(PeerTransferError::Timeout)?;
+        let deadline = options.deadline;
         let descriptors = slices
             .iter()
             .map(|slice| {
@@ -480,7 +532,7 @@ impl dyn TransferBackend {
                 TransferOp::Read,
                 &peer,
                 &descriptors,
-                deadline,
+                options,
                 &Cancellation::default(),
             )
         };
@@ -534,9 +586,16 @@ pub(crate) fn create_transfer_backend(
 ) -> Result<Arc<dyn TransferBackend>, String> {
     backend.validate_compiled()?;
     #[cfg(feature = "orbite-rdma")]
-    if (backend == PeerTransferBackend::OrbiteRdma) != rdma.is_some() {
+    if (backend == PeerTransferBackend::OrbiteRdma && rdma.is_none())
+        || (rdma.is_some()
+            && !matches!(
+                backend,
+                PeerTransferBackend::Orbite | PeerTransferBackend::OrbiteRdma
+            ))
+    {
         return Err(
-            "OrbiTE RDMA requires an explicit configuration and orbite-rdma selection".into(),
+            "OrbiTE RDMA requires a device configuration and orbite or orbite-rdma selection"
+                .into(),
         );
     }
     match backend {
@@ -545,7 +604,9 @@ pub(crate) fn create_transfer_backend(
             crate::peer::transport::MooncakeTransport::new(nics, allocator, advertise, storage)?,
         )),
         #[cfg(feature = "orbite")]
-        PeerTransferBackend::OrbiteTcp | PeerTransferBackend::OrbiteRdma => {
+        PeerTransferBackend::Orbite
+        | PeerTransferBackend::OrbiteTcp
+        | PeerTransferBackend::OrbiteRdma => {
             if !nics.is_empty() {
                 return Err("OrbiTE does not accept a Mooncake RDMA NIC filter".into());
             }
@@ -554,8 +615,10 @@ pub(crate) fn create_transfer_backend(
                 advertise,
                 if backend == PeerTransferBackend::OrbiteRdma {
                     orbite::Transport::Rdma
-                } else {
+                } else if backend == PeerTransferBackend::OrbiteTcp {
                     orbite::Transport::Tcp
+                } else {
+                    orbite::Transport::Unspec
                 },
                 storage,
                 #[cfg(feature = "orbite-rdma")]
@@ -569,3 +632,7 @@ pub(crate) fn create_transfer_backend(
         _ => Err("selected transfer backend was not compiled".into()),
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/transfer_engine.rs"]
+pub(crate) mod tests;

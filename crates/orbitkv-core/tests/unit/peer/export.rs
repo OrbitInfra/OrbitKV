@@ -323,12 +323,27 @@ async fn export_revalidates_residency_and_drains_after_fencing() {
     drop(exports.dram.remove_all());
     exports.dram.batch_insert(blocks);
     assert!(matches!(
-        exports.authorize(owner, ticket, &records).await,
+        exports
+            .authorize(
+                owner,
+                ticket,
+                &records,
+                crate::transfer_engine::tests::demand()
+            )
+            .await,
         Err(PeerError::StaleReplica)
     ));
     assert_eq!(exports.locks.inner.lock().reserved_bytes, 0);
     let records = inventory.page(None).unwrap();
-    let authorized = exports.authorize(owner, ticket, &records).await.unwrap();
+    let authorized = exports
+        .authorize(
+            owner,
+            ticket,
+            &records,
+            crate::transfer_engine::tests::demand(),
+        )
+        .await
+        .unwrap();
     assert_eq!(authorized.len(), records.len());
     let bytes = allocation.size_bytes();
     assert_eq!(exports.locks.inner.lock().reserved_bytes, bytes);
@@ -342,7 +357,14 @@ async fn export_revalidates_residency_and_drains_after_fencing() {
         Err(PeerError::StaleReplica)
     );
     assert!(matches!(
-        exports.authorize(owner, ticket, &records).await,
+        exports
+            .authorize(
+                owner,
+                ticket,
+                &records,
+                crate::transfer_engine::tests::demand()
+            )
+            .await,
         Err(PeerError::StaleReplica)
     ));
     assert_eq!(exports.expire(), 1);
@@ -407,7 +429,14 @@ async fn export_rejects_invalid_evidence_before_reserving_resources() {
         }],
     ] {
         assert!(matches!(
-            exports.authorize(owner, ticket, &records).await,
+            exports
+                .authorize(
+                    owner,
+                    ticket,
+                    &records,
+                    crate::transfer_engine::tests::demand()
+                )
+                .await,
             Err(PeerError::InvalidRequest(_))
         ));
     }
@@ -418,7 +447,14 @@ async fn export_rejects_invalid_evidence_before_reserving_resources() {
         Err(PeerError::Unavailable)
     );
     assert!(matches!(
-        exports.authorize(owner, ticket, &[valid]).await,
+        exports
+            .authorize(
+                owner,
+                ticket,
+                &[valid],
+                crate::transfer_engine::tests::demand()
+            )
+            .await,
         Err(PeerError::Unavailable)
     ));
 }
@@ -457,10 +493,30 @@ async fn orbite_grant_registrations_share_backing_and_fence_old_completion_gener
     let records = inventory.page(None).unwrap();
     let first = TransferTicket::new(exports.open(owner, Uuid::new_v4()).unwrap(), 0, 1).unwrap();
     let second = TransferTicket { slot: 1, ..first };
-    drop(exports.authorize(owner, first, &records).await.unwrap());
-    drop(exports.authorize(owner, second, &records).await.unwrap());
+    drop(
+        exports
+            .authorize(
+                owner,
+                first,
+                &records,
+                crate::transfer_engine::tests::demand(),
+            )
+            .await
+            .unwrap(),
+    );
+    drop(
+        exports
+            .authorize(
+                owner,
+                second,
+                &records,
+                crate::transfer_engine::tests::demand(),
+            )
+            .await
+            .unwrap(),
+    );
     let client = TransferEngine::new(EngineConfig::default()).unwrap();
-    let endpoint = parse_endpoint(Transport::Tcp, &source.endpoint).unwrap();
+    let endpoint = parse_endpoint(&source.endpoint).unwrap();
     let epoch = source.epoch.parse().unwrap();
     assert_eq!(
         client
@@ -475,7 +531,17 @@ async fn orbite_grant_registrations_share_backing_and_fence_old_completion_gener
         generation: 2,
         ..first
     };
-    drop(exports.authorize(owner, current, &records).await.unwrap());
+    drop(
+        exports
+            .authorize(
+                owner,
+                current,
+                &records,
+                crate::transfer_engine::tests::demand(),
+            )
+            .await
+            .unwrap(),
+    );
     assert_eq!(exports.release(first), Ok(0));
     assert_eq!(exports.release(second), Ok(2));
     drop(exports.dram.remove_all());

@@ -7,12 +7,15 @@ use std::sync::{
     Mutex,
     atomic::{AtomicUsize, Ordering},
 };
+use std::time::Instant;
 
 #[derive(Default)]
 pub(crate) struct Control {
     pub(crate) result: Mutex<Option<ErrorKind>>,
     pub(crate) registrations: AtomicUsize,
     pub(crate) reads: AtomicUsize,
+    pub(crate) options: Mutex<Vec<crate::transfer_engine::TransferOptions>>,
+    pub(crate) admissions: Mutex<Vec<crate::transfer_engine::TransferOptions>>,
     pub(crate) cleanups: AtomicUsize,
     cleanup_failed: std::sync::atomic::AtomicBool,
     failure: Mutex<Option<Failure>>,
@@ -99,10 +102,15 @@ impl TransferBackend for Control {
         op: TransferOp,
         _: &PeerSegment,
         slices: &[TransferSlice],
-        _: Instant,
+        options: crate::transfer_engine::TransferOptions,
         _: &Cancellation,
     ) -> Result<usize, TransferError> {
         assert_eq!(op, TransferOp::Read);
+        assert_eq!(
+            options.intent,
+            crate::transfer_engine::TransferIntent::ForegroundGet
+        );
+        self.options.lock().unwrap().push(options);
         self.reads.fetch_add(1, Ordering::SeqCst);
         if matches!(*self.failure.lock().unwrap(), Some(Failure::TransferPanic)) {
             panic!("transfer panicked");
@@ -141,6 +149,8 @@ pub(crate) fn source(
     let membership = Arc::new(orbitkv_catalog::MembershipView::new(source_owner.clone()));
     membership.renew(Instant::now(), std::time::Duration::from_secs(120));
     membership.replace_members([("control".into(), source_owner.clone())]);
+    let options = crate::transfer_engine::tests::demand();
+    control.admissions.lock().unwrap().push(options);
     PeerRestoreBlock {
         grant: Arc::new(Grant {
             _lock: TransferLockGuard::test_detached(),
@@ -149,7 +159,7 @@ pub(crate) fn source(
             transfer: control,
             endpoint: "control".into(),
             epoch: "epoch".into(),
-            deadline: Instant::now() + std::time::Duration::from_secs(10),
+            options,
         }),
         slots: validate_slots(&info, info.len()).unwrap().into(),
     }
@@ -257,7 +267,7 @@ async fn epoch_deadline_and_membership_fences_reject_before_submission() {
         let grant = Arc::get_mut(&mut source.grant).unwrap();
         match fence {
             0 => grant.epoch = "stale".into(),
-            1 => grant.deadline = Instant::now(),
+            1 => grant.options.deadline = Instant::now(),
             _ => grant.membership.fence(),
         }
         // SAFETY: preflight fences reject before any payload use.
