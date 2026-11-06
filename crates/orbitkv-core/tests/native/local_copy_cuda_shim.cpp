@@ -53,6 +53,11 @@ int cuInit(unsigned) { return 0; }
 int cuDriverGetVersion(int *version) { *version = 13000; return 0; }
 int cuDeviceGet(int *device, int ordinal) { *device = ordinal; return ordinal == 0 ? 0 : 101; }
 int cuDeviceGetCount(int *count) { *count = 1; return 0; }
+// Stable fake identity for Manager ownership tests; no hardware is enumerated.
+int cuDeviceGetUuid_v2(void *uuid, int device) {
+  if (device != 0) return 101;
+  std::memset(uuid, 0x42, 16); return 0;
+}
 int cuDeviceGetAttribute(int *value, int attr, int) {
   *value = attr == 11 ? 2147483647 : (attr == 16 ? 8 : 0); return 0;
 }
