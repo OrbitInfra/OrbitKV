@@ -111,8 +111,8 @@ fn runtime_for_protocol_test() -> (InventoryRuntime, Member, CacheOwner) {
     let membership = Arc::new(MembershipView::new(own.clone()));
     assert!(membership.renew(std::time::Instant::now(), Duration::from_secs(60)));
     membership.replace_members([
-        ("source".into(), own.clone()),
-        ("requester".into(), requester.clone()),
+        ("source".into(), 1, own.clone()),
+        ("requester".into(), 1, requester.clone()),
     ]);
     let member = Member {
         node_id: "source".into(),

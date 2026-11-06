@@ -21,7 +21,10 @@ fn setup_scope(
     let remote = owner(51002);
     let membership = Arc::new(MembershipView::new(local.clone()));
     assert!(membership.renew(Instant::now(), Duration::from_secs(60)));
-    membership.replace_members([("local".into(), local), ("remote".into(), remote.clone())]);
+    membership.replace_members([
+        ("local".into(), 1, local),
+        ("remote".into(), 1, remote.clone()),
+    ]);
     let index = GlobalIndex::new(membership.clone(), limit, Arc::new(scope));
     index.set_expected_owners(10, [remote.incarnation]);
     (index, membership, remote)
@@ -127,9 +130,9 @@ fn member_transitions_update_cached_coverage_without_treating_missing_as_empty()
     );
     let added = owner(51003);
     membership.replace_members([
-        ("local".into(), membership.owner().clone()),
-        ("remote".into(), remote.clone()),
-        ("added".into(), added.clone()),
+        ("local".into(), 1, membership.owner().clone()),
+        ("remote".into(), 1, remote.clone()),
+        ("added".into(), 1, added.clone()),
     ]);
     index.set_expected_owners(
         11,
@@ -151,9 +154,9 @@ fn member_transitions_update_cached_coverage_without_treating_missing_as_empty()
 
     let replacement = owner(51004);
     membership.replace_members([
-        ("local".into(), membership.owner().clone()),
-        ("added".into(), added.clone()),
-        ("remote".into(), replacement.clone()),
+        ("local".into(), 1, membership.owner().clone()),
+        ("added".into(), 1, added.clone()),
+        ("remote".into(), 1, replacement.clone()),
     ]);
     index.set_expected_owners(
         12,
@@ -432,7 +435,7 @@ fn removed_owner_is_excluded_before_bounded_reverse_cleanup() {
         vec![record(1, 1, ReplicaMedium::Dram, true)],
         1,
     );
-    membership.replace_members([("local".into(), membership.owner().clone())]);
+    membership.replace_members([("local".into(), 1, membership.owner().clone())]);
     index.set_expected_owners(11, [membership.owner().incarnation]);
     index.retire_owner(remote.incarnation);
     assert!(index.lookup(&[key])[0].replicas.is_empty());

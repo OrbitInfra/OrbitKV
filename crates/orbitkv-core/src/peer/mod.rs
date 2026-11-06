@@ -15,3 +15,5 @@ pub(crate) mod orbite;
 
 #[cfg(any(feature = "mooncake", feature = "orbite"))]
 pub(crate) mod restore;
+#[cfg(any(feature = "mooncake", feature = "orbite"))]
+pub(crate) mod segment;

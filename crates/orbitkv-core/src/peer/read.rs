@@ -16,6 +16,7 @@ use super::completion::{TransferCompletions, TransferLockGuard};
 use super::execute::{
     AuthorizationError, AuthorizationMode, FetchResult, SegmentFetcher, execute_fetch_plan,
 };
+use super::segment::{PeerIdentity, PeerSegments};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
 use crate::cost::{
     CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
@@ -50,10 +51,13 @@ pub(crate) struct PeerReader {
     completions: Arc<TransferCompletions>,
     pub(super) membership: Arc<orbitkv_catalog::MembershipView>,
     pub(super) transfer: Arc<dyn TransferBackend>,
+    segments: Arc<PeerSegments>,
     allocate_fn: AllocateFn,
 }
 
 pub(super) struct AuthorizedSegment {
+    pub(super) segments: Arc<PeerSegments>,
+    pub(super) peer: Arc<PeerIdentity>,
     pub(super) options: TransferOptions,
     pub(super) response: QueryBlocksForTransferResponse,
     pub(super) lock_guard: TransferLockGuard,
@@ -92,9 +96,10 @@ impl SegmentFetcher for PeerReader {
         mode: AuthorizationMode,
         options: TransferOptions,
     ) -> Result<Self::Grant, AuthorizationError> {
-        if !self.membership.permits(&segment.owner) {
-            return Err(AuthorizationError::Rejected);
-        }
+        let member = self
+            .membership
+            .lease(&segment.owner)
+            .ok_or(AuthorizationError::Rejected)?;
         let remote_addr = &segment.owner.endpoint;
         // A prepared grant can wait for the preceding READ. That residence time
         // is not this route's service cost; keep leaf authorization/READ samples
@@ -206,7 +211,17 @@ impl SegmentFetcher for PeerReader {
             return Err(AuthorizationError::Failed);
         }
 
+        let peer = self
+            .segments
+            .get(
+                member,
+                &response.transfer_endpoint,
+                &response.native_source_epoch,
+            )
+            .map_err(|_| AuthorizationError::Rejected)?;
         Ok(AuthorizedSegment {
+            segments: Arc::clone(&self.segments),
+            peer,
             options,
             response,
             lock_guard,
@@ -225,6 +240,8 @@ impl SegmentFetcher for PeerReader {
         destination_nodes: &[NumaNode],
     ) -> Result<MaterializedBlocks, ()> {
         let AuthorizedSegment {
+            segments: _segments,
+            peer,
             mut options,
             response,
             lock_guard,
@@ -252,8 +269,7 @@ impl SegmentFetcher for PeerReader {
             &self.transfer,
             &self.allocate_fn,
             namespace,
-            &response.transfer_endpoint,
-            &response.native_source_epoch,
+            peer,
             &blocks,
             destination_nodes,
             options,
@@ -337,6 +353,7 @@ impl PeerReader {
         Self {
             global_index,
             completions: Arc::new(TransferCompletions::default()),
+            segments: PeerSegments::new(Arc::clone(&transfer), Arc::clone(&membership)),
             membership,
             transfer,
             allocate_fn,
@@ -414,8 +431,7 @@ async fn fetch_blocks_via_peer(
     transfer: &Arc<dyn TransferBackend>,
     allocate_fn: &AllocateFn,
     namespace: &str,
-    transfer_endpoint: &str,
-    native_source_epoch: &str,
+    peer: Arc<PeerIdentity>,
     blocks: &[TransferBlockInfo],
     destination_nodes: &[NumaNode],
     options: TransferOptions,
@@ -554,18 +570,14 @@ async fn fetch_blocks_via_peer(
         logical_bytes,
     );
     let transfer = Arc::clone(transfer);
-    let transfer_endpoint = transfer_endpoint.to_string();
-    let native_source_epoch = native_source_epoch.to_string();
     let (block_allocs, transferred) = lock_guard
         .run_with_buffers(block_allocs, move || {
             observation.admitted();
             observation.submitted();
-            let result = transfer.read(
-                &transfer_endpoint,
-                &all_descs,
-                options,
-                &native_source_epoch,
-            );
+            let result = peer
+                .open(options.deadline)
+                .map_err(PeerTransferError::from)
+                .and_then(|operation| transfer.read(operation, &all_descs, options));
             let (outcome, actual_bytes) = match &result {
                 Ok(bytes) if *bytes as u64 == stored_bytes => {
                     (Outcome::Completed, Some(*bytes as u64))

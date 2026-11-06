@@ -185,14 +185,14 @@ impl Engine for Service {
     }
 }
 
-struct Fixture {
+pub(in crate::peer) struct Fixture {
     source: Arc<Source>,
-    owner: CacheOwner,
+    pub(in crate::peer) owner: CacheOwner,
     server: tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
 }
 
 impl Fixture {
-    async fn new() -> Self {
+    pub(in crate::peer) async fn new() -> Self {
         let source = Arc::new(Source::default());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let owner = CacheOwner {
@@ -211,7 +211,7 @@ impl Fixture {
         }
     }
 
-    fn segment(&self) -> FetchSegment {
+    pub(in crate::peer) fn segment(&self) -> FetchSegment {
         FetchSegment {
             owner: self.owner.clone(),
             source: crate::planning::peer::PeerSource::Dram,
@@ -224,6 +224,14 @@ impl Fixture {
             stored_bytes: None,
             representation: orbitkv_state::ReplicaRepresentation::Unknown,
         }
+    }
+
+    #[cfg(feature = "orbite")]
+    pub(in crate::peer) fn pins_and_releases(&self) -> (usize, usize) {
+        (
+            self.source.locks.accounting().0,
+            self.source.releases.load(Ordering::SeqCst),
+        )
     }
 }
 

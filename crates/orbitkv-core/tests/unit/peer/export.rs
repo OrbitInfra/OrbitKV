@@ -286,7 +286,7 @@ fn exports() -> (
     };
     let membership = Arc::new(MembershipView::new(owner.clone()));
     assert!(membership.renew(Instant::now(), Duration::from_secs(3600)));
-    membership.replace_members([("source".into(), owner)]);
+    membership.replace_members([("source".into(), 1, owner)]);
     let inventory = Arc::new(crate::ResidencyInventory::new(16 * 1024));
     let dram = Arc::new(crate::storage::dram::DramStore::with_inventory(
         1 << 20,

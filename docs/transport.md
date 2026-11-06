@@ -644,7 +644,7 @@ registration because the pinned C ABI has no per-range permission argument.
 OrbitKV source grants remain authoritative for peer access in both profiles.
 
 OrbiTE is pinned to
-[`6c53077332467d78f80c8211d60bf7a9f11b3ccc`](https://github.com/OrbitInfra/OrbiTE/commit/6c53077332467d78f80c8211d60bf7a9f11b3ccc).
+[`2e50af25007ca9681912ba5175109d09488a8f99`](https://github.com/OrbitInfra/OrbiTE/commit/2e50af25007ca9681912ba5175109d09488a8f99).
 Run the same OrbitKV build on both peers.
 The `orbite` mode uses `Transport::Unspec` and the engine selector chooses from
 enabled providers; TCP is enabled and RDMA requires an explicit device config.
@@ -824,8 +824,51 @@ OrbiTE RDMA NIC load is read from `nic_load_stats` and exported as
 snapshots. These aggregate engine statistics cannot replace the cost module's
 per-KV-path latency samples. Codec, SSD and restore observations remain; replacing
 pure transfer-leg latency estimates needs a per-transfer engine timing API and
-is a follow-up. Membership-driven OrbiTE `close_segment` is the separate C1b
-change; the pin alone does not install peer-retirement callbacks.
+is a follow-up.
+
+### Peer departure
+
+The etcd watch installs each node's epoch, incarnation and endpoint together.
+Removal or replacement permanently revokes that installed identity before any
+native cleanup. Discovery, outstanding authorizations and deferred restore
+plans cannot schedule more bytes using the revoked identity. A temporary snapshot
+repair suspends admission; an unchanged authoritative snapshot preserves its
+identity. Local lease expiry or fencing retires all cached peers.
+
+Each requester owns its own `RemoteSegment` cache; handles never cross engines.
+The cache admits at most 1,024 identities, including uncertain retirement and
+query-held identities, and at most 1,024 operations per identity in addition to
+existing transfer budgets. One retirement worker per requester scans every
+100 ms and waits at most 100 ms per `close_segment(endpoint, epoch, timeout)`
+call. Native cleanup itself cannot be preempted; a blocked native call can delay
+that worker, but holds no admission lock for other identities and creates no
+additional cleanup workers.
+
+OrbiTE closes native admission and drains the identity's admitted operations.
+`Ok` releases the cached handle even if a query still holds the revoked grant;
+dropping handles after retirement lets the engine reclaim its bounded identity
+table. Timeout/Unquiesced keeps grants, leases, pins, descriptors and budget
+charges. Repeated calls only wait for the engine's recorded retirement result;
+uncertain native destruction is never retried. Runtime teardown is not a drain
+receipt. A successful whole-engine shutdown supplies a physical receipt too.
+A fresh identity uses the new epoch from the authoritative source grant; stale
+grants remain fenced and Describe rejects a mismatched native source epoch.
+
+TENT's `closeSegment` remains reversible handle invalidation, unlike OrbiTE's
+native admission fence. OrbitKV revokes scheduling first and waits for its
+wrapper operations to drain before invalidating the cached TENT handle. A later
+authoritative open may recreate it. A failed close leaves a charged tombstone;
+neither another open nor Drop retries uncertain cleanup. Ticket release and RPC
+acknowledgement retries retain their existing independent completion ownership.
+
+CPU/TCP controls hold an actual reply while membership removes the peer, verify
+source pins and destination owners survive the retirement timeout, and finish
+with byte checks. They cover two identities on each of two requester engines,
+unrelated-peer progress, epoch replacement, stale rejection, and churn beyond a
+two-slot native identity table while old query identities remain alive. Run
+`cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib peer::orbite::tests::retirement`;
+these controls are also included in the existing CI peer gates. GPU/RDMA native
+retirement and installed shared-cache failure profiles remain unqualified.
 
 ## SSD file transfers
 
@@ -1014,7 +1057,7 @@ run matching builds across the cluster. No old-name aliases are accepted.
 ## Experimental OrbiTE allocation bridge
 
 The opt-in `orbitkv-core/orbite` feature pins
-[OrbiTE `6c530773`](https://github.com/OrbitInfra/OrbiTE/commit/6c53077332467d78f80c8211d60bf7a9f11b3ccc).
+[OrbiTE `2e50af25`](https://github.com/OrbitInfra/OrbiTE/commit/2e50af25007ca9681912ba5175109d09488a8f99).
 `PinnedAllocation::orbite_memory` returns a canonical `Arc<HostMemory>` retaining
 that exact allocation and its shared physical CUDA pin. A pool owner alone would keep the mapping alive while
 allowing a slot to be reused. The allocation holds only a weak cached view, so

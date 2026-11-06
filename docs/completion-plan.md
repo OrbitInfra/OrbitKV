@@ -88,20 +88,26 @@ See [transport](transport.md), [engine-local restore](engine-local-restore.md)
 and [adapter contracts](adapters.md).
 
 - [x] Runtime transfer-backend boundary for TENT and OrbiTE, retaining peer
-  grants and completion ownership, with OrbiTE pinned at `6c530773` and one
+  grants and completion ownership, with OrbiTE pinned at `2e50af25` and one
   shared registry `cudarc` 0.19.8. READ/WRITE, registration, cancellation and
   shutdown contracts are implemented; hardware and installed qualification at
   this pin remain open. The prior profile results below do not qualify this
   upgrade. See the
   [runtime contract and CPU gates](transport.md#runtime-transfer-backend).
-- [x] C1a is implemented for review: foreground/high restores, background/low
+- [x] C1a accepted at `67d9ac4b`: foreground/high restores, background/low
   warming, checkpoint/low SSD write-back, preserved admission deadlines and
   automatic OrbiTE transport selection. Lifecycle 12 adds `orbite`; matching
   clients, Managers and peers upgrade together. TENT peer priority is consumed;
   missing intent/file QoS and CPU priority statistics remain API gaps. See
   [scheduling contracts](transport.md#scheduling-metadata).
-- [ ] C1b: consume OrbiTE `close_segment` on membership departure/epoch change,
-  preserving requester ownership and Unquiesced retention. Complete before C2.
+- [x] C1b implemented for review: membership removal and incarnation/epoch changes
+  revoke admission before each requester's cached identities retire. OrbiTE
+  `close_segment` waits for physical drain; timeout/Unquiesced retains owners.
+  Successful retirement drops requester-specific handles to reclaim bounded
+  identity capacity. TENT keeps reversible handle invalidation. Real TCP controls
+  cover in-flight source tickets/buffers, independent peers/requesters, epoch
+  replacement and churn; installed GPU/RDMA retirement remains unqualified.
+  See [peer departure](transport.md#peer-departure). Stop for review before C2.
 - [x] OrbiTE SSD file-segment integration implemented for io_uring, CUDA staging
   and opt-in native-only GDS, preserving OrbitKV placement, extents and index
   publication. A3 below removes the temporary native fallback. CPU file/lifetime

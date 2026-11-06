@@ -586,7 +586,26 @@ impl TransferBackend for MooncakeTransport {
             .map_err(|e| TransferError::new(ErrorKind::Unquiesced, e.to_string()))
     }
     fn invalidate_segment(&self, endpoint: &str) {
-        self.engine.invalidate_segment(endpoint);
+        if let Err(error) = self.engine.invalidate_segment(endpoint) {
+            log::warn!("Retaining failed TENT peer close: {error}");
+        }
+    }
+    fn retire_peer(
+        &self,
+        endpoint: &str,
+        _epoch: &str,
+        _timeout: std::time::Duration,
+        requesters_drained: bool,
+    ) -> Result<(), TransferError> {
+        if !requesters_drained {
+            return Err(TransferError::new(
+                ErrorKind::Unquiesced,
+                "TENT peer requests still own the reversible handle",
+            ));
+        }
+        self.engine
+            .invalidate_segment(endpoint)
+            .map_err(|error| TransferError::new(ErrorKind::Unquiesced, error.to_string()))
     }
     fn record_nic_load(&self) {
         if let Ok(stats) = self.engine.nic_load_stats() {
