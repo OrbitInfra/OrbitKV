@@ -79,3 +79,14 @@ async fn cuda_staged_file_roundtrip() {
 async fn native_gds_file_roundtrip() {
     roundtrip(SsdBackend::Cufile, false).await;
 }
+
+#[cfg(feature = "mooncake")]
+#[tokio::test]
+#[ignore = "requires CUDA 13 and native-only TENT GDS with padded vectors; preserve native route evidence"]
+async fn tent_native_gds_padded_file_roundtrip() {
+    assert_eq!(
+        std::env::var("ORBITKV_SSD_TEST_ENGINE").as_deref(),
+        Ok("tent")
+    );
+    roundtrip(SsdBackend::Cufile, true).await;
+}

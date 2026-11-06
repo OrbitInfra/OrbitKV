@@ -781,7 +781,7 @@ become index-visible.
 
 Every SSD byte transfer goes through the selected backend. OrbiTE uses its
 file segments; TENT uses `tent_create_engine_with_files`, `tent_file_open`,
-`tent_file_submit`, `tent_file_drain`, `tent_file_release_batch` and
+`tent_file_submitv`, `tent_file_drain`, `tent_file_release_batch` and
 `tent_file_close`. TENT's file engine is separate from its peer engine, where
 file transports remain disabled to preserve the CPU/TCP source-drain contract.
 Standalone SSD creates the selected backend even without cluster membership.
@@ -802,8 +802,9 @@ For either backend, `--ssd-backend uring` uses host materialization; `auto`
 additionally permits GPU destinations through engine-owned CUDA staging and
 io_uring. `cufile` requests native-only GDS. OrbiTE requires `orbite-gds`;
 TENT requires a native CUDA build with the cuFile headers and library detected by
-CMake. The default wheel toolchain does not install the GDS SDK. An explicit GDS
-request with padding is unavailable; it never silently changes to io_uring.
+CMake. The default wheel toolchain does not install the GDS SDK. OrbiTE rejects explicit GDS
+requests with padding. TENT supports padded GPU vectors through engine-owned
+GDS staging, with 4 KiB-aligned extents. Neither silently changes to io_uring.
 The `cufile` read-route spelling selects a GPU destination, while the engine
 owns how bytes reach it. Local GPU↔DRAM migration remains a separate step.
 
@@ -831,24 +832,27 @@ admission until process exit. A failed WRITE stays unpublished and cannot be
 evicted or overwritten. `orbitkv_ssd_engine_retained_operations_total` records
 such retention. A failed or short READ never becomes a cache hit.
 
-TENT uses `tent_file_submit` with actual ranges and native retain/release
+TENT uses `tent_file_submitv` with RANGE/PADDING elements and native retain/release
 callbacks on its **separate file engine**. Only `drained == 1`, followed by
 successful batch release, permits owner destruction. Cancel, deadline, a dropped
 receiver and logical terminal status do not. Cleanup is never retried. A retained
 file or receipt prevents successful shutdown.
 
-The fork accepts GPU ranges, but its ABI has no padding element and splits each
-range into an independent O_DIRECT request. It cannot repair odd-sized ranges or
-file offsets. The remaining TENT-only adapter in `peer/transport/file.rs` passes
-aligned vectors directly and repairs other io_uring vectors with at most 4 MiB
-of scratch per operation (128 MiB at the store's 32-operation limit). Host
-vectors use aligned host scratch; GPU vectors use device scratch and synchronous
-D2D copies on a private stream, with engine-owned GPU↔host staging. A CUDA
-event proves copy completion under the same operation deadline. It never stages GPU payloads in
-OrbitKV's pinned pool. Every chunk drains before scratch reuse; uncertainty
-retains scratch, actual backing and admission. No WRITE is replayed. Delete this
-adapter once the fork accepts padding and owns unaligned vectored staging. Its
-native rings have depth 32 and CUDA pinned staging has four 16 MiB slots.
+The fork at `1198515dc7d4b234a990ae7d8919f13e4404e585` owns padded and
+unaligned vectors. `peer/transport/file.rs` and its host/device scratch, zero-fill
+and private copy stream are deleted. TENT stages at most 4 MiB per window, within
+its 64 MiB per-file-engine staging budget; native GDS charges both host zero-fill
+and GPU windows. Its rings have depth 32 and CUDA pinned staging has four 16 MiB
+slots. Unknown drain retains native staging and charges as well as OrbitKV's
+actual backing and admission. The receipt counts the completed file prefix,
+including padding; short READs scatter only that prefix. No WRITE is replayed.
+
+TENT uses buffered io_uring for extents not aligned to 4 KiB, and direct I/O for
+aligned extents when the filesystem supports it. OrbitKV preserves its 512-byte
+host/4 KiB GPU extent constraints. Dependent or overlapping accesses wait for
+successful full-byte physical drain; ext4/XFS direct-I/O page-cache coherence
+makes sequential buffered/direct batches visible without a consumer fsync.
+This is visibility, not a durability guarantee or cross-batch range lock.
 
 `storage/ssd/gpu.rs` is deleted. SSD reader/writer code plans layouts, manages
 queues/leases and publishes metadata; file bytes move through the selected
@@ -859,10 +863,14 @@ CPU host-registration shim. Its TENT source-drain control requires `MC_FORCE_TCP
 so an RDMA device on the runner cannot change that CPU/TCP profile; the separate
 file engine still uses io_uring. It covers sharded raw/encoded metadata, extent
 leases, padded/odd-sized vectors above 4 MiB, all-padding extents, explicit GDS
-padding rejection, alignment and truncated-file errors, cancellation before submission,
+unconfigured GDS rejection, alignment and truncated-file errors, cancellation before submission,
 detached completion, and retained owners after injected uncertainty. TENT callback
 controls also cover short receipts, failed release/close and shutdown retention. The latter are ownership controls, not simulated storage qualification.
-The same file gate runs for both engines on the runner filesystem and tmpfs. GPU/CUDA staging,
+The same file gate runs for both engines on ext4 and tmpfs, requiring
+`ORBITKV_SSD_TEST_FS=ext4|tmpfs` and checking the actual filesystem. The ext4
+vector control also requires an engine-owned O_DIRECT descriptor. Truncation
+checks cover EOF inside padding and data: TENT scatters only the completed
+prefix; OrbiTE rejects the shortened file before touching the destination. GPU/CUDA staging,
 GDS and installed serving remain unqualified. Source GPU byte gates are written
 in `crates/orbitkv-core/tests/ssd_engine.rs` and have not been run:
 
@@ -872,7 +880,9 @@ ORBITKV_SSD_TEST_ENGINE=orbite ORBITKV_SSD_TEST_ROOT=/path/to/test-owned/ssd car
 ```
 
 For TENT, use `ORBITKV_SSD_TEST_ENGINE=tent` and `--features cuda-13,mooncake`
-with the same two tests. These source gates are written, not hardware evidence.
+with the same two tests. Its padded native-GDS gate additionally runs
+`--ignored --exact tent_native_gds_padded_file_roundtrip --test-threads=1`.
+These source gates are written, not hardware evidence.
 
 Native GDS qualification also requires cuFile/nvidia-fs route evidence from that
 same installed run; configuration and successful bytes alone do not prove the

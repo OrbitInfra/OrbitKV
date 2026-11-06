@@ -29,7 +29,11 @@ fn tent_c_abi_layouts_match_the_pinned_header() {
     assert_eq!(std::mem::size_of::<NotificationInfo>(), 16);
     assert_eq!(std::mem::size_of::<NicLoadStat>(), 80);
     assert_eq!(std::mem::size_of::<files::FileOptions>(), 20);
-    assert_eq!(std::mem::size_of::<files::FileRange>(), 16);
+    assert_eq!(std::mem::size_of::<files::FileElement>(), 24);
+    assert_eq!(std::mem::align_of::<files::FileElement>(), 8);
+    assert_eq!(std::mem::offset_of!(files::FileElement, address), 8);
+    assert_eq!(std::mem::offset_of!(files::FileElement, length), 16);
+    assert_eq!((files::RANGE, files::PADDING), (0, 1));
     assert_eq!(std::mem::size_of::<files::FileOwner>(), 24);
     assert_eq!(std::mem::size_of::<files::FileResult>(), 16);
     assert_eq!(

@@ -14,7 +14,7 @@ enum Fault {
 struct Control {
     fault: Fault,
     submits: AtomicUsize,
-    ranges: AtomicUsize,
+    elements: Mutex<Vec<(c_int, usize, u64)>>,
     closes: AtomicUsize,
     releases: AtomicUsize,
     destroyed: AtomicBool,
@@ -42,12 +42,12 @@ unsafe extern "C" fn open(
     }
     0
 }
-unsafe extern "C" fn submit(
+unsafe extern "C" fn submitv(
     engine: native::NativeEngine,
     _: u64,
     _: c_int,
     _: u64,
-    _: *const ffi::FileRange,
+    elements: *const ffi::FileElement,
     count: usize,
     owner: *const ffi::FileOwner,
     batch: *mut u64,
@@ -56,7 +56,10 @@ unsafe extern "C" fn submit(
     unsafe {
         let c = control(engine);
         c.submits.fetch_add(1, Ordering::Relaxed);
-        c.ranges.store(count, Ordering::Relaxed);
+        *c.elements.lock().unwrap() = std::slice::from_raw_parts(elements, count)
+            .iter()
+            .map(|e| (e.kind, e.address as usize, e.length))
+            .collect();
         if c.fault == Fault::Reject {
             return 9;
         }
@@ -128,7 +131,7 @@ fn fixture(fault: Fault) -> (Arc<FileEngine>, Arc<FileSegment>, Arc<Control>) {
     let c = Arc::new(Control {
         fault,
         submits: AtomicUsize::new(0),
-        ranges: AtomicUsize::new(0),
+        elements: Mutex::new(Vec::new()),
         closes: AtomicUsize::new(0),
         releases: AtomicUsize::new(0),
         destroyed: AtomicBool::new(false),
@@ -139,7 +142,7 @@ fn fixture(fault: Fault) -> (Arc<FileEngine>, Arc<FileSegment>, Arc<Control>) {
         api: ffi::FileApi {
             create,
             open,
-            submit,
+            submitv,
             drain,
             release: release_batch,
             close,
@@ -173,17 +176,26 @@ fn file_receipts_release_only_physically_drained_backing_and_never_replay() {
         let (engine, file, c) = fixture(fault);
         let owner = Arc::new(vec![0x5au8; 1024]);
         let weak = Arc::downgrade(&owner);
-        let slices = [0, 512].map(|offset| TransferSlice {
-            local: std::ptr::NonNull::new(owner.as_ptr().wrapping_add(offset).cast_mut()).unwrap(),
-            remote_address: offset as u64,
-            length: 512,
-        });
+        let elements = [
+            FileElement::Range {
+                address: owner.as_ptr() as u64,
+                length: 137,
+            },
+            FileElement::Padding(375),
+            FileElement::Range {
+                address: owner.as_ptr().wrapping_add(512) as u64,
+                length: 512,
+            },
+        ];
         // SAFETY: the entire source remains immutable in the transferred Arc.
         let result = unsafe {
             file.transfer(
                 TransferOp::Write,
                 FileTransport::IoUring,
-                &slices,
+                FileExtent {
+                    offset: 0,
+                    elements: &elements,
+                },
                 owner,
                 Instant::now() + Duration::from_millis(10),
                 &AtomicBool::new(false),
@@ -191,7 +203,12 @@ fn file_receipts_release_only_physically_drained_backing_and_never_replay() {
         };
         assert_eq!(result.is_ok(), fault == Fault::None, "{fault:?}");
         assert_eq!(c.submits.load(Ordering::Relaxed), 1, "{fault:?}");
-        assert_eq!(c.ranges.load(Ordering::Relaxed), 2);
+        let seen = c.elements.lock().unwrap();
+        assert_eq!(seen.len(), 3);
+        assert_eq!(seen[0].0, ffi::RANGE);
+        assert_eq!(seen[1], (ffi::PADDING, 0, 375));
+        assert_eq!(seen[2].0, ffi::RANGE);
+        drop(seen);
         let retained = matches!(fault, Fault::Pending | Fault::Release);
         assert_eq!(weak.upgrade().is_some(), retained, "{fault:?}");
         assert_eq!(
@@ -227,9 +244,8 @@ fn preadmission_cancel_and_deadline_never_submit_or_retain() {
     for canceled in [true, false] {
         let owner = Arc::new(vec![0u8; 1024]);
         let weak = Arc::downgrade(&owner);
-        let slice = TransferSlice {
-            local: std::ptr::NonNull::new(owner.as_ptr().cast_mut()).unwrap(),
-            remote_address: 0,
+        let element = FileElement::Range {
+            address: owner.as_ptr() as u64,
             length: 1024,
         };
         // SAFETY: destination and its backing are exclusive until return.
@@ -237,7 +253,10 @@ fn preadmission_cancel_and_deadline_never_submit_or_retain() {
             file.transfer(
                 TransferOp::Read,
                 FileTransport::IoUring,
-                &[slice],
+                FileExtent {
+                    offset: 0,
+                    elements: &[element],
+                },
                 owner,
                 Instant::now(),
                 &AtomicBool::new(canceled),

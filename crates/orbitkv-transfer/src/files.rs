@@ -11,10 +11,10 @@ use std::time::{Duration, Instant};
 
 use orbitkv_mooncake_sys::{self as native, files as ffi};
 
-use crate::{Result, TransferError, TransferOp, TransferSlice};
+use crate::{Result, TransferError, TransferOp};
 
 const MAX_FILES: usize = 256;
-const MAX_RANGES: usize = 16_384;
+const MAX_ELEMENTS: usize = 16_384;
 const MAX_BYTES: usize = 64 << 20;
 
 fn error(operation: &'static str, status: i32, transferred_bytes: u64) -> TransferError {
@@ -23,6 +23,18 @@ fn error(operation: &'static str, status: i32, transferred_bytes: u64) -> Transf
         status,
         transferred_bytes,
     }
+}
+
+/// Consecutive bytes of one file extent. Padding is generated/discarded by TENT.
+#[derive(Clone, Copy)]
+pub enum FileElement {
+    Range { address: u64, length: usize },
+    Padding(usize),
+}
+
+pub struct FileExtent<'a> {
+    pub offset: u64,
+    pub elements: &'a [FileElement],
 }
 
 pub enum FileTransport {
@@ -242,82 +254,56 @@ impl FileSegment {
     /// `owner` retains actual backing, native registrations and extent leases.
     /// Sources are ready and immutable; READ destinations are exclusive. The
     /// GDS route carries the caller's bound CUDA context. No WRITE is replayed.
+    /// Wait for physical drain before a dependent or overlapping file access.
     pub unsafe fn transfer<T: Send + Sync + 'static>(
         self: &Arc<Self>,
         operation: TransferOp,
         transport: FileTransport,
-        slices: &[TransferSlice],
+        extent: FileExtent<'_>,
         owner: Arc<T>,
         deadline: Instant,
         cancel: &AtomicBool,
     ) -> Result<usize> {
-        let total = slices
-            .iter()
-            .try_fold(0usize, |sum, s| sum.checked_add(s.length))
-            .filter(|bytes| *bytes > 0 && *bytes <= MAX_BYTES)
-            .ok_or_else(|| error("range budget", 1, 0))?;
-        if slices.len() > MAX_RANGES {
-            return Err(error("range budget", 1, 0));
+        let FileExtent { offset, elements } = extent;
+        if elements.is_empty() || elements.len() > MAX_ELEMENTS {
+            return Err(error("element budget", 1, 0));
         }
+        let mut expected = 0u64;
+        let mut native = Vec::with_capacity(elements.len());
+        for element in elements {
+            let (kind, address, length) = match *element {
+                FileElement::Range { address, length } => {
+                    if address == 0 || address.checked_add(length as u64).is_none() {
+                        return Err(error("invalid range", 1, 0));
+                    }
+                    (ffi::RANGE, address as *mut _, length)
+                }
+                FileElement::Padding(length) => (ffi::PADDING, std::ptr::null_mut(), length),
+            };
+            if length == 0 {
+                return Err(error("empty element", 1, 0));
+            }
+            expected = expected
+                .checked_add(length as u64)
+                .filter(|bytes| *bytes <= MAX_BYTES as u64)
+                .ok_or_else(|| error("element byte budget", 1, 0))?;
+            native.push(ffi::FileElement {
+                kind,
+                address,
+                length: length as u64,
+            });
+        }
+        offset
+            .checked_add(expected)
+            .filter(|end| *end <= self.length && i64::try_from(*end).is_ok())
+            .ok_or_else(|| error("file extent", 1, 0))?;
         if cancel.load(Ordering::Acquire) {
             return Err(TransferError::Cancelled);
         }
         if Instant::now() >= deadline {
             return Err(TransferError::Timeout);
         }
-        let handle = self.handle(transport)?;
-        // The C API maps each vectored batch to one contiguous file interval.
-        // Preserve noncontiguous OrbitKV layout ranges as separate batches.
-        let mut start = 0;
-        while start < slices.len() {
-            let mut end = start + 1;
-            while end < slices.len()
-                && slices[end - 1]
-                    .remote_address
-                    .checked_add(slices[end - 1].length as u64)
-                    == Some(slices[end].remote_address)
-            {
-                end += 1;
-            }
-            // SAFETY: every group retains the same complete backing/extent owner.
-            unsafe {
-                self.transfer_contiguous(
-                    operation,
-                    handle,
-                    &slices[start..end],
-                    Arc::clone(&owner),
-                    deadline,
-                    cancel,
-                )?;
-            }
-            start = end;
-        }
-        Ok(total)
-    }
-
-    unsafe fn transfer_contiguous<T: Send + Sync + 'static>(
-        self: &Arc<Self>,
-        operation: TransferOp,
-        file: u64,
-        slices: &[TransferSlice],
-        owner: Arc<T>,
-        deadline: Instant,
-        cancel: &AtomicBool,
-    ) -> Result<()> {
-        if cancel.load(Ordering::Acquire) {
-            return Err(TransferError::Cancelled);
-        }
-        if Instant::now() >= deadline {
-            return Err(TransferError::Timeout);
-        }
-        let ranges = slices
-            .iter()
-            .map(|s| ffi::FileRange {
-                address: s.local.as_ptr().cast(),
-                length: s.length as u64,
-            })
-            .collect::<Vec<_>>();
-        let expected = slices.iter().map(|s| s.length as u64).sum::<u64>();
+        let file = self.handle(transport)?;
         // Keep a Rust reference until the receipt, so native release is never
         // the last backing/context/extent reference and cannot reenter the API.
         let mut owners = ManuallyDrop::new((Arc::clone(self), owner));
@@ -330,13 +316,13 @@ impl FileSegment {
         // SAFETY: range descriptors are copied at admission, and retain takes a
         // native Arc reference before any worker can access the bytes.
         let status = unsafe {
-            (self.engine.api.submit)(
+            (self.engine.api.submitv)(
                 self.engine.native,
                 file,
                 operation.code(),
-                slices[0].remote_address,
-                ranges.as_ptr(),
-                ranges.len(),
+                offset,
+                native.as_ptr(),
+                native.len(),
                 &token,
                 &mut batch,
             )
@@ -391,7 +377,7 @@ impl FileSegment {
                 if expired {
                     return Err(TransferError::Timeout);
                 }
-                return Ok(());
+                return Ok(expected as usize);
             }
             if status != ffi::UNQUIESCED || canceled || expired || receipt.outcome == 4 {
                 self.engine.retained.store(true, Ordering::Release);

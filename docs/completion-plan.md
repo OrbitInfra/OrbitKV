@@ -121,9 +121,9 @@ and [adapter contracts](adapters.md).
   vector per extent with `Padding` for gaps/tails, and `gds_enabled` prevents
   unconfigured cuFile loading. `storage/ssd/gpu.rs` and its zero buffers are
   deleted. Persistent tensor/codec input registrations and actual codec arena
-  backing survive unknown drain with caller completion/admission. TENT uses
-  native vectors for aligned ranges; only its bounded padding/unaligned repair
-  adapter remains until the fork adds those contracts. CPU real-file and owner
+  backing survive unknown drain with caller completion/admission. TENT now uses `tent_file_submitv` at fork `1198515d` for RANGE/PADDING
+  elements and bounded unaligned staging. Its OrbitKV adapter and scratch/zero-fill
+  code are deleted; the separate file engine and physical-drain contract remain. CPU real-file and owner
   gates cover both providers; GPU/GDS/installed profiles remain unqualified.
 - [x] C was independently accepted and merged as `73570259`: OrbiTE owns
   Manager and client local GPU↔DRAM payload copies through one `LocalCopyEngine`

@@ -323,10 +323,14 @@ jobs:
         run: |
           CC=gcc CXX=g++ cargo clippy --locked -p orbitkv-server -p orbitkv-core --all-targets --no-default-features --features cuda-13,orbite-gds -- -D warnings
           # CUDA host-registration is a CPU fixture; io_uring and file bytes are real.
+          export ORBITKV_SSD_TEST_ROOT="$RUNNER_TEMP/ssd-ext4"
+          export ORBITKV_SSD_TEST_FS=ext4
+          mkdir -p "$ORBITKV_SSD_TEST_ROOT"
+          test "$(findmnt -n -o FSTYPE -T "$ORBITKV_SSD_TEST_ROOT")" = ext4
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=orbite cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
-          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=orbite ORBITKV_SSD_TEST_ROOT=/dev/shm cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=orbite ORBITKV_SSD_TEST_ROOT=/dev/shm ORBITKV_SSD_TEST_FS=tmpfs cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=tent cargo test --locked -p orbitkv-core --no-default-features --features mooncake,cudarc/cuda-13000,cudarc/nvrtc --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
-          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=tent ORBITKV_SSD_TEST_ROOT=/dev/shm cargo test --locked -p orbitkv-core --no-default-features --features mooncake,cudarc/cuda-13000,cudarc/nvrtc --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=tent ORBITKV_SSD_TEST_ROOT=/dev/shm ORBITKV_SSD_TEST_FS=tmpfs cargo test --locked -p orbitkv-core --no-default-features --features mooncake,cudarc/cuda-13000,cudarc/nvrtc --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
           # Both selections must work in the same binary, with separate file owners.
           for engine in tent orbite; do
             LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE="$engine" cargo test --locked -p orbitkv-core --no-default-features --features mooncake,orbite,cudarc/cuda-13000,cudarc/nvrtc --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1

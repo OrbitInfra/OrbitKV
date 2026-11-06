@@ -1,5 +1,3 @@
-mod file;
-
 use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -9,10 +7,10 @@ use orbitkv_transfer::{AUTO_MEMORY_LOCATION, MemoryRegistration, P2P_METADATA, T
 
 use crate::memory::pool::PinnedAllocator;
 use crate::transfer_engine::{
-    Cancellation, ErrorKind, FileSegment, FileSegmentInner, FileTransfer, FileTransport,
-    MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, PeerSegment, Permission, REGISTERED_POOLS,
-    Registration, RegistrationInner, Segment, TransferBackend, TransferError, TransferOp,
-    TransferSlice, remaining, validate_slices,
+    Cancellation, ErrorKind, FileIoElement, FileMemory, FileSegment, FileSegmentInner,
+    FileTransfer, FileTransport, MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, PeerSegment,
+    Permission, REGISTERED_POOLS, Registration, RegistrationInner, Segment, TransferBackend,
+    TransferError, TransferOp, TransferSlice, remaining, validate_slices,
 };
 
 struct RetainedSource {
@@ -302,8 +300,60 @@ impl TransferBackend for MooncakeTransport {
         };
         #[cfg(not(feature = "orbite"))]
         let FileSegmentInner::Tent(file) = &file.inner;
-        // SAFETY: FileTransfer retains the actual ranges and extent through physical drain.
-        unsafe { file::transfer(file, operation, transport, transfer, deadline, cancellation) }
+        transfer.extent.bytes()?;
+        let context = match &transfer.memory {
+            FileMemory::Pinned(_) => None,
+            FileMemory::RegisteredCuda { context, .. } => {
+                context
+                    .bind_to_thread()
+                    .map_err(|e| TransferError::new(ErrorKind::InvalidRequest, e.to_string()))?;
+                Some(Arc::clone(context))
+            }
+        };
+        let transport = match transport {
+            FileTransport::IoUring => orbitkv_transfer::files::FileTransport::IoUring,
+            FileTransport::Gds => {
+                orbitkv_transfer::files::FileTransport::Gds(context.ok_or_else(|| {
+                    TransferError::new(
+                        ErrorKind::Unavailable,
+                        "TENT native GDS requires CUDA ranges",
+                    )
+                })?)
+            }
+        };
+        let elements: Vec<_> = transfer
+            .extent
+            .elements
+            .iter()
+            .map(|element| match *element {
+                FileIoElement::Range { address, length } => {
+                    orbitkv_transfer::files::FileElement::Range { address, length }
+                }
+                FileIoElement::Padding(length) => {
+                    orbitkv_transfer::files::FileElement::Padding(length)
+                }
+            })
+            .collect();
+        let operation = match operation {
+            TransferOp::Read => orbitkv_transfer::TransferOp::Read,
+            TransferOp::Write => orbitkv_transfer::TransferOp::Write,
+        };
+        // SAFETY: FileTransfer retains actual backing, registrations, CUDA context and
+        // extent through the native physical receipt, including TENT-owned staging.
+        unsafe {
+            file.transfer(
+                operation,
+                transport,
+                orbitkv_transfer::files::FileExtent {
+                    offset: transfer.extent.offset,
+                    elements: &elements,
+                },
+                transfer,
+                deadline,
+                cancellation.flag(),
+            )
+        }
+        .map_err(tent_error)
     }
 
     fn register_pinned(

@@ -55,12 +55,12 @@ retain persistent registrations, while encoded writes retain their actual codec
 arena. Unknown drain keeps caller completion/admission and fences the worker.
 Local GPU↔DRAM migration remains a separate step.
 
-TENT submits aligned GPU vectors directly. Its C API lacks padding and unaligned
-vector repair, so a TENT-only adapter uses at most 4 MiB of host or device scratch
-per operation; GPU scratch uses D2D copies, and the engine owns host staging.
-This adapter is removed when the fork provides those missing contracts. Explicit
-GDS with padding is unavailable on both backends. OrbiTE's `gds_enabled` is false
-unless `cufile` is configured, even when GDS is compiled.
+TENT consumes the same RANGE/PADDING layouts through `tent_file_submitv` on a
+separate file engine. Its 4 MiB windows and 64 MiB staging budget replace the
+OrbitKV adapter, scratch and zero-fill buffers. TENT native GDS supports padded
+GPU vectors with 4 KiB-aligned extents; GPU staging remains unqualified.
+OrbiTE rejects explicit GDS padding without fallback. Its `gds_enabled` stays
+false unless `cufile` is configured, even when GDS is compiled.
 
 Each store admits 32 file operations, including retained work, with at most
 64 MiB and 1,024 elements including padding per operation. Whole host extents
@@ -286,7 +286,6 @@ functional passes do not satisfy it.
 - `orbitkv_ssd_cufile_read_failures_total` / `orbitkv_ssd_cufile_write_failures_total`: failed or short I/O.
 - `orbitkv_ssd_backend_fallbacks_total`: transitions from automatic cuFile admission to io_uring.
 - `orbitkv_ssd_read_pinned_bytes`: SSD bytes held by restore leases.
-- `orbitkv_ssd_gpu_staging_bytes`: TENT-only device alignment scratch; absent in OrbiTE-only builds.
 - `orbitkv_ssd_pinned_write_skips_total`: reservations rejected to protect reads
   or in-flight writes.
 

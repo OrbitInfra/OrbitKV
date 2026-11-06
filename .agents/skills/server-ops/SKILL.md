@@ -66,7 +66,7 @@ Trace an incident through its owner:
    `docs/metrics.md`. Lease expiry or a deadline cannot establish native drain.
 
 Default deployments use native TENT payloads and OrbitKV source-control RPCs.
-TENT v0.3.14 at `85c270db` requires all four runtime libraries, including
+TENT v0.3.14 at `1198515d` requires all four runtime libraries, including
 `libtent_metrics.so` even with metrics disabled. Generic C errors propagate
 negative native codes: -135 maps to `Unquiesced`, -134 to `Unavailable`, and -2
 to `ResourceExhausted`. The asynchronous terminal query gives logical evidence
@@ -81,9 +81,10 @@ OrbiTE requires `orbite-gds`, and TENT requires a native build with cuFile SDK
 support. Uncertain work retains backing, extents and one of 32 operation permits.
 OrbiTE submits one vector per extent, including padding (64 MiB/1,024 elements).
 It reuses persistent tensor/codec input registrations and retains caller completion
-on unknown GPU drain. TENT passes aligned vectors directly; its file ABI still
-needs padding/unaligned repair in a bounded TENT-only adapter. Explicit padded
-GDS requests fail without fallback. `gds_enabled` prevents unconfigured cuFile
+on unknown GPU drain. TENT consumes RANGE/PADDING through `tent_file_submitv`,
+with 4 MiB windows/64 MiB staging charged to its separate file engine; the
+OrbitKV scratch adapter is deleted. Its native GDS accepts padded GPU vectors,
+while OrbiTE rejects explicit GDS padding without fallback. `gds_enabled` prevents unconfigured cuFile
 loading. GPU/GDS remains unqualified. See `docs/transport.md#ssd-file-transfers`.
 OrbiTE `8fa03eda` uses a one-route Unspec peer policy with
 failover, HP-TCP, SHM and MNNVL disabled. Historical hardware results below do not
