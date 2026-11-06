@@ -168,8 +168,18 @@ fn local_copy_shim_bytes_stream_binding_and_pin_owners() {
             weak.upgrade().is_some(),
             "completion holds the exact allocator slot and physical pin"
         );
+        let retained = weak.upgrade().unwrap();
         shim.set(b"orbitkv_test_cuda_hold", 0);
         completion.wait().unwrap();
+        for (row, copy) in copies.iter().enumerate() {
+            // SAFETY: D2H drained, and retained still owns these pinned rows.
+            let actual = unsafe { std::slice::from_raw_parts(copy.host, copy.size) };
+            let expected: Vec<_> = (row * 64..row * 64 + 32)
+                .map(|index| (index % 251) as u8)
+                .collect();
+            assert_eq!(actual, expected, "D2H bytes in row {row}");
+        }
+        drop(retained);
         assert!(
             weak.upgrade().is_none(),
             "drained completion releases the slot"
