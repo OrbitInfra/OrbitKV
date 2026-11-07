@@ -22,13 +22,26 @@ BACKEND = re.compile(r'feature\s*=\s*"(?:mooncake|orbite[^\"]*|orbitte[^\"]*)"')
 
 def main() -> int:
     paths = subprocess.check_output(
-        ["rg", "--files", "crates", "python/src", "benches", "-g", "*.rs"],
+        [
+            "git",
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            "crates",
+            "python/src",
+            "benches",
+        ],
         cwd=ROOT,
         text=True,
-    ).splitlines()
+    ).split("\0")
     total = 0
     violations = []
-    for path in sorted(paths):
+    for path in sorted(
+        path for path in paths if path.endswith(".rs") and (ROOT / path).is_file()
+    ):
         source = (ROOT / path).read_text()
         count = 0
         for match in PREDICATE.finditer(source):
