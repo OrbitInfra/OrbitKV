@@ -234,9 +234,8 @@ impl OrbitKVEngine {
                 "query lease requires at least one block".to_string(),
             ));
         }
-        Ok(self
-            .query_leases
-            .create(instance_id, blocks, instance.world_size(), None))
+        self.query_leases
+            .create(instance_id, blocks, instance.world_size(), None)
     }
 
     /// Check the complete declared boundary before admitting any selected group.
@@ -322,31 +321,31 @@ impl OrbitKVEngine {
         reservation
             .ready(bytes)
             .map_err(EngineError::InvalidArgument)?;
-        Ok(self.query_leases.create(
+        self.query_leases.create(
             instance_id,
             blocks,
             instance.world_size(),
             Some((owner, reservation.clone())),
-        ))
+        )
     }
 
-    pub fn release_query_session(&self, session: u64) {
+    pub fn release_query_session(&self, session: u64) -> Result<(), EngineError> {
         self.query_leases
-            .release_owner(|owner| owner.session == session);
+            .release_owner(|owner| owner.session == session)
     }
 
     /// Move a prepared lease into foreground ownership without releasing bytes.
-    pub fn claim_query(&self, lease: &QueryLeaseId) {
-        self.query_leases.claim(lease);
+    pub fn claim_query(&self, lease: &QueryLeaseId) -> Result<(), EngineError> {
+        self.query_leases.claim(lease)
     }
 
-    pub fn cancel_query(&self, owner: QueryOwner) {
+    pub fn cancel_query(&self, owner: QueryOwner) -> Result<(), EngineError> {
         self.query_leases
-            .release_owner(|candidate| candidate == owner);
+            .release_owner(|candidate| candidate == owner)
     }
 
     /// Release a query lease. Returns false when the lease is unknown or expired.
-    pub fn release_query_lease(&self, lease: &QueryLeaseId) -> bool {
+    pub fn release_query_lease(&self, lease: &QueryLeaseId) -> Result<bool, EngineError> {
         self.query_leases.release(lease)
     }
 }

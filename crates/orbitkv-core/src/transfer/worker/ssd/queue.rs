@@ -76,11 +76,15 @@ struct Job {
 }
 
 impl Job {
-    fn new(id: u64, command: WorkerCommand) -> Self {
+    fn new(id: u64, command: WorkerCommand) -> Result<Self, EngineError> {
         let (task, observation) = match command {
             WorkerCommand::Load(task, observation) => (Task::Load(task), observation),
             WorkerCommand::Save(task, observation) => (Task::Save(task), observation),
-            WorkerCommand::Drain(_) => unreachable!("drain is handled by the queue"),
+            WorkerCommand::Drain(reply) => {
+                let error = "drain cannot be submitted as a file job";
+                let _ = reply.send(Err(error.into()));
+                return Err(EngineError::Storage(error.into()));
+            }
         };
         let mut job = Self {
             id,
@@ -159,7 +163,7 @@ impl Job {
         if let Err(error) = planned {
             job.fail(error.to_string());
         }
-        job
+        Ok(job)
     }
 
     fn prepare(&mut self, runtime: &WorkerRuntime) -> Result<(), EngineError> {
@@ -192,7 +196,7 @@ impl Job {
                 unsafe {
                     runtime.backend.submit(
                         &copies,
-                        &super::super::host_owners(layers),
+                        &super::super::host_owners(layers)?,
                         !self.is_write(),
                     )
                 }
@@ -266,11 +270,11 @@ impl Job {
             let write = &mut self.writes[index];
             write.remaining -= 1;
             if write.remaining == 0 && publish {
-                write
-                    .lease
-                    .take()
-                    .expect("unpublished extent owned")
-                    .commit();
+                if let Some(lease) = write.lease.take() {
+                    lease.commit();
+                } else {
+                    self.fail("completed extent has no publication lease".into());
+                }
             }
         }
         if let Err(error) = result {
@@ -500,10 +504,13 @@ fn poll_decode(decoder: &Decoder, active: &mut Option<Decode>, jobs: &mut VecDeq
     let Some(mut decode) = active.take() else {
         return;
     };
-    let job = jobs
-        .iter_mut()
-        .find(|job| job.id == decode.job)
-        .expect("decoding job retained");
+    let Some(job) = jobs.iter_mut().find(|job| job.id == decode.job) else {
+        log::error!(
+            "{}",
+            TransferError::new(ErrorKind::Unquiesced, "active decoder lost its job")
+        );
+        crate::transfer::retain_gpu_work();
+    };
     if decode.phase != DecodePhase::Reading {
         match decoder.replies.try_recv() {
             Ok(DecodeReply::Prepared(result)) => {
@@ -616,7 +623,10 @@ pub(in crate::transfer::worker) fn run(
                     let Some(command) = super::super::prepare_peer(command, &runtime) else {
                         continue;
                     };
-                    jobs.push_back(Job::new(next_id, command));
+                    match Job::new(next_id, command) {
+                        Ok(job) => jobs.push_back(job),
+                        Err(error) => log::error!("File job rejected: {error}"),
+                    }
                     next_id += 1;
                 }
                 None => closed = true,
@@ -646,10 +656,21 @@ pub(in crate::transfer::worker) fn run(
                 )),
                 Ok(result) => result,
             };
-            let pending = slot.take().expect("pending file receipt");
+            let Some(pending) = slot.take() else {
+                continue;
+            };
             let owner = pending.owner;
             if owner.encoded {
-                let decode = decoding.as_mut().expect("encoded input retained");
+                let Some(decode) = decoding.as_mut() else {
+                    log::error!(
+                        "{}",
+                        TransferError::new(
+                            ErrorKind::Unquiesced,
+                            "encoded receipt lost its decoder"
+                        )
+                    );
+                    crate::transfer::retain_gpu_work();
+                };
                 assert_eq!(decode.job, owner.job);
                 decode.remaining -= 1;
             }
@@ -675,10 +696,14 @@ pub(in crate::transfer::worker) fn run(
             if let Err(error) = &result {
                 pending.file.gpu_io.failed(&error.to_string());
             }
-            jobs.iter_mut()
-                .find(|job| job.id == owner.job)
-                .expect("submitted job retained")
-                .complete(owner.write, result);
+            let Some(job) = jobs.iter_mut().find(|job| job.id == owner.job) else {
+                log::error!(
+                    "{}",
+                    TransferError::new(ErrorKind::Unquiesced, "file receipt lost its job")
+                );
+                crate::transfer::retain_gpu_work();
+            };
+            job.complete(owner.write, result);
         }
         if let Some(decoder) = &decoder {
             poll_decode(decoder, &mut decoding, &mut jobs);
@@ -686,7 +711,9 @@ pub(in crate::transfer::worker) fn run(
         let mut index = 0;
         while index < jobs.len() {
             if jobs[index].is_complete() {
-                jobs.remove(index).expect("completed job exists").finish();
+                if let Some(job) = jobs.remove(index) {
+                    job.finish();
+                }
             } else {
                 index += 1;
             }
@@ -746,7 +773,9 @@ pub(in crate::transfer::worker) fn run(
             } else {
                 0
             };
-            let mut job = jobs.remove(position).expect("selected job exists");
+            let Some(mut job) = jobs.remove(position) else {
+                continue;
+            };
             if let Err(error) = job.prepare(&runtime) {
                 job.fail(error.to_string());
                 jobs.push_back(job);
@@ -763,18 +792,22 @@ pub(in crate::transfer::worker) fn run(
                         }
                     }
                 }
-                match Decode::begin(
-                    &mut job,
-                    decoder.as_ref().expect("decoder initialized"),
-                    &runtime,
-                ) {
+                let result = decoder
+                    .as_ref()
+                    .ok_or_else(|| "decoder was not initialized".to_string())
+                    .and_then(|decoder| Decode::begin(&mut job, decoder, &runtime));
+                match result {
                     Ok(active) => decoding = Some(active),
                     Err(error) => job.fail(error),
                 }
                 jobs.push_back(job);
                 continue;
             }
-            let work = job.work.pop_front().expect("eligible job has work");
+            let Some(work) = job.work.pop_front() else {
+                job.fail("selected file job has no work".into());
+                jobs.push_back(job);
+                continue;
+            };
             let owner = BatchOwner {
                 job: job.id,
                 write: work.write,

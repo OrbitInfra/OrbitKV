@@ -6,13 +6,15 @@ fn invalid_batch_does_not_consume_valid_lease_shares() {
     for invalid in ["missing", "instance", "expired", "duplicate"] {
         let manager = QueryLeaseManager::default();
         let source = RestoreSource::Memory(Arc::new(SealedBlock::from_slots(Vec::new())));
-        let first = manager.create("a", vec![source.clone()], 2, None);
-        let second = manager.create(
-            if invalid == "instance" { "b" } else { "a" },
-            vec![source],
-            1,
-            None,
-        );
+        let first = manager.create("a", vec![source.clone()], 2, None).unwrap();
+        let second = manager
+            .create(
+                if invalid == "instance" { "b" } else { "a" },
+                vec![source],
+                1,
+                None,
+            )
+            .unwrap();
         if invalid == "expired" {
             manager
                 .inner
@@ -60,8 +62,10 @@ fn source_validation_failure_preserves_the_entire_batch() {
     let manager = QueryLeaseManager::default();
     let block = Arc::new(SealedBlock::from_slots(Vec::new()));
     let source = RestoreSource::Memory(Arc::clone(&block));
-    let first = manager.create("a", vec![source.clone()], 1, None);
-    let second = manager.create("a", vec![source.clone(), source], 2, None);
+    let first = manager.create("a", vec![source.clone()], 1, None).unwrap();
+    let second = manager
+        .create("a", vec![source.clone(), source], 2, None)
+        .unwrap();
     let owners = Arc::strong_count(&block);
     let error = manager
         .consume_batch::<()>("a", &[first, second], |sources| {
@@ -101,18 +105,22 @@ fn batch_preserves_order_and_configured_consumer_count() {
     let manager = QueryLeaseManager::default();
     let first_block = Arc::new(SealedBlock::from_slots(Vec::new()));
     let second_block = Arc::new(SealedBlock::from_slots(Vec::new()));
-    let first = manager.create(
-        "a",
-        vec![RestoreSource::Memory(Arc::clone(&first_block))],
-        2,
-        None,
-    );
-    let second = manager.create(
-        "a",
-        vec![RestoreSource::Memory(Arc::clone(&second_block))],
-        1,
-        None,
-    );
+    let first = manager
+        .create(
+            "a",
+            vec![RestoreSource::Memory(Arc::clone(&first_block))],
+            2,
+            None,
+        )
+        .unwrap();
+    let second = manager
+        .create(
+            "a",
+            vec![RestoreSource::Memory(Arc::clone(&second_block))],
+            1,
+            None,
+        )
+        .unwrap();
     let (_, consumed, _) = manager
         .consume_batch("a", &[second, first], |_| Ok(()))
         .unwrap();
@@ -157,15 +165,19 @@ fn disconnect_releases_ready_interest_but_not_a_gpu_consumers_reservation() {
     };
     let block = Arc::new(SealedBlock::from_slots(Vec::new()));
     let source = Arc::downgrade(&block);
-    let id = manager.create(
-        "a",
-        vec![RestoreSource::Memory(block)],
-        2,
-        Some((owner, reservation)),
-    );
+    let id = manager
+        .create(
+            "a",
+            vec![RestoreSource::Memory(block)],
+            2,
+            Some((owner, reservation)),
+        )
+        .unwrap();
     let (_, blocks, gpu) = manager.consume_batch("a", &[id], |_| Ok(())).unwrap();
     gpu[0].restoring();
-    manager.release_owner(|candidate| candidate.session == 7);
+    manager
+        .release_owner(|candidate| candidate.session == 7)
+        .unwrap();
     assert!(source.upgrade().is_some());
     assert!(matches!(
         budget.reserve("a", "ns", 1, crate::QueryMode::Demand),
@@ -194,21 +206,23 @@ fn registration_fence_rejects_old_leases_before_consuming_any_share() {
         panic!("reservation must fit")
     };
     let reservation = reservation.bind_registration([1; 16]);
-    let token = manager.create(
-        "instance",
-        vec![RestoreSource::Memory(Arc::new(SealedBlock::from_slots(
-            vec![],
-        )))],
-        2,
-        Some((
-            crate::query::QueryOwner {
-                session: 2,
-                operation: 1,
-                revision: 1,
-            },
-            reservation,
-        )),
-    );
+    let token = manager
+        .create(
+            "instance",
+            vec![RestoreSource::Memory(Arc::new(SealedBlock::from_slots(
+                vec![],
+            )))],
+            2,
+            Some((
+                crate::query::QueryOwner {
+                    session: 2,
+                    operation: 1,
+                    revision: 1,
+                },
+                reservation,
+            )),
+        )
+        .unwrap();
     manager
         .validate_registration(std::iter::once(&token), [1; 16])
         .unwrap();
@@ -224,4 +238,47 @@ fn registration_fence_rejects_old_leases_before_consuming_any_share() {
     manager
         .validate_registration(std::iter::once(&token), [1; 16])
         .unwrap();
+}
+
+#[test]
+fn poisoned_lease_lock_returns_errors_and_retains_owners() {
+    let manager = QueryLeaseManager::default();
+    let block = Arc::new(SealedBlock::from_slots(Vec::new()));
+    let weak = Arc::downgrade(&block);
+    let token = manager
+        .create("a", vec![RestoreSource::Memory(block)], 1, None)
+        .unwrap();
+    let inner = Arc::clone(&manager.inner);
+    assert!(
+        std::thread::spawn(move || {
+            let _guard = inner.leases.lock().unwrap();
+            panic!("inject poisoned lease lock");
+        })
+        .join()
+        .is_err()
+    );
+    assert!(matches!(
+        manager.claim(&token),
+        Err(EngineError::Poisoned("query leases"))
+    ));
+    assert!(matches!(
+        manager.release(&token),
+        Err(EngineError::Poisoned("query leases"))
+    ));
+    assert!(matches!(
+        manager.release_instance("a"),
+        Err(EngineError::Poisoned("query leases"))
+    ));
+    assert!(matches!(
+        manager.sweep_expired(),
+        Err(EngineError::Poisoned("query leases"))
+    ));
+    assert!(matches!(
+        manager.consume_batch("a", &[token], |_| Ok(())),
+        Err(EngineError::Poisoned("query leases"))
+    ));
+    assert!(
+        weak.upgrade().is_some(),
+        "failed cleanup must retain the existing lease owner"
+    );
 }

@@ -174,10 +174,12 @@ impl LifecycleHeader {
             ));
         }
         let header = Self {
-            code: u16::from_le_bytes(bytes[6..8].try_into().expect("fixed header")),
-            epoch: u64::from_le_bytes(bytes[8..16].try_into().expect("fixed header")),
-            payload_len: u32::from_le_bytes(bytes[16..20].try_into().expect("fixed header"))
-                as usize,
+            code: u16::from_le_bytes([bytes[6], bytes[7]]),
+            epoch: u64::from_le_bytes([
+                bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14],
+                bytes[15],
+            ]),
+            payload_len: u32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]) as usize,
         };
         if header.payload_len > MAX_LIFECYCLE_PAYLOAD {
             return Err(io::Error::new(

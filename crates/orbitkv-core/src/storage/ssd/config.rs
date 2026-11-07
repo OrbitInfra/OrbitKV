@@ -120,7 +120,7 @@ impl Default for SsdCacheConfig {
         Self {
             cache_paths: vec![PathBuf::from("/tmp/orbitkv-ssd-cache/cache.bin")],
             capacity_bytes: 512 * 1024 * 1024 * 1024, // 512GB
-            shards: NonZeroUsize::new(1).unwrap(),
+            shards: NonZeroUsize::MIN,
             write_queue_depth: DEFAULT_SSD_WRITE_QUEUE_DEPTH,
             write_policy: SsdWritePolicy::All,
             prefetch_queue_depth: DEFAULT_SSD_PREFETCH_QUEUE_DEPTH,

@@ -48,7 +48,7 @@ async fn process_channel_lifecycle_and_cache_control_need_no_grpc() {
     let engine = test_engine();
     let lifecycle = LifecycleService::new(
         Arc::clone(&engine),
-        RegistryHandle::spawn(CudaTensorRegistry::empty()),
+        RegistryHandle::spawn(CudaTensorRegistry::empty()).unwrap(),
     );
     let shutdown = Arc::new(Notify::new());
     let id = uuid::Uuid::new_v4();
@@ -179,7 +179,7 @@ async fn lifecycle_shutdown_latches_while_an_accepted_request_finishes() {
     let engine = test_engine();
     let lifecycle = LifecycleService::new(
         Arc::clone(&engine),
-        RegistryHandle::spawn(CudaTensorRegistry::empty()),
+        RegistryHandle::spawn(CudaTensorRegistry::empty()).unwrap(),
     );
     let shutdown = Arc::new(Notify::new());
     let id = uuid::Uuid::new_v4();

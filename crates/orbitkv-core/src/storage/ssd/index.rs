@@ -247,10 +247,8 @@ impl SsdRingBuffer {
             if current && *generation >= new_tail {
                 break;
             }
-            let (key, _) = self.shards[shard_id]
-                .order
-                .pop_front()
-                .expect("front exists");
+            let key = key.clone();
+            self.shards[shard_id].order.pop_front();
             if current {
                 self.entries.remove(&key);
                 self.retired.push(key);

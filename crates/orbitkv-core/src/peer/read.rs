@@ -609,15 +609,15 @@ async fn fetch_blocks_via_peer(
                     .into_iter()
                     .map(|sa| {
                         let ptr = NonNull::new(sa.ptr_addr as *mut u8)
-                            .expect("slab segment pointer must be non-null");
-                        Segment::new(ptr, sa.size, sa.alloc)
+                            .ok_or("null slab segment pointer")?;
+                        Segment::new(ptr, sa.size, sa.alloc).map_err(|error| error.to_string())
                     })
-                    .collect();
+                    .collect::<Result<_, String>>()?;
                 let mut raw = RawBlock::new(segments);
                 raw.encoding = encoding;
-                (raw, numa)
+                Ok((raw, numa))
             })
-            .collect();
+            .collect::<Result<_, String>>()?;
         for (slot, _) in &slots {
             slot.validate_encoding()
                 .inspect_err(|_| core_metrics().storage_codec_decode_failures.add(1, &[]))?;
@@ -743,7 +743,7 @@ impl<'a> ChunkedSlabs<'a> {
         if let Some(slab) = self.current.get_mut(&numa)
             && let Ok(seg) = slab.allocate(len, segment_kind)
         {
-            self.consume_remaining(numa, len);
+            self.consume_remaining(numa, len)?;
             return Ok(seg);
         }
 
@@ -751,7 +751,7 @@ impl<'a> ChunkedSlabs<'a> {
         let remaining = *self
             .remaining
             .get(&numa)
-            .expect("remaining bytes tracked for every NUMA in the batch");
+            .ok_or("missing NUMA byte accounting")?;
         let chunk = remaining.min(self.chunk_bytes).max(len as u64);
         let allocation = (self.allocate_fn)(chunk, Some(numa)).ok_or_else(|| {
             format!("failed to allocate fetch chunk ({chunk} bytes) on {numa} for {segment_kind}")
@@ -767,19 +767,20 @@ impl<'a> ChunkedSlabs<'a> {
                 capacity,
             },
         );
-        self.consume_remaining(numa, len);
+        self.consume_remaining(numa, len)?;
         self.current
             .get_mut(&numa)
-            .expect("chunk just inserted")
+            .ok_or("missing NUMA allocation chunk")?
             .allocate(len, segment_kind)
     }
 
-    fn consume_remaining(&mut self, numa: NumaNode, len: usize) {
+    fn consume_remaining(&mut self, numa: NumaNode, len: usize) -> Result<(), String> {
         let rem = self
             .remaining
             .get_mut(&numa)
-            .expect("remaining bytes tracked for every NUMA in the batch");
+            .ok_or("missing NUMA byte accounting")?;
         *rem = rem.saturating_sub(len as u64);
+        Ok(())
     }
 }
 

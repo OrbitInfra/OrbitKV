@@ -153,7 +153,7 @@ fn strided_restore_keeps_each_allocation_boundary_inside_a_shared_arena() {
     use std::num::NonZeroU64;
 
     let _context = CudaContext::new(0).unwrap();
-    let pool = PinnedAllocator::new_global(4096, 1, false, None);
+    let pool = PinnedAllocator::new_global(4096, 1, false, None).unwrap();
     let sources: Vec<_> = (0..4)
         .map(|index| {
             let source = pool

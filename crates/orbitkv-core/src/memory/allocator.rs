@@ -7,10 +7,14 @@ use std::{
 /// Error variants returned by the scaled allocator wrapper.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum AllocatorError {
+    InvalidAllocationSize,
     /// The configured unit size must be greater than zero.
     InvalidUnitSize,
     /// The requested capacity cannot be represented with the underlying u32 allocator.
-    CapacityTooLarge { total_bytes: u64, unit_size: u64 },
+    CapacityTooLarge {
+        total_bytes: u64,
+        unit_size: u64,
+    },
     /// The requested allocation is too large for the underlying allocator.
     RequestTooLarge {
         requested_bytes: u64,
@@ -21,6 +25,9 @@ pub(crate) enum AllocatorError {
 impl Display for AllocatorError {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
+            AllocatorError::InvalidAllocationSize => {
+                write!(f, "allocator returned an empty allocation")
+            }
             AllocatorError::InvalidUnitSize => write!(f, "unit size must be greater than zero"),
             AllocatorError::CapacityTooLarge {
                 total_bytes,
@@ -108,8 +115,10 @@ impl ScaledOffsetAllocator {
         };
 
         let allocated_units = self.inner.allocation_size(raw) as u64;
-        let size_bytes = NonZeroU64::new(allocated_units * self.unit_size.get())
-            .expect("allocation_size should always be non-zero");
+        let Some(size_bytes) = NonZeroU64::new(allocated_units * self.unit_size.get()) else {
+            self.inner.free(raw);
+            return Err(AllocatorError::InvalidAllocationSize);
+        };
         Ok(Some(Allocation {
             offset_bytes: raw.offset as u64 * self.unit_size.get(),
             size_bytes,

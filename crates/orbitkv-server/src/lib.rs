@@ -1,3 +1,7 @@
+#![cfg_attr(
+    not(test),
+    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 #![recursion_limit = "256"]
 
 mod cache;
@@ -657,7 +661,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     })?;
     // Confine the registry to its own thread: GIL + CUDA work now happens off
     // the async runtime, so a wedged `empty_cache` can't starve tokio workers.
-    let registry = RegistryHandle::spawn(registry);
+    let registry = RegistryHandle::spawn(registry)?;
 
     if let Some(hint_value_size) = cli.hint_value_size {
         if hint_value_size == 0 {

@@ -160,7 +160,11 @@ impl LifecycleService {
         // Wait for registrations already importing tensors before taking the snapshot.
         let mut stopping = self.stopping.write().await;
         *stopping = true;
-        for instance in self.engine.list_instance_ids() {
+        for instance in self
+            .engine
+            .list_instance_ids()
+            .map_err(Self::map_engine_error)?
+        {
             self.cleanup(&instance).await?;
         }
         Ok(())
@@ -363,8 +367,8 @@ impl LifecycleService {
                 ));
             }
             formats[index] = StorageFormat::Attention {
-                scalar: scalar.expect("checked"),
-                role: role.expect("checked"),
+                scalar: scalar.ok_or_else(|| ControlError::invalid_argument("unsupported attention scalar"))?,
+                role: role.ok_or_else(|| ControlError::invalid_argument("unsupported attention role"))?,
                 head_dim: *dim,
                 layer_index: *layer_index,
                 layer_count: *layer_count,

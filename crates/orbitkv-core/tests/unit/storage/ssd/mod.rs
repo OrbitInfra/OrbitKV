@@ -219,15 +219,17 @@ fn export_pins_exact_ssd_evidence_and_accounts_staging_allocations() {
     drop(leases);
     assert_eq!(readers.load(Ordering::Acquire), 0);
 
-    inventory.change(
-        &key,
-        orbitkv_state::ReplicaMedium::Dram,
-        Some(orbitkv_state::ReplicaMetadata {
-            medium: orbitkv_state::ReplicaMedium::Dram,
-            representation: orbitkv_state::ReplicaRepresentation::Raw,
-            stored_bytes: Some(SSD_ALIGNMENT as u64),
-        }),
-    );
+    inventory
+        .change(
+            &key,
+            orbitkv_state::ReplicaMedium::Dram,
+            Some(orbitkv_state::ReplicaMetadata {
+                medium: orbitkv_state::ReplicaMedium::Dram,
+                representation: orbitkv_state::ReplicaRepresentation::Raw,
+                stored_bytes: Some(SSD_ALIGNMENT as u64),
+            }),
+        )
+        .unwrap();
     let leases = store
         .pin_residencies(
             std::slice::from_ref(&record),
@@ -235,7 +237,9 @@ fn export_pins_exact_ssd_evidence_and_accounts_staging_allocations() {
         )
         .unwrap();
     drop(leases);
-    inventory.change(&key, orbitkv_state::ReplicaMedium::Ssd, None);
+    inventory
+        .change(&key, orbitkv_state::ReplicaMedium::Ssd, None)
+        .unwrap();
     assert!(
         store
             .pin_residencies(&[record], crate::transfer_engine::tests::demand())

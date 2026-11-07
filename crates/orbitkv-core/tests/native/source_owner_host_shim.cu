@@ -26,6 +26,8 @@ extern "C" cudaError_t cudaHostGetDevicePointer(void **device, void *host,
   return cudaSuccess;
 }
 extern "C" cudaError_t cudaHostUnregister(void *) {
+  if (std::getenv("ORBITKV_TEST_CUDART_UNLOADING"))
+    return static_cast<cudaError_t>(4);
   if (std::getenv("ORBITKV_TEST_IMPORT_UNREGISTER_FAILURE"))
     return static_cast<cudaError_t>(1);
   ++unregistered;

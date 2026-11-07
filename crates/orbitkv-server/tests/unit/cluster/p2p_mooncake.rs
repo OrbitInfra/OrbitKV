@@ -903,7 +903,7 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
         "direct peer GPU restore bytes"
     );
     assert_eq!(
-        engine_b.cleanup_memory_cache().evicted_blocks,
+        engine_b.cleanup_memory_cache().unwrap().evicted_blocks,
         0,
         "GPU restore must not populate the DRAM tier"
     );
@@ -947,7 +947,7 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
     .await;
 
     // Eviction removes A's evidence while the copied replica on B remains usable.
-    assert!(engine_a.cleanup_memory_cache().evicted_blocks > 0);
+    assert!(engine_a.cleanup_memory_cache().unwrap().evicted_blocks > 0);
     let evicted_fence = capture_inventory_fence(&engine_a, &cluster_a).await;
     wait_for_fence(&stores, &evicted_fence).await;
     let remaining = locate(&stores, &cache_namespace, &stored_delayed);
@@ -1107,8 +1107,8 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
         .unregister_instance_and_wait("inst-a")
         .await
         .unwrap();
-    assert!(engine_b.list_instance_ids().is_empty());
-    assert!(engine_a.list_instance_ids().is_empty());
+    assert!(engine_b.list_instance_ids().unwrap().is_empty());
+    assert!(engine_a.list_instance_ids().unwrap().is_empty());
     _observer.shutdown().await;
     if matches!(
         backend,
@@ -1261,7 +1261,10 @@ async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata
 
     peer_gate.partition().await;
     let transient_partition_started = Instant::now();
-    assert_eq!(engine.cleanup_memory_cache().evicted_blocks, BLOCKS);
+    assert_eq!(
+        engine.cleanup_memory_cache().unwrap().evicted_blocks,
+        BLOCKS
+    );
     tokio::time::sleep(Duration::from_millis(200)).await;
     let final_hashes = make_block_hashes(BLOCKS, 72);
     let final_stored: Vec<_> = final_hashes

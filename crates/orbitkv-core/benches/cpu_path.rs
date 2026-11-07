@@ -292,7 +292,7 @@ impl BenchFixture {
     }
 
     fn cleanup_cache(&self) {
-        black_box(self.engine.cleanup_memory_cache());
+        black_box(self.engine.cleanup_memory_cache().unwrap());
     }
 }
 
@@ -470,7 +470,7 @@ impl MultiLayerBenchFixture {
     }
 
     fn cleanup_cache(&self) {
-        black_box(self.engine.cleanup_memory_cache());
+        black_box(self.engine.cleanup_memory_cache().unwrap());
     }
 }
 
@@ -814,7 +814,7 @@ fn query_benchmarks(c: &mut Criterion) {
                         let start = Instant::now();
                         let lease = fixture.query_lease(&req_id, &hashes).await;
                         measured += start.elapsed();
-                        assert!(fixture.engine.release_query_lease(&lease));
+                        assert!(fixture.engine.release_query_lease(&lease).unwrap());
                     }
                     measured
                 })

@@ -142,7 +142,7 @@ async fn actor_cleanup_preserves_the_other_instances_registration() {
     registry
         .contexts
         .insert(other.clone(), ContextState::new(0));
-    let actor = RegistryHandle::spawn(registry);
+    let actor = RegistryHandle::spawn(registry).unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         assert_eq!(actor.drop_instance("a".into()).await.unwrap(), 0);
         let message = actor
@@ -315,4 +315,34 @@ fn tensor_owner_survives_registry_removal() {
     assert!(weak.upgrade().is_some());
     drop(retained);
     assert!(weak.upgrade().is_none());
+}
+
+#[tokio::test]
+async fn actor_failure_preserves_import_disposition() {
+    for accepted in [false, true] {
+        let (tx, mut rx) = mpsc::channel(1);
+        let handle = RegistryHandle { tx };
+        let actor = if accepted {
+            Some(tokio::spawn(async move {
+                // Acceptance without a reply never proves whether CUDA import happened.
+                drop(rx.recv().await.unwrap());
+            }))
+        } else {
+            drop(rx);
+            None
+        };
+        let error = handle
+            .register_layers(key("lost-actor", 0, 0, "GPU-0"), Vec::new(), None)
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(
+            (accepted, error.disposition),
+            (false, CudaCreditDisposition::NeverImported) | (true, CudaCreditDisposition::Unknown)
+        ));
+        if let Some(actor) = actor {
+            actor.await.unwrap();
+        }
+        assert!(handle.clear().await.is_err());
+    }
 }

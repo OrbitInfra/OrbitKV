@@ -152,17 +152,17 @@ pub(crate) fn turboquant_bytes(
     if logical == 0 || !logical.is_multiple_of(source_width) {
         return None;
     }
-    (logical / source_width).checked_mul(vector_bytes(dim, bits, role))
+    (logical / source_width).checked_mul(vector_bytes(dim, bits, role)?)
 }
 
-fn vector_bytes(dim: u32, bits: u8, role: AttentionRole) -> usize {
+fn vector_bytes(dim: u32, bits: u8, role: AttentionRole) -> Option<usize> {
     let packed = (dim as usize * bits as usize).div_ceil(8);
-    match role {
+    Some(match role {
         AttentionRole::Key => packed + 2,
         AttentionRole::Value => packed + 4,
         AttentionRole::PackedKeyValue => 2 * packed + 6,
-        AttentionRole::KeyValue => unreachable!("split K/V must be resolved per segment"),
-    }
+        AttentionRole::KeyValue => return None,
+    })
 }
 
 pub(crate) fn segment_format(format: StorageFormat, index: usize) -> StorageFormat {

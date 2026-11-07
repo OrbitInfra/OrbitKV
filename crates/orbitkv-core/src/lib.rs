@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 //! Framework-neutral cache engine with leased state, tiered storage and GPU transfer.
 
 #[cfg(feature = "test-hooks")]

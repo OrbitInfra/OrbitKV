@@ -11,23 +11,27 @@ pub(super) type PoolRegistration = Arc<orbite::cuda::local_copy::PinnedHostRegis
 #[cfg(not(feature = "orbite"))]
 pub(super) struct PoolRegistration;
 
-pub(super) fn pin(backing: &Arc<PinnedMemory>) -> PoolRegistration {
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "the adapter contract is fallible when OrbiTE registrations are compiled"
+)]
+pub(super) fn pin(backing: &Arc<PinnedMemory>) -> Result<PoolRegistration, String> {
     #[cfg(feature = "orbite")]
     {
         // SAFETY: backing owns the physical CUDA pin until the last local loan.
         unsafe {
             orbite::cuda::local_copy::PinnedHostRegistration::from_raw_parts(
-                NonNull::new(backing.as_ptr().cast_mut()).expect("pinned base"),
+                backing.as_non_null(),
                 backing.size(),
                 backing.clone(),
             )
         }
-        .expect("valid pinned pool")
+        .map_err(|error| error.to_string())
     }
     #[cfg(not(feature = "orbite"))]
     {
         let _ = backing;
-        PoolRegistration
+        Ok(PoolRegistration)
     }
 }
 
@@ -69,8 +73,7 @@ impl PinnedAllocation {
 impl PinnedMemoryPool {
     /// Return the base pointer and length of the backing pinned memory.
     fn memory_region(&self) -> (NonNull<u8>, usize) {
-        let ptr = NonNull::new(self.backing.as_ptr() as *mut u8)
-            .expect("PinnedMemoryPool backing pointer is null");
+        let ptr = self.backing.as_non_null();
         (ptr, self.backing.size())
     }
 }

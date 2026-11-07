@@ -70,7 +70,10 @@ fn prepare_gpu_writes(
         let page = topology.is_page_first();
         let layer_id = topology.layer_id(&layer.layer_name)?;
         let offset = if page {
-            topology.page_placement(layer_id).expect("page layout").0
+            topology
+                .page_placement(layer_id)
+                .ok_or_else(|| EngineError::InvalidArgument("missing page layout".into()))?
+                .0
         } else {
             0
         };
@@ -78,7 +81,8 @@ fn prepare_gpu_writes(
             smallvec::smallvec![
                 topology
                     .shard_page_size(layer.slot_id)
-                    .expect("page layout") as u64
+                    .ok_or_else(|| EngineError::InvalidArgument("missing page layout".into()))?
+                    as u64
             ]
         } else if layer.layout.geometry().is_split() {
             smallvec::smallvec![layer.layout.geometry().padded_segment_bytes() as u64; 2]
@@ -224,9 +228,9 @@ impl OrbitKVEngine {
         // One writer saves exactly one shard (its registered layers), so every
         // layer in this batch maps to the same shard/slot.
         let shard = layer_contexts[0].slot_id;
-        let page_size = topology
-            .shard_page_size(shard)
-            .expect("page-first topology must have a shard page size");
+        let page_size = topology.shard_page_size(shard).ok_or_else(|| {
+            EngineError::InvalidArgument("page-first topology has no shard page size".into())
+        })?;
 
         // A page holds all of the shard's layers, so every layer must save the
         // same blocks in the same order. Block hashes are content-derived
@@ -263,9 +267,9 @@ impl OrbitKVEngine {
             .collect::<Result<_, _>>()?;
         layer_ids.sort_unstable();
         layer_ids.dedup();
-        let shard_layers = topology
-            .shard_layer_count(shard)
-            .expect("page-first topology must have a shard layer count");
+        let shard_layers = topology.shard_layer_count(shard).ok_or_else(|| {
+            EngineError::InvalidArgument("page-first topology has no shard layer count".into())
+        })?;
         if layer_ids.len() != shard_layers {
             return Err(EngineError::InvalidArgument(format!(
                 "page-first save must cover all {shard_layers} layers of shard {shard}, \
@@ -277,13 +281,17 @@ impl OrbitKVEngine {
         let mut padding = Vec::with_capacity(layer_contexts.len());
         for ctx in layer_contexts {
             let layer_id = topology.layer_id(&ctx.layer_name)?;
-            let (offset, padded) = topology.page_placement(layer_id).expect("page layout");
+            let (offset, padded) = topology
+                .page_placement(layer_id)
+                .ok_or_else(|| EngineError::InvalidArgument("missing page layout".into()))?;
             let BlockCopies::Contiguous(copy) = ctx
                 .layout
                 .block_copies(ctx.blocks_to_save[0].0)
                 .map_err(EngineError::Storage)?
             else {
-                unreachable!("split rejected above")
+                return Err(EngineError::InvalidArgument(
+                    "page-first save requires contiguous K/V".into(),
+                ));
             };
             if copy.bytes < padded {
                 padding.push((offset + copy.bytes, padded - copy.bytes));
@@ -316,22 +324,24 @@ impl OrbitKVEngine {
         // Each layer copies its block into its slice of every page.
         for ctx in layer_contexts {
             let layer_id = topology.layer_id(&ctx.layer_name)?;
-            let (offset, layer_bytes) = topology
-                .page_placement(layer_id)
-                .expect("page-first layer placement");
+            let (offset, layer_bytes) = topology.page_placement(layer_id).ok_or_else(|| {
+                EngineError::InvalidArgument("missing page-first layer placement".into())
+            })?;
             let save_blocks: Vec<TransferBlock> = ctx
                 .blocks_to_save
                 .iter()
                 .zip(pages.iter())
-                .map(|((block_idx, _), page)| TransferBlock {
-                    block_idx: *block_idx,
-                    block: TransferPayload::Owned(RawBlock::single_segment(Segment::new(
-                        page.mapped_ptr().add(offset).host(),
-                        layer_bytes,
-                        Arc::clone(page),
-                    ))),
+                .map(|((block_idx, _), page)| {
+                    Ok(TransferBlock {
+                        block_idx: *block_idx,
+                        block: TransferPayload::Owned(RawBlock::single_segment(Segment::new(
+                            page.mapped_ptr().add(offset).host(),
+                            layer_bytes,
+                            Arc::clone(page),
+                        )?)),
+                    })
                 })
-                .collect();
+                .collect::<Result<_, EngineError>>()?;
             gpu_save_layers.push(LayerTransferData {
                 layer_name: ctx.layer_name.clone(),
                 layout: ctx.layout.clone(),
@@ -411,7 +421,7 @@ impl OrbitKVEngine {
         saves: Vec<LayerSave>,
         diagnostic: Option<PublishDiagnostic>,
     ) -> Result<(), EngineError> {
-        self.query_leases.sweep_expired();
+        self.query_leases.sweep_expired()?;
 
         let batch_start = std::time::Instant::now();
         let total_layers = saves.len();
@@ -638,12 +648,12 @@ impl OrbitKVEngine {
                                     k_alloc.mapped_ptr().add(offset).host(),
                                     stride,
                                     Arc::clone(&k_alloc),
-                                ),
+                                )?,
                                 Segment::new(
                                     v_alloc.mapped_ptr().add(offset).host(),
                                     stride,
                                     Arc::clone(&v_alloc),
-                                ),
+                                )?,
                             ));
                         }
                     } else {
@@ -664,7 +674,7 @@ impl OrbitKVEngine {
                                 alloc.mapped_ptr().add(i * stride).host(),
                                 stride,
                                 Arc::clone(&alloc),
-                            )));
+                            )?));
                         }
                     }
                 }
@@ -740,15 +750,12 @@ impl OrbitKVEngine {
                     .blocks
                     .into_iter()
                     .map(|transfer_block| match transfer_block.block {
-                        TransferPayload::Owned(block) => block,
-                        TransferPayload::Peer { .. } => panic!("peer source returned from save"),
-                        TransferPayload::Pending
-                        | TransferPayload::Cached { .. }
-                        | TransferPayload::Ssd { .. } => {
-                            panic!("save path must return TransferPayload::Owned blocks")
-                        }
+                        TransferPayload::Owned(block) => Ok(block),
+                        _ => Err(EngineError::Storage(
+                            "save did not return an owned payload".into(),
+                        )),
                     })
-                    .collect();
+                    .collect::<Result<_, _>>()?;
             }
         }
 
@@ -795,9 +802,9 @@ impl OrbitKVEngine {
             // its layer count. Sealing rejects multi-group page-first, so the
             // whole batch is group 0.
             let slot_id = layer_contexts[0].slot_id;
-            let page_size = topology
-                .shard_page_size(slot_id)
-                .expect("page-first shard page size");
+            let page_size = topology.shard_page_size(slot_id).ok_or_else(|| {
+                EngineError::InvalidArgument("missing page-first shard page size".into())
+            })?;
             let block_hashes: Vec<Vec<u8>> = layer_contexts[0]
                 .blocks_to_save
                 .iter()
@@ -816,11 +823,11 @@ impl OrbitKVEngine {
                 .into_iter()
                 .map(|page| {
                     let ptr = page.mapped_ptr().host();
-                    let mut block = RawBlock::single_segment(Segment::new(ptr, page_size, page));
+                    let mut block = RawBlock::single_segment(Segment::new(ptr, page_size, page)?);
                     block.storage_format = format;
-                    block
+                    Ok(block)
                 })
-                .collect();
+                .collect::<Result<_, EngineError>>()?;
             if let Some(diagnostic) = diagnostic {
                 diagnostic.record(
                     "publish_storage_enqueue",

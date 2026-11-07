@@ -38,8 +38,9 @@ impl QueryReply {
     pub(crate) fn delivered(&mut self) {
         if let Ok(QueryOutcome::Ready { lease, .. }) = &self.outcome
             && let Ok(lease) = QueryLeaseId::from_bytes(lease)
+            && let Err(error) = self.engine.claim_query(&lease)
         {
-            self.engine.claim_query(&lease);
+            log::error!("Query claim failed; lease retained: {error}");
         }
         self.delivered = true;
     }
@@ -143,8 +144,13 @@ impl PendingQueries {
             if live(*token) {
                 true
             } else {
-                engine.release_query_session(*token);
-                false
+                match engine.release_query_session(*token) {
+                    Ok(()) => false,
+                    Err(error) => {
+                        log::error!("Query session retained: {error}");
+                        true
+                    }
+                }
             }
         });
     }
@@ -158,7 +164,7 @@ impl PendingQueries {
             queries.stopping = true;
             queries.pending.clear();
             for token in queries.sessions.keys() {
-                engine.release_query_session(*token);
+                engine.release_query_session(*token)?;
             }
             queries.sessions.clear();
             Arc::clone(&queries.capacity)
@@ -175,7 +181,9 @@ impl PendingQueries {
     pub(crate) fn close_session(&mut self, token: u64, engine: &OrbitKVEngine) {
         self.pending.retain(|(session, _), _| *session != token);
         self.sessions.remove(&token);
-        engine.release_query_session(token);
+        if let Err(error) = engine.release_query_session(token) {
+            log::error!("Query session leases retained: {error}");
+        }
     }
 
     pub(crate) fn cancel(&mut self, token: u64, ticket: QueryTicket, engine: &OrbitKVEngine) {
@@ -193,7 +201,9 @@ impl PendingQueries {
                 ticket.revision,
             );
         }
-        engine.cancel_query(owner(token, ticket));
+        if let Err(error) = engine.cancel_query(owner(token, ticket)) {
+            log::error!("Cancelled query lease retained: {error}");
+        }
     }
 
     pub(crate) fn execute(
@@ -451,7 +461,7 @@ impl PendingQueries {
                                 lease: Vec::new(),
                                 hit_positions: Vec::new(),
                             }),
-                            _ => unreachable!(),
+                            _ => Err(EngineError::Storage("inconsistent query admission".into())),
                         },
                         engine: Arc::clone(engine),
                         delivered: false,
@@ -537,17 +547,15 @@ impl PendingQueries {
         query: impl Future<Output = QueryReply> + Send + 'static,
         runtime: &Handle,
     ) -> Option<QueryReply> {
+        let pending = self.pending.get_mut(&key)?;
         let mut query = Box::pin(query);
         let _entered = runtime.enter();
         match query.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
             Poll::Ready(reply) => {
-                if self.pending[&key].request.prepare {
+                if pending.request.prepare {
                     let (sender, receiver) = oneshot::channel();
                     let _ = sender.send(reply);
-                    self.pending
-                        .get_mut(&key)
-                        .expect("registered query")
-                        .receiver = Some(receiver);
+                    pending.receiver = Some(receiver);
                     return None;
                 }
                 self.pending.remove(&key);
@@ -555,10 +563,7 @@ impl PendingQueries {
             }
             Poll::Pending => {
                 let (sender, receiver) = oneshot::channel();
-                self.pending
-                    .get_mut(&key)
-                    .expect("registered query")
-                    .receiver = Some(receiver);
+                pending.receiver = Some(receiver);
                 runtime.spawn(async move {
                     // Cancellation drops interest, never a submitted I/O future.
                     let _ = sender.send(query.await);

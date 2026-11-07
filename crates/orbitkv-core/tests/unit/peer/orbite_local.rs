@@ -77,7 +77,7 @@ fn local_copy_shim_bytes_stream_binding_and_pin_owners() {
         let context = CudaContext::new(0).unwrap();
         let stream = context.new_stream().unwrap();
         let device = Device::new(&context, 65536);
-        let allocator = PinnedAllocator::new_global(65536, 1, false, None);
+        let allocator = PinnedAllocator::new_global(65536, 1, false, None).unwrap();
         let host = allocator
             .allocate(NonZeroU64::new(65536).unwrap(), NumaNode::UNKNOWN)
             .unwrap();
@@ -197,7 +197,7 @@ fn local_copy_shim_large_batch_and_partial_submission_drain() {
     let context = CudaContext::new(0).unwrap();
     let stream = context.new_stream().unwrap();
     let device = Device::new(&context, 65536);
-    let allocator = PinnedAllocator::new_global(65536, 1, false, None);
+    let allocator = PinnedAllocator::new_global(65536, 1, false, None).unwrap();
     let host = allocator
         .allocate(NonZeroU64::new(65536).unwrap(), NumaNode::UNKNOWN)
         .unwrap();
@@ -284,7 +284,7 @@ fn client_restore_layers_and_context(selected: crate::PeerTransferBackend) {
     let shim = Shim::load();
     let context = CudaContext::new(0).unwrap();
     let device = Device::new(&context, 4096);
-    let allocator = PinnedAllocator::new_global(4096, 1, false, None);
+    let allocator = PinnedAllocator::new_global(4096, 1, false, None).unwrap();
     let host = allocator
         .allocate(NonZeroU64::new(512).unwrap(), NumaNode::UNKNOWN)
         .unwrap();
@@ -381,7 +381,7 @@ fn local_copy_shim_unknown_completion_retains_backing() {
     let context = CudaContext::new(0).unwrap();
     let stream = context.new_stream().unwrap();
     let device = Device::new(&context, 4096);
-    let allocator = PinnedAllocator::new_global(4096, 1, false, None);
+    let allocator = PinnedAllocator::new_global(4096, 1, false, None).unwrap();
     let host = allocator
         .allocate(NonZeroU64::new(4096).unwrap(), NumaNode::UNKNOWN)
         .unwrap();

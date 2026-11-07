@@ -546,22 +546,31 @@ impl SsdStore {
         inner.pending_writes.remove(key);
         drop(inner);
         self.retire_inventory(retired);
-        if let (Some(inventory), Some(metadata)) = (&self.inventory, metadata) {
-            inventory.change(key, orbitkv_state::ReplicaMedium::Ssd, Some(metadata));
+        if let (Some(inventory), Some(metadata)) = (&self.inventory, metadata)
+            && let Err(error) =
+                inventory.change(key, orbitkv_state::ReplicaMedium::Ssd, Some(metadata))
+        {
+            log::error!("Inventory mutation rejected: {error:?}");
         }
     }
 
     pub(super) fn invalidate_encoded_entry(&self, key: &StateKey, entry: &SsdIndexEntry) {
         let invalidated = self.inner.lock().ring.invalidate_encoded(key, entry);
-        if invalidated && let Some(inventory) = &self.inventory {
-            inventory.change(key, orbitkv_state::ReplicaMedium::Ssd, None);
+        if invalidated
+            && let Some(inventory) = &self.inventory
+            && let Err(error) = inventory.change(key, orbitkv_state::ReplicaMedium::Ssd, None)
+        {
+            log::error!("Inventory mutation rejected: {error:?}");
         }
     }
 
     pub(super) fn retire_inventory(&self, keys: Vec<StateKey>) {
         if let Some(inventory) = &self.inventory {
             for key in keys {
-                inventory.change(&key, orbitkv_state::ReplicaMedium::Ssd, None);
+                if let Err(error) = inventory.change(&key, orbitkv_state::ReplicaMedium::Ssd, None)
+                {
+                    log::error!("Inventory mutation rejected: {error:?}");
+                }
             }
         }
     }

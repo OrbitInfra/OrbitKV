@@ -98,7 +98,9 @@ pub(super) fn save(
                 .with_transfer(runtime.engine.clone()),
         );
     }
-    let codec = owner.as_mut().expect("initialized codec");
+    let codec = owner
+        .as_mut()
+        .ok_or_else(|| EngineError::Storage("codec was not initialized".into()))?;
     let _reservation = Reservation::new(storage.codec_budget, "encode");
     for group in groups {
         save_blocks(
@@ -234,7 +236,7 @@ fn save_blocks(
             allocated.push((
                 source,
                 SavedSegment {
-                    segment: Segment::new(ptr, physical, allocation),
+                    segment: Segment::new(ptr, physical, allocation)?,
                     meta,
                     device: Some(source),
                 },
@@ -271,10 +273,8 @@ fn save_blocks(
                 if packed_size
                     <= input.bytes.next_multiple_of(alignment)
                         - input.bytes.next_multiple_of(alignment) / 8
-                    && let Some(packed) = storage.allocate(
-                        NonZeroU64::new(packed_size as u64).expect("nonzero"),
-                        Some(numa),
-                    )
+                    && let Some(packed_bytes) = NonZeroU64::new(packed_size as u64)
+                    && let Some(packed) = storage.allocate(packed_bytes, Some(numa))
                 {
                     // SAFETY: copy_payload has physically drained; saved_segment retains the
                     // initialized input.bytes host range and no writer can access it here.
@@ -299,7 +299,7 @@ fn save_blocks(
                         saved_segment.meta.stored_bytes = input.bytes / 2;
                         saved_segment.meta.checksum = crc32fast::hash(&output[..input.bytes / 2]);
                         saved_segment.segment =
-                            Segment::new(packed.mapped_ptr().host(), packed_size, packed);
+                            Segment::new(packed.mapped_ptr().host(), packed_size, packed)?;
                         saved_segment.device = None;
                     }
                 }
@@ -410,14 +410,14 @@ fn write_gpu(
     let mut copies = Vec::new();
     let mut offset = 0;
     for ((layer, block), devices) in blocks.iter().copied().zip(devices) {
-        let raw = layers[layer].blocks[block].block.raw();
+        let raw = layers[layer].blocks[block].block.raw()?;
         let mut meta = SlotMeta::new(
             raw.segment_iovecs().map(|(_, size)| size as u64).collect(),
             numa,
         );
         meta.encoding = raw.encoding.clone();
         for ((source, bytes), &physical) in devices
-            .expect("GPU sources checked")
+            .ok_or_else(|| EngineError::Storage("GPU save sources are missing".into()))?
             .into_iter()
             .zip(&meta.segment_sizes)
         {
@@ -517,7 +517,7 @@ pub(super) fn restore(
             if block.block.is_external() {
                 continue;
             }
-            let raw = block.block.raw();
+            let raw = block.block.raw()?;
             let Some(metadata) = &raw.encoding else {
                 continue;
             };
@@ -544,14 +544,19 @@ pub(super) fn restore(
                         "encoded restore representation mismatch".into(),
                     ));
                 }
-                meta.validate_metadata(raw.segment_size(index).expect("segment count checked"))
-                    .map_err(EngineError::Storage)?;
+                meta.validate_metadata(
+                    raw.segment_size(index)
+                        .ok_or_else(|| EngineError::Storage("encoded segment is missing".into()))?,
+                )
+                .map_err(EngineError::Storage)?;
                 // SAFETY: metadata validation bounds stored_bytes by the retained sealed
                 // segment; the restore lease keeps these immutable bytes alive through decode.
                 let host = unsafe {
                     std::slice::from_raw_parts(
                         raw.segment_ptr(index)
-                            .expect("segment count checked")
+                            .ok_or_else(|| {
+                                EngineError::Storage("encoded segment is missing".into())
+                            })?
                             .as_ptr(),
                         meta.stored_bytes,
                     )
@@ -568,7 +573,7 @@ pub(super) fn restore(
     if inputs.is_empty() {
         return Ok(0);
     }
-    let hosts = super::host_owners(layers);
+    let hosts = super::host_owners(layers)?;
     let budget = runtime.codec_budget(budget);
     let _reservation = Reservation::new(budget, "decode");
     let stream = &runtime.stream;
@@ -580,7 +585,9 @@ pub(super) fn restore(
                 .with_transfer(runtime.engine.clone()),
         );
     }
-    let codec = owner.as_mut().expect("initialized codec");
+    let codec = owner
+        .as_mut()
+        .ok_or_else(|| EngineError::Storage("codec was not initialized".into()))?;
     let mut total = 0;
     let mut transferred = 0;
     let cpu: Vec<bool> = inputs
@@ -713,7 +720,7 @@ fn copy_payload(
                 std::ptr::NonNull::new(host)
                     .ok_or_else(|| EngineError::Storage("null codec input".into()))?,
                 size,
-            );
+            )?;
             Ok(crate::transfer::CopyDesc {
                 device,
                 host,

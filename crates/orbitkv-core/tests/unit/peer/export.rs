@@ -7,7 +7,7 @@ use crate::memory::numa::NumaNode;
 use crate::memory::pool::{PinnedAllocation, PinnedAllocator};
 
 fn shared_slab() -> (Vec<(StateKey, Arc<SealedBlock>)>, Arc<PinnedAllocation>) {
-    let pool = PinnedAllocator::new_global(1024 * 1024, 1, false, None);
+    let pool = PinnedAllocator::new_global(1024 * 1024, 1, false, None).unwrap();
     let allocation = pool
         .allocate(NonZeroU64::new(4096).unwrap(), NumaNode::UNKNOWN)
         .unwrap();
@@ -18,7 +18,8 @@ fn shared_slab() -> (Vec<(StateKey, Arc<SealedBlock>)>, Arc<PinnedAllocation>) {
             let ptr = unsafe {
                 NonNull::new_unchecked(allocation.as_non_null().as_ptr().add(index * 64))
             };
-            let raw = RawBlock::single_segment(Segment::new(ptr, 64, Arc::clone(&allocation)));
+            let raw =
+                RawBlock::single_segment(Segment::new(ptr, 64, Arc::clone(&allocation)).unwrap());
             (
                 StateKey::new("ns".into(), vec![index as u8]),
                 Arc::new(SealedBlock::from_slots(vec![(raw, NumaNode::UNKNOWN)])),

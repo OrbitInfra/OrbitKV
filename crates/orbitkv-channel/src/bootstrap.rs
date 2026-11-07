@@ -737,16 +737,15 @@ fn encode_info(info: &BootstrapInfo) -> Result<[u8; BOOTSTRAP_BYTES], BootstrapE
 }
 
 fn decode_info(bytes: [u8; BOOTSTRAP_BYTES]) -> Result<BootstrapInfo, BootstrapError> {
-    let magic = u32::from_le_bytes(bytes[0..4].try_into().expect("fixed slice"));
+    let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
     if magic != BOOTSTRAP_MAGIC {
         return Err(BootstrapError::InvalidMagic(magic));
     }
-    let version = u16::from_le_bytes(bytes[4..6].try_into().expect("fixed slice"));
+    let version = u16::from_le_bytes([bytes[4], bytes[5]]);
     if version != BOOTSTRAP_VERSION {
         return Err(BootstrapError::UnsupportedVersion(version));
     }
-    let service_name_len =
-        u16::from_le_bytes(bytes[36..38].try_into().expect("fixed slice")) as usize;
+    let service_name_len = u16::from_le_bytes([bytes[36], bytes[37]]) as usize;
     if service_name_len > BOOTSTRAP_BYTES - SERVICE_NAME_OFFSET {
         return Err(BootstrapError::ServiceNameTooLong(service_name_len));
     }
@@ -756,18 +755,24 @@ fn decode_info(bytes: [u8; BOOTSTRAP_BYTES]) -> Result<BootstrapInfo, BootstrapE
     .map_err(|_| BootstrapError::InvalidServiceNameUtf8)?;
     Ok(BootstrapInfo {
         service_name,
-        session_epoch: u64::from_le_bytes(bytes[8..16].try_into().expect("fixed slice")),
-        arena_bytes: usize::try_from(u64::from_le_bytes(
-            bytes[16..24].try_into().expect("fixed slice"),
-        ))
+        session_epoch: u64::from_le_bytes([
+            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+        ]),
+        arena_bytes: usize::try_from(u64::from_le_bytes([
+            bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23],
+        ]))
         .map_err(|_| BootstrapError::FieldOverflow {
             field: "arena_bytes",
         })?,
-        slot_capacity: u32::from_le_bytes(bytes[24..28].try_into().expect("fixed slice")) as usize,
-        slot_count: u32::from_le_bytes(bytes[28..32].try_into().expect("fixed slice")) as usize,
-        slot_index: u32::from_le_bytes(bytes[32..36].try_into().expect("fixed slice")) as usize,
-        initial_generation: u64::from_le_bytes(bytes[40..48].try_into().expect("fixed slice")),
-        client_token: u64::from_le_bytes(bytes[48..56].try_into().expect("fixed slice")),
+        slot_capacity: u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]) as usize,
+        slot_count: u32::from_le_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]) as usize,
+        slot_index: u32::from_le_bytes([bytes[32], bytes[33], bytes[34], bytes[35]]) as usize,
+        initial_generation: u64::from_le_bytes([
+            bytes[40], bytes[41], bytes[42], bytes[43], bytes[44], bytes[45], bytes[46], bytes[47],
+        ]),
+        client_token: u64::from_le_bytes([
+            bytes[48], bytes[49], bytes[50], bytes[51], bytes[52], bytes[53], bytes[54], bytes[55],
+        ]),
     })
 }
 

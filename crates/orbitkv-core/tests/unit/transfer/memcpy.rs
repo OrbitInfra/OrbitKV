@@ -22,7 +22,7 @@ fn strided_dma_preserves_unrequested_bytes_both_directions() {
     // SAFETY: this test exclusively owns the pinned region and synchronizes
     // every transfer before accessing it or freeing either allocation.
     let host =
-        unsafe { std::slice::from_raw_parts_mut(memory.as_ptr().cast_mut(), ROWS * HOST_PITCH) };
+        unsafe { std::slice::from_raw_parts_mut(memory.as_non_null().as_ptr(), ROWS * HOST_PITCH) };
     let copies: Vec<_> = (0..ROWS)
         .map(|index| CopyDesc {
             device: device + (index * DEVICE_PITCH) as u64,
@@ -30,7 +30,7 @@ fn strided_dma_preserves_unrequested_bytes_both_directions() {
             host_device: memory.device_ptr().as_ptr() as u64 + (index * HOST_PITCH) as u64,
             size: WIDTH,
             device_allocation: 1,
-            host_registration: memory.as_ptr() as usize,
+            host_registration: memory.as_non_null().as_ptr() as usize,
         })
         .collect();
     assert_eq!(dma_copies(&copies, backend.max_pitch).count(), 1);

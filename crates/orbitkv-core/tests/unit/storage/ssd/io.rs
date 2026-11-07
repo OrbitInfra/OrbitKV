@@ -170,7 +170,7 @@ mod engine {
         let mut slots = Vec::new();
         for value in [value, value + 1] {
             let a = allocation(storage, 512, value);
-            let mut raw = RawBlock::single_segment(Segment::new(a.as_non_null(), 512, a));
+            let mut raw = RawBlock::single_segment(Segment::new(a.as_non_null(), 512, a).unwrap());
             if encoded {
                 raw.encoding = Some(vec![crate::codec::EncodedSegment {
                     version: 1,

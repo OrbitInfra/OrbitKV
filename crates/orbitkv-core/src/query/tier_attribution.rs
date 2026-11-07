@@ -27,17 +27,21 @@ impl TierAttribution {
     /// already knows. `loading_source` is `Some` iff a backing tier was
     /// chosen for the remaining prefix.
     ///
-    /// # Panics
-    /// Debug-only assertion that `hit + loading + miss == total`.
+    /// Rejects inconsistent block counts.
     pub(super) fn classify(
         total: usize,
         hit: usize,
         loading: usize,
         loading_source: Option<AttributionSource>,
-    ) -> Self {
+    ) -> Result<Self, crate::EngineError> {
         let miss = total
-            .checked_sub(hit + loading)
-            .expect("hit + loading must not exceed total");
+            .checked_sub(hit)
+            .and_then(|remaining| remaining.checked_sub(loading))
+            .ok_or_else(|| {
+                crate::EngineError::InvalidArgument(
+                    "tier hits and loads exceed total blocks".into(),
+                )
+            })?;
         let (remote, ssd) = match loading_source {
             Some(AttributionSource::Remote) => (loading, 0),
             Some(AttributionSource::Ssd) => (0, loading),
@@ -45,7 +49,11 @@ impl TierAttribution {
             // selected; if a caller hands us `loading > 0` without a source it
             // is a programmer error, surfaced under debug builds.
             None => {
-                debug_assert_eq!(loading, 0, "loading > 0 without a backing source");
+                if loading != 0 {
+                    return Err(crate::EngineError::InvalidArgument(
+                        "loading blocks have no backing source".into(),
+                    ));
+                }
                 (0, 0)
             }
         };
@@ -60,7 +68,7 @@ impl TierAttribution {
             total,
             "tier attribution must sum to total"
         );
-        attribution
+        Ok(attribution)
     }
 
     fn sum(&self) -> usize {

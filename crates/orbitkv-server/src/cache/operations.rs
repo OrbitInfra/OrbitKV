@@ -193,6 +193,8 @@ pub(crate) async fn execute_publish(
 
 #[derive(Debug, Error)]
 pub(crate) enum ReleaseError {
+    #[error(transparent)]
+    Engine(#[from] EngineError),
     #[error("{0}")]
     InvalidLease(String),
     #[error("query lease is unknown or expired")]
@@ -201,7 +203,7 @@ pub(crate) enum ReleaseError {
 
 pub(crate) fn execute_release(engine: &OrbitKVEngine, lease: &[u8]) -> Result<(), ReleaseError> {
     let lease = QueryLeaseId::from_bytes(lease).map_err(ReleaseError::InvalidLease)?;
-    if engine.release_query_lease(&lease) {
+    if engine.release_query_lease(&lease)? {
         Ok(())
     } else {
         Err(ReleaseError::UnknownOrExpired)

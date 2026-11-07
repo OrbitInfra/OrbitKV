@@ -862,7 +862,10 @@ impl FrameSender {
             .front()
             .is_some_and(|frame| frame.frame_id <= control.consumed_frame_id)
         {
-            let frame = self.outstanding.pop_front().expect("front exists");
+            let frame = self
+                .outstanding
+                .pop_front()
+                .ok_or("missing acknowledged inventory frame")?;
             self.outstanding_bytes -= frame.bytes;
         }
         Ok(())

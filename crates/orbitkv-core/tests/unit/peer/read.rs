@@ -37,12 +37,9 @@ fn transfer_authorization_requires_the_source_epoch_before_destination_use() {
 }
 
 fn test_allocate_fn(calls: Arc<AtomicUsize>) -> AllocateFn {
-    let allocator = Arc::new(crate::memory::pool::PinnedAllocator::new_global(
-        32 * 1024 * 1024,
-        1,
-        false,
-        None,
-    ));
+    let allocator = Arc::new(
+        crate::memory::pool::PinnedAllocator::new_global(32 * 1024 * 1024, 1, false, None).unwrap(),
+    );
     Arc::new(move |size, _numa| {
         calls.fetch_add(1, Ordering::Relaxed);
         allocator.allocate(NonZeroU64::new(size)?, NumaNode::UNKNOWN)

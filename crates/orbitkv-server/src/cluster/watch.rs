@@ -83,7 +83,9 @@ pub(super) async fn run(
                 }
             }
         }
-        let (members, revision) = snapshot.as_mut().expect("completed membership snapshot");
+        let Some((members, revision)) = snapshot.as_mut() else {
+            continue;
+        };
         match follow(
             &mut client,
             &prefix,

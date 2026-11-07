@@ -122,51 +122,47 @@ struct LockMetrics {
     update_samples: AtomicU64,
 }
 
+// Fields drop in declaration order: unlock before observing the hold duration.
 struct TimedRead<'a> {
-    guard: Option<RwLockReadGuard<'a, View>>,
+    guard: RwLockReadGuard<'a, View>,
+    _hold: LockHold<'a>,
+}
+
+struct LockHold<'a> {
     acquired: Instant,
-    metrics: &'a LockMetrics,
+    nanoseconds: &'a AtomicU64,
+}
+
+impl Drop for LockHold<'_> {
+    fn drop(&mut self) {
+        record_duration(self.nanoseconds, self.acquired.elapsed());
+    }
 }
 
 impl Deref for TimedRead<'_> {
     type Target = View;
 
     fn deref(&self) -> &Self::Target {
-        self.guard.as_deref().expect("timed read guard exists")
-    }
-}
-
-impl Drop for TimedRead<'_> {
-    fn drop(&mut self) {
-        self.guard.take();
-        record_duration(&self.metrics.lookup_hold_ns, self.acquired.elapsed());
+        &self.guard
     }
 }
 
 struct TimedWrite<'a> {
-    guard: Option<RwLockWriteGuard<'a, View>>,
-    acquired: Instant,
-    metrics: &'a LockMetrics,
+    guard: RwLockWriteGuard<'a, View>,
+    _hold: LockHold<'a>,
 }
 
 impl Deref for TimedWrite<'_> {
     type Target = View;
 
     fn deref(&self) -> &Self::Target {
-        self.guard.as_deref().expect("timed write guard exists")
+        &self.guard
     }
 }
 
 impl DerefMut for TimedWrite<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.guard.as_deref_mut().expect("timed write guard exists")
-    }
-}
-
-impl Drop for TimedWrite<'_> {
-    fn drop(&mut self) {
-        self.guard.take();
-        record_duration(&self.metrics.update_hold_ns, self.acquired.elapsed());
+        &mut self.guard
     }
 }
 
@@ -197,9 +193,11 @@ impl GlobalIndex {
             .lookup_samples
             .fetch_add(1, Ordering::Relaxed);
         TimedRead {
-            guard: Some(guard),
-            acquired: Instant::now(),
-            metrics: &self.lock_metrics,
+            guard,
+            _hold: LockHold {
+                acquired: Instant::now(),
+                nanoseconds: &self.lock_metrics.lookup_hold_ns,
+            },
         }
     }
 
@@ -211,9 +209,11 @@ impl GlobalIndex {
             .update_samples
             .fetch_add(1, Ordering::Relaxed);
         TimedWrite {
-            guard: Some(guard),
-            acquired: Instant::now(),
-            metrics: &self.lock_metrics,
+            guard,
+            _hold: LockHold {
+                acquired: Instant::now(),
+                nanoseconds: &self.lock_metrics.update_hold_ns,
+            },
         }
     }
 
@@ -391,7 +391,10 @@ impl GlobalIndex {
         if view.accounted_bytes + additional > self.byte_limit {
             return Err("inventory staging exceeds metadata budget".into());
         }
-        let staging = view.staging.get_mut(&owner).expect("validated staging");
+        let staging = view
+            .staging
+            .get_mut(&owner)
+            .ok_or("missing validated staging")?;
         for (residence, record) in updates {
             staging.max_record_sequence = staging.max_record_sequence.max(record.sequence);
             staging.last_residence = Some(residence.clone());
@@ -436,7 +439,10 @@ impl GlobalIndex {
         {
             return Err("inventory staging exceeds metadata budget".into());
         }
-        let staging = view.staging.get_mut(&owner).expect("validated staging");
+        let staging = view
+            .staging
+            .get_mut(&owner)
+            .ok_or("missing validated staging")?;
         staging.replay_started = true;
         apply_records(&mut staging.records, updates);
         staging.replay_sequence = through_inclusive;
@@ -489,7 +495,7 @@ impl GlobalIndex {
         view.staging_bytes -= staging.bytes;
         let active_bytes = staging.bytes;
         for record in staging.records.values() {
-            insert_block(&mut view.blocks, owner, record);
+            insert_block(&mut view.blocks, owner, record)?;
         }
         view.active_bytes += active_bytes;
         view.owners.insert(
@@ -511,7 +517,7 @@ impl GlobalIndex {
         view.generation = view.generation.saturating_add(1);
         view.owners
             .get_mut(&owner)
-            .expect("committed owner view")
+            .ok_or("missing committed owner view")?
             .installed_mono_ns = monotonic_ns();
         Ok(view_id)
     }
@@ -574,12 +580,15 @@ impl GlobalIndex {
         for (residence, record) in &updates {
             remove_block(&mut view.blocks, owner, residence);
             if record.present {
-                insert_block(&mut view.blocks, owner, record);
+                insert_block(&mut view.blocks, owner, record)?;
             }
         }
         let expected = view.expected.contains(&owner);
         let became_fresh = {
-            let owner_view = view.owners.get_mut(&owner).expect("validated owner view");
+            let owner_view = view
+                .owners
+                .get_mut(&owner)
+                .ok_or("missing validated owner view")?;
             let became_fresh = !owner_view.fresh && expected;
             apply_records(&mut owner_view.records, updates);
             owner_view.applied_sequence = through_inclusive;
@@ -601,7 +610,7 @@ impl GlobalIndex {
         view.generation = view.generation.saturating_add(1);
         view.owners
             .get_mut(&owner)
-            .expect("applied owner view")
+            .ok_or("missing applied owner view")?
             .installed_mono_ns = monotonic_ns();
         Ok(DeltaApply::Applied)
     }
@@ -953,16 +962,21 @@ fn apply_records(
     }
 }
 
-fn insert_block(blocks: &mut HashMap<StateKey, Vec<Entry>>, owner: Uuid, record: &InventoryRecord) {
+fn insert_block(
+    blocks: &mut HashMap<StateKey, Vec<Entry>>,
+    owner: Uuid,
+    record: &InventoryRecord,
+) -> Result<(), String> {
     if !record.present {
-        return;
+        return Ok(());
     }
-    let metadata = record.metadata.expect("validated record metadata");
+    let metadata = record.metadata.ok_or("missing record metadata")?;
     blocks.entry(record.key.clone()).or_default().push(Entry {
         owner,
         sequence: record.sequence,
         metadata,
     });
+    Ok(())
 }
 
 fn remove_block(blocks: &mut HashMap<StateKey, Vec<Entry>>, owner: Uuid, residence: &Residence) {

@@ -74,9 +74,10 @@ impl P2pTransferService {
     fn build_transfer_slot_info(
         raw_block: &orbitkv_core::RawBlock,
         numa_node: orbitkv_core::NumaNode,
-    ) -> TransferSlotInfo {
-        let layer_block = LayerBlock::new(raw_block);
-        TransferSlotInfo {
+    ) -> Result<TransferSlotInfo, Status> {
+        let layer_block =
+            LayerBlock::new(raw_block).map_err(|error| Status::internal(error.to_string()))?;
+        Ok(TransferSlotInfo {
             k_ptr: layer_block.k_ptr() as u64,
             k_size: layer_block.k_size() as u64,
             v_ptr: layer_block.v_ptr().map(|p| p as u64).unwrap_or(0),
@@ -84,9 +85,11 @@ impl P2pTransferService {
             numa_node: numa_node.0,
             encoding: raw_block
                 .encoding()
-                .map(|meta| serde_json::to_vec(meta).expect("serializable codec metadata"))
+                .map(serde_json::to_vec)
+                .transpose()
+                .map_err(|error| Status::internal(error.to_string()))?
                 .unwrap_or_default(),
-        }
+        })
     }
 }
 
@@ -178,13 +181,13 @@ impl Engine for P2pTransferService {
                     .iter()
                     .zip(block.slot_numas())
                     .map(|(raw, &numa)| Self::build_transfer_slot_info(raw, numa))
-                    .collect();
-                TransferBlockInfo {
+                    .collect::<Result<_, _>>()?;
+                Ok(TransferBlockInfo {
                     block_hash: key.hash.clone(),
                     slots,
-                }
+                })
             })
-            .collect();
+            .collect::<Result<_, Status>>()?;
 
         debug!(
             "P2P query_blocks_for_transfer: requested={} found={} ticket={:?}",

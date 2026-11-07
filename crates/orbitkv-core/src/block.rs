@@ -117,13 +117,17 @@ impl Segment {
         self.ptr.host()
     }
 
-    pub(crate) fn new(ptr: NonNull<u8>, size: usize, allocation: Arc<PinnedAllocation>) -> Self {
-        let ptr = allocation.mapped_ptr_for_host_range(ptr, size);
-        Self {
+    pub(crate) fn new(
+        ptr: NonNull<u8>,
+        size: usize,
+        allocation: Arc<PinnedAllocation>,
+    ) -> Result<Self, crate::EngineError> {
+        let ptr = allocation.mapped_ptr_for_host_range(ptr, size)?;
+        Ok(Self {
             ptr,
             size,
             _allocation: allocation,
-        }
+        })
     }
 
     fn allocation_id(&self) -> usize {
@@ -151,19 +155,12 @@ enum BlockSegments {
 
 impl BlockSegments {
     fn from_vec(segments: Vec<Segment>) -> Self {
-        match segments.len() {
-            1 => {
-                let mut segments = segments.into_iter();
-                Self::One(segments.next().expect("length checked"))
-            }
-            2 => {
-                let mut segments = segments.into_iter();
-                Self::Two([
-                    segments.next().expect("length checked"),
-                    segments.next().expect("length checked"),
-                ])
-            }
-            _ => Self::Many(segments.into_boxed_slice()),
+        match <[Segment; 1]>::try_from(segments) {
+            Ok([segment]) => Self::One(segment),
+            Err(segments) => match <[Segment; 2]>::try_from(segments) {
+                Ok(segments) => Self::Two(segments),
+                Err(segments) => Self::Many(segments.into_boxed_slice()),
+            },
         }
     }
 
@@ -325,27 +322,26 @@ impl RawBlock {
 /// Invariant: inner RawBlock has >= 1 segment.
 pub struct LayerBlock<'a> {
     raw: &'a RawBlock,
+    first: &'a Segment,
 }
 
 impl<'a> LayerBlock<'a> {
-    /// Wrap a RawBlock as a KV layer block.
-    /// Panics if the block has zero segments (violated invariant from construction).
-    pub fn new(raw: &'a RawBlock) -> Self {
-        debug_assert!(
-            raw.num_segments() > 0,
-            "LayerBlock requires at least 1 segment"
-        );
-        Self { raw }
+    /// Wrap a nonempty RawBlock as a KV layer block.
+    pub fn new(raw: &'a RawBlock) -> Result<Self, crate::EngineError> {
+        let first = raw.segments.as_slice().first().ok_or_else(|| {
+            crate::EngineError::InvalidArgument("layer block has no segments".into())
+        })?;
+        Ok(Self { raw, first })
     }
 
     /// K segment pointer (always segment 0).
     pub fn k_ptr(&self) -> *const u8 {
-        self.raw.segment_ptr(0).unwrap().as_ptr()
+        self.first.host_ptr().as_ptr()
     }
 
     /// K segment size.
     pub fn k_size(&self) -> usize {
-        self.raw.segment_size(0).unwrap()
+        self.first.size
     }
 
     /// V segment pointer (segment 1 if split, None if contiguous).
@@ -627,7 +623,7 @@ impl InflightBlock {
         slot_id: usize,
         block: RawBlock,
         numa_node: NumaNode,
-    ) -> SlotInsertResult {
+    ) -> Result<SlotInsertResult, crate::EngineError> {
         debug_assert!(
             slot_id < self.total_slots,
             "slot_id {} must be < total_slots {}",
@@ -636,36 +632,37 @@ impl InflightBlock {
         );
 
         if self.slots[slot_id].is_some() {
-            return SlotInsertResult::Duplicate;
+            return Ok(SlotInsertResult::Duplicate);
         }
 
+        let remaining = self
+            .remaining
+            .checked_sub(1)
+            .ok_or_else(|| crate::EngineError::Storage("inflight slot count underflow".into()))?;
         let footprint_added = block.memory_footprint();
         self.footprint += footprint_added;
         self.slots[slot_id] = Some(block);
         self.slot_numas[slot_id] = numa_node;
-        self.remaining = self
-            .remaining
-            .checked_sub(1)
-            .expect("remaining should not underflow");
+        self.remaining = remaining;
 
-        SlotInsertResult::Inserted {
+        Ok(SlotInsertResult::Inserted {
             completed: self.remaining == 0,
             footprint_added,
-        }
+        })
     }
 
     /// Seal the block, converting to immutable SealedBlock.
-    /// Panics if not all slots are filled.
-    pub(crate) fn seal(self) -> SealedBlock {
+    /// Rejects an incomplete block.
+    pub(crate) fn seal(self) -> Result<SealedBlock, crate::EngineError> {
         let slots: Vec<RawBlock> = self
             .slots
             .into_iter()
-            .map(|opt| opt.expect("all slots must be filled before sealing"))
-            .collect();
-        SealedBlock::from_slots_with_footprint(
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| crate::EngineError::Storage("cannot seal an incomplete block".into()))?;
+        Ok(SealedBlock::from_slots_with_footprint(
             slots.into_boxed_slice(),
             self.footprint,
             self.slot_numas,
-        )
+        ))
     }
 }

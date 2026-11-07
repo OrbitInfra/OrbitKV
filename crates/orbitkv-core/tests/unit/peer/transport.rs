@@ -28,7 +28,7 @@ fn tent_rpc_errors_preserve_delivery_certainty_before_epoch_mapping() {
 #[test]
 #[ignore = "requires CUDA and Mooncake TCP; run after all native builds"]
 fn registration_preserves_pool_without_cuda_source_termination() {
-    let pool = Arc::new(PinnedAllocator::new_global(1 << 20, 1, false, None));
+    let pool = Arc::new(PinnedAllocator::new_global(1 << 20, 1, false, None).unwrap());
     let memory = Arc::downgrade(&pool);
     let transport = MooncakeTransport::new(&[], pool.clone(), "127.0.0.1:0", None).unwrap();
     drop(pool);
@@ -77,7 +77,7 @@ fn actual_source_owner_preserves_partial_and_unproven_resources() {
         unsafe { function() }
     };
     let shards = if scenario == "partial" { 2 } else { 1 };
-    let pool = Arc::new(PinnedAllocator::new_global(1 << 20, shards, false, None));
+    let pool = Arc::new(PinnedAllocator::new_global(1 << 20, shards, false, None).unwrap());
     let memory = Arc::downgrade(&pool);
     let result = MooncakeTransport::new(&[], pool.clone(), "127.0.0.1:0", None);
     let engine = result

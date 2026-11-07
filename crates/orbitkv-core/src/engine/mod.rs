@@ -185,7 +185,7 @@ impl OrbitKVEngine {
         let mut instances = self
             .instances
             .write()
-            .expect("instances write lock poisoned");
+            .map_err(|_| EngineError::Poisoned("instances"))?;
 
         if let Some(instance) = instances.get(instance_id) {
             // Already exists, verify topology
@@ -216,7 +216,10 @@ impl OrbitKVEngine {
 
     /// Look up an instance by ID.
     fn get_instance(&self, instance_id: &str) -> Result<Arc<InstanceContext>, EngineError> {
-        let instances = self.instances.read().expect("instances read lock poisoned");
+        let instances = self
+            .instances
+            .read()
+            .map_err(|_| EngineError::Poisoned("instances"))?;
         instances
             .get(instance_id)
             .cloned()
@@ -464,11 +467,12 @@ impl OrbitKVEngine {
             .instances
             .write()
             .map_err(|_| EngineError::Poisoned("instances"))?;
-        let removed = instances
-            .remove(instance_id)
-            .ok_or_else(|| EngineError::InstanceMissing(instance_id.to_string()))?;
-        // No replacement registration may appear between removal and old lease retirement.
-        self.query_leases.release_instance(instance_id);
+        if !instances.contains_key(instance_id) {
+            return Err(EngineError::InstanceMissing(instance_id.to_string()));
+        }
+        // Keep the instance if lease retirement fails; the write lock fences replacement.
+        self.query_leases.release_instance(instance_id)?;
+        let removed = instances.remove(instance_id);
         drop(instances);
         drop(removed);
         info!("Unregistered instance: {}", instance_id);
@@ -476,31 +480,32 @@ impl OrbitKVEngine {
     }
 
     /// Unregister all instances, returning the IDs that were removed.
-    pub fn unregister_all_instances(&self) -> Vec<String> {
+    pub fn unregister_all_instances(&self) -> Result<Vec<String>, EngineError> {
         let mut instances = self
             .instances
             .write()
-            .expect("instances write lock poisoned");
+            .map_err(|_| EngineError::Poisoned("instances"))?;
         let ids: Vec<String> = instances.keys().cloned().collect();
-        instances.clear();
         for id in &ids {
-            self.query_leases.release_instance(id);
+            self.query_leases.release_instance(id)?;
         }
+        instances.clear();
         drop(instances);
         if !ids.is_empty() {
             info!("Unregistered all instances: {:?}", ids);
         }
-        ids
+        Ok(ids)
     }
 
     /// List all registered instance IDs.
-    pub fn list_instance_ids(&self) -> Vec<String> {
-        self.instances
+    pub fn list_instance_ids(&self) -> Result<Vec<String>, EngineError> {
+        Ok(self
+            .instances
             .read()
-            .expect("instances read lock poisoned")
+            .map_err(|_| EngineError::Poisoned("instances"))?
             .keys()
             .cloned()
-            .collect()
+            .collect())
     }
 
     /// A scheduler session may arrive before or after GPU registration. Once an
@@ -515,7 +520,7 @@ impl OrbitKVEngine {
         if let Some(instance) = self
             .instances
             .read()
-            .expect("instances read lock poisoned")
+            .map_err(|_| EngineError::Poisoned("instances"))?
             .get(instance_id)
         {
             instance
@@ -557,9 +562,9 @@ impl OrbitKVEngine {
     }
 
     /// Evict all resident in-memory cache blocks while preserving backing-store data.
-    pub fn cleanup_memory_cache(&self) -> MemoryCacheCleanupStats {
-        self.query_leases.sweep_expired();
-        self.storage.cleanup_memory_cache()
+    pub fn cleanup_memory_cache(&self) -> Result<MemoryCacheCleanupStats, EngineError> {
+        self.query_leases.sweep_expired()?;
+        Ok(self.storage.cleanup_memory_cache())
     }
 
     /// Wait until all previously submitted save batches have been processed

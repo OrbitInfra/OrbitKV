@@ -12,13 +12,14 @@
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::ptr::NonNull;
-use std::sync::OnceLock;
+use std::sync::{Once, OnceLock};
 
 use crate::memory::numa::{NumaNode, pin_thread_to_numa_node};
 use cudarc::runtime::sys as rt;
 
 /// Cached huge page size from /proc/meminfo
 static HUGE_PAGE_SIZE: OnceLock<Option<usize>> = OnceLock::new();
+static UNLOADING_NOTICE: Once = Once::new();
 
 /// Read the system's default huge page size from /proc/meminfo.
 /// Returns None if reading or parsing fails.
@@ -58,6 +59,8 @@ pub(crate) enum PinnedMemError {
     CudaRegisterFailed(rt::cudaError),
     /// cudaHostGetDevicePointer failed
     CudaGetDevicePointerFailed(rt::cudaError),
+    /// A successful native mapping/address lookup returned a null address.
+    NullAddress,
     /// Size must be greater than zero
     ZeroSize,
     /// Failed to determine huge page size from /proc/meminfo
@@ -75,6 +78,7 @@ impl std::fmt::Display for PinnedMemError {
             Self::CudaGetDevicePointerFailed(e) => {
                 write!(f, "cudaHostGetDevicePointer failed: {:?}", e)
             }
+            Self::NullAddress => write!(f, "native pinned mapping returned a null address"),
             Self::ZeroSize => write!(f, "size must be greater than zero"),
             Self::HugePageSizeUnavailable => write!(
                 f,
@@ -147,6 +151,11 @@ impl PinnedMemory {
             return Err(PinnedMemError::MmapFailed(io::Error::last_os_error()));
         }
 
+        let Some(non_null) = NonNull::new(ptr.cast::<u8>()) else {
+            // SAFETY: mmap succeeded; this rejects the null mapping before any CUDA access.
+            unsafe { libc::munmap(ptr, size) };
+            return Err(PinnedMemError::NullAddress);
+        };
         if node.is_valid()
             && let Err(error) = bind_payload_mapping(ptr, size, node)
         {
@@ -164,7 +173,7 @@ impl PinnedMemory {
             return Err(PinnedMemError::CudaRegisterFailed(result));
         }
 
-        let ptr = NonNull::new(ptr.cast::<u8>()).expect("mmap returned null");
+        let ptr = non_null;
         // Establish the unregister-before-unmap owner before the fallible lookup.
         // The placeholder device address is never exposed on an error path.
         let mut memory = Self {
@@ -181,10 +190,8 @@ impl PinnedMemory {
         self.fd.try_clone()
     }
 
-    /// Get a raw pointer to the allocated memory.
-    #[inline]
-    pub(crate) fn as_ptr(&self) -> *const u8 {
-        self.ptr.as_ptr()
+    pub(crate) fn as_non_null(&self) -> NonNull<u8> {
+        self.ptr
     }
 
     pub(crate) fn device_ptr(&self) -> NonNull<u8> {
@@ -288,7 +295,7 @@ fn mapped_device_pointer(host_ptr: NonNull<u8>) -> Result<NonNull<u8>, PinnedMem
     if result != rt::cudaError::cudaSuccess {
         return Err(PinnedMemError::CudaGetDevicePointerFailed(result));
     }
-    Ok(NonNull::new(device_ptr as *mut u8).expect("cudaHostGetDevicePointer returned null"))
+    NonNull::new(device_ptr.cast()).ok_or(PinnedMemError::NullAddress)
 }
 
 impl Drop for PinnedMemory {
@@ -296,6 +303,16 @@ impl Drop for PinnedMemory {
         // SAFETY: this mapping was registered in this process. Its owner must
         // have drained CUDA work before releasing the final PinnedAllocation.
         let result = unsafe { rt::cudaHostUnregister(self.ptr.as_ptr().cast()) };
+        if result == rt::cudaError::cudaErrorCudartUnloading {
+            // CUDA is destroying its contexts at process exit: no device access
+            // can follow. Retain the mapping for the OS to reclaim at exit.
+            UNLOADING_NOTICE.call_once(|| {
+                eprintln!(
+                    "CUDA runtime is unloading; retaining pinned mappings until process exit"
+                );
+            });
+            return;
+        }
         if result != rt::cudaError::cudaSuccess {
             eprintln!("cudaHostUnregister failed: {result:?}; preserving mapping and terminating");
             std::process::abort();
