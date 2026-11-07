@@ -64,6 +64,7 @@ export const docGroups = [
 // Keep stable reference routes and search entries outside the primary sidebar.
 const referencePages = [
   { slug: "hybrid-recovery", title: "Hybrid recovery contracts", group: "Reference" },
+  { slug: "hybrid-cache-design", title: "Hybrid cache design (proposed)", group: "Reference" },
   { slug: "gds", title: "GPU storage & GDS limits", group: "Reference" },
   { slug: "fault-qualification", title: "Fault qualification", group: "Reference" },
   { slug: "engine-local-restore", title: "Engine-local restore ownership", group: "Reference" },
