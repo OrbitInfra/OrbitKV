@@ -295,7 +295,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/orbitkv-cpu-host-control"
           c++ -std=c++20 -shared -fPIC -DORBITKV_CPU_HOST_CONTROL -x c++ crates/orbitkv-core/tests/native/source_owner_host_shim.cu -o "$RUNNER_TEMP/orbitkv-cpu-host-control/libcudart.so"
           # The shim exercises host ownership only; it is not CUDA evidence.
-          for filter in peer:: query:: planning:: cost:: metrics:: transfer_engine::tests local_only_orbite missing_orbite_worker_engine no_backend_storage; do
+          for filter in peer:: query:: planning:: cost:: metrics:: transfer_engine::tests \
+            codec:: engine::restore:: storage::inventory:: \
+            transfer::worker::tests::nonresident_payloads_return_errors_without_host_access \
+            local_only_orbite missing_orbite_worker_engine no_backend_storage; do
             LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --no-default-features --features cuda-13 --lib "$filter" -- --test-threads=1
           done
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib peer::
