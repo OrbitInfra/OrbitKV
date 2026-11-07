@@ -20,7 +20,6 @@ fn replacing_memory_evidence_never_pins_either_generation() {
     );
 }
 
-#[cfg(any(feature = "mooncake", feature = "orbite"))]
 #[test]
 fn peer_evidence_is_bounded_by_runtime_identity_and_preserves_local_memory() {
     use orbitkv_state::{CacheOwner, ReplicaMedium};

@@ -11,8 +11,7 @@ use super::layout::{KVCacheGeometry, KVCacheLayout};
 use super::{CopyDesc, TransferMode};
 use crate::PayloadArena;
 
-#[cfg(feature = "orbite")]
-mod orbite;
+mod backend;
 mod trace;
 use crate::transfer_engine::local::{LocalCompletion, LocalCopy, LocalHost};
 use trace::LocalCopyTrace;
@@ -179,8 +178,7 @@ pub struct LocalTensor {
     address: u64,
     bytes: usize,
     allocation: usize,
-    #[cfg(feature = "orbite")]
-    allocation_end: u64,
+    _allocation_end: u64,
 }
 
 impl LocalTensor {
@@ -217,8 +215,7 @@ impl LocalTensor {
             address,
             bytes: extent,
             allocation,
-            #[cfg(feature = "orbite")]
-            allocation_end: address
+            _allocation_end: address
                 .checked_add(bytes as u64)
                 .ok_or("tensor allocation overflow")?,
         })
@@ -389,6 +386,13 @@ impl LocalRestoreExecutor {
         mode: TransferMode,
         engine: Option<(crate::PeerTransferBackend, Arc<dyn Send + Sync>)>,
     ) -> Result<Self, String> {
+        if let Some((selected, _)) = &engine
+            && *selected != crate::PeerTransferBackend::Mooncake
+        {
+            crate::PeerTransferBackend::Orbite
+                .validate_compiled()
+                .map_err(|e| e.to_string())?;
+        }
         let _caller_context = CallerContext::capture()?;
         let context = CudaContext::new(device).map_err(|e| e.to_string())?;
         let mut bindings = HashMap::new();
@@ -431,32 +435,8 @@ impl LocalRestoreExecutor {
         let readiness = context
             .new_event(Some(sys::CUevent_flags::CU_EVENT_BLOCKING_SYNC))
             .map_err(|e| e.to_string())?;
-        let (backend, hosts, registrations) = match engine {
-            Some((
-                crate::PeerTransferBackend::Orbite
-                | crate::PeerTransferBackend::OrbiteTcp
-                | crate::PeerTransferBackend::OrbiteRdma,
-                owner,
-            )) => {
-                #[cfg(feature = "orbite")]
-                {
-                    orbite::bind(&bindings, &imported, stream.clone(), mode, owner)?
-                }
-                #[cfg(not(feature = "orbite"))]
-                {
-                    let _ = owner;
-                    return Err(
-                        "Manager selected orbite, but this client was built without it".into(),
-                    );
-                }
-            }
-            _ => (
-                crate::transfer_engine::local::bind(None, stream.clone(), mode, 0)
-                    .map_err(|e| e.to_string())?,
-                Vec::new(),
-                Vec::new(),
-            ),
-        };
+        let (backend, hosts, registrations) =
+            backend::bind(engine, &bindings, &imported, stream.clone(), mode)?;
         let limit = orbitkv_common::timeline::diagnostic_event_limit();
         let trace = (limit > 0).then(|| {
             LocalCopyTrace::new(

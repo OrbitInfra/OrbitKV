@@ -12,8 +12,6 @@ pub(crate) fn discover(
     namespace: &str,
     hashes: &[Vec<u8>],
 ) -> Vec<ReplicaSet> {
-    #[cfg(not(any(feature = "mooncake", feature = "orbite")))]
-    let _ = index;
     let keys: Vec<_> = hashes
         .iter()
         .map(|hash| StateKey::new(namespace.to_owned(), hash.clone()))
@@ -37,7 +35,6 @@ pub(crate) fn discover(
             }
         }
     }
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     if let Some(index) = index {
         for (candidate, remote) in candidates.iter_mut().zip(index.lookup(&keys)) {
             candidate.set_remote(remote.coverage, remote.replicas);

@@ -118,14 +118,9 @@ impl OrbitKVEngine {
         use_hugepages: bool,
         storage_config: crate::EngineConfig,
     ) -> Result<Self, EngineError> {
-        if storage_config.global_index.is_some()
-            || storage_config.peer_transfer_backend != crate::PeerTransferBackend::Mooncake
-        {
-            storage_config
-                .peer_transfer_backend
-                .validate_compiled()
-                .map_err(EngineError::InvalidArgument)?;
-        }
+        storage_config
+            .validate_backend()
+            .map_err(|e| EngineError::InvalidArgument(e.to_string()))?;
         let topology = Arc::new(NumaTopology::detect());
         topology.log_summary();
 
@@ -209,6 +204,7 @@ impl OrbitKVEngine {
             tp_size,
             world_size,
             page_first,
+            self.storage.selected_backend,
             self.transfer_backend(),
         )
         .map_err(EngineError::InvalidArgument)?;
@@ -646,47 +642,21 @@ impl OrbitKVEngine {
     }
 
     /// Returns true if the peer transfer engine is available.
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub fn has_remote_transport(&self) -> bool {
         self.storage.peer_transport().is_some()
     }
 
-    /// Returns true if the peer transfer engine is available.
-    #[cfg(not(any(feature = "mooncake", feature = "orbite")))]
-    pub fn has_remote_transport(&self) -> bool {
-        false
-    }
-
     /// Shared byte engine used when importing persistent GPU allocations.
     pub fn transfer_backend(&self) -> Option<Arc<dyn crate::transfer_engine::TransferBackend>> {
-        #[cfg(any(feature = "mooncake", feature = "orbite"))]
-        {
-            self.storage.peer_transport().cloned()
-        }
-        #[cfg(not(any(feature = "mooncake", feature = "orbite")))]
-        {
-            None
-        }
+        self.storage.peer_transport().cloned()
     }
 
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub fn transfer_endpoint(&self) -> Option<&str> {
         self.storage.transfer_endpoint()
     }
 
-    #[cfg(not(any(feature = "mooncake", feature = "orbite")))]
-    pub fn transfer_endpoint(&self) -> Option<&str> {
-        None
-    }
-
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub fn transfer_source_epoch(&self) -> Option<&str> {
         self.storage.transfer_source_epoch()
-    }
-
-    #[cfg(not(any(feature = "mooncake", feature = "orbite")))]
-    pub fn transfer_source_epoch(&self) -> Option<&str> {
-        None
     }
 }
 

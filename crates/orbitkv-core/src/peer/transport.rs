@@ -6,11 +6,14 @@ use log::{error, info};
 use orbitkv_transfer::{AUTO_MEMORY_LOCATION, MemoryRegistration, P2P_METADATA, TransferEngine};
 
 use crate::memory::pool::PinnedAllocator;
+use crate::transfer_engine::backend::{
+    FileSegmentInner, MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, REGISTERED_POOLS,
+    RegistrationInner, Segment,
+};
 use crate::transfer_engine::{
-    Cancellation, ErrorKind, FileIoElement, FileMemory, FileSegment, FileSegmentInner,
-    FileTransfer, FileTransport, MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, PeerSegment,
-    Permission, REGISTERED_POOLS, Registration, RegistrationInner, Segment, TransferBackend,
-    TransferError, TransferOp, TransferOptions, TransferSlice, remaining, validate_slices,
+    Cancellation, ErrorKind, FileIoElement, FileMemory, FileSegment, FileTransfer, FileTransport,
+    PeerSegment, Permission, Registration, TransferBackend, TransferError, TransferOp,
+    TransferOptions, TransferSlice, remaining, validate_slices,
 };
 
 struct RetainedSource {
@@ -609,14 +612,15 @@ impl TransferBackend for MooncakeTransport {
     }
     fn record_nic_load(&self) {
         if let Ok(stats) = self.engine.nic_load_stats() {
-            let metrics = crate::metrics::core_metrics();
+            static METRICS: std::sync::OnceLock<crate::transfer_engine::backend::NicMetrics> =
+                std::sync::OnceLock::new();
+            let metrics = METRICS
+                .get_or_init(|| crate::transfer_engine::backend::NicMetrics::new("tent", "TENT"));
             for stat in stats {
                 let attributes = [opentelemetry::KeyValue::new("nic", stat.device_name)];
+                metrics.inflight.record(stat.inflight_bytes, &attributes);
                 metrics
-                    .tent_nic_inflight_bytes
-                    .record(stat.inflight_bytes, &attributes);
-                metrics
-                    .tent_nic_bandwidth_bytes_per_second
+                    .bandwidth
                     .record(stat.ewma_bandwidth_bps, &attributes);
             }
         }

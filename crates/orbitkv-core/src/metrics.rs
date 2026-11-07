@@ -39,7 +39,6 @@ pub(crate) struct CoreMetrics {
     pub cost_shadow_candidates: Counter<u64>,
     pub cost_shadow_prediction_seconds: Histogram<f64>,
     pub cost_shadow_decisions: Counter<u64>,
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub cost_route_decisions: Counter<u64>,
     pub cost_estimate_samples: Histogram<u64>,
     pub cost_estimate_age_seconds: Histogram<f64>,
@@ -154,31 +153,14 @@ pub(crate) struct CoreMetrics {
     pub transfer_lock_rejections: Counter<u64>,
 
     // Mooncake remote fetch (client side)
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub transfer_completion_outstanding: UpDownCounter<i64>,
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub transfer_completion_retries: Counter<u64>,
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub transfer_completion_rejections: Counter<u64>,
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub remote_fetch_total: Counter<u64>,
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub remote_fetch_duration_seconds: Histogram<f64>,
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub remote_stage_duration_seconds: Histogram<f64>,
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub remote_fetch_bytes: Counter<u64>,
-    #[cfg(feature = "orbite-rdma")]
-    pub orbite_nic_inflight_bytes: Histogram<u64>,
-    #[cfg(feature = "orbite-rdma")]
-    pub orbite_nic_bandwidth_bytes_per_second: Histogram<f64>,
-    #[cfg(feature = "mooncake")]
-    pub tent_nic_inflight_bytes: Histogram<u64>,
-    #[cfg(feature = "mooncake")]
-    pub tent_nic_bandwidth_bytes_per_second: Histogram<f64>,
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub remote_fetch_plan_segments: Histogram<u64>,
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub remote_fetch_plan_completed_segments: Histogram<u64>,
 }
 
@@ -193,7 +175,6 @@ fn ssd_throughput_boundaries() -> Vec<f64> {
 }
 
 /// Histogram boundaries for Mooncake remote fetch (authorization + Mooncake READ).
-#[cfg(any(feature = "mooncake", feature = "orbite"))]
 fn remote_fetch_duration_boundaries() -> Vec<f64> {
     vec![
         0.01, // 10ms
@@ -208,7 +189,6 @@ fn remote_fetch_duration_boundaries() -> Vec<f64> {
 }
 
 /// Histogram boundaries for the number of segments in one Mooncake fetch plan.
-#[cfg(any(feature = "mooncake", feature = "orbite"))]
 fn remote_fetch_plan_segment_boundaries() -> Vec<f64> {
     vec![
         0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 16.0, 32.0, 64.0, 128.0,
@@ -329,7 +309,6 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
             cost_shadow_decisions: meter.u64_counter("orbitkv_cost_shadow_decisions")
                 .with_description("Shadow agreement with compatibility, empirical-error and gain-margin checks; never selects execution")
                 .build(),
-            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             cost_route_decisions: meter.u64_counter("orbitkv_cost_route_decisions")
                 .with_description("Opt-in execution choices among fresh compatible complete-route estimates")
                 .build(),
@@ -678,73 +657,40 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .build(),
 
             // Mooncake remote fetch (client side)
-            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             transfer_completion_outstanding: meter.i64_up_down_counter("orbitkv_transfer_completion_outstanding")
                 .with_description("Reserved requester completion slots, including active authorizations and READs")
                 .build(),
-            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             transfer_completion_retries: meter.u64_counter("orbitkv_transfer_completion_retries")
                 .with_description("Unacknowledged release attempts; completion retained for retry")
                 .build(),
-            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             transfer_completion_rejections: meter.u64_counter("orbitkv_transfer_completion_rejections")
                 .with_description("Authorizations skipped because requester completion capacity is exhausted")
                 .build(),
-            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             remote_fetch_total: meter
                 .u64_counter("orbitkv_remote_fetch_total")
                 .with_description("Mooncake remote fetch attempts (status=ok|error)")
                 .build(),
-            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             remote_fetch_duration_seconds: meter
                 .f64_histogram("orbitkv_remote_fetch_duration")
                 .with_unit("s")
                 .with_description("End-to-end Mooncake fetch latency (authorization + READ)")
                 .with_boundaries(remote_fetch_duration_boundaries())
                 .build(),
-            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             remote_stage_duration_seconds: meter.f64_histogram("orbitkv_remote_stage_duration")
                 .with_unit("s")
                 .with_description("Remote discovery RPC, authorization and completed transfer stages")
                 .with_boundaries(remote_fetch_duration_boundaries())
                 .build(),
-            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             remote_fetch_bytes: meter
                 .u64_counter("orbitkv_remote_fetch_bytes")
                 .with_unit("bytes")
                 .with_description("Total bytes fetched via Mooncake from remote nodes")
                 .build(),
-            #[cfg(feature = "orbite-rdma")]
-            orbite_nic_inflight_bytes: meter
-                .u64_histogram("orbitkv_orbite_nic_inflight_bytes")
-                .with_unit("bytes")
-                .with_description("OrbiTE live RDMA rail inflight-byte snapshot after a peer batch")
-                .build(),
-            #[cfg(feature = "orbite-rdma")]
-            orbite_nic_bandwidth_bytes_per_second: meter
-                .f64_histogram("orbitkv_orbite_nic_bandwidth_bytes_per_second")
-                .with_unit("By/s")
-                .with_description("OrbiTE RDMA rail EWMA bandwidth snapshot after a peer batch")
-                .build(),
-            #[cfg(feature = "mooncake")]
-            tent_nic_inflight_bytes: meter
-                .u64_histogram("orbitkv_tent_nic_inflight_bytes")
-                .with_unit("bytes")
-                .with_description("TENT live RDMA rail inflight-byte snapshot after a peer batch")
-                .build(),
-            #[cfg(feature = "mooncake")]
-            tent_nic_bandwidth_bytes_per_second: meter
-                .f64_histogram("orbitkv_tent_nic_bandwidth_bytes_per_second")
-                .with_unit("By/s")
-                .with_description("TENT RDMA rail EWMA bandwidth snapshot after a peer batch")
-                .build(),
-            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             remote_fetch_plan_segments: meter
                 .u64_histogram("orbitkv_remote_fetch_plan_segments")
                 .with_description("Number of segments attempted per Mooncake fetch plan, including stale-candidate retries")
                 .with_boundaries(remote_fetch_plan_segment_boundaries())
                 .build(),
-            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             remote_fetch_plan_completed_segments: meter
                 .u64_histogram("orbitkv_remote_fetch_plan_completed_segments")
                 .with_description(
@@ -769,8 +715,7 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
         ] {
             counter.add(0, &[]);
         }
-        #[cfg(any(feature = "mooncake", feature = "orbite"))]
-        metrics.transfer_completion_outstanding.add(0, &[]);
+                metrics.transfer_completion_outstanding.add(0, &[]);
         metrics.load_bytes.add(0, &[]);
         metrics.save_bytes.add(0, &[]);
         metrics

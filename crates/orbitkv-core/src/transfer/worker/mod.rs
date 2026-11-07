@@ -25,7 +25,6 @@ use crate::transfer::layout::{BlockCopies, KVCacheLayout};
 use crate::transfer::{CopyDesc, TransferMode};
 
 mod codec;
-#[cfg(any(feature = "mooncake", feature = "orbite"))]
 mod peer;
 mod restore;
 pub(crate) use codec::SaveGroup;
@@ -72,7 +71,6 @@ pub(crate) enum TransferPayload {
         slot_id: usize,
         offset: usize,
     },
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     Peer {
         source: crate::peer::restore::PeerRestoreBlock,
         slot_id: usize,
@@ -91,16 +89,10 @@ pub(crate) enum TransferPayload {
 
 impl TransferPayload {
     fn is_external(&self) -> bool {
-        match self {
-            Self::Ssd { .. } => true,
-            #[cfg(any(feature = "mooncake", feature = "orbite"))]
-            Self::Peer { .. } => true,
-            _ => false,
-        }
+        matches!(self, Self::Ssd { .. } | Self::Peer { .. })
     }
     pub(crate) fn raw(&self) -> &RawBlock {
         match self {
-            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             Self::Peer { .. } => unreachable!("peer sources do not own host memory"),
             Self::Pending => unreachable!("unallocated save"),
             Self::Ssd { .. } => unreachable!("SSD sources do not own host memory"),
@@ -117,7 +109,6 @@ impl TransferPayload {
     fn host_offset(&self) -> usize {
         match self {
             Self::Ssd { offset, .. } => *offset,
-            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             Self::Peer { offset, .. } => *offset,
             Self::Owned(_) | Self::Pending => 0,
             Self::Cached { offset, .. } => *offset,
@@ -161,6 +152,7 @@ pub(crate) struct GpuWorkerPool {
     numa_node: NumaNode,
     pub(crate) transfer_mode: TransferMode,
     local_device: Option<Arc<crate::transfer_engine::CudaRegistration>>,
+    selected_backend: crate::PeerTransferBackend,
     engine: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
     ssd_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     ssd_host_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
@@ -420,6 +412,7 @@ impl GpuWorkerPool {
         numa_node: NumaNode,
         transfer_mode: TransferMode,
         local_device: Option<Arc<crate::transfer_engine::CudaRegistration>>,
+        selected_backend: crate::PeerTransferBackend,
         engine: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
     ) -> Result<Self, EngineError> {
         Ok(Self {
@@ -432,6 +425,7 @@ impl GpuWorkerPool {
                 transfer_mode,
                 "load",
                 local_device.clone(),
+                selected_backend,
                 engine.clone(),
             )?,
             save_tx: spawn_worker(
@@ -440,9 +434,11 @@ impl GpuWorkerPool {
                 transfer_mode,
                 "save",
                 local_device.clone(),
+                selected_backend,
                 engine.clone(),
             )?,
             local_device,
+            selected_backend,
             engine,
             ssd_tx: Mutex::new(None),
             ssd_host_tx: Mutex::new(None),
@@ -481,6 +477,7 @@ impl GpuWorkerPool {
                     self.transfer_mode,
                     "encoded-writeback",
                     self.local_device.clone(),
+                    self.selected_backend,
                     self.engine.clone(),
                 ) {
                     Ok(worker) => *sender = Some(worker),
@@ -497,7 +494,7 @@ impl GpuWorkerPool {
         } else if matches!(&command, WorkerCommand::Load(task, _) if task.plan.ssd_path() == Some(crate::SsdReadPath::Uring)) {
             let mut sender = self.ssd_host_tx.lock();
             if sender.is_none() {
-                match spawn_worker(self.device_id, self.numa_node, self.transfer_mode, "ssd-host", self.local_device.clone(), self.engine.clone()) {
+                match spawn_worker(self.device_id, self.numa_node, self.transfer_mode, "ssd-host", self.local_device.clone(), self.selected_backend, self.engine.clone()) {
                     Ok(worker) => *sender = Some(worker),
                     Err(error) => {
                         reject(command);
@@ -509,7 +506,7 @@ impl GpuWorkerPool {
         } else if disk {
             let mut sender = self.ssd_tx.lock();
             if sender.is_none() {
-                match spawn_worker(self.device_id, self.numa_node, self.transfer_mode, "ssd", self.local_device.clone(), self.engine.clone()) {
+                match spawn_worker(self.device_id, self.numa_node, self.transfer_mode, "ssd", self.local_device.clone(), self.selected_backend, self.engine.clone()) {
                     Ok(worker) => *sender = Some(worker),
                     Err(error) => {
                         reject(command);
@@ -603,7 +600,6 @@ impl GpuWorkerPool {
         let decode_queue_depth = decode_admission.depth;
         task.decode_admission = Some(decode_admission);
         restore::validate_plan(&task.plan, layers)?;
-        #[cfg(any(feature = "mooncake", feature = "orbite"))]
         peer::validate(layers, task.codec_budget).map_err(EngineError::Storage)?;
         let mut ssd_path = task.plan.ssd_path();
         if ssd_path == Some(crate::SsdReadPath::Cufile)
@@ -798,6 +794,7 @@ fn spawn_worker(
     mode: TransferMode,
     name: &str,
     local_device: Option<Arc<crate::transfer_engine::CudaRegistration>>,
+    selected_backend: crate::PeerTransferBackend,
     engine: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
 ) -> Result<mpsc::UnboundedSender<WorkerCommand>, EngineError> {
     let (sender, receiver) = mpsc::unbounded_channel();
@@ -811,7 +808,7 @@ fn spawn_worker(
             {
                 warn!("Failed to pin GPU worker: {error}");
             }
-            match init_worker(device_id, mode, local_device, engine) {
+            match init_worker(device_id, mode, local_device, selected_backend, engine) {
                 Ok(runtime) => {
                     let _ = ready_tx.send(Ok(()));
                     if storage {
@@ -867,8 +864,11 @@ fn init_worker(
     device_id: i32,
     transfer_mode: TransferMode,
     local_device: Option<Arc<crate::transfer_engine::CudaRegistration>>,
+    selected_backend: crate::PeerTransferBackend,
     engine: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
 ) -> Result<WorkerRuntime, EngineError> {
+    crate::transfer_engine::local::validate_engine(selected_backend, engine.as_ref())
+        .map_err(|e| EngineError::CudaInit(e.to_string()))?;
     let address = local_device.as_ref().map_or(0, |owner| owner.address);
     // Initialize CUDA context for this thread
     let ctx = CudaContext::new(device_id as usize)
@@ -883,9 +883,14 @@ fn init_worker(
     let max_dma_pitch = ctx
         .attribute(cudarc::driver::sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MAX_PITCH)
         .map_err(|e| EngineError::CudaInit(e.to_string()))? as usize;
-    let backend =
-        crate::transfer_engine::local::bind(engine.clone(), stream.clone(), transfer_mode, address)
-            .map_err(|e| EngineError::CudaInit(e.to_string()))?;
+    let backend = crate::transfer_engine::local::bind(
+        selected_backend,
+        engine.clone(),
+        stream.clone(),
+        transfer_mode,
+        address,
+    )
+    .map_err(|e| EngineError::CudaInit(e.to_string()))?;
 
     info!(
         "GPU worker initialized: device={} backend={}",
@@ -1081,7 +1086,6 @@ fn terminal_outcome(completed: bool, consumer_closed: bool) -> Outcome {
 fn has_encoded(layers: &[LayerTransferData]) -> bool {
     layers.iter().any(|layer| {
         layer.blocks.iter().any(|block| match &block.block {
-            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             TransferPayload::Peer {
                 source, slot_id, ..
             } => source
@@ -1149,7 +1153,6 @@ fn transfer_key(
         (false, false, true, TransferMode::Direct) => CostObservationKind::GpuSaveDirect,
         (false, false, true, TransferMode::Kernel) => CostObservationKind::GpuSaveKernel,
     };
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     let path = if layers
         .iter()
         .flat_map(|layer| &layer.blocks)
@@ -1170,7 +1173,6 @@ fn transfer_key(
     for layer in layers {
         for block in &layer.blocks {
             let metadata = match &block.block {
-                #[cfg(any(feature = "mooncake", feature = "orbite"))]
                 TransferPayload::Peer {
                     source, slot_id, ..
                 } => source
@@ -1498,12 +1500,6 @@ fn process_save_task(
 #[path = "../../../tests/unit/transfer/worker/mod.rs"]
 mod drain_tests;
 
-#[cfg(not(any(feature = "mooncake", feature = "orbite")))]
-fn prepare_peer(command: WorkerCommand, _: &WorkerRuntime) -> Option<WorkerCommand> {
-    Some(command)
-}
-
-#[cfg(any(feature = "mooncake", feature = "orbite"))]
 fn prepare_peer(command: WorkerCommand, runtime: &WorkerRuntime) -> Option<WorkerCommand> {
     if runtime.unquiesced.get()
         && let WorkerCommand::Save(task, observation) = command
@@ -1556,7 +1552,6 @@ fn prepare_peer(command: WorkerCommand, runtime: &WorkerRuntime) -> Option<Worke
     Some(WorkerCommand::Load(task, observation))
 }
 
-#[cfg(any(feature = "mooncake", feature = "orbite"))]
 #[allow(
     clippy::mem_forget,
     reason = "unknown peer drain retains GPU backing, grants, client completion and device admission"

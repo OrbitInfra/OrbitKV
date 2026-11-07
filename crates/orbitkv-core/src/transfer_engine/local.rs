@@ -5,16 +5,9 @@ use std::time::Duration;
 use cudarc::driver::{CudaEvent, CudaStream, result, sys};
 
 use super::{ErrorKind, TransferBackend, TransferError};
-use crate::memory::pool::PinnedAllocation;
 use crate::transfer::{CopyDesc, TransferMode};
 
-/// Actual host backing; imported client mappings use their grant's lifetime.
-#[derive(Clone)]
-pub enum LocalHost {
-    Pinned(Arc<PinnedAllocation>),
-    #[cfg(feature = "orbite")]
-    Imported(Arc<orbite::HostMemory>),
-}
+pub use super::backend::LocalHost;
 
 pub trait LocalCompletion: Send {
     /// `Ok(true)` and non-Unquiesced errors prove physical drain.
@@ -44,12 +37,32 @@ pub trait LocalCopy: Send {
     fn close(&self) -> Result<(), TransferError>;
 }
 
+/// A local-only deployment may omit the TENT peer engine, but OrbiTE must
+/// still supply its own local-copy implementation. Check before touching CUDA.
+pub(crate) fn validate_engine(
+    selected: crate::PeerTransferBackend,
+    engine: Option<&Arc<dyn TransferBackend>>,
+) -> Result<(), TransferError> {
+    let tent = selected == crate::PeerTransferBackend::Mooncake;
+    if engine.map_or(!tent, |engine| {
+        (engine.local_engine() == crate::PeerTransferBackend::Mooncake) != tent
+    }) {
+        return Err(TransferError::new(
+            ErrorKind::Unavailable,
+            "selected backend requires its own local-copy engine, including local-only OrbiTE",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn bind(
+    selected: crate::PeerTransferBackend,
     engine: Option<Arc<dyn TransferBackend>>,
     stream: Arc<CudaStream>,
     mode: TransferMode,
     device: u64,
 ) -> Result<Box<dyn LocalCopy>, TransferError> {
+    validate_engine(selected, engine.as_ref())?;
     match engine {
         Some(engine) => engine.bind_local(stream, mode, device),
         // Local-only TENT configurations do not start a peer/file engine.

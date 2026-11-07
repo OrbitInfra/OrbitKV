@@ -96,6 +96,7 @@ fn local_copy_shim_bytes_stream_binding_and_pin_owners() {
                 NumaNode::UNKNOWN,
                 mode,
                 None,
+                crate::PeerTransferBackend::Orbite,
                 Some(backend.clone())
             )
             .is_err(),
@@ -269,6 +270,16 @@ fn local_copy_shim_large_batch_and_partial_submission_drain() {
 #[test]
 #[ignore = "requires the explicit CPU CUDA-driver fixture"]
 fn local_copy_shim_client_restore_layers_and_context() {
+    for selected in [
+        crate::PeerTransferBackend::Orbite,
+        crate::PeerTransferBackend::OrbiteTcp,
+        crate::PeerTransferBackend::OrbiteRdma,
+    ] {
+        client_restore_layers_and_context(selected);
+    }
+}
+
+fn client_restore_layers_and_context(selected: crate::PeerTransferBackend) {
     use crate::transfer::local::{LocalRestoreExecutor, LocalTensor, RawCopy, RawRestorePart};
     let shim = Shim::load();
     let context = CudaContext::new(0).unwrap();
@@ -305,7 +316,7 @@ fn local_copy_shim_client_restore_layers_and_context() {
         tensors,
         allocator.payload_arenas().unwrap(),
         TransferMode::Kernel,
-        crate::PeerTransferBackend::OrbiteTcp,
+        selected,
         device.clone(),
     )
     .unwrap();

@@ -100,14 +100,21 @@ and [adapter contracts](adapters.md).
   clients, Managers and peers upgrade together. TENT peer priority is consumed;
   missing intent/file QoS and CPU priority statistics remain API gaps. See
   [scheduling contracts](transport.md#scheduling-metadata).
-- [x] C1b implemented for review: membership removal and incarnation/epoch changes
+- [x] C1b accepted at `a683f991`: membership removal and incarnation/epoch changes
   revoke admission before each requester's cached identities retire. OrbiTE
   `close_segment` waits for physical drain; timeout/Unquiesced retains owners.
   Successful retirement drops requester-specific handles to reclaim bounded
   identity capacity. TENT keeps reversible handle invalidation. Real TCP controls
   cover in-flight source tickets/buffers, independent peers/requesters, epoch
   replacement and churn; installed GPU/RDMA retirement remains unqualified.
-  See [peer departure](transport.md#peer-departure). Stop for review before C2.
+  See [peer departure](transport.md#peer-departure).
+- [x] C2 implemented for review: shared peer, query, planning, storage, transfer
+  ownership and metrics compile without backend features. Native cfgs stay in
+  adapters/build glue; absent providers return typed `Unavailable`. No-backend
+  strict Clippy and CPU ownership controls join CI. Instance/worker admission
+  rejects missing or mismatched OrbiTE local-copy engines, including local-only
+  mode. Wire/lifecycle, bounded budgets and drain contracts are unchanged; installed
+  GPU/RDMA/GDS qualification remains open. Stop for review before C3.
 - [x] OrbiTE SSD file-segment integration implemented for io_uring, CUDA staging
   and opt-in native-only GDS, preserving OrbitKV placement, extents and index
   publication. A3 below removes the temporary native fallback. CPU file/lifetime

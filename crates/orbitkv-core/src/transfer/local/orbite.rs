@@ -38,9 +38,9 @@ pub(super) fn bind(
         }
         let range = ranges
             .entry(tensor.allocation)
-            .or_insert((tensor.allocation as u64, tensor.allocation_end));
+            .or_insert((tensor.allocation as u64, tensor._allocation_end));
         range.0 = range.0.min(tensor.allocation as u64);
-        range.1 = range.1.max(tensor.allocation_end);
+        range.1 = range.1.max(tensor._allocation_end);
     }
     let mut registrations = Vec::with_capacity(ranges.len());
     for (address, end) in ranges.into_values() {

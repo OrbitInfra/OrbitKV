@@ -36,10 +36,6 @@ pub use engine::{
 };
 pub use memory::numa::NumaNode;
 pub use memory::pool::{PayloadArena, PinnedAllocation};
-#[cfg(feature = "orbite-rdma")]
-pub use orbite::transport::rdma::{
-    RdmaConfig as OrbiteRdmaConfig, RdmaCudaMemory as OrbiteRdmaCudaMemory,
-};
 pub use orbitkv_state::{
     BundleComponent, RecoveryContract, StateBundle, StateComponent, StateDescriptor, StateFormat,
     TokenRange,
@@ -61,3 +57,4 @@ pub use storage::ssd::{
 pub use trace::{set_trace_sample_rate, should_sample};
 pub use transfer::TransferMode;
 pub use transfer::worker::LoadOutcome;
+pub use transfer_engine::backend::{OrbiteRdmaConfig, OrbiteRdmaCudaMemory};

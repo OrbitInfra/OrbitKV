@@ -79,7 +79,6 @@ fn initial_ownership_metrics_child() {
             "orbitkv_save_retained_operations",
             &metrics.save_retained_operations,
         ),
-        #[cfg(any(feature = "mooncake", feature = "orbite"))]
         (
             "orbitkv_transfer_completion_outstanding",
             &metrics.transfer_completion_outstanding,
@@ -151,7 +150,6 @@ fn cache_residence_reason_attributes_are_fixed_and_low_cardinality() {
     );
 }
 
-#[cfg(any(feature = "mooncake", feature = "orbite"))]
 #[test]
 fn remote_fetch_plan_segment_boundaries_cover_failures_and_fragmented_plans() {
     assert_eq!(

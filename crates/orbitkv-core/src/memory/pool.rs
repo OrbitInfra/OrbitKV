@@ -9,8 +9,7 @@ use std::{
     },
 };
 
-#[cfg(feature = "orbite")]
-use std::sync::Weak;
+mod backend;
 
 use bytesize::ByteSize;
 use log::{error, info, warn};
@@ -76,8 +75,7 @@ pub struct PinnedAllocation {
     ptr: NonNull<u8>,
     device_ptr: NonNull<u8>,
     pool: Arc<PinnedMemoryPool>,
-    #[cfg(feature = "orbite")]
-    orbite_memory: Mutex<Weak<orbite::HostMemory>>,
+    _engine_memory: backend::MemoryRegistration,
 }
 
 // SAFETY: PinnedAllocation points to CUDA pinned memory which is fixed in physical
@@ -97,38 +95,6 @@ impl PinnedAllocation {
         self.pool
             .allocate(NonZeroU64::new(bytes as u64)?)
             .map(Arc::new)
-    }
-
-    /// Shares this allocation and its access lock with OrbiTE registrations.
-    /// Retaining the returned memory keeps this exact allocator slot occupied,
-    /// even after the allocator, registration or batch handle is dropped.
-    ///
-    /// # Safety
-    /// Until the last returned memory, registration and admitted transfer releases
-    /// this allocation, coordinate all external CPU, CUDA and process accesses
-    /// with OrbiTE. No conflicting Rust references or unsynchronized device
-    /// accesses may remain. All OrbiTE aliases must be obtained through this
-    /// method so they share the same access lock.
-    #[cfg(feature = "orbite")]
-    pub unsafe fn orbite_memory(self: &Arc<Self>) -> orbite::Result<Arc<orbite::HostMemory>> {
-        let mut cached = self.orbite_memory.lock();
-        if let Some(memory) = cached.upgrade() {
-            return Ok(memory);
-        }
-        let length = usize::try_from(self.size_bytes()).map_err(|_| orbite::Error::InvalidRange)?;
-        // SAFETY: this Arc retains the actual allocation and its pinned pool;
-        // its Drop is the only path returning this slot to the allocator. The
-        // caller coordinates accesses outside the shared OrbiTE lock.
-        let memory = Arc::new(unsafe {
-            orbite::HostMemory::from_cuda_registered_parts(
-                self.ptr,
-                length,
-                self.clone(),
-                self.pool.local_pin.clone(),
-            )?
-        });
-        *cached = Arc::downgrade(&memory);
-        Ok(memory)
     }
 
     pub(crate) fn registration_id(&self) -> usize {
@@ -166,20 +132,12 @@ impl PinnedAllocation {
         self.allocation.size_bytes.get()
     }
 
-    /// Get the underlying NonNull pointer.
-    #[cfg_attr(
-        not(feature = "mooncake"),
-        allow(
-            dead_code,
-            reason = "only the Mooncake backing needs the raw allocation pointer"
-        )
-    )]
     pub(crate) fn as_non_null(&self) -> NonNull<u8> {
         self.ptr
     }
 
     pub(crate) fn mapped_ptr(&self) -> MappedPinnedPtr {
-        MappedPinnedPtr::new(self.ptr, self.device_ptr)
+        MappedPinnedPtr::new(self.as_non_null(), self.device_ptr)
     }
 
     pub(crate) fn mapped_ptr_at(&self, offset: usize, size: usize) -> MappedPinnedPtr {
@@ -220,8 +178,7 @@ pub(crate) struct PinnedMemoryPool {
     next_allocation_id: AtomicU64,
     /// Backing pinned memory (handles mmap + cudaHostRegister)
     backing: Arc<PinnedMemory>,
-    #[cfg(feature = "orbite")]
-    local_pin: Arc<orbite::cuda::local_copy::PinnedHostRegistration>,
+    _local_pin: backend::PoolRegistration,
     allocator: Mutex<ScaledOffsetAllocator>,
     allocatable_bytes: u64,
 }
@@ -279,16 +236,7 @@ impl PinnedMemoryPool {
             PinnedMemory::allocate(pool_size, pages, node)
                 .expect("Failed to allocate shared pinned memory pool"),
         );
-        #[cfg(feature = "orbite")]
-        // SAFETY: backing owns the physical CUDA pin until the last local loan.
-        let local_pin = unsafe {
-            orbite::cuda::local_copy::PinnedHostRegistration::from_raw_parts(
-                NonNull::new(backing.as_ptr().cast_mut()).expect("pinned base"),
-                backing.size(),
-                backing.clone(),
-            )
-        }
-        .expect("valid pinned pool");
+        let local_pin = backend::pin(&backing);
 
         let actual_size = backing.size() as u64;
         let unit_size = Self::compute_unit_size(actual_size, unit_size_hint);
@@ -333,8 +281,7 @@ impl PinnedMemoryPool {
                 .expect("payload arena identity exhausted"),
             next_allocation_id: AtomicU64::new(1),
             backing,
-            #[cfg(feature = "orbite")]
-            local_pin,
+            _local_pin: local_pin,
             allocator: Mutex::new(allocator),
             allocatable_bytes,
         }
@@ -393,8 +340,7 @@ impl PinnedMemoryPool {
             ptr,
             device_ptr,
             pool: Arc::clone(self),
-            #[cfg(feature = "orbite")]
-            orbite_memory: Mutex::new(Weak::new()),
+            _engine_memory: Default::default(),
         })
     }
 
@@ -431,14 +377,6 @@ impl PinnedMemoryPool {
     fn largest_free_allocation(&self) -> u64 {
         let allocator = self.allocator.lock();
         allocator.storage_report().largest_free_allocation_bytes
-    }
-
-    /// Return the base pointer and length of the backing pinned memory.
-    #[cfg(feature = "mooncake")]
-    fn memory_region(&self) -> (NonNull<u8>, usize) {
-        let ptr = NonNull::new(self.backing.as_ptr() as *mut u8)
-            .expect("PinnedMemoryPool backing pointer is null");
-        (ptr, self.backing.size())
     }
 }
 
@@ -561,12 +499,6 @@ impl ShardedPinnedPool {
             .map(|s| s.largest_free_allocation())
             .max()
             .unwrap_or(0)
-    }
-
-    /// Return all backing memory regions (one per shard).
-    #[cfg(feature = "mooncake")]
-    fn memory_regions(&self) -> Vec<(NonNull<u8>, usize)> {
-        self.shards.iter().map(|s| s.memory_region()).collect()
     }
 }
 
@@ -718,15 +650,6 @@ impl NumaAwarePinnedPools {
             .unwrap_or(0)
     }
 
-    /// Return all backing memory regions across all NUMA nodes and shards.
-    #[cfg(feature = "mooncake")]
-    fn memory_regions(&self) -> Vec<(NonNull<u8>, usize)> {
-        self.pools
-            .values()
-            .flat_map(|p| p.memory_regions())
-            .collect()
-    }
-
     /// Get aggregate usage across all pools: (used_bytes, total_bytes)
     fn total_usage(&self) -> (u64, u64) {
         let mut used = 0u64;
@@ -869,15 +792,6 @@ impl PinnedAllocator {
         arenas.sort_unstable_by_key(|arena| arena.id);
         Ok(arenas)
     }
-
-    /// Return all backing memory regions as `(ptr, len)` pairs.
-    #[cfg(feature = "mooncake")]
-    pub(crate) fn memory_regions(&self) -> Vec<(NonNull<u8>, usize)> {
-        match self {
-            Self::Global(pool) => pool.memory_regions(),
-            Self::Numa(pools) => pools.memory_regions(),
-        }
-    }
 }
 
 // SAFETY: PinnedAllocator owns ShardedPinnedPool or NumaAwarePinnedPools,
@@ -888,7 +802,3 @@ unsafe impl Sync for PinnedAllocator {}
 #[cfg(test)]
 #[path = "../../tests/unit/memory/pool.rs"]
 mod tests;
-
-#[cfg(all(test, feature = "orbite"))]
-#[path = "../../tests/unit/memory/orbite.rs"]
-mod orbite_tests;
