@@ -83,6 +83,10 @@ hit its native GPU cache instead.
 
 ## Learn more
 
+For contributors, follow the data flow: [transport](docs/transport.md) →
+[engine-local restore](docs/engine-local-restore.md) →
+[distributed cache](docs/distributed-cache.md) → [adapter contracts](docs/adapters.md).
+
 | Task | Guide |
 | --- | --- |
 | Choose features and a model | [Features](docs/features.md), [model recipes](docs/models.md) |
