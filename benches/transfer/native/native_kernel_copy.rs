@@ -31,6 +31,8 @@ impl Memory {
         let mut host = std::ptr::null_mut();
         let mut mapped = 0;
         let mut device = 0;
+        // SAFETY: the benchmark bound a live CUDA context; outputs are writable
+        // and every successful allocation is retained by Memory.
         unsafe {
             check(sys::cuMemHostAlloc(
                 &mut host,
@@ -49,12 +51,16 @@ impl Memory {
     }
 
     fn host_slice(&mut self) -> &mut [u8] {
+        // SAFETY: &mut self provides exclusive host access to the owned len-byte
+        // allocation; callers synchronize all GPU accesses before borrowing it.
         unsafe { std::slice::from_raw_parts_mut(self.host, self.len) }
     }
 }
 
 impl Drop for Memory {
     fn drop(&mut self) {
+        // SAFETY: every benchmark submission synchronizes before Memory drops;
+        // these are its exact device/host allocations and their only free calls.
         unsafe {
             check(sys::cuMemFree_v2(self.device));
             check(sys::cuMemFreeHost(self.host.cast()));
@@ -255,6 +261,8 @@ fn main() {
             }
             copies.push(CopyDesc {
                 device: memory.device + device_offset as u64,
+                // SAFETY: source_offset and the descriptor width were bounded by total;
+                // Memory owns the host range through submission and synchronization.
                 host: unsafe { memory.host.add(source_offset) },
                 host_device: memory.mapped + source_offset as u64,
                 size,
@@ -280,6 +288,8 @@ fn main() {
                     .host_slice()
                     .copy_from_slice(if h2d { source } else { &destination });
                 let device_source = if h2d { &destination } else { source };
+                // SAFETY: device_source and memory.device both cover total bytes; no
+                // previous submission remains active during this synchronous reset.
                 unsafe {
                     check(sys::cuMemcpyHtoD_v2(
                         memory.device,
@@ -289,6 +299,8 @@ fn main() {
                 }
                 submit(*backend, &copies, &stream, h2d);
                 let mut device = vec![0; total];
+                // SAFETY: submit synchronized before this oracle; device is a writable
+                // total-byte Vec and memory still owns the source device allocation.
                 unsafe {
                     check(sys::cuMemcpyDtoH_v2(
                         device.as_mut_ptr().cast(),

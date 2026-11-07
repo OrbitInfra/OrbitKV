@@ -1,6 +1,7 @@
 // CPU ownership control only. No CUDA registration or device operation occurs.
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #ifdef ORBITKV_CPU_HOST_CONTROL
 #include <cstddef>
 // Match only the three runtime ABI functions below. This build is a CPU
@@ -19,10 +20,14 @@ extern "C" cudaError_t cudaHostRegister(void *, size_t, unsigned int) {
 }
 extern "C" cudaError_t cudaHostGetDevicePointer(void **device, void *host,
                                                 unsigned int) {
+  if (std::getenv("ORBITKV_TEST_IMPORT_ADDRESS_FAILURE"))
+    return static_cast<cudaError_t>(1);
   *device = host;
   return cudaSuccess;
 }
 extern "C" cudaError_t cudaHostUnregister(void *) {
+  if (std::getenv("ORBITKV_TEST_IMPORT_UNREGISTER_FAILURE"))
+    return static_cast<cudaError_t>(1);
   ++unregistered;
   unregister_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                       std::chrono::steady_clock::now().time_since_epoch())

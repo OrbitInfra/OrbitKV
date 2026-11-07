@@ -43,7 +43,11 @@ pub struct TransferSlice {
     pub length: usize,
 }
 
+// SAFETY: this descriptor only carries addresses; it never dereferences them.
+// Unsafe submission requires the caller to retain and synchronize registered backing.
 unsafe impl Send for TransferSlice {}
+// SAFETY: sharing this immutable descriptor does not access bytes. Submission
+// retains the caller's exclusive/read loans through physical drain.
 unsafe impl Sync for TransferSlice {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]

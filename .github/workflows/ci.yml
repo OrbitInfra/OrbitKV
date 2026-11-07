@@ -187,6 +187,7 @@ jobs:
           cargo clippy -p orbitkv-core --all-targets --features orbite -- -D warnings
           cargo clippy -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbite -- -D warnings
           CC=gcc CXX=g++ cargo clippy -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbite-rdma -- -D warnings
+          CC=gcc CXX=g++ cargo clippy --locked --workspace --all-targets --no-default-features --features cuda-13,mooncake,orbite-rdma,orbite-gds,test-hooks -- -D warnings
         env:
           LIBCLANG_PATH: /usr/lib/llvm-18/lib
           CLANG_PATH: /usr/bin/clang-18
@@ -321,6 +322,7 @@ jobs:
           export LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-local-copy-control:$RUNNER_TEMP/orbitkv-cpu-host-control"
           export ORBITKV_REQUIRE_LOCAL_COPY_SHIM=1
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib peer::orbite::local::tests -- --ignored --test-threads=1
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib transfer::local::tests::failed_import_cleanup_preserves_registered_mapping -- --exact --ignored
           cargo test --locked -p orbitkv-core --features orbite --lib peer::orbite::local::tests -- --ignored --test-threads=1
           cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,test-hooks --lib -- --test-threads=1
           cargo test --locked -p orbitkv-server --features orbite,test-hooks --lib -- --test-threads=1

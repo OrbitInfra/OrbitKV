@@ -251,6 +251,8 @@ fn canceled_decoder_preparation_is_not_an_io_failure() {
     });
     let (decoder, requests, replies) = decoder_channels();
     // No native registration is needed: cancellation happens before any file I/O.
+    // SAFETY: with no engine this registration is bookkeeping only; the
+    // fixture never submits or dereferences the synthetic address.
     let input = unsafe { CudaRegistration::new(None, 1, 4096, 0, Arc::new(())) }.unwrap();
     replies.send(DecodeReply::Prepared(Ok(input))).unwrap();
     poll_decode(&decoder, &mut active, &mut jobs);

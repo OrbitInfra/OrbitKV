@@ -314,6 +314,8 @@ fn encode_one(
     format: StorageFormat,
     budget: usize,
 ) -> Result<Option<(CudaSlice<u8>, usize)>, String> {
+    // SAFETY: the test caller retains the source CudaSlice through this
+    // synchronous codec operation; bytes bounds its initialized device range.
     let batch = unsafe {
         codec.encode_batch(
             stream,
@@ -332,6 +334,8 @@ fn encode_one(
     let copy = stream
         .alloc_zeros::<u8>(output.meta.stored_bytes)
         .map_err(|e| e.to_string())?;
+    // SAFETY: the borrowed batch owns output and copy has stored_bytes
+    // capacity; both survive the explicit stream synchronization below.
     let copied = unsafe {
         result::memcpy_dtod_async(
             copy.device_ptr(stream).0,
@@ -356,6 +360,8 @@ fn decode_one(
     meta: &EncodedSegment,
     budget: usize,
 ) -> Result<(), gpu::DecodeError> {
+    // SAFETY: source is borrowed and the test caller retains the disjoint
+    // target allocation through the codec's synchronous drain.
     unsafe {
         codec.decode_batch(
             stream,

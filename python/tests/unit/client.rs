@@ -356,6 +356,8 @@ fn prepared_spawn_failure_rolls_back_every_unsubmitted_handle() {
         len: filter.len() as u16,
         filter: filter.as_mut_ptr(),
     };
+    // SAFETY: the initialized filter array backs program for both prctl calls;
+    // only this isolated fixture thread receives the fault filter.
     unsafe {
         assert_eq!(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), 0);
         assert_eq!(libc::prctl(libc::PR_SET_SECCOMP, 2, &program), 0);

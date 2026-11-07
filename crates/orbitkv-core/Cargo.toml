@@ -52,6 +52,7 @@ mea.workspace = true
 orbite = { git = "https://github.com/OrbitInfra/OrbiTE", rev = "2e50af25007ca9681912ba5175109d09488a8f99", default-features = false, optional = true }
 
 [dev-dependencies]
+rustix.workspace = true
 opentelemetry_sdk.workspace = true
 opentelemetry-prometheus.workspace = true
 prometheus.workspace = true

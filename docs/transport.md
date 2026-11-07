@@ -657,6 +657,11 @@ OrbiTE enforces registration permissions; TENT retains its existing whole-pool
 registration because the pinned C ABI has no per-range permission argument.
 OrbitKV source grants remain authoritative for peer access in both profiles.
 
+The lower-level `orbitkv-transfer` raw Rust submit methods are unsafe: callers
+retain registered backing and exclude conflicting accesses until physical drain.
+Timeout and cancellation do not shorten that obligation. The core backend
+adapter supplies these owners and loans; this changes no wire or drain receipt.
+
 OrbiTE is pinned to
 [`2e50af25007ca9681912ba5175109d09488a8f99`](https://github.com/OrbitInfra/OrbiTE/commit/2e50af25007ca9681912ba5175109d09488a8f99).
 Run the same OrbitKV build on both peers.
@@ -971,8 +976,11 @@ engine. All-padded extents are legal and need no consumer-owned buffer.
 
 CI requires real Linux io_uring and real file bytes, with an explicitly labelled
 CPU host-registration shim. Its TENT source-drain control requires `MC_FORCE_TCP=1`
-so an RDMA device on the runner cannot change that CPU/TCP profile; the separate
-file engine still uses io_uring. It covers sharded raw/encoded metadata, extent
+with `MC_TENT_CONF` unset before startup, so an RDMA device on the runner cannot
+change that CPU/TCP profile; the separate file engine still uses io_uring.
+Conflicting configuration returns an error. OrbitKV no longer temporarily
+mutates process environment; explicit NIC whitelists use the fork's thread-local
+configuration. The file controls cover sharded raw/encoded metadata, extent
 leases, padded/odd-sized vectors above 4 MiB, all-padding extents, explicit GDS
 unconfigured GDS rejection, alignment and truncated-file errors, cancellation before submission,
 detached completion, and retained owners after injected uncertainty. TENT callback

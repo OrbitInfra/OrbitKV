@@ -13,6 +13,8 @@ fn shared_slab() -> (Vec<(StateKey, Arc<SealedBlock>)>, Arc<PinnedAllocation>) {
         .unwrap();
     let blocks = (0..2)
         .map(|index| {
+            // SAFETY: both 64-byte ranges lie within the owned 4096-byte allocation;
+            // each returned Segment retains its allocation Arc.
             let ptr = unsafe {
                 NonNull::new_unchecked(allocation.as_non_null().as_ptr().add(index * 64))
             };
@@ -485,6 +487,8 @@ async fn orbite_grant_registrations_share_backing_and_fence_old_completion_gener
     let weak = Arc::downgrade(&allocation);
     let address = allocation.as_non_null().as_ptr() as usize as u64;
     // Initialize before publishing immutable source blocks; all later access is READ.
+    // SAFETY: the allocation remains owned while the canonical alias and its
+    // registration are live; the test does not concurrently mutate these bytes.
     let memory = unsafe { allocation.orbite_memory().unwrap() };
     memory.write(0, &[0x42; 4096]).unwrap();
     drop(memory);

@@ -69,6 +69,8 @@ pub struct FileEngine {
 // SAFETY: the native file API synchronizes its registry; Rust serializes its
 // admission and keeps every native owner alive through an explicit receipt.
 unsafe impl Send for FileEngine {}
+// SAFETY: the pinned file API synchronizes native state; Rust handle/admission
+// state is mutex-protected and retained prevents destruction after uncertain drain.
 unsafe impl Sync for FileEngine {}
 
 impl FileEngine {
@@ -192,6 +194,8 @@ impl Drop for FileEngine {
         // SAFETY: file/batch owners hold an Arc, including retained failures.
         // The C destructor independently refuses live file handles/receipts.
         if !self.retained.load(Ordering::Acquire) {
+            // SAFETY: all file handles and batches have drained and this is the last
+            // engine owner; retained engines bypass this sole destroy attempt.
             unsafe { (self.api.destroy)(self.native) };
         }
     }

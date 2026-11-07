@@ -229,6 +229,8 @@ async fn restores(count: usize, block_bytes: usize) {
         assert_eq!(batch.slices.len(), 2);
         // SAFETY: the CPU control borrows actual disjoint bytes until synchronous completion.
         assert_eq!(
+            // SAFETY: this Control backend never accesses synthetic device addresses;
+            // batch owners remain retained while submission/drain counts are observed.
             unsafe { batch.source.read_gpu(&batch.slices, &batch.owners) }.unwrap(),
             original.len()
         );

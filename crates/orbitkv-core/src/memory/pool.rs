@@ -41,6 +41,8 @@ pub(crate) struct MappedPinnedPtr {
 // carried separately by PinnedAllocation/RawBlock/LayerAlloc, and this value is
 // only an address pair used to build CUDA copy descriptors.
 unsafe impl Send for MappedPinnedPtr {}
+// SAFETY: this copies addresses without accessing bytes. PinnedAllocation/RawBlock
+// owns the backing; descriptor users retain it and serialize DMA/host access.
 unsafe impl Sync for MappedPinnedPtr {}
 
 impl MappedPinnedPtr {
@@ -61,7 +63,7 @@ impl MappedPinnedPtr {
         unsafe {
             Self {
                 host: NonNull::new_unchecked(self.host.as_ptr().add(offset)),
-                device: NonNull::new_unchecked(self.device.as_ptr().add(offset)),
+                device: NonNull::new_unchecked(self.device.as_ptr().wrapping_add(offset)),
             }
         }
     }
@@ -78,10 +80,12 @@ pub struct PinnedAllocation {
     _engine_memory: backend::MemoryRegistration,
 }
 
-// SAFETY: PinnedAllocation points to CUDA pinned memory which is fixed in physical
-// memory and safe to access from any thread. The NonNull<u8> is just a pointer to
-// this pinned memory region.
+// SAFETY: moving the allocation does not move its backing. The retained pool
+// owns the mapping and serializes allocator reuse; transfers retain this owner
+// and coordinate byte access separately until physical drain.
 unsafe impl Send for PinnedAllocation {}
+// SAFETY: shared methods expose addresses, not mutable references; allocation
+// owners and the transfer/grant protocol fence writes and retain backing through drain.
 unsafe impl Sync for PinnedAllocation {}
 
 impl PinnedAllocation {
@@ -324,8 +328,12 @@ impl PinnedMemoryPool {
         );
 
         let offset = allocation.offset_bytes as usize;
+        // SAFETY: the allocator and preceding bounds assertion keep this offset inside
+        // the retained pinned host mapping.
         let ptr = unsafe { self.backing.as_ptr().add(offset) };
-        let device_ptr = unsafe { self.backing.device_ptr().as_ptr().add(offset) };
+        // This is address arithmetic inside the validated CUDA mapping; the
+        // result is used only as a device address, never dereferenced by Rust.
+        let device_ptr = self.backing.device_ptr().as_ptr().wrapping_add(offset);
         let ptr = NonNull::new(ptr as *mut u8).expect("PinnedMemoryPool returned null pointer");
         let device_ptr =
             NonNull::new(device_ptr).expect("PinnedMemoryPool returned null device pointer");
@@ -395,12 +403,6 @@ impl Drop for PinnedMemoryPool {
 }
 
 // PinnedMemory handles cleanup in its Drop impl, no manual Drop needed here.
-
-// SAFETY: The pool owns a PinnedMemory backing that remains valid for the lifetime
-// of the pool. All mutations of the allocator state are guarded by the internal
-// `Mutex`. CUDA pinned host memory can be accessed from any host thread.
-unsafe impl Send for PinnedMemoryPool {}
-unsafe impl Sync for PinnedMemoryPool {}
 
 // ============================================================================
 // Sharded Pool Wrapper
@@ -501,11 +503,6 @@ impl ShardedPinnedPool {
             .unwrap_or(0)
     }
 }
-
-// SAFETY: ShardedPinnedPool owns Arc<PinnedMemoryPool> which are Send + Sync.
-// The AtomicUsize cursor is inherently thread-safe.
-unsafe impl Send for ShardedPinnedPool {}
-unsafe impl Sync for ShardedPinnedPool {}
 
 // ============================================================================
 // NUMA-Aware Pool Management
@@ -793,11 +790,6 @@ impl PinnedAllocator {
         Ok(arenas)
     }
 }
-
-// SAFETY: PinnedAllocator owns ShardedPinnedPool or NumaAwarePinnedPools,
-// both of which are Send + Sync.
-unsafe impl Send for PinnedAllocator {}
-unsafe impl Sync for PinnedAllocator {}
 
 #[cfg(test)]
 #[path = "../../tests/unit/memory/pool.rs"]

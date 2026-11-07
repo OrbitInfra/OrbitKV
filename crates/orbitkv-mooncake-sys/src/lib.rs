@@ -10,7 +10,7 @@
 )]
 
 use std::env;
-use std::ffi::{CStr, CString, OsString, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -40,26 +40,6 @@ pub const INVALID_BATCH: BatchId = 0;
 
 const GLOBAL_READ_WRITE: c_int = 2;
 const TRANSPORT_UNSPECIFIED: c_int = 0;
-
-struct SuspendedTentConfig(Option<OsString>);
-
-impl SuspendedTentConfig {
-    fn for_forced_tcp() -> Option<Self> {
-        env::var_os("MC_FORCE_TCP")?;
-        let previous = env::var_os("MC_TENT_CONF");
-        unsafe { env::remove_var("MC_TENT_CONF") };
-        Some(Self(previous))
-    }
-}
-
-impl Drop for SuspendedTentConfig {
-    fn drop(&mut self) {
-        match self.0.take() {
-            Some(value) => unsafe { env::set_var("MC_TENT_CONF", value) },
-            None => unsafe { env::remove_var("MC_TENT_CONF") },
-        }
-    }
-}
 
 #[repr(C)]
 pub struct TransferRequest {
@@ -190,6 +170,8 @@ fn api() -> &'static Api {
 fn load_api() -> Result<Api, String> {
     let mut attempted = Vec::new();
     for directory in candidate_directories() {
+        // SAFETY: Only the pinned bundle or an operator-selected trusted bundle is loaded;
+        // load_api_from retains its libraries with the function table.
         match unsafe { load_api_from(&directory) } {
             Ok(api) => return Ok(api),
             Err(error) => attempted.push(format!("{} ({error})", directory.display())),
@@ -227,10 +209,13 @@ fn module_directory() -> Option<PathBuf> {
         dli_sname: std::ptr::null(),
         dli_saddr: std::ptr::null_mut(),
     };
+    // SAFETY: the address belongs to this loaded module and info is writable Dl_info storage.
     let found = unsafe { libc::dladdr(module_directory as *const () as *const c_void, &mut info) };
     if found == 0 || info.dli_fname.is_null() {
         return None;
     }
+    // SAFETY: successful dladdr returned a non-null, NUL-terminated name owned by the
+    // loader; this module stays loaded while the name is copied.
     let path = unsafe { CStr::from_ptr(info.dli_fname) };
     Path::new(path.to_str().ok()?)
         .parent()
@@ -239,54 +224,70 @@ fn module_directory() -> Option<PathBuf> {
 
 unsafe fn load_api_from(directory: &Path) -> Result<Api, String> {
     let flags = RTLD_NOW | RTLD_GLOBAL;
+    // SAFETY: the pinned trusted bundle supplies native initializers; the returned
+    // library handles are retained together in Api.
     let asio = unsafe { Library::open(Some(directory.join("libasio.so")), flags) }
         .map_err(|error| error.to_string())?;
+    // SAFETY: this is the pinned common library from the same trusted bundle;
+    // Api keeps it loaded until all TENT symbols are gone.
     let common = unsafe { Library::open(Some(directory.join("libmooncake_common.so")), flags) }
         .map_err(|error| error.to_string())?;
+    // SAFETY: TENT needs the pinned metrics ABI even when metrics are disabled;
+    // Api retains this dependency alongside the engine library.
     let metrics = unsafe { Library::open(Some(directory.join("libtent_metrics.so")), flags) }
         .map_err(|error| error.to_string())?;
+    // SAFETY: the trusted engine library matches the audited C header and its
+    // three dependencies above stay loaded with it.
     let library = unsafe { Library::open(Some(directory.join("libtent_shared.so")), flags) }
         .map_err(|error| error.to_string())?;
 
-    Ok(Api {
-        set_config: unsafe { symbol(&library, b"tent_set_config\0")? },
-        create: unsafe { symbol(&library, b"tent_create_engine\0")? },
-        destroy: unsafe { symbol(&library, b"tent_destroy_engine\0")? },
-        available: unsafe { symbol(&library, b"tent_available\0")? },
-        local_endpoint: unsafe { symbol(&library, b"tent_segment_name\0")? },
-        open_segment: unsafe { symbol(&library, b"tent_open_segment\0")? },
-        close_segment: unsafe { symbol(&library, b"tent_close_segment\0")? },
-        register_memory: unsafe { symbol(&library, b"tent_register_memory_ex\0")? },
-        unregister_memory: unsafe { symbol(&library, b"tent_unregister_memory\0")? },
-        close_source: unsafe { symbol(&library, b"tent_close_source\0")? },
-        source_epoch: unsafe { symbol(&library, b"tent_source_epoch\0")? },
-        validate_remote_epoch: unsafe { symbol(&library, b"tent_validate_remote_epoch\0")? },
-        allocate_batch: unsafe { symbol(&library, b"tent_allocate_batch\0")? },
-        submit: unsafe { symbol(&library, b"tent_submit\0")? },
-        submit_with_notify: unsafe { symbol(&library, b"tent_submit_notif\0")? },
-        transfer_status: unsafe { symbol(&library, b"tent_task_status\0")? },
-        batch_status: unsafe { symbol(&library, b"tent_overall_status\0")? },
-        terminal_result: unsafe { symbol(&library, b"tent_terminal_result\0")? },
-        cancel_task: unsafe { symbol(&library, b"tent_cancel_task\0")? },
-        free_batch: unsafe { symbol(&library, b"tent_free_batch\0")? },
-        receive_notifications: unsafe { symbol(&library, b"tent_recv_notifs\0")? },
-        free_notifications: unsafe { symbol(&library, b"tent_free_notifs\0")? },
-        send_notification: unsafe { symbol(&library, b"tent_send_notifs\0")? },
-        get_nic_load_stats: unsafe { symbol(&library, b"tent_get_nic_load_stats\0")? },
-        // Old peer-only controls do not consume the additive file ABI.
-        files: unsafe { files::FileApi::load(&library) },
-        _dependencies: vec![asio, common, metrics],
-        _library: library,
-    })
+    // SAFETY: every function type below matches the pinned transfer_engine.h.
+    // Api retains all four libraries for as long as any resolved symbol is used.
+    unsafe {
+        Ok(Api {
+            set_config: symbol(&library, b"tent_set_config\0")?,
+            create: symbol(&library, b"tent_create_engine\0")?,
+            destroy: symbol(&library, b"tent_destroy_engine\0")?,
+            available: symbol(&library, b"tent_available\0")?,
+            local_endpoint: symbol(&library, b"tent_segment_name\0")?,
+            open_segment: symbol(&library, b"tent_open_segment\0")?,
+            close_segment: symbol(&library, b"tent_close_segment\0")?,
+            register_memory: symbol(&library, b"tent_register_memory_ex\0")?,
+            unregister_memory: symbol(&library, b"tent_unregister_memory\0")?,
+            close_source: symbol(&library, b"tent_close_source\0")?,
+            source_epoch: symbol(&library, b"tent_source_epoch\0")?,
+            validate_remote_epoch: symbol(&library, b"tent_validate_remote_epoch\0")?,
+            allocate_batch: symbol(&library, b"tent_allocate_batch\0")?,
+            submit: symbol(&library, b"tent_submit\0")?,
+            submit_with_notify: symbol(&library, b"tent_submit_notif\0")?,
+            transfer_status: symbol(&library, b"tent_task_status\0")?,
+            batch_status: symbol(&library, b"tent_overall_status\0")?,
+            terminal_result: symbol(&library, b"tent_terminal_result\0")?,
+            cancel_task: symbol(&library, b"tent_cancel_task\0")?,
+            free_batch: symbol(&library, b"tent_free_batch\0")?,
+            receive_notifications: symbol(&library, b"tent_recv_notifs\0")?,
+            free_notifications: symbol(&library, b"tent_free_notifs\0")?,
+            send_notification: symbol(&library, b"tent_send_notifs\0")?,
+            get_nic_load_stats: symbol(&library, b"tent_get_nic_load_stats\0")?,
+            // Old peer-only controls do not consume the additive file ABI.
+            files: files::FileApi::load(&library),
+            _dependencies: vec![asio, common, metrics],
+            _library: library,
+        })
+    }
 }
 
 unsafe fn symbol<T: Copy>(library: &Library, name: &[u8]) -> Result<T, String> {
+    // SAFETY: the caller supplies a NUL-terminated symbol name and its exact C ABI type;
+    // the owning Api outlives every copied function pointer.
     unsafe { library.get::<T>(name) }
         .map(|symbol| *symbol)
         .map_err(|error| format!("missing Mooncake TENT symbol: {error}"))
 }
 
 unsafe fn set_config(key: &CStr, value: &CStr) {
+    // SAFETY: both CStr inputs are NUL-terminated and live through the call;
+    // the fork copies them into this thread's settings.
     unsafe { (api().set_config)(key.as_ptr(), value.as_ptr()) };
 }
 
@@ -295,14 +296,17 @@ pub unsafe fn create(
     local_server_name: *const c_char,
     bind_host: *const c_char,
     rpc_port: u64,
-) -> NativeEngine {
-    // Explicit forced-TCP qualification must not be undone by a general TENT
-    // JSON config. TransferEngine::new serializes creation around this scope.
-    let _tent_config = SuspendedTentConfig::for_forced_tcp();
-    let Ok(port) = CString::new(rpc_port.to_string()) else {
-        return std::ptr::null_mut();
-    };
+    nic_filter: &CStr,
+) -> Result<NativeEngine, String> {
+    let forced_tcp = env::var_os("MC_FORCE_TCP").is_some();
+    if forced_tcp && env::var_os("MC_TENT_CONF").is_some_and(|value| !value.is_empty()) {
+        return Err("MC_FORCE_TCP cannot safely suppress MC_TENT_CONF in a threaded process; unset MC_TENT_CONF before startup".into());
+    }
+    let port = CString::new(rpc_port.to_string()).map_err(|error| error.to_string())?;
+    // SAFETY: caller strings remain live and terminated; settings are copied into
+    // thread-local native storage. A fresh engine is checked before ownership escapes.
     unsafe {
+        set_config(c"topology/rdma_whitelist", nic_filter);
         set_config(c"metadata_type", c"p2p");
         set_config(c"metadata_servers", CStr::from_ptr(metadata));
         set_config(c"local_segment_name", CStr::from_ptr(local_server_name));
@@ -318,11 +322,7 @@ pub unsafe fn create(
         set_config(c"transports/shm/enable", c"false");
         set_config(c"transports/gds/enable", c"false");
         set_config(c"transports/io_uring/enable", c"false");
-        let native_paths = if env::var_os("MC_FORCE_TCP").is_some() {
-            c"false"
-        } else {
-            c"true"
-        };
+        let native_paths = if forced_tcp { c"false" } else { c"true" };
         set_config(c"transports/rdma/enable", native_paths);
         set_config(c"transports/nvlink/enable", native_paths);
         set_config(c"transports/mnnvl/enable", native_paths);
@@ -331,17 +331,20 @@ pub unsafe fn create(
             if !engine.is_null() {
                 (api().destroy)(engine);
             }
-            return std::ptr::null_mut();
+            return Ok(std::ptr::null_mut());
         }
-        engine
+        Ok(engine)
     }
 }
 
 pub unsafe fn destroy(engine: NativeEngine) {
+    // SAFETY: the caller owns this engine exclusively and has drained its native users;
+    // this is its sole destruction attempt.
     unsafe { (api().destroy)(engine) };
 }
 
 pub unsafe fn local_ip_and_port(engine: NativeEngine, output: *mut c_char, len: usize) -> c_int {
+    // SAFETY: the caller retains the engine and provides output writable for len bytes.
     unsafe { (api().local_endpoint)(engine, output, len) }
 }
 
@@ -350,10 +353,14 @@ pub unsafe fn open_segment(
     segment: &mut SegmentId,
     name: *const c_char,
 ) -> c_int {
+    // SAFETY: the caller retains the engine and NUL-terminated name through this call;
+    // segment is exclusive writable output.
     unsafe { (api().open_segment)(engine, segment, name) }
 }
 
 pub unsafe fn close_segment(engine: NativeEngine, segment: SegmentId) -> c_int {
+    // SAFETY: the caller owns this engine's segment and has fenced/drained its users;
+    // an uncertain result must retain the handle rather than repeat native cleanup.
     unsafe { (api().close_segment)(engine, segment) }
 }
 
@@ -363,6 +370,7 @@ pub unsafe fn register_memory(
     length: usize,
     location: *const c_char,
 ) -> c_int {
+    // SAFETY: the caller provides a live NUL-terminated location string.
     let location = unsafe { CStr::from_ptr(location) }.to_bytes();
     if location.len() >= 64 {
         return -1;
@@ -378,6 +386,8 @@ pub unsafe fn register_memory(
     for (output, input) in options.location.iter_mut().zip(location) {
         *output = *input as c_char;
     }
+    // SAFETY: the caller retains the address/length backing for the registration lifetime;
+    // options matches the pinned ABI and is borrowed only during registration.
     unsafe { (api().register_memory)(engine, address, length, &mut options) }
 }
 
@@ -386,6 +396,8 @@ pub unsafe fn unregister_memory(
     address: *mut c_void,
     length: usize,
 ) -> c_int {
+    // SAFETY: the caller retains the registered backing and proves no transfer can
+    // access it; errors do not authorize releasing that backing.
     unsafe { (api().unregister_memory)(engine, address, length) }
 }
 
@@ -395,10 +407,13 @@ pub unsafe fn close_source(
     epoch: &mut [c_char; 33],
     active: &mut u64,
 ) -> c_int {
+    // SAFETY: the caller keeps the engine alive; epoch has the ABI's 33 bytes and active
+    // is writable. Only the returned native receipt can authorize release.
     unsafe { (api().close_source)(engine, timeout_ms, epoch.as_mut_ptr(), active) }
 }
 
 pub unsafe fn source_epoch(engine: NativeEngine, epoch: &mut [c_char; 33]) -> c_int {
+    // SAFETY: the caller retains the engine; the output is exactly the advertised array size.
     unsafe { (api().source_epoch)(engine, epoch.as_mut_ptr(), epoch.len()) }
 }
 
@@ -407,10 +422,13 @@ pub unsafe fn validate_remote_epoch(
     segment: SegmentId,
     epoch: &[c_char; 33],
 ) -> c_int {
+    // SAFETY: the caller retains the engine/segment and supplies a terminated epoch array
+    // that remains borrowed throughout the synchronous validation.
     unsafe { (api().validate_remote_epoch)(engine, segment, epoch.as_ptr()) }
 }
 
 pub unsafe fn allocate_batch(engine: NativeEngine, batch_size: usize) -> BatchId {
+    // SAFETY: the caller retains the engine and takes ownership of the returned batch.
     unsafe { (api().allocate_batch)(engine, batch_size) }
 }
 
@@ -419,6 +437,8 @@ pub unsafe fn submit(
     batch: BatchId,
     requests: &mut [TransferRequest],
 ) -> c_int {
+    // SAFETY: requests supplies exactly requests.len() initialized ABI descriptors.
+    // The caller retains the batch, descriptors and registered backing through drain.
     unsafe { (api().submit)(engine, batch, requests.as_mut_ptr(), requests.len()) }
 }
 
@@ -429,6 +449,8 @@ pub unsafe fn submit_with_notify(
     name: *const c_char,
     message: *const c_char,
 ) -> c_int {
+    // SAFETY: the caller retains batch/descriptors/registered backing through drain,
+    // and both notification strings remain valid until the native submit copies them.
     unsafe {
         (api().submit_with_notify)(
             engine,
@@ -447,6 +469,8 @@ pub unsafe fn transfer_status(
     task: usize,
     status: &mut TransferStatus,
 ) -> c_int {
+    // SAFETY: the caller retains this engine's batch and task; status is exclusive
+    // writable ABI storage for this observation, not a drain receipt.
     unsafe { (api().transfer_status)(engine, batch, task, status) }
 }
 
@@ -455,22 +479,31 @@ pub unsafe fn batch_status(
     batch: BatchId,
     status: &mut TransferStatus,
 ) -> c_int {
+    // SAFETY: the caller retains this engine's batch; status is exclusive writable ABI storage.
     unsafe { (api().batch_status)(engine, batch, status) }
 }
 
 pub unsafe fn cancel_task(engine: NativeEngine, batch: BatchId, task: usize) -> c_int {
+    // SAFETY: the caller retains this engine's batch/task and all backing after cancellation;
+    // requesting cancellation does not prove physical termination.
     unsafe { (api().cancel_task)(engine, batch, task) }
 }
 
 pub unsafe fn free_batch(engine: NativeEngine, batch: BatchId) -> c_int {
+    // SAFETY: the caller has physically drained every task and owns this batch's release;
+    // an uncertain result cannot be treated as a release receipt.
     unsafe { (api().free_batch)(engine, batch) }
 }
 
 pub unsafe fn receive_notifications(engine: NativeEngine, info: &mut NotificationInfo) -> c_int {
+    // SAFETY: the caller retains the engine; info is writable ABI output whose records
+    // are subsequently returned to the matching native allocator.
     unsafe { (api().receive_notifications)(engine, info) }
 }
 
 pub unsafe fn free_notifications(info: &mut NotificationInfo) {
+    // SAFETY: info is the unmodified native allocation receipt, exclusively owned by the
+    // caller; no record borrow survives this sole free.
     unsafe { (api().free_notifications)(info) };
 }
 
@@ -480,6 +513,8 @@ pub unsafe fn notify(
     name: *const c_char,
     message: *const c_char,
 ) -> c_int {
+    // SAFETY: the caller retains the engine/target and both NUL-terminated strings
+    // through the synchronous native copy.
     unsafe { (api().send_notification)(engine, target, name, message) }
 }
 
@@ -488,6 +523,8 @@ pub unsafe fn nic_load_stats(
     stats: *mut NicLoadStat,
     count: &mut usize,
 ) -> c_int {
+    // SAFETY: the caller retains the engine and gives a writable stats array of count
+    // elements; the pinned API writes at most that input capacity.
     unsafe { (api().get_nic_load_stats)(engine, stats, count) }
 }
 

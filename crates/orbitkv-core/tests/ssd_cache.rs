@@ -21,6 +21,8 @@ const PREFETCH_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 /// Probe whether io_uring is usable in the current environment.
 /// Some containers restrict the `io_uring_setup` syscall via seccomp.
 fn io_uring_available() -> bool {
+    // SAFETY: the zeroed 128-byte output matches Linux io_uring_params;
+    // setup initializes it and a successful returned fd is closed exactly once.
     unsafe {
         let mut params = std::mem::MaybeUninit::<[u8; 128]>::zeroed();
         let fd = libc::syscall(

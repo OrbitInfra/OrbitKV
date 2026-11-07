@@ -32,6 +32,8 @@ impl LocalCompletions {
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
+        // SAFETY: the successful eventfd call returned a fresh descriptor; ownership
+        // is transferred exactly once into OwnedFd.
         Ok(Self(unsafe { OwnedFd::from_raw_fd(fd) }))
     }
 
@@ -635,10 +637,14 @@ fn wait_for_updates(client: &CacheClient, admission: &LocalCompletions, pending:
     // shared notification. Normal admission and grant changes wake immediately.
     // SAFETY: events contains two initialized, live descriptors.
     let ready = if pending {
+        // SAFETY: events is a writable two-element pollfd array; both descriptor
+        // owners remain borrowed for this wait.
         unsafe { libc::poll(events.as_mut_ptr(), events.len() as libc::nfds_t, 50) }
     } else {
         // No operation or retirement owns Manager state: sleep until admission
         // or shutdown without periodic wakeups.
+        // SAFETY: events[1] is valid writable pollfd storage for one retained eventfd;
+        // this branch has no pending Manager operation to reap.
         unsafe { libc::poll(&mut events[1], 1, -1) }
     };
     if ready > 0 {

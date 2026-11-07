@@ -57,6 +57,8 @@ fn all_backends_match_scalar_for_every_finite_in_range_16bit_value() {
         assert!(unsafe { encode_with_backend(format, &input, &mut expected, Backend::Scalar) });
         for backend in supported_backends() {
             let mut encoded = vec![0xa5; expected.len()];
+            // SAFETY: supported_backends detected the required ISA. The input and
+            // output slices are disjoint and the codec validates their lengths.
             assert!(unsafe { encode_with_backend(format, &input, &mut encoded, backend) });
             assert_eq!(encoded, expected, "{format:?} {backend:?}");
         }
@@ -67,9 +69,13 @@ fn all_backends_match_scalar_for_every_finite_in_range_16bit_value() {
         // Include both FP8 NaN encodings and signed zero in bitwise decode checks.
         let input: Vec<u8> = (0..=u8::MAX).collect();
         let mut expected = vec![0; input.len() * 2];
+        // SAFETY: Scalar needs no target features; input/output are disjoint owned
+        // slices whose sizes are checked before codec access.
         assert!(unsafe { decode_with_backend(format, &input, &mut expected, Backend::Scalar) });
         for backend in supported_backends() {
             let mut decoded = vec![0xa5; expected.len()];
+            // SAFETY: supported_backends detected the required ISA. The input and
+            // output slices are disjoint and the codec validates their lengths.
             assert!(unsafe { decode_with_backend(format, &input, &mut decoded, backend) });
             assert_eq!(decoded, expected, "{format:?} {backend:?}");
         }
@@ -96,6 +102,8 @@ fn all_backends_decline_every_nonfinite_and_out_of_range_16bit_value() {
             for &backend in &backends {
                 // SAFETY: supported_backends performs runtime ISA detection.
                 assert!(
+                    // SAFETY: supported_backends detected the required ISA. The input and
+                    // output slices are disjoint and the codec validates their lengths.
                     !unsafe { encode_with_backend(format, &input, &mut [0; 16], backend) },
                     "{format:?} {backend:?} {bits:04x}"
                 );
@@ -118,6 +126,8 @@ fn all_backends_decline_every_nonfinite_and_out_of_range_16bit_value() {
                     .copy_from_slice(&scalar_bits(format, invalid).to_le_bytes());
                 for &backend in &backends {
                     assert!(
+                        // SAFETY: supported_backends detected the required ISA. The input and
+                        // output slices are disjoint and the codec validates their lengths.
                         !unsafe { encode_with_backend(format, &input, &mut [0; 33], backend) },
                         "{format:?} {backend:?} invalid lane {position}"
                     );
@@ -146,11 +156,15 @@ fn all_backends_handle_unaligned_tails_and_reject_invalid_lengths() {
             // SAFETY: only scalar or runtime-supported SIMD backends are selected.
             assert!(unsafe { encode_with_backend(format, source, &mut expected, Backend::Scalar) });
             let mut reconstructed = vec![0; len * 2];
+            // SAFETY: Scalar needs no target features; input/output are disjoint owned
+            // slices whose sizes are checked before codec access.
             assert!(unsafe {
                 decode_with_backend(format, &expected, &mut reconstructed, Backend::Scalar)
             });
             for &backend in &backends {
                 let mut encoded = vec![0xa5; len + 12];
+                // SAFETY: supported_backends detected the required ISA. The input and
+                // output slices are disjoint and the codec validates their lengths.
                 assert!(unsafe {
                     encode_with_backend(format, source, &mut encoded[5..5 + len], backend)
                 });
@@ -166,6 +180,8 @@ fn all_backends_handle_unaligned_tails_and_reject_invalid_lengths() {
                         .all(|&b| b == 0xa5)
                 );
                 let mut decoded = vec![0xa5; len * 2 + 8];
+                // SAFETY: supported_backends detected the required ISA. The input and
+                // output slices are disjoint and the codec validates their lengths.
                 assert!(unsafe {
                     decode_with_backend(
                         format,
@@ -190,6 +206,8 @@ fn all_backends_handle_unaligned_tails_and_reject_invalid_lengths() {
         for &backend in &backends {
             for (input_len, output_len) in [(0, 1), (1, 0), (3, 1), (2, 2)] {
                 let mut output = vec![0xa5; output_len];
+                // SAFETY: supported_backends detected the required ISA. The input and
+                // output slices are disjoint and the codec validates their lengths.
                 assert!(!unsafe {
                     encode_with_backend(format, &vec![0; input_len], &mut output, backend)
                 });
@@ -197,6 +215,8 @@ fn all_backends_handle_unaligned_tails_and_reject_invalid_lengths() {
             }
             for (input_len, output_len) in [(0, 1), (1, 0), (1, 1), (3, 5)] {
                 let mut output = vec![0xa5; output_len];
+                // SAFETY: supported_backends detected the required ISA. The input and
+                // output slices are disjoint and the codec validates their lengths.
                 assert!(!unsafe {
                     decode_with_backend(format, &vec![0; input_len], &mut output, backend)
                 });

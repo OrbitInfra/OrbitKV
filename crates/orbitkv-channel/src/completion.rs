@@ -176,6 +176,8 @@ impl RestoreCompletions {
             return Err(CompletionError::InvalidMapping);
         }
         // The sealed memfd cannot shrink. All offsets are aligned AtomicU64s.
+        // SAFETY: the fd is retained and size-sealed against growth/shrink. Only aligned
+        // atomic words are accessed through this shared mapping.
         let map = unsafe { MmapOptions::new().len(MAPPING_BYTES).map_mut(&file)? };
         Ok(Self {
             file,
@@ -213,6 +215,8 @@ impl RestoreCompletions {
 
     fn word(&self, offset: usize) -> &AtomicU64 {
         assert!(offset.is_multiple_of(8) && offset + 8 <= self.map.len());
+        // SAFETY: the assertion checks alignment and the full word range in the live mmap;
+        // all processes access these words atomically, including during slot reuse.
         unsafe { &*self.map.as_ptr().add(offset).cast::<AtomicU64>() }
     }
 

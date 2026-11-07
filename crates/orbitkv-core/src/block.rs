@@ -131,11 +131,6 @@ impl Segment {
     }
 }
 
-// Safety: Segment holds NonNull<u8> pointing to pinned memory whose lifetime
-// is managed by Arc<PinnedAllocation>. PinnedAllocation itself is Send+Sync.
-unsafe impl Send for Segment {}
-unsafe impl Sync for Segment {}
-
 /// Storage-level block: an ordered list of opaque memory segments.
 /// No awareness of K/V layout -- that's the caller's concern.
 ///

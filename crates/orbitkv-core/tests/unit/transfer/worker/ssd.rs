@@ -140,12 +140,16 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
             format,
         }];
         // The input and borrowed codec output remain alive through the copy.
+        // SAFETY: input is an owned CudaSlice and stays live through the codec
+        // drain and snapshot copy; the borrowed arena output is not reused early.
         let batch = unsafe { codec.encode_batch(&stream, &inputs, CODEC_BUDGET) }.unwrap();
         assert_eq!(batch.processed, 1);
         let output = batch.outputs[0].as_ref().expect("real ANS encoding");
         assert_eq!(output.meta.format, StorageFormat::Ans);
         assert!(output.meta.stored_bytes < BYTES);
         let snapshot = stream.alloc_zeros::<u8>(output.meta.stored_bytes).unwrap();
+        // SAFETY: batch retains output and snapshot has exactly stored_bytes;
+        // both allocations remain live until stream.synchronize below.
         let copied = unsafe {
             result::memcpy_dtod_async(
                 snapshot.device_ptr(&stream).0,
@@ -192,6 +196,8 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
         .allocate(NonZeroU64::new(padded as u64).unwrap(), None)
         .unwrap();
     // This allocation is exclusively owned until its sealed block is ingested.
+    // SAFETY: allocation is fresh and exclusively owned for padded bytes;
+    // it is not published or submitted until this initialization ends.
     unsafe {
         let target = std::slice::from_raw_parts_mut(allocation.as_non_null().as_ptr(), padded);
         target.fill(0);

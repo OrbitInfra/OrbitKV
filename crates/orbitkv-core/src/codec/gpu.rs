@@ -436,6 +436,8 @@ impl GpuCodec {
             // never temporarily doubles the configured resident GPU budget.
             self.release_arena()?;
             // cuMemAlloc (not the async pool) also permits cuFileBufRegister.
+            // SAFETY: prepare bound this codec's retained CUDA context on the worker thread.
+            // The new allocation is immediately owned by Arena and released only after drain.
             let allocation = unsafe { result::malloc_sync(bytes) }.map_err(|e| e.to_string())?;
             let base = allocation.next_multiple_of(ALIGNMENT as u64);
             self.arena = Some(Arc::new(Arena {
@@ -666,6 +668,8 @@ impl GpuCodec {
             self.upload_header(stream, &layout, base)?;
             // Initialize reused output storage. nvCOMP may use bytes beyond its
             // final payload length; consumers copy only the reported payload.
+            // SAFETY: layout.payload..layout.end lies inside the reserved arena. The stream
+            // orders initialization before codec reads; Drain holds the arena through completion.
             unsafe {
                 result::memset_d8_async(
                     base + layout.payload as u64,
@@ -1052,6 +1056,8 @@ impl GpuCodec {
             if let Some(data_type) = ans_type(entries[group.range.start].format) {
                 let library = self.ans.as_ref().ok_or("nvCOMP not initialized")?;
                 let batch = layout.device_batch(base, group);
+                // SAFETY: device_batch addresses the validated header/payload regions of the
+                // retained arena; the enclosing Drain keeps every input/output alive on this stream.
                 unsafe {
                     if encode {
                         library.encode_batch(stream, batch, data_type)?;
@@ -1118,6 +1124,8 @@ impl GpuCodec {
             .arg(&statuses)
             .arg(&partials)
             .arg(&encode);
+        // SAFETY: header, per-tile partials and descriptors occupy disjoint validated
+        // arena ranges; the kernel signature matches these arguments and Drain retains them.
         unsafe {
             launch.launch(LaunchConfig {
                 grid_dim: (max_tiles, entries.len() as u32, 1),
@@ -1133,6 +1141,8 @@ impl GpuCodec {
             .arg(&partials)
             .arg(&checksums)
             .arg(&encode);
+        // SAFETY: the preceding CRC launch writes the partials on the same stream. The
+        // validated arena owns all inputs and checksum outputs through the enclosing drain.
         unsafe {
             launch.launch(LaunchConfig {
                 grid_dim: (entries.len() as u32, 1, 1),

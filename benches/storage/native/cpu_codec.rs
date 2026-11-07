@@ -48,6 +48,8 @@ mod cpu {
         match (backend, encoding) {
             // SAFETY: forced backends come only from selected(), which checks OS/ISA support.
             (Some(backend), true) => unsafe { encode_with_backend(format, input, output, backend) },
+            // SAFETY: backend selection above checks runtime ISA support; input and
+            // output are borrowed, disjoint slices with lengths checked by the codec.
             (Some(backend), false) => unsafe {
                 decode_with_backend(format, input, output, backend)
             },

@@ -212,6 +212,8 @@ fn publish_send_retention_child() {
                 filter: filter.as_mut_ptr(),
             };
             // Limit the fault to this CPU fixture thread's adaptive queue wait.
+            // SAFETY: the filter/program arrays remain live until prctl copies them;
+            // the filter applies only to this disposable fixture thread.
             unsafe {
                 assert_eq!(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), 0);
                 assert_eq!(libc::prctl(libc::PR_SET_SECCOMP, 2, &program), 0);

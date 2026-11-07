@@ -24,12 +24,18 @@ fn pinned_aliases_transfer_bytes_and_release_the_actual_slot() {
     let destination_weak = Arc::downgrade(&destination_allocation);
     let generation = source_allocation.id;
     let aliases = thread::scope(|scope| {
+        // SAFETY: the scoped thread borrows the retained allocation; no byte access
+        // occurs while it constructs the shared canonical registration.
         let first = scope.spawn(|| unsafe { source_allocation.orbite_memory().unwrap() });
+        // SAFETY: the second scoped thread retains the same allocation and only
+        // constructs an alias protected by the registration cache lock.
         let second = scope.spawn(|| unsafe { source_allocation.orbite_memory().unwrap() });
         [first.join().unwrap(), second.join().unwrap()]
     });
     assert!(Arc::ptr_eq(&aliases[0], &aliases[1]));
     // No CPU/device access outside these canonical OrbiTE views is active.
+    // SAFETY: the destination allocation stays owned through transfer drain,
+    // and the test performs no conflicting host access.
     let destination_memory = unsafe { destination_allocation.orbite_memory().unwrap() };
     let original = (0..512)
         .map(|index| (index % 251) as u8)
@@ -138,6 +144,8 @@ fn detached_transfer_retains_pinned_slot_after_cancel_unregister_and_wait_timeou
     let weak_allocation = Arc::downgrade(&allocation);
     let weak_pool = Arc::downgrade(&allocation.pool);
     // The test owns this allocation exclusively outside the OrbiTE access lock.
+    // SAFETY: allocation owns the pinned bytes throughout registration and
+    // the delayed completion control; the test does not release it on timeout.
     let memory = unsafe { allocation.orbite_memory().unwrap() };
     let source = TransferEngine::new(EngineConfig::default()).unwrap();
     let remote = source

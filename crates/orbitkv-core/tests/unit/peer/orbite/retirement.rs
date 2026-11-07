@@ -93,6 +93,8 @@ fn read(peer: &Arc<PeerIdentity>, local: &RegisteredMemory, remote: &RegisteredM
     }];
     // SAFETY: real host registrations and source bytes remain owned through drain.
     assert_eq!(
+        // SAFETY: the source export and destination registration remain owned
+        // through this transfer and its retirement wait; host reads follow drain.
         unsafe {
             op.transfer(
                 crate::transfer_engine::TransferOp::Read,

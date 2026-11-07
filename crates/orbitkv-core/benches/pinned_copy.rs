@@ -132,6 +132,8 @@ impl TransferFixture {
 
 impl Drop for TransferFixture {
     fn drop(&mut self) {
+        // SAFETY: this fixture exclusively owns both allocations; every copy is
+        // synchronous and has completed before their sole matching frees.
         unsafe {
             if self.device_ptr != 0 {
                 // SAFETY: self.device_ptr was allocated by cuMemAlloc_v2 and has not been freed.

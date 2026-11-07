@@ -67,7 +67,9 @@ Trace an incident through its owner:
 
 Default deployments use native TENT payloads and OrbitKV source-control RPCs.
 TENT v0.3.14 at `1198515d` requires all four runtime libraries, including
-`libtent_metrics.so` even with metrics disabled. Generic C errors propagate
+`libtent_metrics.so` even with metrics disabled. Forced-TCP controls require `MC_TENT_CONF` unset before startup; a conflict now
+returns a configuration error instead of mutating process environment. Explicit
+NIC filters use the fork's thread-local whitelist. Generic C errors propagate
 negative native codes: -135 maps to `Unquiesced`, -134 to `Unavailable`, and -2
 to `ResourceExhausted`. The asynchronous terminal query gives logical evidence
 only. Source/file drain uses independent contracts; never release or replay on

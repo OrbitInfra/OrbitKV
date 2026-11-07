@@ -28,6 +28,8 @@ fn main() {
     println!("=== mmap(MAP_POPULATE) + cudaHostRegister ===");
     {
         let start = Instant::now();
+        // SAFETY: this requests a fresh anonymous private mapping; failure is
+        // checked before the pointer is passed to CUDA.
         let ptr = unsafe {
             libc::mmap(
                 ptr::null_mut(),
@@ -49,6 +51,8 @@ fn main() {
             );
 
             let reg_start = Instant::now();
+            // SAFETY: ptr owns a writable size-byte mmap in the current CUDA
+            // context and the example submits no work using the registration.
             let result = unsafe { rt::cudaHostRegister(ptr, size, rt::cudaHostRegisterDefault) };
             let reg_elapsed = reg_start.elapsed();
 
@@ -61,11 +65,16 @@ fn main() {
                     "  TOTAL:       {:8.2}ms",
                     (mmap_elapsed + reg_elapsed).as_secs_f64() * 1000.0
                 );
-                unsafe { rt::cudaHostUnregister(ptr) };
+                // SAFETY: the registration succeeded and no transfers were submitted;
+                // ptr and its backing remain valid throughout deregistration.
+                let result = unsafe { rt::cudaHostUnregister(ptr) };
+                assert_eq!(result, rt::cudaError::cudaSuccess);
             } else {
                 println!("  cudaHostRegister FAILED: {:?}", result);
             }
 
+            // SAFETY: no transfer was submitted, registration is absent or successfully
+            // removed, and this is the exact base/length of the owned private mapping.
             unsafe { libc::munmap(ptr, size) };
         }
     }
@@ -76,6 +85,8 @@ fn main() {
         let aligned_size = (size + MB_2 - 1) & !(MB_2 - 1);
 
         let start = Instant::now();
+        // SAFETY: this requests a new private huge-page mapping; the returned
+        // address is checked before any access or CUDA registration.
         let ptr = unsafe {
             libc::mmap(
                 ptr::null_mut(),
@@ -100,6 +111,8 @@ fn main() {
 
             let reg_start = Instant::now();
             let result =
+                // SAFETY: ptr owns aligned_size mapped bytes in the current context;
+                // the example retains the mapping and submits no native transfers.
                 unsafe { rt::cudaHostRegister(ptr, aligned_size, rt::cudaHostRegisterDefault) };
             let reg_elapsed = reg_start.elapsed();
 
@@ -112,11 +125,16 @@ fn main() {
                     "  TOTAL:       {:8.2}ms",
                     (mmap_elapsed + reg_elapsed).as_secs_f64() * 1000.0
                 );
-                unsafe { rt::cudaHostUnregister(ptr) };
+                // SAFETY: registration succeeded, its backing remains mapped, and the
+                // example has submitted no transfers using it.
+                let result = unsafe { rt::cudaHostUnregister(ptr) };
+                assert_eq!(result, rt::cudaError::cudaSuccess);
             } else {
                 println!("  cudaHostRegister FAILED: {:?}", result);
             }
 
+            // SAFETY: this is the exact owned huge-page mmap base and size;
+            // registration is absent or successfully removed, with no submitted work.
             unsafe { libc::munmap(ptr, aligned_size) };
         }
     }
