@@ -1305,25 +1305,33 @@ impl<'a> Decoder<'a> {
 
     fn u16(&mut self) -> Result<u16, CacheProtocolError> {
         Ok(u16::from_le_bytes(
-            self.bytes(2)?.try_into().expect("fixed slice"),
+            self.bytes(2)?
+                .try_into()
+                .map_err(|_| CacheProtocolError::Truncated)?,
         ))
     }
 
     fn u32(&mut self) -> Result<u32, CacheProtocolError> {
         Ok(u32::from_le_bytes(
-            self.bytes(4)?.try_into().expect("fixed slice"),
+            self.bytes(4)?
+                .try_into()
+                .map_err(|_| CacheProtocolError::Truncated)?,
         ))
     }
 
     fn i32(&mut self) -> Result<i32, CacheProtocolError> {
         Ok(i32::from_le_bytes(
-            self.bytes(4)?.try_into().expect("fixed slice"),
+            self.bytes(4)?
+                .try_into()
+                .map_err(|_| CacheProtocolError::Truncated)?,
         ))
     }
 
     fn u64(&mut self) -> Result<u64, CacheProtocolError> {
         Ok(u64::from_le_bytes(
-            self.bytes(8)?.try_into().expect("fixed slice"),
+            self.bytes(8)?
+                .try_into()
+                .map_err(|_| CacheProtocolError::Truncated)?,
         ))
     }
 

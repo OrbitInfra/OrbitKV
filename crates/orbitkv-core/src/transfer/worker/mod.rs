@@ -91,17 +91,17 @@ impl TransferPayload {
     fn is_external(&self) -> bool {
         matches!(self, Self::Ssd { .. } | Self::Peer { .. })
     }
-    pub(crate) fn raw(&self) -> &RawBlock {
+    pub(crate) fn raw(&self) -> Result<&RawBlock, EngineError> {
         match self {
-            Self::Peer { .. } => unreachable!("peer sources do not own host memory"),
-            Self::Pending => unreachable!("unallocated save"),
-            Self::Ssd { .. } => unreachable!("SSD sources do not own host memory"),
-            Self::Owned(block) => block,
+            Self::Peer { .. } | Self::Pending | Self::Ssd { .. } => Err(EngineError::Storage(
+                "transfer payload has no host residency".into(),
+            )),
+            Self::Owned(block) => Ok(block),
             Self::Cached {
                 sealed, slot_id, ..
             } => sealed
                 .get_slot(*slot_id)
-                .expect("cached slot_id validated at construction"),
+                .ok_or_else(|| EngineError::Storage("cached transfer slot is missing".into())),
         }
     }
 
@@ -489,7 +489,7 @@ impl GpuWorkerPool {
             }
             sender
                 .as_ref()
-                .expect("encoded writeback worker initialized")
+                .ok_or_else(|| EngineError::Storage("encoded writeback worker has no sender".into()))?
                 .send(command)
         } else if matches!(&command, WorkerCommand::Load(task, _) if task.plan.ssd_path() == Some(crate::SsdReadPath::Uring)) {
             let mut sender = self.ssd_host_tx.lock();
@@ -502,7 +502,7 @@ impl GpuWorkerPool {
                     }
                 }
             }
-            sender.as_ref().expect("SSD host worker initialized").send(command)
+            sender.as_ref().ok_or_else(|| EngineError::Storage("SSD host worker has no sender".into()))?.send(command)
         } else if disk {
             let mut sender = self.ssd_tx.lock();
             if sender.is_none() {
@@ -516,7 +516,7 @@ impl GpuWorkerPool {
             }
             sender
                 .as_ref()
-                .expect("SSD worker initialized")
+                .ok_or_else(|| EngineError::Storage("SSD worker has no sender".into()))?
                 .send(command)
         } else {
             match command {
@@ -628,7 +628,7 @@ impl GpuWorkerPool {
             let target_shape = task
                 .plan
                 .target_shape()
-                .expect("restore target shape bound before cost observation");
+                .ok_or_else(|| EngineError::Storage("restore target shape is not bound".into()))?;
             debug_assert_eq!(target_shape.device_id(), self.device_id);
             debug_assert_eq!(target_shape.bytes(), bytes);
             debug_assert_eq!(target_shape.fragments(), transfer_shape(&task.layers).1);
@@ -991,7 +991,7 @@ fn worker_loop(
                             runtime.backend.as_ref(),
                             &runtime.stream,
                             &copies,
-                            &host_owners(layers),
+                            &host_owners(layers)?,
                             true,
                             runtime.max_dma_pitch,
                         )?;
@@ -1336,17 +1336,25 @@ pub(crate) fn append_copy_descs(
     }
 }
 
-fn host_owners(layers: &[LayerTransferData]) -> Vec<crate::transfer_engine::local::LocalHost> {
+fn host_owners(
+    layers: &[LayerTransferData],
+) -> Result<Vec<crate::transfer_engine::local::LocalHost>, EngineError> {
     let mut seen = std::collections::HashSet::new();
-    layers
+    let mut owners = Vec::new();
+    for block in layers
         .iter()
         .flat_map(|layer| &layer.blocks)
         .filter(|block| !block.block.is_external())
-        .flat_map(|block| block.block.raw().allocations())
-        .filter(|allocation| seen.insert(Arc::as_ptr(allocation) as usize))
-        .cloned()
-        .map(crate::transfer_engine::local::LocalHost::Pinned)
-        .collect()
+    {
+        for allocation in block.block.raw()?.allocations() {
+            if seen.insert(Arc::as_ptr(allocation) as usize) {
+                owners.push(crate::transfer_engine::local::LocalHost::Pinned(
+                    allocation.clone(),
+                ));
+            }
+        }
+    }
+    Ok(owners)
 }
 
 /// Encoded/SSD restore and Publish retain layer payloads until their physical route
@@ -1370,7 +1378,7 @@ fn build_copy_descs(layers: &[LayerTransferData]) -> Result<(Vec<CopyDesc>, usiz
             if block.block.is_external() {
                 continue;
             }
-            let raw = block.block.raw();
+            let raw = block.block.raw()?;
             if raw.encoding.is_some() {
                 continue;
             }
@@ -1470,7 +1478,7 @@ fn process_save_task(
         backend,
         stream,
         &copies,
-        &host_owners(layers),
+        &host_owners(layers)?,
         false,
         runtime.max_dma_pitch,
     )?;

@@ -98,7 +98,8 @@ async fn sustained_all_to_all_stream_churn_is_exact_bounded_and_etcd_constant() 
             node.present[key] = true;
             let medium = medium(source, key);
             node.inventory
-                .test_change(&node.keys[key], medium, Some(metadata(medium)));
+                .test_change(&node.keys[key], medium, Some(metadata(medium)))
+                .unwrap();
         }
     }
     let fences = nodes
@@ -138,7 +139,8 @@ async fn sustained_all_to_all_stream_churn_is_exact_bounded_and_etcd_constant() 
                 node.sequence[key] = node.head;
                 node.present[key] = false;
                 node.inventory
-                    .test_change(&node.keys[key], medium(source, key), None);
+                    .test_change(&node.keys[key], medium(source, key), None)
+                    .unwrap();
             }
             for offset in 0..WINDOW_SHIFT {
                 let key = (previous + ACTIVE_KEYS + offset) % KEYS_PER_SOURCE;
@@ -147,7 +149,8 @@ async fn sustained_all_to_all_stream_churn_is_exact_bounded_and_etcd_constant() 
                 node.present[key] = true;
                 let medium = medium(source, key);
                 node.inventory
-                    .test_change(&node.keys[key], medium, Some(metadata(medium)));
+                    .test_change(&node.keys[key], medium, Some(metadata(medium)))
+                    .unwrap();
             }
             node.window = (previous + WINDOW_SHIFT) % KEYS_PER_SOURCE;
         }

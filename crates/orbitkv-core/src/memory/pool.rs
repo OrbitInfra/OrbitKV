@@ -144,27 +144,32 @@ impl PinnedAllocation {
         MappedPinnedPtr::new(self.as_non_null(), self.device_ptr)
     }
 
-    pub(crate) fn mapped_ptr_at(&self, offset: usize, size: usize) -> MappedPinnedPtr {
+    pub(crate) fn mapped_ptr_at(
+        &self,
+        offset: usize,
+        size: usize,
+    ) -> Result<MappedPinnedPtr, crate::EngineError> {
         let alloc_size = self.allocation.size_bytes.get() as usize;
-        assert!(
-            offset
-                .checked_add(size)
-                .is_some_and(|end| end <= alloc_size),
-            "mapped device pointer range exceeds pinned allocation"
-        );
-        self.mapped_ptr().add(offset)
+        if offset.checked_add(size).is_none_or(|end| end > alloc_size) {
+            return Err(crate::EngineError::InvalidArgument(
+                "mapped pointer range exceeds pinned allocation".into(),
+            ));
+        }
+        Ok(self.mapped_ptr().add(offset))
     }
 
     pub(crate) fn mapped_ptr_for_host_range(
         &self,
         host_ptr: NonNull<u8>,
         size: usize,
-    ) -> MappedPinnedPtr {
+    ) -> Result<MappedPinnedPtr, crate::EngineError> {
         let base = self.ptr.as_ptr() as usize;
         let host = host_ptr.as_ptr() as usize;
-        let offset = host
-            .checked_sub(base)
-            .expect("host pointer is before pinned allocation base");
+        let offset = host.checked_sub(base).ok_or_else(|| {
+            crate::EngineError::InvalidArgument(
+                "host pointer is before pinned allocation base".into(),
+            )
+        })?;
         self.mapped_ptr_at(offset, size)
     }
 }
@@ -224,12 +229,7 @@ impl PinnedMemoryPool {
         use_hugepages: bool,
         unit_size_hint: Option<NonZeroU64>,
         node: NumaNode,
-    ) -> Self {
-        assert!(
-            pool_size != 0,
-            "Pinned memory pool size must be greater than zero"
-        );
-
+    ) -> Result<Self, String> {
         let pages = if use_hugepages {
             PagePolicy::HugePages
         } else {
@@ -237,10 +237,9 @@ impl PinnedMemoryPool {
         };
         info!("Allocating shared pinned pool on {} with {:?}", node, pages);
         let backing = Arc::new(
-            PinnedMemory::allocate(pool_size, pages, node)
-                .expect("Failed to allocate shared pinned memory pool"),
+            PinnedMemory::allocate(pool_size, pages, node).map_err(|error| error.to_string())?,
         );
-        let local_pin = backend::pin(&backing);
+        let local_pin = backend::pin(&backing)?;
 
         let actual_size = backing.size() as u64;
         let unit_size = Self::compute_unit_size(actual_size, unit_size_hint);
@@ -255,6 +254,17 @@ impl PinnedMemoryPool {
             ByteSize(allocatable_bytes)
         );
 
+        let allocator = ScaledOffsetAllocator::new_with_unit_size_and_max_allocs(
+            actual_size,
+            unit_size,
+            Self::MAX_ALLOCS,
+        )
+        .map_err(|error| error.to_string())?;
+
+        let id = NEXT_ARENA_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .map_err(|_| "payload arena identity exhausted".to_string())?;
+
         let metrics = core_metrics();
         if let Ok(capacity_i64) = i64::try_from(allocatable_bytes) {
             metrics.pool_capacity_bytes.add(capacity_i64, &[]);
@@ -265,30 +275,14 @@ impl PinnedMemoryPool {
             );
         }
 
-        let allocator = ScaledOffsetAllocator::new_with_unit_size_and_max_allocs(
-            actual_size,
-            unit_size,
-            Self::MAX_ALLOCS,
-        )
-        .unwrap_or_else(|err| {
-            panic!(
-                "Failed to create memory allocator (size={}, unit={}): {}",
-                ByteSize(actual_size),
-                ByteSize(unit_size),
-                err
-            )
-        });
-
-        Self {
-            id: NEXT_ARENA_ID
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-                .expect("payload arena identity exhausted"),
+        Ok(Self {
+            id,
             next_allocation_id: AtomicU64::new(1),
             backing,
             _local_pin: local_pin,
             allocator: Mutex::new(allocator),
             allocatable_bytes,
-        }
+        })
     }
 
     /// Allocate pinned memory from the pool. Returns None when the allocation cannot be satisfied.
@@ -328,15 +322,10 @@ impl PinnedMemoryPool {
         );
 
         let offset = allocation.offset_bytes as usize;
-        // SAFETY: the allocator and preceding bounds assertion keep this offset inside
-        // the retained pinned host mapping.
-        let ptr = unsafe { self.backing.as_ptr().add(offset) };
-        // This is address arithmetic inside the validated CUDA mapping; the
-        // result is used only as a device address, never dereferenced by Rust.
-        let device_ptr = self.backing.device_ptr().as_ptr().wrapping_add(offset);
-        let ptr = NonNull::new(ptr as *mut u8).expect("PinnedMemoryPool returned null pointer");
-        let device_ptr =
-            NonNull::new(device_ptr).expect("PinnedMemoryPool returned null device pointer");
+        let mapped =
+            MappedPinnedPtr::new(self.backing.as_non_null(), self.backing.device_ptr()).add(offset);
+        let ptr = mapped.host();
+        let device_ptr = mapped.device();
 
         if let Ok(size_i64) = i64::try_from(size_bytes) {
             core_metrics().pool_used_bytes.add(size_i64, &[]);
@@ -433,7 +422,7 @@ impl ShardedPinnedPool {
         use_hugepages: bool,
         unit_size_hint: Option<NonZeroU64>,
         node: NumaNode,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let num_shards = num_shards.max(1);
         let per_shard = total_capacity / num_shards;
 
@@ -449,19 +438,14 @@ impl ShardedPinnedPool {
 
         let shards: Vec<Arc<PinnedMemoryPool>> = (0..num_shards)
             .map(|_| {
-                Arc::new(PinnedMemoryPool::new(
-                    per_shard,
-                    use_hugepages,
-                    unit_size_hint,
-                    node,
-                ))
+                PinnedMemoryPool::new(per_shard, use_hugepages, unit_size_hint, node).map(Arc::new)
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
 
-        Self {
+        Ok(Self {
             shards,
             cursor: AtomicUsize::new(0),
-        }
+        })
     }
 
     /// Allocate from shards using round-robin with fallback to all shards.
@@ -540,23 +524,20 @@ impl NumaAwarePinnedPools {
     /// - Each NUMA node gets `total_capacity / num_nodes` bytes
     /// - Pools are allocated on threads pinned to their respective NUMA nodes
     ///
-    /// # Panics
-    /// Panics if any NUMA pool allocation fails. This is a fail-fast behavior
-    /// to prevent silent partial failures that would cause mysterious allocation
-    /// errors later when GPUs try to use the missing pool.
+    /// Returns an error if any NUMA pool allocation or thread setup fails.
     fn new(
         total_capacity: usize,
         numa_nodes: &[NumaNode],
         num_shards: usize,
         use_hugepages: bool,
         unit_size_hint: Option<NonZeroU64>,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let num_nodes = numa_nodes.len();
         if num_nodes == 0 {
             warn!("No NUMA nodes provided, creating empty NumaAwarePinnedPools");
-            return Self {
+            return Ok(Self {
                 pools: HashMap::new(),
-            };
+            });
         }
 
         let per_node_capacity = total_capacity / num_nodes;
@@ -590,27 +571,17 @@ impl NumaAwarePinnedPools {
                 )
             });
 
-            match result {
-                Ok(pool) => {
-                    info!(
-                        "Created pinned pool on NUMA{}: capacity={}",
-                        node_id,
-                        ByteSize(per_node_capacity as u64)
-                    );
-                    pools.insert(node_id, pool);
-                }
-                Err(e) => {
-                    panic!(
-                        "Failed to create pool on NUMA{}: {}. \
-                         This is a fatal error during initialization. \
-                         Please check system resources or disable NUMA affinity.",
-                        node_id, e
-                    );
-                }
-            }
+            let pool =
+                result.map_err(|error| format!("NUMA{node_id} pool initialization: {error}"))??;
+            info!(
+                "Created pinned pool on NUMA{}: capacity={}",
+                node_id,
+                ByteSize(per_node_capacity as u64)
+            );
+            pools.insert(node_id, pool);
         }
 
-        Self { pools }
+        Ok(Self { pools })
     }
 
     /// Allocate memory from the pool for a specific NUMA node.
@@ -685,14 +656,14 @@ impl PinnedAllocator {
         num_shards: usize,
         use_hugepages: bool,
         unit_hint: Option<NonZeroU64>,
-    ) -> Self {
-        Self::Global(ShardedPinnedPool::new(
+    ) -> Result<Self, String> {
+        Ok(Self::Global(ShardedPinnedPool::new(
             capacity,
             num_shards,
             use_hugepages,
             unit_hint,
             NumaNode::UNKNOWN,
-        ))
+        )?))
     }
 
     /// Create a new NUMA-aware allocator.
@@ -704,20 +675,20 @@ impl PinnedAllocator {
         num_shards: usize,
         use_hugepages: bool,
         unit_hint: Option<NonZeroU64>,
-    ) -> Self {
+    ) -> Result<Self, String> {
         if numa_nodes.is_empty() {
             warn!(
                 "NUMA allocator requested but no nodes provided, falling back to global allocator"
             );
             return Self::new_global(capacity, num_shards, use_hugepages, unit_hint);
         }
-        Self::Numa(NumaAwarePinnedPools::new(
+        Ok(Self::Numa(NumaAwarePinnedPools::new(
             capacity,
             numa_nodes,
             num_shards,
             use_hugepages,
             unit_hint,
-        ))
+        )?))
     }
 
     /// Allocate pinned memory.

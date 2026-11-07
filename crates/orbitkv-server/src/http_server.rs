@@ -43,9 +43,14 @@ struct InstancesResponse {
     instances: Vec<String>,
 }
 
-async fn list_instances_handler(State(state): State<AppState>) -> Json<InstancesResponse> {
-    let instances = state.engine.list_instance_ids();
-    Json(InstancesResponse { instances })
+async fn list_instances_handler(
+    State(state): State<AppState>,
+) -> Result<Json<InstancesResponse>, (StatusCode, String)> {
+    let instances = state
+        .engine
+        .list_instance_ids()
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(InstancesResponse { instances }))
 }
 
 #[derive(Deserialize)]
@@ -81,9 +86,18 @@ async fn cleanup_handler(
     State(state): State<AppState>,
     Query(query): Query<CleanupQuery>,
 ) -> impl IntoResponse {
-    let ids = query
+    let ids = match query
         .id
-        .map_or_else(|| state.engine.list_instance_ids(), |id| vec![id]);
+        .map_or_else(|| state.engine.list_instance_ids(), |id| Ok(vec![id]))
+    {
+        Ok(ids) => ids,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error.to_string().into_response(),
+            );
+        }
+    };
     let mut removed_tensors = 0;
     let mut removed_instances = Vec::new();
     for id in ids {
@@ -115,14 +129,17 @@ async fn cleanup_handler(
 /// Drops resident in-memory cache blocks while preserving backing-store data.
 async fn cleanup_memory_cache_handler(
     State(state): State<AppState>,
-) -> Json<MemoryCacheCleanupResponse> {
-    let stats = state.engine.cleanup_memory_cache();
-    Json(MemoryCacheCleanupResponse {
+) -> Result<Json<MemoryCacheCleanupResponse>, (StatusCode, String)> {
+    let stats = state
+        .engine
+        .cleanup_memory_cache()
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(MemoryCacheCleanupResponse {
         evicted_blocks: stats.evicted_blocks,
         evicted_bytes: stats.evicted_bytes,
         reclaimed_bytes: stats.reclaimed_bytes,
         still_referenced_blocks: stats.still_referenced_blocks,
-    })
+    }))
 }
 
 #[derive(Serialize)]

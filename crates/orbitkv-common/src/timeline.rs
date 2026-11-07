@@ -466,13 +466,16 @@ impl BufferedTimeline {
         if !first_flush && late_records == 0 {
             return None;
         }
-        if overflow || ready != reserved || late_records != 0 {
-            let reason = match (overflow, ready != reserved, late_records != 0) {
-                (_, true, _) => "slot_not_ready",
-                (true, false, _) => "capacity_exceeded",
-                (false, false, true) => "post_seal_record",
-                (false, false, false) => unreachable!(),
-            };
+        let reason = if ready != reserved {
+            Some("slot_not_ready")
+        } else if overflow {
+            Some("capacity_exceeded")
+        } else if late_records != 0 {
+            Some("post_seal_record")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
             write(diagnostic_limit_event(
                 reason,
                 self.slots.len() as u64,

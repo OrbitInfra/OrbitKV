@@ -350,8 +350,10 @@ fn record_tier_attribution(
     if total == 0 {
         return;
     }
-    let attribution = TierAttribution::classify(total, hit, loading, loading_source);
-    record_cache_tier_block_requests(total, attribution);
+    match TierAttribution::classify(total, hit, loading, loading_source) {
+        Ok(attribution) => record_cache_tier_block_requests(total, attribution),
+        Err(error) => warn!("Cannot record tier attribution: {error}"),
+    }
 }
 
 fn build_ready_result(

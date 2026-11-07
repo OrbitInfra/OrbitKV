@@ -425,12 +425,12 @@ fn transfer_cost_shape_uses_logical_ranges_and_actual_encoding() {
     use crate::memory::pool::PinnedAllocator;
     use orbitkv_state::StorageFormat;
 
-    let pool = PinnedAllocator::new_global(4096, 1, false, None);
+    let pool = PinnedAllocator::new_global(4096, 1, false, None).unwrap();
     let block = |bytes: usize| {
         let allocation = pool
             .allocate(NonZeroU64::new(bytes as u64).unwrap(), NumaNode::UNKNOWN)
             .unwrap();
-        RawBlock::single_segment(Segment::new(allocation.as_non_null(), bytes, allocation))
+        RawBlock::single_segment(Segment::new(allocation.as_non_null(), bytes, allocation).unwrap())
     };
     let mut encoded = block(512);
     encoded.storage_format = StorageFormat::Ans;
@@ -571,12 +571,12 @@ fn raw_source_ranges_are_checked_before_appending_descriptors() {
     use crate::memory::pool::PinnedAllocator;
     use crate::transfer::layout::BlockCopy;
 
-    let pool = PinnedAllocator::new_global(4096, 1, false, None);
+    let pool = PinnedAllocator::new_global(4096, 1, false, None).unwrap();
     let segment = |bytes| {
         let allocation = pool
             .allocate(NonZeroU64::new(bytes as u64).unwrap(), NumaNode::UNKNOWN)
             .unwrap();
-        Segment::new(allocation.as_non_null(), bytes, allocation)
+        Segment::new(allocation.as_non_null(), bytes, allocation).unwrap()
     };
     let contiguous = RawBlock::single_segment(segment(32));
     let split = RawBlock::two_segments(segment(16), segment(12));
@@ -688,7 +688,7 @@ fn managed_restore_retains_sources_and_reservations_through_partial_submission_d
     let target = stream.alloc_zeros::<u8>(32).unwrap();
     let device = target.device_ptr(&stream).0;
     stream.synchronize().unwrap();
-    let pool = PinnedAllocator::new_global(4096, 1, false, None);
+    let pool = PinnedAllocator::new_global(4096, 1, false, None).unwrap();
     let allocation = pool
         .allocate(NonZeroU64::new(32).unwrap(), NumaNode::UNKNOWN)
         .unwrap();
@@ -696,7 +696,8 @@ fn managed_restore_retains_sources_and_reservations_through_partial_submission_d
     unsafe {
         allocation.as_non_null().as_ptr().write_bytes(0x5a, 32);
     };
-    let raw = RawBlock::single_segment(Segment::new(allocation.as_non_null(), 32, allocation));
+    let raw =
+        RawBlock::single_segment(Segment::new(allocation.as_non_null(), 32, allocation).unwrap());
     let source = Arc::new(SealedBlock::from_slots(vec![(raw, NumaNode::UNKNOWN)]));
     let weak = Arc::downgrade(&source);
     let budget = crate::query::QueryBudget::new(32, 32).unwrap();
@@ -992,5 +993,17 @@ fn missing_orbite_worker_engine_is_rejected_before_cuda_initialization() {
             .err()
             .expect("an OrbiTE worker needs its selected engine even without networking");
         assert!(error.to_string().contains("local-only OrbiTE"), "{error}");
+    }
+}
+
+#[test]
+fn nonresident_payloads_return_errors_without_host_access() {
+    let missing = TransferPayload::Cached {
+        sealed: Arc::new(SealedBlock::from_slots(Vec::new())),
+        slot_id: 0,
+        offset: 0,
+    };
+    for payload in [TransferPayload::Pending, missing] {
+        assert!(matches!(payload.raw(), Err(EngineError::Storage(_))));
     }
 }

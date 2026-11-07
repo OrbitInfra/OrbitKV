@@ -115,17 +115,20 @@ and [adapter contracts](adapters.md).
   rejects missing or mismatched OrbiTE local-copy engines, including local-only
   mode. Wire/lifecycle, bounded budgets and drain contracts are unchanged; installed
   GPU/RDMA/GDS qualification remains open.
-- [x] C3a implemented for review: workspace unsafe-block documentation lint,
+- [x] C3a accepted (`7f68a1a6`): workspace unsafe-block documentation lint,
   owner/aliasing/FFI invariants, and removal of redundant unsafe auto-trait impls.
   TENT construction no longer mutates process environment, raw Rust submissions
   require an unsafe caller contract, and failed local import uses the existing
   unregister-before-unmap owner. Pinned-pool cleanup also fails closed on refused
   unregister. C2 tensor metadata and reverse-engine selection
   controls are included. Wire and physical-drain receipts are unchanged; installed
-  GPU/RDMA/GDS qualification remains open. Stop for review before C3b.
-- [ ] C3b: remove non-test source panic sites (including the pool registration
-  `expect`s and payload `unreachable!` arms) and enable `unwrap_used`,
-  `expect_used` and `panic` for source; list any justified infallible exceptions.
+  GPU/RDMA/GDS qualification remains open.
+- [x] C3b implemented for review: source `unwrap_used`, `expect_used` and `panic`
+  lints; fallible pool, payload, lease and Manager boundaries; three documented
+  infallible expectations. Pinned-pool cleanup retains mappings on cudart unloading
+  at exit, with a CPU-shim child-process control for unloading and other errors.
+  Timeout/cancellation/unknown-drain ownership and wire receipts are unchanged.
+  Installed GPU/RDMA/GDS qualification remains open. Stop for review before C4.
 - [x] OrbiTE SSD file-segment integration implemented for io_uring, CUDA staging
   and opt-in native-only GDS, preserving OrbitKV placement, extents and index
   publication. A3 below removes the temporary native fallback. CPU file/lifetime

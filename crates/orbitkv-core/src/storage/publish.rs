@@ -361,25 +361,37 @@ fn insert_partial_slots(
     let mut completed = false;
     for (slot_id, block) in slots {
         match inflight_block.insert_slot(slot_id, block, numa_node) {
-            SlotInsertResult::Inserted {
+            Ok(SlotInsertResult::Inserted {
                 completed: c,
                 footprint_added,
-            } => {
+            }) => {
                 *inflight_bytes_added = inflight_bytes_added.saturating_add(footprint_added);
                 completed = c;
                 if completed {
                     break;
                 }
             }
-            SlotInsertResult::Duplicate => {}
+            Ok(SlotInsertResult::Duplicate) => {}
+            Err(error) => {
+                log::error!("Cannot insert publish slot: {error}");
+                return;
+            }
         }
     }
 
     if completed {
-        let inflight_block = inflight.remove(&key).expect("just inserted");
+        let Some(inflight_block) = inflight.remove(&key) else {
+            return;
+        };
         let total_footprint = inflight_block.footprint();
         *inflight_bytes_removed = inflight_bytes_removed.saturating_add(total_footprint);
-        let sealed = Arc::new(inflight_block.seal());
+        let sealed = match inflight_block.seal() {
+            Ok(block) => Arc::new(block),
+            Err(error) => {
+                log::error!("Cannot publish incomplete block: {error}");
+                return;
+            }
+        };
 
         sealed_blocks.push((key, sealed));
     }

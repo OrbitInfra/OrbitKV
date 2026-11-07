@@ -86,8 +86,9 @@ async fn reclaim_preserves_residents_and_rechecks_real_contiguous_capacity() {
             let allocation = storage
                 .allocate(NonZeroU64::new(PAGE as u64).unwrap(), None)
                 .unwrap();
-            let slot =
-                RawBlock::single_segment(Segment::new(allocation.as_non_null(), PAGE, allocation));
+            let slot = RawBlock::single_segment(
+                Segment::new(allocation.as_non_null(), PAGE, allocation).unwrap(),
+            );
             blocks.push((
                 StateKey::new("ns".into(), vec![i]),
                 Arc::new(SealedBlock::from_slots(vec![(slot, NumaNode::UNKNOWN)])),

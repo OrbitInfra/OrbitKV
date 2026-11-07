@@ -260,6 +260,13 @@ impl HllTracker {
     /// `total_requests` is used as the denominator. This is used by the
     /// miss-only reference: only cache misses enter HLL, but every queried
     /// block still contributes to the total observation count.
+    #[cfg_attr(
+        not(test),
+        expect(
+            clippy::expect_used,
+            reason = "exclusive access: an empty deque always gets a slot above and no slot is removed before this borrow"
+        )
+    )]
     pub(crate) fn record_hashes_with_total<T: AsRef<[u8]>>(
         &mut self,
         hashes: &[T],
@@ -295,7 +302,10 @@ impl HllTracker {
             });
         }
 
-        let slot = self.slots.back_mut().unwrap();
+        let slot = self
+            .slots
+            .back_mut()
+            .expect("active slot inserted before recording");
         for hash in hashes {
             slot.hll.insert(hash.as_ref());
         }

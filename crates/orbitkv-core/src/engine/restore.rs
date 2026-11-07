@@ -240,12 +240,14 @@ impl OrbitKVEngine {
                     if !used {
                         return None;
                     }
-                    let RestoreSource::Memory(source) = source else {
-                        unreachable!("raw plan contains only checked DRAM sources")
-                    };
-                    Some(source)
+                    Some(match source {
+                        RestoreSource::Memory(source) => Ok(source),
+                        _ => Err(EngineError::Storage(
+                            "raw plan contains a non-DRAM source".into(),
+                        )),
+                    })
                 })
-                .collect();
+                .collect::<Result<_, _>>()?;
             return Ok(RestoreExecution::Local(RawRestoreGrant {
                 plans,
                 sources,
@@ -436,7 +438,9 @@ impl PreparedRestore {
                 for segment in 0..if layout.geometry().is_split() { 2 } else { 1 } {
                     for &(block, source) in &group.targets {
                         let RestoreSource::Memory(sealed) = sources[source] else {
-                            unreachable!("raw sources checked above")
+                            return Err(EngineError::Storage(
+                                "raw plan contains a non-DRAM source".into(),
+                            ));
                         };
                         let slot = sealed.get_slot(layer.slot_id).ok_or_else(|| {
                             EngineError::Storage("missing raw source slot".into())

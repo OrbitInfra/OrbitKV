@@ -307,11 +307,14 @@ async fn dispatch_prefetch_batch(
                     let _ = done_tx.send(result);
                     return true;
                 };
-                segments.push(Segment::new(
-                    allocation.mapped_ptr().host(),
-                    size as usize,
-                    allocation,
-                ));
+                match Segment::new(allocation.mapped_ptr().host(), size as usize, allocation) {
+                    Ok(segment) => segments.push(segment),
+                    Err(error) => {
+                        let _ =
+                            done_tx.send(Err(crate::PeerError::InvalidRequest(error.to_string())));
+                        return true;
+                    }
+                }
             }
             let mut raw = RawBlock::new(segments);
             raw.encoding = meta.encoding.clone();

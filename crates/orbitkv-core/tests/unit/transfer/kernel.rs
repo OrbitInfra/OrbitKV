@@ -53,7 +53,7 @@ fn kernel_matches_direct_both_directions() {
     let memory = PinnedMemory::allocate(total, PagePolicy::Regular, NumaNode::UNKNOWN)
         .expect("shared pinned payload backing");
     let host = MappedHost {
-        host: memory.as_ptr().cast_mut(),
+        host: memory.as_non_null().as_ptr(),
         device: memory.device_ptr().as_ptr() as u64,
     };
     let device = alloc_device(total);

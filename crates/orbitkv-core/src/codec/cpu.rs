@@ -140,15 +140,15 @@ fn value(bits: u8) -> f32 {
     }
 }
 
-fn tables(format: StorageFormat) -> &'static Tables {
+fn tables(format: StorageFormat) -> Option<&'static Tables> {
     static BF16: OnceLock<Tables> = OnceLock::new();
     static FP16: OnceLock<Tables> = OnceLock::new();
     let table = match format {
         StorageFormat::Fp8FromBf16 => &BF16,
         StorageFormat::Fp8FromFp16 => &FP16,
-        _ => unreachable!("exact segments bypass quantization"),
+        _ => return None,
     };
-    table.get_or_init(|| {
+    Some(table.get_or_init(|| {
         let bf = format == StorageFormat::Fp8FromBf16;
         let levels: Vec<_> = (0..127).map(value).collect();
         let encode = (0..=u16::MAX)
@@ -184,7 +184,7 @@ fn tables(format: StorageFormat) -> &'static Tables {
             }) as i32
         });
         Tables { encode, decode }
-    })
+    }))
 }
 
 pub(crate) fn encode(format: StorageFormat, input: &[u8], output: &mut [u8]) -> bool {
@@ -202,7 +202,9 @@ unsafe fn encode_with_backend(
     if output.len().checked_mul(2) != Some(input.len()) {
         return false;
     }
-    let table = tables(format);
+    let Some(table) = tables(format) else {
+        return false;
+    };
     let start = match backend {
         Backend::Scalar => Some(0),
         #[cfg(target_arch = "x86_64")]
@@ -242,7 +244,9 @@ unsafe fn decode_with_backend(
     if input.len().checked_mul(2) != Some(output.len()) {
         return false;
     }
-    let table = tables(format);
+    let Some(table) = tables(format) else {
+        return false;
+    };
     let start = match backend {
         Backend::Scalar => 0,
         #[cfg(target_arch = "x86_64")]

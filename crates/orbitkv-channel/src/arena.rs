@@ -119,15 +119,15 @@ impl DescriptorArena {
     ) -> Result<Self, ArenaError> {
         let file = File::from(fd);
         let map = map_file(&file, arena_bytes)?;
-        let magic = read_u32(&map, 0);
+        let magic = read_u32(&map, 0)?;
         if magic != ARENA_MAGIC {
             return Err(ArenaError::InvalidMagic(magic));
         }
-        let version = read_u16(&map, 4);
+        let version = read_u16(&map, 4)?;
         if version != ARENA_VERSION {
             return Err(ArenaError::UnsupportedVersion(version));
         }
-        let session_epoch = read_u64(&map, 8);
+        let session_epoch = read_u64(&map, 8)?;
         if session_epoch != expected_session_epoch {
             return Err(ArenaError::SessionMismatch {
                 expected: expected_session_epoch,
@@ -135,7 +135,7 @@ impl DescriptorArena {
             });
         }
         let encoded_bytes =
-            usize::try_from(read_u64(&map, 16)).map_err(|_| ArenaError::FieldOverflow {
+            usize::try_from(read_u64(&map, 16)?).map_err(|_| ArenaError::FieldOverflow {
                 field: "arena_bytes",
             })?;
         if encoded_bytes != arena_bytes {
@@ -144,9 +144,9 @@ impl DescriptorArena {
                 actual: encoded_bytes,
             });
         }
-        let slot_capacity = read_u32(&map, 24) as usize;
+        let slot_capacity = read_u32(&map, 24)? as usize;
         let layout = ArenaLayout::new(arena_bytes, slot_capacity)?;
-        let encoded_slots = read_u32(&map, 28) as usize;
+        let encoded_slots = read_u32(&map, 28)? as usize;
         if encoded_slots != layout.slot_count {
             return Err(ArenaError::LengthMismatch {
                 expected: layout.slot_count,
@@ -247,7 +247,7 @@ impl DescriptorArena {
                 actual: actual_generation,
             });
         }
-        let actual_len = read_u32(&map, slot_header + 8) as usize;
+        let actual_len = read_u32(&map, slot_header + 8)? as usize;
         if actual_len != descriptor.len as usize {
             return Err(ArenaError::LengthMismatch {
                 expected: descriptor.len as usize,
@@ -370,16 +370,34 @@ fn map_file(file: &File, len: usize) -> Result<MmapMut, ArenaError> {
     unsafe { MmapOptions::new().len(len).map_mut(file) }.map_err(ArenaError::System)
 }
 
-fn read_u16(bytes: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes(bytes[offset..offset + 2].try_into().expect("fixed slice"))
+fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, ArenaError> {
+    let value = bytes
+        .get(offset..)
+        .and_then(|bytes| bytes.first_chunk::<2>())
+        .ok_or(ArenaError::InvalidOffset {
+            offset: offset as u64,
+        })?;
+    Ok(u16::from_le_bytes(*value))
 }
 
-fn read_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("fixed slice"))
+fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, ArenaError> {
+    let value = bytes
+        .get(offset..)
+        .and_then(|bytes| bytes.first_chunk::<4>())
+        .ok_or(ArenaError::InvalidOffset {
+            offset: offset as u64,
+        })?;
+    Ok(u32::from_le_bytes(*value))
 }
 
-fn read_u64(bytes: &[u8], offset: usize) -> u64 {
-    u64::from_le_bytes(bytes[offset..offset + 8].try_into().expect("fixed slice"))
+fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, ArenaError> {
+    let value = bytes
+        .get(offset..)
+        .and_then(|bytes| bytes.first_chunk::<8>())
+        .ok_or(ArenaError::InvalidOffset {
+            offset: offset as u64,
+        })?;
+    Ok(u64::from_le_bytes(*value))
 }
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {

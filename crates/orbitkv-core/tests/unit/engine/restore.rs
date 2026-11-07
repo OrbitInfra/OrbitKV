@@ -9,12 +9,13 @@ use crate::{NumaNode, QueryAdmission, QueryMode, QueryOwner};
 
 #[test]
 fn raw_grant_retains_allocation_and_query_charge_until_explicit_finish() {
-    let pool = PinnedAllocator::new_global(512, 1, false, None);
+    let pool = PinnedAllocator::new_global(512, 1, false, None).unwrap();
     let allocation = pool
         .allocate(NonZeroU64::new(512).unwrap(), NumaNode::UNKNOWN)
         .unwrap();
     let allocation_owner = Arc::downgrade(&allocation);
-    let slot = RawBlock::single_segment(Segment::new(allocation.as_non_null(), 512, allocation));
+    let slot =
+        RawBlock::single_segment(Segment::new(allocation.as_non_null(), 512, allocation).unwrap());
     let block = Arc::new(SealedBlock::from_slots(vec![(slot, NumaNode::UNKNOWN)]));
     let source_owner = Arc::downgrade(&block);
     let budget = crate::query::QueryBudget::new(512, 512).unwrap();
@@ -30,12 +31,14 @@ fn raw_grant_retains_allocation_and_query_charge_until_explicit_finish() {
         revision: 1,
     };
     let leases = QueryLeaseManager::default();
-    let lease = leases.create(
-        "engine",
-        vec![RestoreSource::Memory(block)],
-        1,
-        Some((owner, reservation)),
-    );
+    let lease = leases
+        .create(
+            "engine",
+            vec![RestoreSource::Memory(block)],
+            1,
+            Some((owner, reservation)),
+        )
+        .unwrap();
     let groups = vec![RestoreGroup {
         layers: vec![RestoreLayer {
             name: "layer_99".into(),
@@ -99,7 +102,9 @@ fn raw_grant_retains_allocation_and_query_charge_until_explicit_finish() {
         cost_key: None,
         decode_admission: None,
     };
-    leases.release_owner(|candidate| candidate.session == 1);
+    leases
+        .release_owner(|candidate| candidate.session == 1)
+        .unwrap();
     assert!(source_owner.upgrade().is_some());
     assert!(allocation_owner.upgrade().is_some());
     assert!(
@@ -135,14 +140,17 @@ fn raw_grant_retains_allocation_and_query_charge_until_explicit_finish() {
 
 #[test]
 fn raw_plan_rejection_preserves_lease_before_source_bounds_or_plan_limit_failure() {
-    let pool = PinnedAllocator::new_global(512, 1, false, None);
+    let pool = PinnedAllocator::new_global(512, 1, false, None).unwrap();
     let allocation = pool
         .allocate(NonZeroU64::new(512).unwrap(), NumaNode::UNKNOWN)
         .unwrap();
-    let slot = RawBlock::single_segment(Segment::new(allocation.as_non_null(), 16, allocation));
+    let slot =
+        RawBlock::single_segment(Segment::new(allocation.as_non_null(), 16, allocation).unwrap());
     let block = Arc::new(SealedBlock::from_slots(vec![(slot, NumaNode::UNKNOWN)]));
     let leases = QueryLeaseManager::default();
-    let lease = leases.create("engine", vec![RestoreSource::Memory(block)], 1, None);
+    let lease = leases
+        .create("engine", vec![RestoreSource::Memory(block)], 1, None)
+        .unwrap();
     let layout = KVCacheLayout::bind(
         0x1000,
         32,
@@ -172,7 +180,7 @@ fn raw_plan_rejection_preserves_lease_before_source_bounds_or_plan_limit_failure
         );
     }
     assert!(
-        leases.release(&lease),
+        leases.release(&lease).unwrap(),
         "rejected plan must leave its lease available"
     );
 }
@@ -181,7 +189,7 @@ fn raw_plan_rejection_preserves_lease_before_source_bounds_or_plan_limit_failure
 fn raw_plan_orders_permuted_pages_and_compacts_only_matching_allocations() {
     for split in [false, true] {
         for sparse in [false, true] {
-            let pool = PinnedAllocator::new_global(1024, 1, false, None);
+            let pool = PinnedAllocator::new_global(1024, 1, false, None).unwrap();
             let allocations: Vec<_> = (0..if split { 2 } else { 1 })
                 .map(|_| {
                     pool.allocate(NonZeroU64::new(128).unwrap(), NumaNode::UNKNOWN)
@@ -197,7 +205,7 @@ fn raw_plan_orders_permuted_pages_and_compacts_only_matching_allocations() {
                         .map(|allocation| {
                             // SAFETY: four 32-byte pages are inside each retained allocation.
                             let pointer = unsafe { allocation.as_non_null().add(block * 32) };
-                            Segment::new(pointer, 32, Arc::clone(allocation))
+                            Segment::new(pointer, 32, Arc::clone(allocation)).unwrap()
                         })
                         .collect();
                     RestoreSource::Memory(Arc::new(SealedBlock::from_slots(vec![(
@@ -247,11 +255,9 @@ fn raw_plan_orders_permuted_pages_and_compacts_only_matching_allocations() {
                 segments as usize * if sparse { 4 } else { 1 }
             );
             for (segment, allocation) in allocations.iter().enumerate() {
-                let base = RawBlock::single_segment(Segment::new(
-                    allocation.as_non_null(),
-                    128,
-                    Arc::clone(allocation),
-                ))
+                let base = RawBlock::single_segment(
+                    Segment::new(allocation.as_non_null(), 128, Arc::clone(allocation)).unwrap(),
+                )
                 .source_range(0, 0, 128)
                 .unwrap();
                 let copies = &plan.copies[segment * if sparse { 4 } else { 1 }..]
@@ -269,14 +275,16 @@ fn raw_plan_orders_permuted_pages_and_compacts_only_matching_allocations() {
         }
     }
 
-    let pool = PinnedAllocator::new_global(1024, 1, false, None);
+    let pool = PinnedAllocator::new_global(1024, 1, false, None).unwrap();
     let sources: Vec<_> = (0..2)
         .map(|_| {
             let allocation = pool
                 .allocate(NonZeroU64::new(512).unwrap(), NumaNode::UNKNOWN)
                 .unwrap();
             RestoreSource::Memory(Arc::new(SealedBlock::from_slots(vec![(
-                RawBlock::single_segment(Segment::new(allocation.as_non_null(), 512, allocation)),
+                RawBlock::single_segment(
+                    Segment::new(allocation.as_non_null(), 512, allocation).unwrap(),
+                ),
                 NumaNode::UNKNOWN,
             )])))
         })
@@ -331,7 +339,7 @@ fn large_plan_compacts_or_partitions_after_global_validation_and_preserves_rejec
         (false, "x".repeat(1024), Some("metadata limit")),
     ] {
         let size = if contiguous { COUNT * 32 } else { 32 };
-        let pool = PinnedAllocator::new_global(size.max(512), 1, false, None);
+        let pool = PinnedAllocator::new_global(size.max(512), 1, false, None).unwrap();
         let allocation = pool
             .allocate(NonZeroU64::new(size as u64).unwrap(), NumaNode::UNKNOWN)
             .unwrap();
@@ -344,13 +352,15 @@ fn large_plan_compacts_or_partitions_after_global_validation_and_preserves_rejec
                         .add(if contiguous { page * 32 } else { 0 })
                 };
                 RestoreSource::Memory(Arc::new(SealedBlock::from_slots(vec![(
-                    RawBlock::single_segment(Segment::new(pointer, 32, Arc::clone(&allocation))),
+                    RawBlock::single_segment(
+                        Segment::new(pointer, 32, Arc::clone(&allocation)).unwrap(),
+                    ),
                     NumaNode::UNKNOWN,
                 )])))
             })
             .collect();
         let leases = QueryLeaseManager::default();
-        let lease = leases.create("engine", sources, 1, None);
+        let lease = leases.create("engine", sources, 1, None).unwrap();
         let layout = KVCacheLayout::bind(
             0x1000,
             COUNT * 32,
@@ -381,7 +391,7 @@ fn large_plan_compacts_or_partitions_after_global_validation_and_preserves_rejec
         if let Some(expected) = rejection {
             assert!(prepared.err().unwrap().to_string().contains(expected));
             assert!(
-                leases.release(&lease),
+                leases.release(&lease).unwrap(),
                 "rejected plan must preserve the lease"
             );
             continue;
@@ -399,7 +409,7 @@ fn large_plan_compacts_or_partitions_after_global_validation_and_preserves_rejec
         assert_eq!(fragments, copies.len());
         assert_eq!(bytes, (COUNT * 32) as u64);
         assert!(
-            !leases.release(&lease),
+            !leases.release(&lease).unwrap(),
             "accepted parts share one consumed lease"
         );
         if contiguous {

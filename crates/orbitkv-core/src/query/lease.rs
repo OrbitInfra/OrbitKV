@@ -76,7 +76,9 @@ impl QueryLeaseManager {
                 interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 loop {
                     interval.tick().await;
-                    inner.sweep_expired();
+                    if let Err(error) = inner.sweep_expired() {
+                        log::error!("Query lease sweep retained owners: {error}");
+                    }
                 }
             })
         });
@@ -90,8 +92,8 @@ impl QueryLeaseManager {
         blocks: Vec<RestoreSource>,
         consumers: usize,
         ownership: Option<(QueryOwner, QueryReservation)>,
-    ) -> QueryLeaseId {
-        self.sweep_expired();
+    ) -> Result<QueryLeaseId, EngineError> {
+        self.sweep_expired()?;
         debug_assert!(!blocks.is_empty(), "query leases require ready blocks");
 
         let token = QueryLeaseId::fresh();
@@ -102,21 +104,22 @@ impl QueryLeaseManager {
             expires_at: Instant::now() + DEFAULT_LEASE_TTL,
             ownership,
         };
-        self.inner.insert(token, lease);
-        token
+        self.inner.insert(token, lease)?;
+        Ok(token)
     }
 
-    pub(crate) fn claim(&self, token: &QueryLeaseId) {
+    pub(crate) fn claim(&self, token: &QueryLeaseId) -> Result<(), EngineError> {
         let leases = self
             .inner
             .leases
             .lock()
-            .expect("query leases lock poisoned");
+            .map_err(|_| EngineError::Poisoned("query leases"))?;
         if let Some(lease) = leases.get(token)
             && let Some((_, reservation)) = &lease.ownership
         {
             reservation.claim();
         }
+        Ok(())
     }
 
     pub(crate) fn validate_registration<'a>(
@@ -156,7 +159,7 @@ impl QueryLeaseManager {
             .inner
             .leases
             .lock()
-            .expect("query leases lock poisoned");
+            .map_err(|_| EngineError::Poisoned("query leases"))?;
         let now = Instant::now();
         let mut seen = HashSet::with_capacity(tokens.len());
         for token in tokens {
@@ -187,9 +190,9 @@ impl QueryLeaseManager {
         let mut blocks = Vec::with_capacity(sources.iter().map(|blocks| blocks.len()).sum());
         let mut reservations = Vec::with_capacity(tokens.len());
         for token in tokens {
-            let lease = leases
-                .get_mut(token)
-                .expect("validated query lease disappeared during consume");
+            let lease = leases.get_mut(token).ok_or_else(|| {
+                EngineError::Storage("query lease disappeared during consume".into())
+            })?;
             if lease.remaining_consumers > 1 {
                 lease.remaining_consumers -= 1;
                 blocks.extend(lease.blocks.iter().cloned());
@@ -197,9 +200,9 @@ impl QueryLeaseManager {
                     reservations.push(reservation.clone());
                 }
             } else {
-                let lease = leases
-                    .remove(token)
-                    .expect("validated query lease disappeared during consume");
+                let lease = leases.remove(token).ok_or_else(|| {
+                    EngineError::Storage("query lease disappeared during consume".into())
+                })?;
                 blocks.extend(lease.blocks);
                 if let Some((_, reservation)) = lease.ownership {
                     reservations.push(reservation);
@@ -209,35 +212,40 @@ impl QueryLeaseManager {
         Ok((validated, blocks, reservations))
     }
 
-    pub(crate) fn release(&self, token: &QueryLeaseId) -> bool {
-        self.sweep_expired();
+    pub(crate) fn release(&self, token: &QueryLeaseId) -> Result<bool, EngineError> {
+        self.sweep_expired()?;
         self.inner.remove(token)
     }
 
-    pub(crate) fn release_instance(&self, instance_id: &str) {
+    pub(crate) fn release_instance(&self, instance_id: &str) -> Result<(), EngineError> {
         let mut leases = self
             .inner
             .leases
             .lock()
-            .expect("query leases lock poisoned");
+            .map_err(|_| EngineError::Poisoned("query leases"))?;
         leases.retain(|_, lease| lease.instance_id != instance_id);
+        Ok(())
     }
 
-    pub(crate) fn release_owner(&self, matches: impl Fn(QueryOwner) -> bool) {
+    pub(crate) fn release_owner(
+        &self,
+        matches: impl Fn(QueryOwner) -> bool,
+    ) -> Result<(), EngineError> {
         self.inner
             .leases
             .lock()
-            .expect("query leases lock poisoned")
+            .map_err(|_| EngineError::Poisoned("query leases"))?
             .retain(|_, lease| {
                 !lease
                     .ownership
                     .as_ref()
                     .is_some_and(|(owner, _)| matches(*owner))
             });
+        Ok(())
     }
 
-    pub(crate) fn sweep_expired(&self) {
-        self.inner.sweep_expired();
+    pub(crate) fn sweep_expired(&self) -> Result<(), EngineError> {
+        self.inner.sweep_expired()
     }
 }
 
@@ -250,27 +258,30 @@ impl Drop for QueryLeaseManager {
 }
 
 impl QueryLeaseInner {
-    fn insert(&self, token: QueryLeaseId, lease: QueryLease) {
+    fn insert(&self, token: QueryLeaseId, lease: QueryLease) -> Result<(), EngineError> {
         self.leases
             .lock()
-            .expect("query leases lock poisoned")
+            .map_err(|_| EngineError::Poisoned("query leases"))?
             .insert(token, lease);
+        Ok(())
     }
 
-    fn remove(&self, token: &QueryLeaseId) -> bool {
-        self.leases
+    fn remove(&self, token: &QueryLeaseId) -> Result<bool, EngineError> {
+        Ok(self
+            .leases
             .lock()
-            .expect("query leases lock poisoned")
+            .map_err(|_| EngineError::Poisoned("query leases"))?
             .remove(token)
-            .is_some()
+            .is_some())
     }
 
-    fn sweep_expired(&self) {
+    fn sweep_expired(&self) -> Result<(), EngineError> {
         let now = Instant::now();
         self.leases
             .lock()
-            .expect("query leases lock poisoned")
+            .map_err(|_| EngineError::Poisoned("query leases"))?
             .retain(|_, lease| lease.expires_at > now);
+        Ok(())
     }
 }
 

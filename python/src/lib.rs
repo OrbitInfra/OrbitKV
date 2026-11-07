@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 use orbitkv_channel::{
     CallOptions, Command as ChannelCommand, CommandCode, QueryOutcomeCode, StatusCode,
     TransportClient,

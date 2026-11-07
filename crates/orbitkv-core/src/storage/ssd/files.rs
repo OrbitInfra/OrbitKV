@@ -49,7 +49,7 @@ pub(super) fn aligned_shard_capacity(
             "SSD cache requires at least one shard",
         ));
     }
-    let shard_count = u64::try_from(shard_count).expect("usize fits into u64");
+    let shard_count = shard_count as u64;
     let raw = capacity_bytes / shard_count;
     // cuFile expands edge reads to 4 KiB, including the last block in a shard.
     let alignment = alignment as u64;

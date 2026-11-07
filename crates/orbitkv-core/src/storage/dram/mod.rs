@@ -125,7 +125,9 @@ impl DramStore {
                 };
                 if let Some(block) = block {
                     if !warming {
-                        retain_demand(&mut inner, key, &block);
+                        if let Err(error) = retain_demand(&mut inner, key, &block) {
+                            log::error!("DRAM retention failed: {error}");
+                        }
                         refresh_recency(&mut inner, key);
                     }
                     hit += 1;
@@ -145,8 +147,9 @@ impl DramStore {
                 .cache
                 .peek(key)
                 .is_some_and(|resident| Arc::ptr_eq(&resident, block))
+                && let Err(error) = retain_demand(&mut inner, key, block)
             {
-                retain_demand(&mut inner, key, block);
+                log::error!("DRAM retention failed: {error}");
             }
         }
     }
@@ -231,14 +234,17 @@ impl DramStore {
                 ResidentClass::Probationary,
                 ResidentClass::Retained,
             ] {
-                remove_lru_batch_from_class(
+                if let Err(error) = remove_lru_batch_from_class(
                     &mut inner,
                     class,
                     batch_size,
                     target_bytes,
                     &mut removed,
                     &mut removed_bytes,
-                );
+                ) {
+                    log::error!("DRAM eviction failed: {error}");
+                    break;
+                }
             }
             removed
         };
@@ -276,7 +282,11 @@ impl DramStore {
                 .collect::<Vec<_>>();
             if let Some(inventory) = &mut inner.inventory {
                 for entry in &removed {
-                    inventory.change(&entry.key, orbitkv_state::ReplicaMedium::Dram, None);
+                    if let Err(error) =
+                        inventory.change(&entry.key, orbitkv_state::ReplicaMedium::Dram, None)
+                    {
+                        log::error!("Inventory mutation rejected: {error:?}");
+                    }
                 }
             }
             debug_assert_eq!(
@@ -339,12 +349,14 @@ fn insert_block(
     let outcome = inner.cache.insert(key.clone(), block);
     match outcome {
         CacheInsertOutcome::InsertedNew => {
-            if let Some(inventory) = &mut inner.inventory {
-                inventory.change(
+            if let Some(inventory) = &mut inner.inventory
+                && let Err(error) = inventory.change(
                     &key,
                     orbitkv_state::ReplicaMedium::Dram,
                     Some(replica_metadata),
-                );
+                )
+            {
+                log::error!("Inventory mutation rejected: {error:?}");
             }
             class_lru(inner, class).insert(
                 key,
@@ -380,27 +392,31 @@ fn class_lru(
     }
 }
 
-fn retain_demand(inner: &mut DramStoreInner, key: &StateKey, block: &SealedBlock) {
+fn retain_demand(
+    inner: &mut DramStoreInner,
+    key: &StateKey,
+    block: &SealedBlock,
+) -> Result<(), String> {
     let from = if inner.probationary.contains_key(key) {
         ResidentClass::Probationary
     } else if block.was_warmed() {
         ResidentClass::Reclaimable
     } else {
-        return;
+        return Ok(());
     };
     if !class_lru(inner, from).contains_key(key) {
-        return;
+        return Ok(());
     }
     if inner.protected_limit > 0 {
         let Some(remaining) = inner.protected_limit.checked_sub(block.memory_footprint()) else {
-            return;
+            return Ok(());
         };
         while inner.retained_bytes > remaining {
             let key = inner
                 .retained
                 .iter()
                 .next()
-                .expect("protected bytes have an owner")
+                .ok_or("protected bytes have no resident owner")?
                 .0
                 .clone();
             move_resident(
@@ -416,6 +432,7 @@ fn retain_demand(inner: &mut DramStoreInner, key: &StateKey, block: &SealedBlock
     if inner.protected_limit > 0 {
         core_metrics().cache_policy_promotions.add(1, &[]);
     }
+    Ok(())
 }
 
 fn move_resident(
@@ -470,8 +487,10 @@ fn remove_lru(inner: &mut DramStoreInner, class: ResidentClass) -> Option<Remove
         let Some(block) = block else {
             continue;
         };
-        if let Some(inventory) = &mut inner.inventory {
-            inventory.change(&key, orbitkv_state::ReplicaMedium::Dram, None);
+        if let Some(inventory) = &mut inner.inventory
+            && let Err(error) = inventory.change(&key, orbitkv_state::ReplicaMedium::Dram, None)
+        {
+            log::error!("Inventory mutation rejected: {error:?}");
         }
         let metrics = core_metrics();
         if class == ResidentClass::Retained {
@@ -502,7 +521,7 @@ fn remove_lru_batch_from_class(
     target_bytes: u64,
     removed: &mut Vec<RemovedResident>,
     removed_bytes: &mut u64,
-) {
+) -> Result<(), String> {
     let candidates = class_lru(inner, class).len();
     for _ in 0..candidates {
         if removed.len() == batch_size || *removed_bytes >= target_bytes {
@@ -517,14 +536,15 @@ fn remove_lru_batch_from_class(
             break;
         };
         if inner.cache.is_cache_owned_only(&key) {
-            let block = remove_lru(inner, class)
-                .expect("cache-owned LRU candidate must remain resident while locked");
+            let block =
+                remove_lru(inner, class).ok_or("cache-owned LRU candidate lost its resident")?;
             *removed_bytes = removed_bytes.saturating_add(block.block.memory_footprint());
             removed.push(block);
         } else {
             class_lru(inner, class).get(&key);
         }
     }
+    Ok(())
 }
 
 fn record_residence_durations(

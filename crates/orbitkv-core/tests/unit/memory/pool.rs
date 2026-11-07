@@ -5,11 +5,11 @@ fn numa_largest_free_for_node_is_not_global_min() {
     let mut pools = HashMap::new();
     pools.insert(
         0,
-        ShardedPinnedPool::new(4096, 1, false, NonZeroU64::new(512), NumaNode::UNKNOWN),
+        ShardedPinnedPool::new(4096, 1, false, NonZeroU64::new(512), NumaNode::UNKNOWN).unwrap(),
     );
     pools.insert(
         1,
-        ShardedPinnedPool::new(4096, 1, false, NonZeroU64::new(512), NumaNode::UNKNOWN),
+        ShardedPinnedPool::new(4096, 1, false, NonZeroU64::new(512), NumaNode::UNKNOWN).unwrap(),
     );
     let allocator = PinnedAllocator::Numa(NumaAwarePinnedPools { pools });
 
@@ -39,7 +39,7 @@ fn numa_largest_free_for_unknown_node_is_zero() {
     let mut pools = HashMap::new();
     pools.insert(
         0,
-        ShardedPinnedPool::new(4096, 1, false, NonZeroU64::new(512), NumaNode::UNKNOWN),
+        ShardedPinnedPool::new(4096, 1, false, NonZeroU64::new(512), NumaNode::UNKNOWN).unwrap(),
     );
     let allocator = PinnedAllocator::Numa(NumaAwarePinnedPools { pools });
 
@@ -51,7 +51,7 @@ fn numa_largest_free_for_unknown_node_is_zero() {
 
 #[test]
 fn payload_ranges_keep_arena_identity_and_change_generation_on_offset_reuse() {
-    let pool = PinnedAllocator::new_global(512, 1, false, None);
+    let pool = PinnedAllocator::new_global(512, 1, false, None).unwrap();
     let first = pool
         .allocate(NonZeroU64::new(512).unwrap(), NumaNode::UNKNOWN)
         .unwrap();

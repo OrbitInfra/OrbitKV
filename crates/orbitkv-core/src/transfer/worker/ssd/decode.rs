@@ -99,7 +99,7 @@ pub(super) fn run(
                     {
                         input
                             .as_ref()
-                            .expect("input exists")
+                            .ok_or("missing codec input")?
                             .close()
                             .map_err(|e| e.to_string())?;
                         input = None;
@@ -130,7 +130,7 @@ pub(super) fn run(
                             .map_err(|e| e.to_string())?,
                         );
                     }
-                    let registration = input.as_ref().expect("input allocated");
+                    let registration = input.as_ref().ok_or("missing codec input")?;
                     let _loan = registration.loan(&backend).map_err(|e| e.to_string())?;
                     Ok(Arc::clone(registration))
                 })();
@@ -152,7 +152,9 @@ pub(super) fn run(
                             meta: &range.meta,
                         })
                         .collect();
-                    let codec = codec.as_mut().expect("codec initialized");
+                    let codec = codec
+                        .as_mut()
+                        .ok_or_else(|| DecodeError::Runtime("codec was not initialized".into()))?;
                     // SAFETY: the queue holds complete, disjoint input and
                     // engine destinations until this reply; no host payload.
                     unsafe { codec.decode_batch(&stream, &inputs, scratch_budget) }

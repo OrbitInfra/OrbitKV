@@ -276,18 +276,20 @@ impl CudaTensorRegistry {
         // Remove contexts under the GIL so each `Py<PyAny>` is dropped (decref)
         // there, then force gc + empty_cache to actually unmap the CUDA IPC
         // memory immediately instead of letting Python's GC defer it.
-        Python::attach(|py| {
+        Python::attach(|py| -> PyResult<()> {
             for key in &keys {
                 self.contexts.remove(key);
             }
 
-            let gc = py.import("gc").expect("gc module");
+            let gc = py.import("gc")?;
             let _ = gc.call_method0("collect");
 
-            let torch = py.import("torch").expect("torch module");
-            let cuda = torch.getattr("cuda").expect("torch.cuda");
+            let torch = py.import("torch")?;
+            let cuda = torch.getattr("cuda")?;
             let _ = cuda.call_method0("empty_cache");
-        });
+            Ok(())
+        })
+        .map_err(|error| error.to_string())?;
 
         Ok(tensor_count)
     }
@@ -436,15 +438,14 @@ pub struct RegistryHandle {
 impl RegistryHandle {
     /// Move `registry` onto a dedicated `cuda-registry` thread and return an
     /// async handle to it. The thread runs until every handle is dropped.
-    pub fn spawn(registry: CudaTensorRegistry) -> Self {
+    pub fn spawn(registry: CudaTensorRegistry) -> std::io::Result<Self> {
         // Bounds how many register/cleanup requests queue before callers await
         // for space; the actor drains them one at a time under the GIL.
         let (tx, rx) = mpsc::channel(64);
         std::thread::Builder::new()
             .name("cuda-registry".to_string())
             .spawn(move || registry_actor(registry, rx))
-            .expect("spawn cuda-registry thread");
-        Self { tx }
+            .map(|_| Self { tx })
     }
 
     /// Materialize and register a batch of layers under `context_key`. Returns
@@ -465,8 +466,15 @@ impl RegistryHandle {
             backend,
             reply,
         })
-        .await;
-        rx.await.expect("cuda-registry thread dropped reply")
+        .await
+        .map_err(|message| ImportFailure {
+            message,
+            disposition: CudaCreditDisposition::NeverImported,
+        })?;
+        rx.await.map_err(|error| ImportFailure {
+            message: format!("cuda-registry reply lost: {error}"),
+            disposition: CudaCreditDisposition::Unknown,
+        })?
     }
 
     /// Drop all CUDA tensors belonging to `instance_id`; returns the count
@@ -474,30 +482,33 @@ impl RegistryHandle {
     pub async fn drop_instance(&self, instance_id: String) -> Result<usize, String> {
         let (reply, rx) = oneshot::channel();
         self.dispatch(RegistryCommand::DropInstance { instance_id, reply })
-            .await;
-        rx.await.expect("cuda-registry thread dropped reply")
+            .await?;
+        rx.await
+            .map_err(|error| format!("cuda-registry reply lost: {error}"))?
     }
 
     /// Drop exactly one context; returns the number of CUDA tensors released.
     pub(crate) async fn drop_context(&self, context_key: ContextKey) -> Result<usize, String> {
         let (reply, rx) = oneshot::channel();
         self.dispatch(RegistryCommand::DropContext { context_key, reply })
-            .await;
-        rx.await.expect("cuda-registry thread dropped reply")
+            .await?;
+        rx.await
+            .map_err(|error| format!("cuda-registry reply lost: {error}"))?
     }
 
     /// Drop every registered tensor; returns the count released.
     pub async fn clear(&self) -> Result<usize, String> {
         let (reply, rx) = oneshot::channel();
-        self.dispatch(RegistryCommand::Clear { reply }).await;
-        rx.await.expect("cuda-registry thread dropped reply")
+        self.dispatch(RegistryCommand::Clear { reply }).await?;
+        rx.await
+            .map_err(|error| format!("cuda-registry reply lost: {error}"))?
     }
 
-    async fn dispatch(&self, cmd: RegistryCommand) {
+    async fn dispatch(&self, cmd: RegistryCommand) -> Result<(), String> {
         self.tx
             .send(cmd)
             .await
-            .expect("cuda-registry thread is gone");
+            .map_err(|_| "cuda-registry thread is gone".into())
     }
 }
 

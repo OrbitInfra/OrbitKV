@@ -179,7 +179,7 @@ fn gpu_turboquant_three_and_four_bits_preserve_key_norm_and_bound_error() {
                     )
                     .unwrap()
                     .unwrap();
-                    assert_eq!(len, 7 * vector_bytes(dim, bits, role));
+                    assert_eq!(len, 7 * vector_bytes(dim, bits, role).unwrap());
                     let bytes = stream.clone_dtoh(&output).unwrap();
                     let meta = EncodedSegment {
                         version: 1,

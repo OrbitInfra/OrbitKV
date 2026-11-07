@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 //! Raw dynamic bindings for the pinned Mooncake TENT C ABI.
 //!
 //! The sys crate builds only TENT from the pinned Mooncake submodule. Runtime
@@ -162,9 +167,16 @@ pub fn ensure_loaded() -> Result<(), String> {
     API.as_ref().map(|_| ()).map_err(Clone::clone)
 }
 
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::expect_used,
+        reason = "create and file_api check the immutable loader result; all other shims require a live engine or its notification allocation"
+    )
+)]
 fn api() -> &'static Api {
     API.as_ref()
-        .unwrap_or_else(|error| panic!("Mooncake TENT runtime unavailable: {error}"))
+        .expect("native API checked before creating an engine")
 }
 
 fn load_api() -> Result<Api, String> {
@@ -298,6 +310,7 @@ pub unsafe fn create(
     rpc_port: u64,
     nic_filter: &CStr,
 ) -> Result<NativeEngine, String> {
+    ensure_loaded()?;
     let forced_tcp = env::var_os("MC_FORCE_TCP").is_some();
     if forced_tcp && env::var_os("MC_TENT_CONF").is_some_and(|value| !value.is_empty()) {
         return Err("MC_FORCE_TCP cannot safely suppress MC_TENT_CONF in a threaded process; unset MC_TENT_CONF before startup".into());

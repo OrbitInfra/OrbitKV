@@ -40,7 +40,7 @@ async fn roundtrip(backend: SsdBackend, padded: bool) {
     env.save_all_layers_one_batch(&hashes).await;
     env.engine.flush_all().await;
     assert_eq!(
-        env.engine.cleanup_memory_cache().evicted_blocks,
+        env.engine.cleanup_memory_cache().unwrap().evicted_blocks,
         hashes.len()
     );
     let result = env.query(&hashes).await;

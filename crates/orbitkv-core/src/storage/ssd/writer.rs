@@ -140,7 +140,7 @@ pub(super) async fn ssd_writer_loop(
 
             // Priority 2: Submit pending writes if inflight has room
             _ = std::future::ready(()), if inflight.len() < max_inflight && !pending.is_empty() => {
-                let task = pending.pop_front().unwrap();
+                let Some(task) = pending.pop_front() else { continue; };
                 // Only the newest dequeued batch can still have pending tasks.
                 // This composite starts service at worker admission; low-level
                 // file submission and completion are observed by the engine boundary.

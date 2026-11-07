@@ -21,6 +21,13 @@ pub struct StorageSlot {
 
 /// Bind the adapter identity to the representation the manager actually stores.
 /// Called once when registration seals, never while probing individual blocks.
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::expect_used,
+        reason = "derived serialization contains only strings, integers, booleans and sequences; Vec writes are infallible"
+    )
+)]
 pub fn storage_namespace(identity: &str, page_first: bool, mut slots: Vec<StorageSlot>) -> String {
     slots.sort_unstable();
     slots.dedup();

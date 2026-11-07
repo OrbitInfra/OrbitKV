@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 //! Framework-neutral contracts shared by OrbitKV engine adapters.
 //!
 //! These types describe logical model state and recovery requirements without

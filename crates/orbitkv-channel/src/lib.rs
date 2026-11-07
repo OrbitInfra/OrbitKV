@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 //! Process channel between inference engines and an OrbitKV Cache Manager.
 //!
 //! Payload bytes do not travel through this crate. Messages refer to

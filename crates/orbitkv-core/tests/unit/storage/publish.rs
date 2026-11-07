@@ -11,7 +11,7 @@ fn make_raw_block(engine: &Storage, size: u64) -> RawBlock {
         .allocate(NonZeroU64::new(size).unwrap(), None)
         .expect("test pool should have space");
     let ptr = alloc.as_non_null();
-    RawBlock::new(vec![Segment::new(ptr, size as usize, alloc)])
+    RawBlock::new(vec![Segment::new(ptr, size as usize, alloc).unwrap()])
 }
 
 fn make_worker(engine: &Storage) -> PublishWorker {

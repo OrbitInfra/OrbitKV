@@ -109,7 +109,7 @@ impl Storage {
                 pool_shards,
                 use_hugepages,
                 unit_hint,
-            ))
+            )?)
         } else {
             info!("Creating global pinned pool (NUMA affinity disabled)");
             Arc::new(PinnedAllocator::new_global(
@@ -117,7 +117,7 @@ impl Storage {
                 pool_shards,
                 use_hugepages,
                 unit_hint,
-            ))
+            )?)
         };
 
         // Sub-components
@@ -203,10 +203,7 @@ impl Storage {
                     Arc::clone(ms),
                     Arc::clone(transfer),
                     allocate_fn.clone(),
-                    config
-                        .membership
-                        .clone()
-                        .expect("distributed configuration"),
+                    config.membership.clone()?,
                 )))
             });
 

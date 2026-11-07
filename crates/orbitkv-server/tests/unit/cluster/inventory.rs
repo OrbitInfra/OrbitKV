@@ -245,21 +245,27 @@ async fn stream_installs_exact_owner_views_and_recovers_overflow_without_etcd_bl
 
     let first = StateKey::new("model".into(), vec![1; 32]);
     let second = StateKey::new("model".into(), vec![2; 32]);
-    source_inventory.test_change(
-        &first,
-        ReplicaMedium::Dram,
-        Some(metadata(ReplicaMedium::Dram)),
-    );
-    source_inventory.test_change(
-        &first,
-        ReplicaMedium::Ssd,
-        Some(metadata(ReplicaMedium::Ssd)),
-    );
-    source_inventory.test_change(
-        &second,
-        ReplicaMedium::Dram,
-        Some(metadata(ReplicaMedium::Dram)),
-    );
+    source_inventory
+        .test_change(
+            &first,
+            ReplicaMedium::Dram,
+            Some(metadata(ReplicaMedium::Dram)),
+        )
+        .unwrap();
+    source_inventory
+        .test_change(
+            &first,
+            ReplicaMedium::Ssd,
+            Some(metadata(ReplicaMedium::Ssd)),
+        )
+        .unwrap();
+    source_inventory
+        .test_change(
+            &second,
+            ReplicaMedium::Dram,
+            Some(metadata(ReplicaMedium::Dram)),
+        )
+        .unwrap();
     let fence = source_runtime.capture_fence().unwrap();
     target_runtime
         .await_fence(
@@ -283,19 +289,27 @@ async fn stream_installs_exact_owner_views_and_recovers_overflow_without_etcd_bl
     gate.partition().await;
     for id in 0u32..400 {
         let key = StateKey::new("overflow".into(), id.to_le_bytes().to_vec());
-        source_inventory.test_change(
-            &key,
-            ReplicaMedium::Dram,
-            Some(metadata(ReplicaMedium::Dram)),
-        );
-        source_inventory.test_change(&key, ReplicaMedium::Dram, None);
+        source_inventory
+            .test_change(
+                &key,
+                ReplicaMedium::Dram,
+                Some(metadata(ReplicaMedium::Dram)),
+            )
+            .unwrap();
+        source_inventory
+            .test_change(&key, ReplicaMedium::Dram, None)
+            .unwrap();
     }
-    source_inventory.test_change(&first, ReplicaMedium::Dram, None);
-    source_inventory.test_change(
-        &second,
-        ReplicaMedium::Ssd,
-        Some(metadata(ReplicaMedium::Ssd)),
-    );
+    source_inventory
+        .test_change(&first, ReplicaMedium::Dram, None)
+        .unwrap();
+    source_inventory
+        .test_change(
+            &second,
+            ReplicaMedium::Ssd,
+            Some(metadata(ReplicaMedium::Ssd)),
+        )
+        .unwrap();
     let final_fence = source_runtime.capture_fence().unwrap();
     gate.heal(Duration::ZERO);
     target_runtime
@@ -397,11 +411,13 @@ async fn scoped_streams_filter_at_source_and_install_complete_empty_views() {
     let other_key = StateKey::new(other.into(), vec![7; 32]);
     let outside_key = StateKey::new(outside.into(), vec![7; 32]);
     for key in [&selected_key, &other_key, &outside_key] {
-        source_inventory.test_change(
-            key,
-            ReplicaMedium::Dram,
-            Some(metadata(ReplicaMedium::Dram)),
-        );
+        source_inventory
+            .test_change(
+                key,
+                ReplicaMedium::Dram,
+                Some(metadata(ReplicaMedium::Dram)),
+            )
+            .unwrap();
     }
     let fence = source_runtime.capture_fence().unwrap();
     for node in [&single, &multi, &empty] {
@@ -434,19 +450,27 @@ async fn scoped_streams_filter_at_source_and_install_complete_empty_views() {
     gate.partition().await;
     for id in 0u32..400 {
         let key = StateKey::new(outside.into(), id.to_le_bytes().to_vec());
-        source_inventory.test_change(
-            &key,
+        source_inventory
+            .test_change(
+                &key,
+                ReplicaMedium::Dram,
+                Some(metadata(ReplicaMedium::Dram)),
+            )
+            .unwrap();
+        source_inventory
+            .test_change(&key, ReplicaMedium::Dram, None)
+            .unwrap();
+    }
+    source_inventory
+        .test_change(&selected_key, ReplicaMedium::Dram, None)
+        .unwrap();
+    source_inventory
+        .test_change(
+            &selected_key,
             ReplicaMedium::Dram,
             Some(metadata(ReplicaMedium::Dram)),
-        );
-        source_inventory.test_change(&key, ReplicaMedium::Dram, None);
-    }
-    source_inventory.test_change(&selected_key, ReplicaMedium::Dram, None);
-    source_inventory.test_change(
-        &selected_key,
-        ReplicaMedium::Dram,
-        Some(metadata(ReplicaMedium::Dram)),
-    );
+        )
+        .unwrap();
     let repaired = source_runtime.capture_fence().unwrap();
     gate.heal(Duration::ZERO);
     single
@@ -505,11 +529,13 @@ async fn scoped_streams_filter_at_source_and_install_complete_empty_views() {
     );
 
     let before = source_inventory.sequence();
-    source_inventory.test_change(
-        &StateKey::new(outside.into(), vec![8; 32]),
-        ReplicaMedium::Ssd,
-        Some(metadata(ReplicaMedium::Ssd)),
-    );
+    source_inventory
+        .test_change(
+            &StateKey::new(outside.into(), vec![8; 32]),
+            ReplicaMedium::Ssd,
+            Some(metadata(ReplicaMedium::Ssd)),
+        )
+        .unwrap();
     let empty_interval = source_runtime.capture_fence().unwrap();
     assert!(empty_interval.inventory_sequence > before);
     single
@@ -536,12 +562,16 @@ async fn scoped_streams_filter_at_source_and_install_complete_empty_views() {
         1
     );
 
-    source_inventory.test_change(&selected_key, ReplicaMedium::Dram, None);
-    source_inventory.test_change(
-        &selected_key,
-        ReplicaMedium::Dram,
-        Some(metadata(ReplicaMedium::Dram)),
-    );
+    source_inventory
+        .test_change(&selected_key, ReplicaMedium::Dram, None)
+        .unwrap();
+    source_inventory
+        .test_change(
+            &selected_key,
+            ReplicaMedium::Dram,
+            Some(metadata(ReplicaMedium::Dram)),
+        )
+        .unwrap();
     let replacement = source_runtime.capture_fence().unwrap();
     single
         .runtime
@@ -594,11 +624,13 @@ async fn scope_change_restart_never_reuses_the_old_view_or_cursor() {
     let first_key = StateKey::new(first_namespace.into(), vec![1; 32]);
     let second_key = StateKey::new(second_namespace.into(), vec![1; 32]);
     for key in [&first_key, &second_key] {
-        source_inventory.test_change(
-            key,
-            ReplicaMedium::Dram,
-            Some(metadata(ReplicaMedium::Dram)),
-        );
+        source_inventory
+            .test_change(
+                key,
+                ReplicaMedium::Dram,
+                Some(metadata(ReplicaMedium::Dram)),
+            )
+            .unwrap();
     }
     let fence = source_runtime.capture_fence().unwrap();
     first

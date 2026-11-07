@@ -187,7 +187,7 @@ async fn concurrent_queries_with_the_same_request_id_own_distinct_results() {
 }
 
 fn cleanup_resident_memory(env: &TestEnv) {
-    let stats = env.engine.cleanup_memory_cache();
+    let stats = env.engine.cleanup_memory_cache().unwrap();
     assert!(
         stats.evicted_blocks > 0,
         "cleanup_memory_cache should evict resident blocks"
@@ -332,7 +332,7 @@ async fn ssd_reclaim_frees_pages_independently_of_a_retained_prefix() {
                 .engine
                 .create_query_lease(&env.instance_id, vec![retained])
                 .unwrap();
-            let stats = env.engine.cleanup_memory_cache();
+            let stats = env.engine.cleanup_memory_cache().unwrap();
             assert_eq!(stats.still_referenced_blocks, 1);
             assert_eq!(
                 stats.reclaimed_bytes,

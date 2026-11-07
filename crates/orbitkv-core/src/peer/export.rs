@@ -471,7 +471,7 @@ impl TransferLockManager {
         let other_bytes = inner
             .reserved_bytes
             .checked_sub(previous_bytes)
-            .expect("session reservation is included in transfer accounting");
+            .ok_or(PeerError::StaleTicket)?;
         if actual_bytes > self.budget_bytes.saturating_sub(other_bytes) {
             core_metrics()
                 .transfer_lock_rejections
@@ -482,13 +482,13 @@ impl TransferLockManager {
         let session = inner
             .windows
             .get_mut(&ticket.window)
-            .expect("validated transfer window")
+            .ok_or(PeerError::UnknownWindow)?
             .slots
             .get_mut(ticket.slot)
-            .expect("validated transfer slot")
+            .ok_or(PeerError::StaleTicket)?
             .transfer
             .as_mut()
-            .expect("validated transfer session");
+            .ok_or(PeerError::StaleTicket)?;
         session.reserved_bytes = actual_bytes;
         session.state = TransferState::Ready(blocks);
         inner.reserved_bytes = other_bytes + actual_bytes;
@@ -520,8 +520,9 @@ impl TransferLockManager {
         {
             return;
         }
-        let session = slot.transfer.take().expect("matched transfer session");
-        release_accounting(&mut inner, &session);
+        if let Some(session) = slot.transfer.take() {
+            release_accounting(&mut inner, &session);
+        }
     }
 
     /// Completion is idempotent, including unknown windows. Never close an
@@ -549,15 +550,14 @@ impl TransferLockManager {
         let Some(session) = slot.transfer.as_mut() else {
             return Ok(0);
         };
-        if let TransferState::Staging { released } = &mut session.state {
-            *released = true;
-            return Ok(0);
-        }
-        let session = slot.transfer.take().expect("ready transfer session");
-        let count = match &session.state {
+        let count = match &mut session.state {
+            TransferState::Staging { released } => {
+                *released = true;
+                return Ok(0);
+            }
             TransferState::Ready(blocks) => blocks.len(),
-            TransferState::Staging { .. } => unreachable!("staging returned above"),
         };
+        let session = slot.transfer.take().ok_or(PeerError::StaleTicket)?;
         release_accounting(&mut inner, &session);
         Ok(count)
     }

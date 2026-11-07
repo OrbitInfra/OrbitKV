@@ -13,6 +13,19 @@ source of KV truth. "Same-host" describes where the client connects; the
 Cache Manager decides whether a requested block is resident in RAM, needs SSD
 prefetch, or can be fetched from a peer with Mooncake.
 
+## Native cleanup at shutdown
+
+Native cleanup inside `Drop` cannot return a recoverable error. If cleanup fails,
+OrbitKV aborts rather than release memory a device might still touch. This covers
+CUDA allocation frees, host unregister, and restoring the caller's CUDA context;
+failed stream drain likewise cannot authorize reuse. A timeout, cancellation or
+`Unquiesced` result remains an unknown drain and retains its owners.
+
+The single cleanup exception is `cudaErrorCudartUnloading` from a pinned pool's
+runtime unregister at process exit. CUDA is destroying its contexts, so no device
+access can follow. OrbitKV logs once, skips `munmap`, and lets process exit reclaim
+the mapping. Other unregister failures still abort.
+
 ## Decision
 
 | Boundary | Control | Payload | Status |

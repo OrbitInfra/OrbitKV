@@ -16,7 +16,7 @@ fn start_endpoint() -> (ProcessEndpoint, PathBuf, Arc<Notify>) {
         Arc::new(OrbitKVEngine::new_with_config(1 << 20, false, EngineConfig::default()).unwrap());
     let lifecycle = LifecycleService::new(
         Arc::clone(&engine),
-        RegistryHandle::spawn(CudaTensorRegistry::empty()),
+        RegistryHandle::spawn(CudaTensorRegistry::empty()).unwrap(),
     );
     let shutdown = Arc::new(Notify::new());
     let id = uuid::Uuid::new_v4();

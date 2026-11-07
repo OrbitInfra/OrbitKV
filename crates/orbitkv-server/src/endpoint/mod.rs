@@ -544,7 +544,13 @@ fn dispatch(
         CommandCode::ObserveCompletion => {
             response = dispatch_completion_observation(command, bootstrap, sessions, engine);
         }
-        CommandCode::Publish => unreachable!("publish uses deferred response handling"),
+        CommandCode::Publish => {
+            return error_response(
+                response,
+                StatusCode::Invalid,
+                &"publish requires deferred response handling",
+            );
+        }
         CommandCode::Restore => {
             response = dispatch_restore(command, bootstrap, sessions, grants, engine, runtime);
         }

@@ -295,7 +295,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/orbitkv-cpu-host-control"
           c++ -std=c++20 -shared -fPIC -DORBITKV_CPU_HOST_CONTROL -x c++ crates/orbitkv-core/tests/native/source_owner_host_shim.cu -o "$RUNNER_TEMP/orbitkv-cpu-host-control/libcudart.so"
           # The shim exercises host ownership only; it is not CUDA evidence.
-          for filter in peer:: query:: planning:: cost:: metrics:: transfer_engine::tests local_only_orbite missing_orbite_worker_engine no_backend_storage; do
+          for filter in peer:: query:: planning:: cost:: metrics:: transfer_engine::tests \
+            codec:: engine::restore:: storage::inventory:: \
+            transfer::worker::drain_tests::nonresident_payloads_return_errors_without_host_access \
+            local_only_orbite missing_orbite_worker_engine no_backend_storage; do
             LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --no-default-features --features cuda-13 --lib "$filter" -- --test-threads=1
           done
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib peer::
@@ -323,6 +326,7 @@ jobs:
           export ORBITKV_REQUIRE_LOCAL_COPY_SHIM=1
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib peer::orbite::local::tests -- --ignored --test-threads=1
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib transfer::local::tests::failed_import_cleanup_preserves_registered_mapping -- --exact --ignored
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib memory::pinned::tests::unregister_failure_policy -- --exact --ignored
           cargo test --locked -p orbitkv-core --features orbite --lib peer::orbite::local::tests -- --ignored --test-threads=1
           cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,test-hooks --lib -- --test-threads=1
           cargo test --locked -p orbitkv-server --features orbite,test-hooks --lib -- --test-threads=1

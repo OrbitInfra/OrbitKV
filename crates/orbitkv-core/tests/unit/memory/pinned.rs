@@ -382,3 +382,76 @@ impl Drop for ChildGuard {
         }
     }
 }
+
+#[test]
+#[ignore = "CPU CUDA runtime shim: unloading retains mappings; other unregister failures abort"]
+fn unregister_failure_policy() {
+    use rustix::process::{Resource, Rlimit, setrlimit};
+    use std::os::unix::process::ExitStatusExt;
+    assert_eq!(
+        std::env::var("ORBITKV_REQUIRE_LOCAL_COPY_SHIM").as_deref(),
+        Ok("1")
+    );
+    let Ok(case) = std::env::var("ORBITKV_TEST_PINNED_DROP") else {
+        for case in ["success", "unloading", "failure"] {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "memory::pinned::tests::unregister_failure_policy",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("ORBITKV_TEST_PINNED_DROP", case)
+                .env_remove("ORBITKV_TEST_IMPORT_ADDRESS_FAILURE")
+                .env_remove("ORBITKV_TEST_IMPORT_UNREGISTER_FAILURE")
+                .env_remove("ORBITKV_TEST_CUDART_UNLOADING")
+                .env(
+                    if case == "unloading" {
+                        "ORBITKV_TEST_CUDART_UNLOADING"
+                    } else if case == "failure" {
+                        "ORBITKV_TEST_IMPORT_UNREGISTER_FAILURE"
+                    } else {
+                        "ORBITKV_TEST_NO_ERROR"
+                    },
+                    "1",
+                )
+                .output()
+                .unwrap();
+            if case == "failure" {
+                assert_eq!(output.status.signal(), Some(libc::SIGABRT), "{output:?}");
+            } else {
+                assert!(output.status.success(), "{output:?}");
+                assert_eq!(
+                    String::from_utf8_lossy(&output.stderr)
+                        .matches("retaining pinned mappings")
+                        .count(),
+                    usize::from(case == "unloading")
+                );
+            }
+        }
+        return;
+    };
+    setrlimit(
+        Resource::Core,
+        Rlimit {
+            current: Some(0),
+            maximum: Some(0),
+        },
+    )
+    .unwrap();
+    for _ in 0..2 {
+        let memory = PinnedMemory::allocate(4096, PagePolicy::Regular, NumaNode::UNKNOWN).unwrap();
+        let address = memory.as_non_null().as_ptr() as usize;
+        drop(memory);
+        let mapped = std::fs::read_to_string("/proc/self/maps")
+            .unwrap()
+            .lines()
+            .any(|line| {
+                let range = line.split_whitespace().next().unwrap();
+                let (start, end) = range.split_once('-').unwrap();
+                (usize::from_str_radix(start, 16).unwrap()..usize::from_str_radix(end, 16).unwrap())
+                    .contains(&address)
+            });
+        assert_eq!(mapped, case == "unloading");
+    }
+}

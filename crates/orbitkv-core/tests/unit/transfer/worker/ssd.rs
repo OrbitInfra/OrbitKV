@@ -203,8 +203,9 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
         target.fill(0);
         target[..payload.len()].copy_from_slice(&payload);
     }
-    let mut raw =
-        RawBlock::single_segment(Segment::new(allocation.as_non_null(), padded, allocation));
+    let mut raw = RawBlock::single_segment(
+        Segment::new(allocation.as_non_null(), padded, allocation).unwrap(),
+    );
     raw.storage_format = format;
     raw.encoding = encoding;
     let sealed = Arc::new(SealedBlock::from_slots(vec![(raw, NumaNode::UNKNOWN)]));

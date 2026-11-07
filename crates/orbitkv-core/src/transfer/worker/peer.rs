@@ -255,11 +255,10 @@ pub(super) fn restore(
             for decode in &batch.decodes {
                 // SAFETY: engine-complete input and actual targets outlive the codec drain.
                 unsafe {
-                    codec.as_mut().expect("codec initialized").decode_batch(
-                        &runtime.stream,
-                        std::slice::from_ref(decode),
-                        budget / 2,
-                    )
+                    codec
+                        .as_mut()
+                        .ok_or_else(|| fail("codec was not initialized".into()))?
+                        .decode_batch(&runtime.stream, std::slice::from_ref(decode), budget / 2)
                 }
                 .map_err(|e| fail(e.to_string()))?;
             }

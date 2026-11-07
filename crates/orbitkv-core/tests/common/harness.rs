@@ -502,7 +502,10 @@ impl TestEnv {
     }
 
     pub fn release(&self, lease: &QueryLeaseId) {
-        assert!(self.engine.release_query_lease(lease), "release lease");
+        assert!(
+            self.engine.release_query_lease(lease).unwrap(),
+            "release lease"
+        );
     }
 
     /// Count cache hits, then release the lease (for probing without consuming).

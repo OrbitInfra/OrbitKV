@@ -1,3 +1,8 @@
+#![allow(
+    clippy::expect_used,
+    reason = "test-only CAS pause controls must fail if their controller disappears"
+)]
+
 use std::cell::RefCell;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;

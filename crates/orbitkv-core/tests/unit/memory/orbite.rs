@@ -13,7 +13,7 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 #[test]
 #[ignore = "OrbiTE allocator hardware gate: requires a real CUDA runtime and GPU"]
 fn pinned_aliases_transfer_bytes_and_release_the_actual_slot() {
-    let allocator = PinnedAllocator::new_global(1024, 1, false, None);
+    let allocator = PinnedAllocator::new_global(1024, 1, false, None).unwrap();
     let source_allocation = allocator
         .allocate(NonZeroU64::new(512).unwrap(), NumaNode::UNKNOWN)
         .unwrap();
@@ -137,7 +137,7 @@ fn pinned_aliases_transfer_bytes_and_release_the_actual_slot() {
 #[test]
 #[ignore = "OrbiTE allocator hardware gate: requires a real CUDA runtime and GPU"]
 fn detached_transfer_retains_pinned_slot_after_cancel_unregister_and_wait_timeout() {
-    let allocator = PinnedAllocator::new_global(512, 1, false, None);
+    let allocator = PinnedAllocator::new_global(512, 1, false, None).unwrap();
     let allocation = allocator
         .allocate(NonZeroU64::new(512).unwrap(), NumaNode::UNKNOWN)
         .unwrap();

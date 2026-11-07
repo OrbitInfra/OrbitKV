@@ -342,7 +342,7 @@ async fn real_query_control_replays_claims_and_fences_replaced_registrations() {
                 .unwrap();
             engine.flush_all().await;
             if ssd {
-                let evicted = engine.cleanup_memory_cache();
+                let evicted = engine.cleanup_memory_cache().unwrap();
                 assert!(
                     evicted.evicted_blocks > 0,
                     "SSD restore must not use retained DRAM"
@@ -361,10 +361,14 @@ async fn real_query_control_replays_claims_and_fences_replaced_registrations() {
                 Arc::clone(&hll),
                 Handle::current(),
             );
-            let lifecycle = crate::cache::lifecycle::LifecycleService::new(
-                Arc::clone(&engine),
-                crate::registry::RegistryHandle::spawn(crate::registry::CudaTensorRegistry::empty()),
-            );
+            let lifecycle =
+                crate::cache::lifecycle::LifecycleService::new(
+                    Arc::clone(&engine),
+                    crate::registry::RegistryHandle::spawn(
+                        crate::registry::CudaTensorRegistry::empty(),
+                    )
+                    .unwrap(),
+                );
             let socket = directory.path().join(format!("local-{shard}.sock"));
             let mut local_endpoint = crate::endpoint::ProcessEndpoint::start(
                 format!("orbitkv/test/query-control/{shard}"),

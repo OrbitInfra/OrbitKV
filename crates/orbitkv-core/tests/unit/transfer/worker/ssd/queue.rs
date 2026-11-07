@@ -31,7 +31,8 @@ fn load_job() -> (Job, oneshot::Receiver<super::super::super::LoadOutcome>) {
                 Some(0),
             ),
         ),
-    );
+    )
+    .unwrap();
     (job, receiver)
 }
 

@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 //! OrbitKV P/D Disaggregation Router
 //!
 //! Simple router that coordinates prefill (P) and decode (D) nodes.
@@ -60,24 +65,19 @@ struct RouterState {
 }
 
 impl RouterState {
-    fn new(prefill_endpoints: Vec<String>, decode_endpoints: Vec<String>) -> Self {
+    fn new(
+        prefill_endpoints: Vec<String>,
+        decode_endpoints: Vec<String>,
+    ) -> Result<Self, reqwest::Error> {
         let prefill_clients = prefill_endpoints
             .iter()
-            .map(|_| {
-                Client::builder()
-                    .build()
-                    .expect("Failed to build prefill client")
-            })
-            .collect();
+            .map(|_| Client::builder().build())
+            .collect::<Result<Vec<_>, _>>()?;
 
         let decode_clients = decode_endpoints
             .iter()
-            .map(|_| {
-                Client::builder()
-                    .build()
-                    .expect("Failed to build decode client")
-            })
-            .collect();
+            .map(|_| Client::builder().build())
+            .collect::<Result<Vec<_>, _>>()?;
 
         let p_inflight: Vec<AtomicUsize> = prefill_endpoints
             .iter()
@@ -88,7 +88,7 @@ impl RouterState {
             .map(|_| AtomicUsize::new(0))
             .collect();
 
-        Self {
+        Ok(Self {
             prefill_clients: Arc::new(prefill_clients),
             decode_clients: Arc::new(decode_clients),
             prefill_urls: Arc::new(prefill_endpoints),
@@ -100,7 +100,7 @@ impl RouterState {
             pd_first_token: false,
             pd_flow_retries: 1,
             pd_max_model_len: 32768,
-        }
+        })
     }
 
     fn get_next_p(&self) -> (Client, String, usize) {
@@ -451,11 +451,12 @@ fn reshape_single_token_response(leg: &PrefillLeg, is_chat: bool, org_stream: bo
         sse.push_str(&format!("data: {chunk}\n\n"));
     }
     sse.push_str("data: [DONE]\n\n");
-    Response::builder()
-        .status(StatusCode::OK)
-        .header("Content-Type", "text/event-stream")
-        .body(Body::from(sse))
-        .unwrap()
+    (
+        StatusCode::OK,
+        [("Content-Type", "text/event-stream")],
+        Body::from(sse),
+    )
+        .into_response()
 }
 
 fn chat_chunk(id: &str, model: &str, delta: Value, finish: Option<&str>) -> Value {
@@ -645,13 +646,12 @@ fn stream_spliced_response(
             state.get_inflight_summary()
         );
     });
-    Response::builder()
-        .status(StatusCode::OK)
-        .header("Content-Type", "text/event-stream")
-        .body(Body::from_stream(
-            tokio_stream::wrappers::ReceiverStream::new(rx),
-        ))
-        .unwrap()
+    (
+        StatusCode::OK,
+        [("Content-Type", "text/event-stream")],
+        Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx)),
+    )
+        .into_response()
 }
 
 async fn handle_completion(
@@ -885,11 +885,12 @@ async fn handle_completion(
             rx
         });
 
-        Response::builder()
-            .status(StatusCode::OK)
-            .header("Content-Type", "text/event-stream")
-            .body(Body::from_stream(stream))
-            .unwrap()
+        (
+            StatusCode::OK,
+            [("Content-Type", "text/event-stream")],
+            Body::from_stream(stream),
+        )
+            .into_response()
     } else {
         // Non-streaming response
         let d_response = match d_client
@@ -993,13 +994,13 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     orbitkv_common::logging::init_stderr("info");
     info!("Starting orbitkv-router v{}", env!("CARGO_PKG_VERSION"));
 
     let args = Args::parse();
 
-    let mut state = RouterState::new(args.prefill.clone(), args.decode.clone());
+    let mut state = RouterState::new(args.prefill.clone(), args.decode.clone())?;
     state.pd_first_token = args.pd_first_token;
     state.pd_flow_retries = args.pd_flow_retries;
     state.pd_max_model_len = args.pd_max_model_len;
@@ -1020,6 +1021,7 @@ async fn main() {
     info!("Prefill nodes: {:?}", args.prefill);
     info!("Decode nodes: {:?}", args.decode);
 
-    let listener = TcpListener::bind(&addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let listener = TcpListener::bind(&addr).await?;
+    axum::serve(listener, app).await?;
+    Ok(())
 }

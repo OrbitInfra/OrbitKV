@@ -82,22 +82,12 @@ pub enum InventoryReadError {
     HistoryGap,
     RecordTooLarge,
     InvalidRecord,
+    SequenceExhausted,
 }
 
 impl ResidencyInventory {
     pub fn new(byte_limit: usize) -> Self {
-        Self::with_publish_coalescing(byte_limit, Duration::ZERO)
-            .expect("zero inventory coalescing window is valid")
-    }
-
-    pub fn with_publish_coalescing(
-        byte_limit: usize,
-        publish_coalesce_window: Duration,
-    ) -> Result<Self, String> {
-        if publish_coalesce_window > Duration::from_millis(5) {
-            return Err("inventory publication coalescing cannot exceed 5 ms".into());
-        }
-        Ok(Self {
+        Self {
             state: Mutex::new(Inventory {
                 residents: BTreeMap::new(),
                 journal: VecDeque::new(),
@@ -121,8 +111,20 @@ impl ResidencyInventory {
             }),
             changed: watch::channel(0).0,
             flush_requested: watch::channel(0).0,
-            publish_coalesce_window,
-        })
+            publish_coalesce_window: Duration::ZERO,
+        }
+    }
+
+    pub fn with_publish_coalescing(
+        byte_limit: usize,
+        publish_coalesce_window: Duration,
+    ) -> Result<Self, String> {
+        if publish_coalesce_window > Duration::from_millis(5) {
+            return Err("inventory publication coalescing cannot exceed 5 ms".into());
+        }
+        let mut inventory = Self::new(byte_limit);
+        inventory.publish_coalesce_window = publish_coalesce_window;
+        Ok(inventory)
     }
 
     pub(crate) fn change(
@@ -130,7 +132,7 @@ impl ResidencyInventory {
         key: &StateKey,
         medium: ReplicaMedium,
         metadata: Option<ReplicaMetadata>,
-    ) {
+    ) -> Result<(), InventoryReadError> {
         assert!(matches!(medium, ReplicaMedium::Dram | ReplicaMedium::Ssd));
         assert!(metadata.is_none_or(|value| value.medium == medium));
         let mut state = self.state.lock();
@@ -140,12 +142,12 @@ impl ResidencyInventory {
             .get(&identity)
             .and_then(|record| record.metadata);
         if old == metadata {
-            return;
+            return Ok(());
         }
         state.sequence = state
             .sequence
             .checked_add(1)
-            .expect("inventory sequence exhausted");
+            .ok_or(InventoryReadError::SequenceExhausted)?;
         let record = InventoryRecord {
             key: key.clone(),
             sequence: state.sequence,
@@ -167,6 +169,7 @@ impl ResidencyInventory {
         state.journal_bytes_peak = state.journal_bytes_peak.max(state.journal_bytes);
         state.last_change_mono_ns = monotonic_ns();
         self.changed.send_replace(state.sequence);
+        Ok(())
     }
 
     #[cfg(feature = "test-hooks")]
@@ -175,8 +178,8 @@ impl ResidencyInventory {
         key: &StateKey,
         medium: ReplicaMedium,
         metadata: Option<ReplicaMetadata>,
-    ) {
-        self.change(key, medium, metadata);
+    ) -> Result<(), InventoryReadError> {
+        self.change(key, medium, metadata)
     }
 
     pub fn sequence(&self) -> u64 {
@@ -260,6 +263,9 @@ impl ResidencyInventory {
     ) -> Result<InventoryPage, InventoryReadError> {
         let started = std::time::Instant::now();
         let mut state = self.state.lock();
+        if state.sequence == u64::MAX {
+            return Err(InventoryReadError::SequenceExhausted);
+        }
         let (records, next, complete, input_records) = {
             let mut scanned = 0usize;
             let mut scanned_bytes = 0usize;
@@ -313,6 +319,9 @@ impl ResidencyInventory {
         through: u64,
     ) -> Result<Vec<InventoryRecord>, InventoryReadError> {
         let mut state = self.state.lock();
+        if state.sequence == u64::MAX {
+            return Err(InventoryReadError::SequenceExhausted);
+        }
         if after > through
             || through > state.sequence
             || (after != state.sequence

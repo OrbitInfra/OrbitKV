@@ -102,11 +102,13 @@ async fn external_metadata_only_pressure_source() {
         .map(|key| StateKey::new(namespace.clone(), key.to_le_bytes().to_vec()))
         .collect::<Vec<_>>();
     for key in keys.iter().take(active) {
-        inventory.test_change(
-            key,
-            ReplicaMedium::Dram,
-            Some(metadata(ReplicaMedium::Dram)),
-        );
+        inventory
+            .test_change(
+                key,
+                ReplicaMedium::Dram,
+                Some(metadata(ReplicaMedium::Dram)),
+            )
+            .unwrap();
     }
     let initial_sequence = inventory.sequence();
     let ready = json!({
@@ -153,21 +155,25 @@ async fn external_metadata_only_pressure_source() {
         let sequence_before = inventory.sequence();
         if mode == "pressure" {
             for offset in 0..shift {
-                inventory.test_change(
-                    &keys[(window + offset) % keys.len()],
-                    ReplicaMedium::Dram,
-                    None,
-                );
+                inventory
+                    .test_change(
+                        &keys[(window + offset) % keys.len()],
+                        ReplicaMedium::Dram,
+                        None,
+                    )
+                    .unwrap();
                 if offset == 0 {
                     first_publication_mono_ns = inventory.status().last_change_mono_ns;
                 }
             }
             for offset in 0..shift {
-                inventory.test_change(
-                    &keys[(window + active + offset) % keys.len()],
-                    ReplicaMedium::Dram,
-                    Some(metadata(ReplicaMedium::Dram)),
-                );
+                inventory
+                    .test_change(
+                        &keys[(window + active + offset) % keys.len()],
+                        ReplicaMedium::Dram,
+                        Some(metadata(ReplicaMedium::Dram)),
+                    )
+                    .unwrap();
             }
             window = (window + shift) % keys.len();
         }
