@@ -297,7 +297,7 @@ jobs:
           # The shim exercises host ownership only; it is not CUDA evidence.
           for filter in peer:: query:: planning:: cost:: metrics:: transfer_engine::tests \
             codec:: engine::restore:: storage::inventory:: \
-            transfer::worker::tests::nonresident_payloads_return_errors_without_host_access \
+            transfer::worker::drain_tests::nonresident_payloads_return_errors_without_host_access \
             local_only_orbite missing_orbite_worker_engine no_backend_storage; do
             LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --no-default-features --features cuda-13 --lib "$filter" -- --test-threads=1
           done
