@@ -9,7 +9,7 @@
 //! keep the backing alive with its own mapping and CUDA registration after the
 //! allocating process exits.
 
-use std::io;
+use std::io::{self, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::ptr::NonNull;
 use std::sync::{Once, OnceLock};
@@ -307,20 +307,28 @@ impl Drop for PinnedMemory {
             // CUDA is destroying its contexts at process exit: no device access
             // can follow. Retain the mapping for the OS to reclaim at exit.
             UNLOADING_NOTICE.call_once(|| {
-                eprintln!(
+                let _ = writeln!(
+                    io::stderr().lock(),
                     "CUDA runtime is unloading; retaining pinned mappings until process exit"
                 );
             });
             return;
         }
         if result != rt::cudaError::cudaSuccess {
-            eprintln!("cudaHostUnregister failed: {result:?}; preserving mapping and terminating");
+            let _ = writeln!(
+                io::stderr().lock(),
+                "cudaHostUnregister failed: {result:?}; preserving mapping and terminating"
+            );
             std::process::abort();
         }
         // SAFETY: CUDA unregister succeeded after all users drained. This is the
         // exact owned mapping; other processes retain independent mappings of the file.
         if unsafe { libc::munmap(self.ptr.as_ptr().cast(), self.size) } == -1 {
-            eprintln!("Warning: munmap failed: {}", io::Error::last_os_error());
+            let _ = writeln!(
+                io::stderr().lock(),
+                "Warning: munmap failed: {}",
+                io::Error::last_os_error()
+            );
         }
     }
 }

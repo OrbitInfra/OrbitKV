@@ -254,6 +254,17 @@ impl PinnedMemoryPool {
             ByteSize(allocatable_bytes)
         );
 
+        let allocator = ScaledOffsetAllocator::new_with_unit_size_and_max_allocs(
+            actual_size,
+            unit_size,
+            Self::MAX_ALLOCS,
+        )
+        .map_err(|error| error.to_string())?;
+
+        let id = NEXT_ARENA_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .map_err(|_| "payload arena identity exhausted".to_string())?;
+
         let metrics = core_metrics();
         if let Ok(capacity_i64) = i64::try_from(allocatable_bytes) {
             metrics.pool_capacity_bytes.add(capacity_i64, &[]);
@@ -264,17 +275,8 @@ impl PinnedMemoryPool {
             );
         }
 
-        let allocator = ScaledOffsetAllocator::new_with_unit_size_and_max_allocs(
-            actual_size,
-            unit_size,
-            Self::MAX_ALLOCS,
-        )
-        .map_err(|error| error.to_string())?;
-
         Ok(Self {
-            id: NEXT_ARENA_ID
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-                .map_err(|_| "payload arena identity exhausted".to_string())?,
+            id,
             next_allocation_id: AtomicU64::new(1),
             backing,
             _local_pin: local_pin,
