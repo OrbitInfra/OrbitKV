@@ -6,8 +6,8 @@ inventory streams carry snapshots/deltas; ordinary queries use the local index,
 then obtain an authoritative source grant before OrbiTE transfers bytes.
 
 Start with [P2P deployment](p2p.md). Current support stays at four owners;
-scoped two-H20 dense RDMA serving is accepted, while full cache HA, physical
-failure domains and sixteen-owner support remain unqualified. See
+historical two-H20 RDMA evidence does not qualify the current OrbiTE path.
+Full cache HA, physical failure domains and sixteen-owner support remain unqualified. See
 [compatibility](compatibility.md).
 
 ## Local global index and etcd metadata
@@ -32,7 +32,7 @@ flowchart LR
   A <-.->|Inventory snapshots and deltas| B
   IA -->|Candidate discovery and grant request| B
   B -->|Authoritative source grant| A
-  DB -->|OrbiTE READ into consumer DRAM| DA
+  DB -->|OrbiTE READ| D[Requester GPU Restore or DRAM fill]
 ```
 
 The current format is `orbitkv/inventory-stream/v4`. Stop all Managers before
@@ -107,7 +107,7 @@ Remote DRAM transfers use a source export held through completion. Remote SSD
 is read/staged by its source owner before export. The current Manager route is
 remote DRAM/SSD → OrbiTE READ → destination GPU (or DRAM for cache-tier fills). A GPU-pointer
 RDMA component test does not imply that this route directly exports live engine
-HBM or bypasses consumer DRAM.
+HBM or qualifies GPU-direct operation.
 
 ## Transfer lifetime and resource control
 
@@ -125,10 +125,10 @@ Native engine P/D has an independent transport and destination ownership.
 
 ## Qualification and historical protocols
 
-S2 is complete for its accepted engineering scope. Same-host DRAM/io_uring
-correctness and ordinary sixteen-owner visibility pass; DRAM/SSD isolation FAIL
-and sixteen owners remain UNQUALIFIED. Three-host etcd acceptance is process-only.
-Controlled peer restart is not full cache HA or an independent fault domain.
+The [completion plan](completion-plan.md#s2--metadata-reliability-and-measured-capacity)
+records the accepted engineering scope, unchanged isolation FAIL and sixteen-owner
+UNQUALIFIED verdict. Three-host etcd acceptance is process-only; controlled peer
+restart is not full cache HA or an independent fault domain.
 
 The old per-block etcd Watch/coalescing path is retired. Current inventory
 coalescing does not put per-block writes back into etcd. Migration, quota,

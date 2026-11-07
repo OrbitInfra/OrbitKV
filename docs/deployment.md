@@ -17,10 +17,10 @@ owner; Python supplies engine callbacks, layout and GPU handoff.
 
 ## Choose a topology
 
-Start with one dense TP=1/PP=1 engine and one Manager. Then select a separately
-qualified profile: shared Manager, independent peer replicas or native P/D plus
-cache. Dense H20 single-engine/shared-Manager recovery and scoped two-H20 RDMA
-serving have acceptance; HA, physical multi-rank and container profiles remain open.
+Start with one dense TP=1/PP=1 engine and one Manager. Shared Managers, peer
+replicas and native P/D each need their own qualification.
+Historical H20 and two-host evidence is linked from [compatibility](compatibility.md);
+it does not qualify the current OrbiTE path.
 
 ```mermaid
 flowchart LR
@@ -84,11 +84,10 @@ same local socket and use different serving ports:
 | vLLM | Default `/tmp/orbitkv-50055.sock`; override `orbitkv.bootstrap_socket` in `kv_connector_extra_config` |
 | SGLang | `ORBITKV_SGLANG_ENDPOINT=unix:///tmp/orbitkv-50055.sock` |
 
-The H20 900-second two-engine direct/kernel io_uring pressure gate accepts
-correctness, progress and bounded reservations for its frozen dense eager
-configuration. It does not establish fairness, tail isolation, Manager restart
-or separate-container support. Validate each engine's recovery against its own
-native controls; see [adapter contracts](adapters.md).
+Validate each engine against its native controls. The [historical shared-Manager
+pressure record](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/deployment.md#share-one-manager)
+retains its 900-second dense eager scope, without fairness, tail-isolation,
+Manager-restart or container qualification.
 
 ## H20 direct CUDA runtime
 
@@ -126,11 +125,11 @@ and leased membership. Bounded scoped inventory streams feed local candidate
 indexes; authoritative source grants fence incarnation/generation before OrbiTE
 moves DRAM or source-side SSD-staged bytes. No per-key etcd lookup is required.
 
-Scoped two-H20 official-engine dense RDMA recovery and controlled restarts pass.
-Cache HA, permanent requester loss, independent etcd failure domains and broad
-parallelism need distinct fault evidence. Three etcd processes do not establish
+Historical two-H20 RDMA recovery and controlled restarts do not establish
+current OrbiTE qualification. Cache HA, permanent requester loss, independent
+etcd failure domains and broad parallelism need distinct fault evidence. Three etcd processes do not establish
 three independent power/network domains. See [shared-cache qualification](shared-cache-qualification.md)
-and the [S2 gates](completion-plan.md#s2--metadata-reliability-and-measured-capacity).
+and the [metadata gates](completion-plan.md#s2--metadata-reliability-and-measured-capacity).
 
 ## P/D: Mooncake or NIXL
 

@@ -47,7 +47,7 @@ impl P2pTransferService {
     fn authorization_error(error: PeerError) -> Status {
         match error {
             PeerError::Unavailable => {
-                Status::failed_precondition("OrbiTE transfer engine is not configured")
+                Status::failed_precondition("Peer transfer engine is not configured")
             }
             PeerError::StagingFailed => Status::unavailable("source SSD staging failed"),
             PeerError::StaleReplica => {
@@ -141,7 +141,7 @@ impl Engine for P2pTransferService {
 
         if !self.engine.has_remote_transport() {
             return Err(Status::failed_precondition(
-                "OrbiTE transfer engine is not configured",
+                "Peer transfer engine is not configured",
             ));
         }
 
@@ -211,7 +211,7 @@ impl Engine for P2pTransferService {
                 .engine
                 .transfer_endpoint()
                 .ok_or_else(|| {
-                    Status::failed_precondition("OrbiTE transfer engine is not configured")
+                    Status::failed_precondition("Peer transfer engine is not configured")
                 })?
                 .to_string(),
         }))

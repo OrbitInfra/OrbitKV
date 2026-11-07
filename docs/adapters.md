@@ -1,96 +1,44 @@
 # vLLM and SGLang integration
 
-> Historical qualification below applies only to its original revisions and
-> recorded backend, including TENT. OrbitKV now uses OrbiTE exclusively; all
-> current GPU/RDMA/GDS and installed profiles need fresh hardware qualification.
-> CPU/TCP and io_uring controls remain CI evidence.
-
-
-OrbitKV integrates external cache recovery with engine-owned GPU pages and
-request lifecycles. Start with the [single-node quickstart](single-node.md).
-Source/package pins are official **vLLM 0.31.0** and **SGLang 0.5.22**. The
-SGLang public load-completion path passes installed Qwen3-8B dense TP1/PP1
-DRAM/io_uring byte and model/restart controls. See [compatibility](compatibility.md).
-
-The broader workloads below retain their recorded **vLLM 0.31.0 and SGLang
-0.5.21** versions. The new 0.5.22 ordinary-cache controls do not extend their
-Graph, shared-pressure or peer-cache scope.
-
-| Recorded workload | Accepted scope and limit |
-| --- | --- |
-| [Installed ordinary cache](releases.md#validate-before-publishing) | Dense TP1/PP1 eager cold/native-HBM/full/partial recovery, DRAM/io_uring and engine restart; P/D and faults separate |
-| Explicit `--release-cuda-graph` | Qwen3-8B serial batch-1/eight-token FULL decode, direct/kernel io_uring; arbitrary shapes, hybrid, concurrency and preemption open |
-| [Shared Manager](../python/tests/README.md#two-engines-sharing-one-manager) | Two local engines and 900-second H20 dense pressure with bounded progress/resources; fairness and tail isolation open |
-| [Two H20 hosts](shared-cache-qualification.md#official-engine-cross-host-serving-restores) | Qwen3-8B TP1/PP1 eager peer DRAM/io_uring restore over TENT RDMA, consumer restart and controlled empty-source restart; HA and physical ranks open |
-
-The installed-wheel gate rejects editable/source imports and changed installed
-files. Graph evidence requires actual native runtime observations, not capture
-logs. Peer bytes land in consumer DRAM before its local GPU copy. These healthy
-controls do not prove physical fault termination, eventual reclamation or page
-reuse after a cancelled/partially submitted transfer. Historical 0.29/0.30 fork
-and topology evidence retains its original version and limits.
+Use official **vLLM 0.31.0** and **SGLang 0.5.22** with the
+[single-node quickstart](single-node.md). OrbiTE is the sole cache transfer engine;
+GPU/RDMA/GDS and installed profiles need fresh hardware qualification. Historical
+[ordinary, Graph, shared-Manager and two-host acceptances](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/adapters.md)
+retain their original releases/backend and do not carry over. Current limits are
+in [compatibility](compatibility.md), status in the [completion plan](completion-plan.md).
 
 ## Ownership contract
 
-Before queueing, adapters call native `prepare_save` at the producer handoff.
-Rust holds and budgets immutable source requests,
-batches `submit_saves`, and keeps registration/exporter owners until completion.
-`cancel_save` succeeds only before native submission. An unknown handoff keeps
-engine completion pending; SGLang also preserves its FIFO tree locks.
-
-The retained integration gates exercise native producer readiness, complete
-restored bytes and sentinels, original IPC-credit repayment and registration
-retirement on vLLM 0.31.0 and SGLang 0.5.22. The SGLang GPU-pool/linker fixture
-covers both sole ownership and an independent exporter hold;
-vLLM includes a no-fence counterfactual. SSD gates evict DRAM and require actual
-io_uring reads. These normal-path controls do not establish complete model
-shutdown, cancellation, page reuse/generations or physical-fault reclamation.
-For Restore, only cancellation of the pre-forward activation future proves
-non-submission. A `CancelledError` from submission or completion waiting keeps
-leases and GPU destinations held and propagates an error to the consumer.
-
-Neither selected release currently supplies the allocator-owned page identity
-needed to reject a late completion after physical slot reuse. The missing vLLM
-and SGLang interfaces are tracked in
-[vLLM #62810](https://github.com/vllm-project/vllm/issues/62810) and
-[SGLang #45493](https://github.com/sgl-project/sglang/issues/45493). Local
-candidate code is contribution evidence only: OrbitKV does not add a
-version-fallback facade, patch the selected engine package, or call an upstream
-proposal released support. Current adapters continue to retain uncertain pages.
-The reviewed contribution candidates are draft
-[vLLM #62819](https://github.com/vllm-project/vllm/pull/62819) and
-[SGLang #45548](https://github.com/sgl-project/sglang/pull/45548); neither changes
-the supported engine pins or closes installed page-reuse fault qualification.
-
-Historical per-cohort details and failures remain in the
-[accepted lifetime record](https://github.com/OrbitInfra/OrbitKV/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#ownership-contract).
-Use the [completion plan](completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
-for current-release acceptance; earlier 0.5.21 results retain their original scope.
-
 | Responsibility | Owner |
 | --- | --- |
-| Request scheduling, batching, model execution, HBM allocation and native prefix cache | Inference engine |
-| State/layout/rank description, lookup and allocation callbacks, consumption dependencies | Engine-specific Python adapter |
-| DRAM/SSD/peer replicas, recovery planning, admission, leases and task lifetime | Existing OrbitKV Rust owners |
-| Raw DRAM restore | Native executor in the engine process, with Manager-retained sources |
-| Publish and SSD/codec execution | Manager physical workers |
-| P/D bootstrap, request lifecycle and payload | Official engine native P/D; vLLM NIXL and SGLang native backend, separately qualified with the cache |
-| Shared-cache memory movement | OrbiTE between Managers; independent of live P/D transport |
+| Request scheduling, HBM allocation and native prefix cache | Inference engine |
+| Layout/rank descriptions and producer/consumer dependencies | Python adapter |
+| Replicas, planning, byte admission, leases and accepted tasks | OrbitKV Rust owners |
+| Raw DRAM Restore | Native client executor with Manager-held sources |
+| Publish and SSD/codec Restore | Manager workers |
+| Cache byte movement | OrbiTE local/file/peer APIs |
+| Live P/D | Official inference-engine transport and lifecycle |
 
-The Publish activity candidate is consumed by vLLM's transfer-result poll and
-SGLang's completed-offload count for bounded diagnostics. It observes native
-active/retained callers and a local active interval without taking the blocked
-descriptor/lifecycle locks. Missing observations, an overdue call or a dead
-Manager cannot produce an offload completion. Existing synchronous Save still
-holds its source pages; this does not qualify asynchronous handles, page-slot
-reuse or fault reclamation.
+A hit proves a legal boundary across every required group, not merely a stored
+key. Model/computation/layout identity must match. Readiness, terminal completion
+and source reaping are separate events; sharing a Manager does not make engine
+layouts interchangeable.
 
-A hit is a recoverable state boundary across every required group, not simply a
-stored key. The engine supplies destination pages and their readiness; native work
-retains source and destination ownership until drain. Enqueue acknowledgement,
-per-layer readiness, terminal completion and source retirement are separate facts.
-Model/adapter identity, cache salt, state representation and shard layout must
-match. Sharing a Manager does not make engine layouts interchangeable.
+Before queueing, `prepare_save` captures immutable requests and the original
+`GpuRegistration`. Rust budgets and batches `submit_saves`, retaining exporters
+until completion. `cancel_save` proves non-submission only before launch.
+Unknown handoff keeps engine completion pending; SGLang also retains FIFO locks.
+Only cancellation of the pre-forward activation future proves a Restore was
+never submitted. Cancellation during submission/wait retains destinations and
+leases and propagates failure.
+
+The selected releases lack allocator-issued page generations for their handoffs.
+Registration lifetime cannot detect every same-allocation slot reuse. Uncertain
+pages remain held; local counters cannot replace an engine allocator contract.
+The [upstream interface record](engine-release-audit.md#upstream-work-and-independent-limits)
+tracks proposals separately from released consumption. Existing
+[normal-path lifetime evidence](https://github.com/OrbitInfra/OrbitKV/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#ownership-contract)
+does not establish cancellation, physical termination or eventual fault reclamation.
 
 ## Explicit cache reset
 
@@ -112,9 +60,9 @@ remain unsupported. The completion plan records qualification separately.
 
 ## Immutable static LoRA
 
-Static adapter support is independently accepted for a fixed local PEFT adapter
-set on official vLLM 0.31.0 and SGLang 0.5.21, dense TP=1/PP=1 eager with
-direct transfers and io_uring SSD. The installed-model evidence is tracked in S5.3.
+The fixed local PEFT adapter contract has historical vLLM 0.31.0 / SGLang 0.5.21
+dense TP=1/PP=1 evidence in the [completion plan](completion-plan.md#s53--public-lifecycle-and-hybrid-state-contracts).
+It does not qualify the current OrbiTE path.
 At startup OrbitKV hashes each adapter's configuration and weights and binds the complete named set and LoRA
 computation configuration to the external cache namespace. Engine prefix hashes
 still distinguish the base model and individual adapters. Replacing weights at
@@ -169,133 +117,66 @@ requests and broader model/topology profiles remain unsupported or unqualified.
 
 ## LMCache and FlexKV reference
 
-Use release source, not an unversioned example, when comparing integrations:
-
-| Released reference | Mechanism to learn from | OrbitKV decision |
-| --- | --- | --- |
-| [vLLM 0.30.0 LMCache MP entry](https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_mp_connector.py) and [LMCache 0.5.5 implementation](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/integration/vllm/lmcache_mp_connector.py) | Engine connector delegates external-cache behavior to a separately installed package | Keep a small official entry and one maintained adapter; storage and cache scheduling remain in Rust. |
-| [SGLang 0.5.20 LMCRadixCache](https://github.com/sgl-project/sglang/blob/94602c9c2b7cbdb8efd5c52802dac6a1c180089e/python/sglang/srt/mem_cache/storage/lmcache/lmc_radix_cache.py) and [LMCache 0.5.5 example](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/examples/sgl_integration/README.md) | Prefix lookup, load-back, finished-request storage and eviction integrate with native lifecycles; MP connects to a separate daemon | Preserve SGLang tree ownership through the existing UnifiedRadixCache external linker. Do not copy a second Radix tree or LMCache's ZMQ transport into OrbitKV. |
-| [LMCache 0.5.5 MP P/D recipe](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/docs/source/mp/disaggregated_prefill.rst) | Native NIXL handoff and cache reuse compose through MultiConnector, with separate P and D cache servers | Reuse native NIXL for live P/D; use OrbiTE for Manager shared-cache transfers. Verify recipe prerequisites against the selected release. Shared P/D Manager use needs its own contention gate. |
-
-Later SGLang main changes toward LMCacheUnifiedRadixCache are not the 0.5.20
-release contract. API similarity and upstream support matrices do not qualify
-OrbitKV. Do not inherit LMCache's version compatibility branches or assume its
-documented P/D prerequisite patches are in the selected engine release.
-
-The pinned [vLLM 0.30.0 FlexKV entry](https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/distributed/kv_transfer/kv_connector/v1/flexkv_connector.py)
-loads its separately installed implementation when the connector is constructed.
-The [SGLang 0.5.20 FlexKV integration](https://github.com/sgl-project/sglang/blob/94602c9c2b7cbdb8efd5c52802dac6a1c180089e/python/sglang/srt/mem_cache/storage/flexkv/flexkv_connector.py)
-owns task completion and connection lifetime beside the engine cache. OrbitKV
-uses these explicit backend boundaries while retaining its existing Rust client,
-Unified tree and per-layer GPU completion dependencies.
-The separately inspected [FlexKV adapter at `738ddc14`](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/flexkv/integration/vllm/vllm_v1_adapter.py)
-is a pinned main reference, not an OrbitKV-supported release. Like LMCache MP,
-it separates scheduler callbacks from worker callbacks. OrbitKV follows that
-ownership split without inheriting another cache's task engine or compatibility
-branches.
+The [pinned integration audit](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/adapters.md#lmcache-and-flexkv-reference)
+compares LMCache 0.5.5, official vLLM/SGLang entries and FlexKV `738ddc14`.
+OrbitKV follows their small engine-entry and scheduler/worker separation while
+keeping cache state in Rust and SGLang's native tree. Upstream compatibility
+branches, P/D prerequisite patches and support matrices are not inherited claims.
 
 ## vLLM callbacks and current internal dependencies
 
 `OrbitKVConnector` implements `KVConnectorBase_V1` and `SupportsHMA`.
-`SchedulerAdapter` in `scheduler.py` discovers legal external coverage and hands
-allocated pages to `WorkerAdapter` in `worker.py`; the worker registers tensors, restores/saves state and reports
-completion through the pinned engine contract. `layout.py` and `metadata.py`
-describe actual groups and intents rather than a second cache scheduler.
+`scheduler.py` discovers legal coverage; `worker.py` receives allocated pages,
+registers tensors and consumes Restore/Save completion. Layout and metadata
+modules describe groups/intents, not another scheduler.
 
-All worker roles implement the released engine's `get_transfer_results` directly. P/D failure
-and receive completion are drained together into `KVConnectorTransferResults`;
-the scheduler consumes native `failed_recving`, including through MultiConnector.
-There is no P/D failure-metadata class or duplicate failure queue. Ordinary cache
-publication declares `requires_kv_delivery=False`; a reliable P/D producer keeps
-the engine's delivery requirement. Divergent hybrid hits remain disabled.
+The profile requires **`VLLM_USE_V2_MODEL_RUNNER=0` and one attention group**.
+V1's public preemption callback precedes page changes. V2 and recurrent/multi-group
+serving reject before connecting. No runner replacement or native-prefix override
+is installed. Framework-neutral recovery validation remains in Rust.
 
-Only the selected role implementation is imported and constructed. Metrics come
-from that role; native sessions close if role initialization fails. The connector
-inherits unchanged optional callbacks from the pinned engine base. Its required
-layer-save callback remains explicit because saves are submitted at step end.
-Restore failures propagate with their retained GPU ownership; there is no separate
-availability flag or background health-polling thread. Plugin registration errors
-remain visible instead of silently selecting a conflicting connector.
-
-The official-release profile requires `VLLM_USE_V2_MODEL_RUNNER=0` and one
-attention cache group. The V1 runner invokes the public preemption callback
-before updating pages. The `runtime.py` runner replacement and block-pool
-native-prefix override are deleted. V2 and multi-group/recurrent serving fail
-before opening a Manager connection; enabling a capability flag is insufficient
-to restore those profiles. Framework-neutral recovery contracts remain in Rust.
-
-Registration currently uses the external package plugin. Official upstream
-registration must replace duplicate registration, not hide name conflicts.
-Use the [S5 sequence](completion-plan.md#s5--released-engine-integration-and-upstream-contributions)
-for release alignment, lifecycle PRs and removal gates.
+The selected role alone is constructed. Native sessions close on initialization
+failure, plugin conflicts stay visible, and `get_transfer_results` uses the
+released completion/failure contract, including MultiConnector. Ordinary cache
+publication has `requires_kv_delivery=False`; native reliable P/D retains its own
+requirement. Saves submit at step end. Restore errors retain GPU ownership rather
+than becoming a silent availability fallback.
 
 ## SGLang linker and current internal dependencies
 
-Select `--radix-cache-backend orbitkv` with
-`--enable-unified-cache-external-linker`. `plugin.py` constructs a
-`UnifiedRadixCache`; `OrbitKVLinker` implements lookup, queued load, layer progress,
-offload, completion, reset and close. SGLang retains tree locks and page allocation. The release linker lookup returns
-ready boundaries, not a pending ticket; current OrbitKV admission Hooks defer a
-pending request while allowing other requests to progress. Do not assume HiCache
-scheduler hooks run when OrbitKV rejects the separate hierarchical-cache mode.
-The [hybrid recovery contract](hybrid-recovery.md) defines legal state boundaries.
+Enable `--enable-unified-cache-external-linker --radix-cache-backend orbitkv`.
+`plugin.py` constructs UnifiedRadixCache; the linker handles lookup, queued load,
+layer progress, offload, reset and close. SGLang owns tree locks and page allocation.
+Plugin discovery does not eagerly load native/GPU resources.
 
-Request admission and hybrid materialization use scalar decisions when the
-released attention/TP groups have one participant. With multiple participants,
-the existing collective decision still waits for every required rank before
-admitting or exposing restored state. This removes redundant single-rank tensor
-allocation without changing cancellation, lease expiry or the internal Hooks.
-The 0.5.22 interface passes the affected CPU controls and the selected installed
-GPU byte/model gates. Physical multi-rank agreement remains unqualified.
+SGLang 0.5.22 owns private destination allocation, cancellation and tree insertion.
+`RecoveryLinkerWrapper` translates absolute boundaries and rank agreement;
+`finish_layer_wise_loading` waits for native Restore before insertion or release.
+Unknown completion raises and retains ownership. Full/SWA are the released
+external-linker components; recurrent/SSM startup is rejected. Aborts use native
+`BasePrefixCache.finish(ABORT)`; lookup-only cancellation retires unsubmitted queries.
 
-`events.py` owns the CUDA events and producer/consumer counters needed before
-graph capture. `linker.py` consumes those events and owns cache queries, loads,
-offloads and registration. Plugin discovery imports neither the native extension
-nor GPU layout code; graph and admission hooks check the selected backend before
-loading OrbitKV resources. Native bindings load on first native API access.
+Two private Hooks remain: graph initialization and pending-query admission. An
+extra enqueue Hook is enabled only for `ORBITKV_PREPARE_REQUESTS=1` or
+`ORBITKV_QUEUE_WARMUP=1`. Replace a Hook only after consuming a released replacement.
+A pending lookup stays queued while other requests can progress; required ranks
+agree before admission, using scalar decisions for one participant. Physical
+multi-rank serving still needs qualification.
 
-`RecoveryLinkerWrapper` now delegates private destination allocation, native
-cancellation and tree insertion to SGLang 0.5.22. It only translates absolute
-recovery boundaries and rank agreement. `finish_layer_wise_loading(index)` waits
-for native Restore before the engine inserts or frees destinations; unknown
-completion raises and retains ownership. The old load-polling queue, custom tree
-insertion and recurrent component override are removed. Full/SWA are the only
-released external-linker components, so recurrent/SSM startup is rejected.
-Aborts use `BasePrefixCache.finish(ABORT)` and the native linker release path;
-lookup-only cancellation also retires its unsubmitted cache query. There is no
-additional Scheduler abort Hook.
-
-The ordinary cache profile registers two internal Hooks: graph initialization
-and pending-query admission. Enqueue preparation adds one Hook only when
-`ORBITKV_PREPARE_REQUESTS=1` or `ORBITKV_QUEUE_WARMUP=1` is set before startup.
-P/D transport factories and fork observation callbacks are removed. Native P/D
-uses the official engine lifecycle and is qualified separately.
-The [S5.2 evidence](completion-plan.md#s52--minimal-official-cache-backends)
-accepts normal prepared-adapter retirement on the selected release. It does not
-qualify crash reclamation or cancellation during DMA. The earlier model-process
-shutdown warnings and calibrated 0.5.21 measurements remain in the
-[immutable shutdown record](https://github.com/OrbitInfra/OrbitKV/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#sglang-linker-and-current-internal-dependencies).
-
-These remaining targets are version-coupled dependencies, not stable public APIs.
-Replace them with consumed factory/lifecycle/component contracts and then delete
-the duplicate logic. Unknown DSA, draft, auxiliary state and unsupported request
-rings remain rejected until they have complete recovery contracts.
+`events.py` owns pre-capture CUDA events and producer/consumer counters. Native
+completion, not task cancellation, releases destinations. The
+[original shutdown record](https://github.com/OrbitInfra/OrbitKV/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#sglang-linker-and-current-internal-dependencies)
+preserves warnings and 0.5.21 measurements. Unknown auxiliary/draft state and
+unsupported request modes remain rejected.
 
 ## P/D and cache composition
 
-Manager shared-cache recovery uses local metadata discovery, an authoritative
-source grant and OrbiTE READ into the restore destination. Live P/D uses each official
-engine's native transport and lifecycle. vLLM uses NIXL plus MultiConnector;
-SGLang uses native disaggregation with the independent external linker.
-
-The candidate vLLM profile reads/writes cache on P and uses save-only cache on D.
-SGLang likewise disables external restoration on D. Native P/D is the sole
-incoming destination writer; cache saves read completed state and retain their
-own leases until drain. Ordinary cache publication remains best effort.
-
-The [P/D guide](pd.md) records released configuration and qualification limits.
-Removed fork factories, callbacks and tests are preserved as immutable upstream
-contribution material; their passed results do not qualify the official engines.
+Manager-to-Manager cache sharing uses OrbiTE. Live P/D uses vLLM
+NIXL/MultiConnector or SGLang native disaggregation. The composition candidate
+reads/writes cache on P and saves only on D, preserving one incoming D writer.
+Cache leases drain independently; ordinary cache Save remains best effort.
+See [native P/D recipes and limits](pd.md). Removed fork callbacks and passed
+fork results do not qualify official-engine fault behavior.
 
 ## Native client
 
@@ -307,240 +188,133 @@ ok, message = client.health()
 client.close()
 ```
 
-`client.peer_alive()` observes the authenticated Manager process through its
-pidfd without an RPC or waiting behind a Publish. A live stalled Manager returns
-true, process exit returns false, and unavailable identity raises an error.
-Replacing the socket does not rebind an old client. Liveness does not authorize
-GPU page reuse or release a source grant; native operation drain remains separate.
-SGLang failed-session probing is still gated by its adapter qualification.
+| API | Contract |
+| --- | --- |
+| `peer_alive()` | Original authenticated pidfd; no RPC/reconnect and no drain proof |
+| `BlockHashes(...)` | Immutable native hash batch; slices share allocation |
+| `query_prefetch` | Native submission/revision/polling ownership |
+| `register_context_batch(..., tensors=...)` | Retains real exporters and IPC registration |
+| `start_restore(..., ready_stream=...)` | Client-bound operation with actual destination readiness |
+| `wait_restore_enqueued` | Fresh layer-event publication, not completion |
+| `poll_restore` / `wait_restore` | Final local result after physical drain; source reaping is separate |
+| `prepare_save` / `submit_saves` | Capture registration at producer handoff; native batching and retained completion |
 
-`CacheManagerClient` is the Rust owner exposed through PyO3. Construct
-`BlockHashes(page_hashes)` once per lookup; slices share its native allocation.
-`query_prefetch` owns submission, revision and polling.
-`register_context_batch(..., tensors=...)` retains actual tensor/exporter objects
-alongside the IPC metadata used by Publish and Manager SSD/codec routes.
-`start_restore(..., ready_stream=...)` takes the engine's destination-readiness
-stream and returns a client-bound handle for `poll_restore` or
-`wait_restore(timeout=...)`. Optional `layer_events` bind retained CUDA events
-to registered layers. `wait_restore_enqueued` waits for fresh event records,
-allowing per-layer consumer dependencies; it does not acknowledge destination
-page reuse. Unencoded DRAM copies execute in the native engine worker; their
-final local result follows DMA drain without waiting for Manager source reaping.
-vLLM uses layer waits in piecewise mode and coarser entry waits for supported
-full-graph layouts; SGLang installs external events before capture.
-Publish uses the opaque native `GpuRegistration` returned by successful
-registration. vLLM save and boundary tasks, and SGLang offload tasks, retain the
-original object when they enter the queue. The native client rejects a retired
-registration or a different client before submission. vLLM refuses a batch
-spanning registrations; it does not switch queued work to a new registration.
-The object retains exporters until the last queued/user reference is dropped.
-These checks bind registration lifetime; same-allocation page-slot reuse and
-physical failure drain still need their own proofs and hardware gates.
+`SaveNotSubmittedError` proves that invocation launched no worker, or the complete
+batch rolled back. Resolve native methods and arguments before catching it:
+Python lookup/attachment/wait errors cannot prove native rollback. SGLang retains
+later offloads behind an unknown earlier FIFO result. A different client or
+retired registration cannot bind queued Save to a replacement; vLLM rejects
+batches spanning registrations.
 
-The native Save contract distinguishes `SaveNotSubmittedError` from unknown
-handoffs. From `start_save` or `prepare_save`, it proves the current invocation
-launched no native Publish worker; from `submit_saves`, it proves the entire batch
-was rolled back without submission. Handle allocation, attachment and wait errors
-retain the page hold.
-Native producer methods and their registration/handle arguments are resolved
-before the typed catch. Python method or argument lookup errors retain pages;
-the exception type alone cannot establish that native code ran and rolled back.
-SGLang also preserves its official completion FIFO: once an
-earlier result is unknown, the worker retains later queued tasks without starting
-them or reporting their completion against the earlier engine node. This does
-not reconcile unknown owners or prove physical drain; qualification is tracked
-in the [completion plan](completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership).
-
-See [layer consumption](engine-local-restore.md#layer-readiness-and-framework-consumption)
-for recurrent, packed-buffer and multi-part limits. Repeated registration of the same binding is rejected, and unregister
-or close drains accepted operations. Native calls release the GIL. A timeout
-does not release destination page assignments while a copy may still be running. See the [type reference](../python/orbitkv/orbitkv.pyi).
+Publish diagnostics can observe active/retained calls without blocking behind
+lifecycle exchange. Overdue/missing/dead-peer observations never complete pages.
+Native calls release the GIL. Repeated live registration is rejected; close and
+unregister fence admission and drain. A timeout/drop cannot release a page while
+copies remain possible. See [native signatures](../python/orbitkv/orbitkv.pyi)
+and [layer consumption](engine-local-restore.md#layer-readiness-and-framework-consumption).
 
 ## Process channel
 
-The connector derives the Cache Manager's Unix socket from the configured
-endpoint. Scheduler Query/Release and worker Publish/Restore use iceoryx2;
-registration, health, session ownership, and cleanup use the bootstrap UDS.
-Each inference process requires a Cache Manager on its own host. A missing
-socket fails at startup. No extra configuration is needed on one node.
+Every inference process requires a same-host Manager. Scheduler Query/Release
+and worker Publish/Restore use iceoryx2; registration, health and cleanup use
+authenticated UDS. The default path is `/tmp/orbitkv-<orbitkv.port>.sock`;
+`orbitkv.bootstrap_socket` overrides it. Standalone mode starts no gRPC listener.
 
-The process channel connects to `/tmp/orbitkv-<orbitkv.port>.sock`, matching the
-Cache Manager default. Use `orbitkv.bootstrap_socket` for a custom single-manager
-path. `orbitkv.timeout_ms` (default 5000) bounds hot requests and health;
-registration and unregister allow at least 120 seconds for CUDA setup/draining.
-`orbitkv.spin_iterations` defaults to 64. Standalone Cache Managers do
-not start gRPC. Client and Cache Manager must use matching
-bootstrap protocol versions (currently bootstrap 7, channel ABI 12, cache schema 10, and lifecycle 12).
-Bootstrap transfers five metadata/notification FDs; GPU registration attaches
-the shared payload arena FDs separately, with the resolved Manager-local CUDA
-ordinal preceding arena metadata. Python APIs use client-local CUDA ordinals;
-the native registration owner resolves tensor UUIDs once and retains the Manager
-route for Publish/Restore. NUMA detection uses only Manager-visible CUDA devices
-and their stable UUIDs, independently of physical index order. The identity
-repair's hardware qualification is separate from broader multi-GPU deployment.
-The local executor partitions large
-raw plans into at most 1 MiB parts under one whole-operation fence. Operation
-metadata is capped at 32 MiB and per-session prepared metadata at 64 MiB;
-see [execution scope and qualification gates](engine-local-restore.md).
+`orbitkv.timeout_ms` defaults to 5,000 for hot requests/health; registration and
+unregister allow at least 120 seconds for CUDA setup/drain. `spin_iterations`
+defaults to 64. Matching bootstrap **7**, ABI **12**, schema **10** and lifecycle
+**13** are required; upgrade clients and Manager together.
 
-`orbitkv.wait_for_full_prefix` is supported on the local path: pending queries
-return `QueryLoading`, and repeated queries with the same instance/request/group
-identity retrieve the result. Query arguments must remain unchanged while
-pending. Superseded queries are explicitly cancelled. Each session permits
-128 outstanding queries, with 1024 globally and a 60-second reply lifetime.
-Cancellation revokes waiting interest while submitted reads drain safely;
-undelivered results release their leases without another readiness poll.
-Use the same wheel version and CUDA variant for the Cache Manager and clients. Connector shutdown
-explicitly closes the UDS session; imported CUDA mappings are released after
-queued GPU transfers finish.
+Client-local CUDA ordinals resolve through full GPU UUIDs to Manager-visible
+devices. Native owners retain that route and NUMA placement. Ordinal equality
+is unnecessary; broader multi-GPU deployment remains unqualified.
+
+Raw Restore uses at most 1 MiB plan parts, 32 MiB operation metadata and 64 MiB
+prepared metadata per session. Pending queries allow 128 per session / 1,024
+globally with a 60-second reply lifetime. `wait_for_full_prefix` polls the same
+instance/request/group operation; input changes require a revision, superseded
+queries are cancelled, and submitted reads drain despite cancellation/expiry.
+See [transport ownership](transport.md) for the complete protocol.
 
 ## Connector Modes
 
-`OrbitKVConnector` defaults to `read_write`: it queries OrbitKV for reusable KV
-blocks, loads matched blocks into vLLM, and saves newly computed full blocks
-back to OrbitKV.
-
-Set `orbitkv.mode` to `save_only` when another vLLM connector is responsible
-for reads and OrbitKV should only persist KV blocks for later reuse. This is
-intended for `MultiConnector` decode-side setups where an upstream connector
-owns the external hit/load path, while OrbitKV records the resulting KV cache.
-In `save_only` mode, OrbitKV does not query or load KV blocks.
-
-```bash
-vllm serve /path/to/immutable-model \
-  --kv-transfer-config '{
-    "kv_connector": "MultiConnector",
-    "kv_role": "kv_both",
-    "kv_connector_extra_config": {
-      "connectors": [
-        {
-          "kv_connector": "<external-read-connector>",
-          "kv_role": "kv_both"
-        },
-        {
-          "kv_connector": "OrbitKVConnector",
-          "kv_role": "kv_both",
-          "kv_connector_module_path": "orbitkv.vllm",
-          "kv_connector_extra_config": {
-            "orbitkv.mode": "save_only"
-          }
-        }
-      ]
-    }
-  }'
-```
-
-Valid values are `read_write` and `save_only`.
+`read_write` (default) performs external lookup, Restore and Save. `save_only`
+does not query/load and is intended for D-side composition where another
+connector owns incoming pages. Set `orbitkv.mode` in `kv_connector_extra_config`;
+these are the only values. The [P/D guide](pd.md#vllm-nixl-and-multiconnector)
+contains the complete MultiConnector configuration.
 
 ## TP shards and host boundary
 
-CUDA IPC is host-local. Workers register with their local Manager, while the
-scheduler connects only to its own Manager over UDS. Official vLLM 0.31.0 worker
-handshake metadata carries opaque sealed query targets to the scheduler. Rust
-validates those targets against the declared topology and performs bounded
-parallel queries. Python does not query foreign Managers or choose the common prefix.
+Workers register with their same-host Manager; the scheduler uses its local UDS.
+Official vLLM handshake metadata carries opaque sealed query targets. Rust
+validates topology, queries bounded targets and finds the common prefix; Python
+never queries foreign Managers or chooses it.
 
-The experimental profile requires `--enable-query-control` on every Manager.
-For one Manager, explicitly set `orbitkv.query_control=true`; multiple
-`orbitkv.tp_shard_endpoints` require native query control automatically. Example:
+Enable `--enable-query-control` on each Manager and `orbitkv.query_control=true`
+for one Manager. Multiple `orbitkv.tp_shard_endpoints` enable native control
+automatically. Example connector extras:
 
 ```json
 {
-  "kv_connector": "OrbitKVConnector",
-  "kv_role": "kv_both",
-  "kv_connector_module_path": "orbitkv.vllm",
-  "kv_connector_extra_config": {
-    "orbitkv.query_control": true,
-    "orbitkv.tp_shard_endpoints": [
-      "http://127.0.0.1:50055",
-      "http://127.0.0.1:50056"
-    ]
-  }
+  "orbitkv.query_control": true,
+  "orbitkv.tp_shard_endpoints": ["http://127.0.0.1:50055", "http://127.0.0.1:50056"]
 }
 ```
 
-As a configuration example for TP8 and two endpoints, global ranks 0–3 register
-with the first Manager and 4–7 with the second. This physical topology is not
-qualified. The scheduler requires exactly all declared global ranks,
-and all workers in one node must export the identical registration. Every worker
-receives the same ordered endpoint list; custom local UDS paths can use
-`orbitkv.tp_shard_bootstrap_sockets`.
+Every worker gets the same ordered endpoint list; custom UDS paths use
+`orbitkv.tp_shard_bootstrap_sockets`. Exactly all declared global ranks must join,
+and workers on one node export identical registration. Equal contiguous dense
+TP-only shards, V1 and one attention group are required. PP/DP/EP/DCP/PCP, MLA
+replication, recurrent state, speculative decode, full-prefix waiting and queue
+preparation are rejected. Ordinary single-Manager mode remains the default.
 
-The Manager acquires initial source prefixes in parallel, cancels longer results
-before reacquiring the exact common prefix, and claims every selected source
-lease. It retains the source interests until all declared global ranks report
-successful native Restore completion through official worker metadata. Duplicate
-rank reports do not count twice. Cancel, replacement revision, unselected result,
-connection loss and shutdown have bounded ownership paths; TTL does not prove
-physical process-death reclamation.
+Initial prefix queries run in parallel; longer results are cancelled before
+reacquiring the exact common prefix. Every selected source lease is claimed and
+retained until all declared ranks report successful native completion. Duplicate
+ranks count once. Revision/cancel/connection loss stays bounded; TTL is not
+process-death or GPU reclamation evidence.
 
-The profile accepts equal contiguous dense TP-only shards, one attention cache
-group and V1. PP, DP, EP, DCP, PCP, MLA replication, hybrid/recurrent recovery,
-speculative decoding, full-prefix waiting and queue preparation are rejected.
-Speculative V1 collects worker metadata before deferred finalization, so it
-cannot consume this completion contract safely. The ordinary single-Manager
-profile remains the default.
-
-This implementation currently accepts only trusted same-host literal loopback
-endpoints. Cross-host activation needs authenticated encrypted transport and its
-own physical topology/fault qualification. Two Manager processes on one GPU do
-not qualify TP8, multi-GPU NCCL, HA or S3 lifetime. The `1ab67a58` installed wheel
-is independently accepted for two-Manager DRAM/io_uring byte gates and official
-vLLM TP=1 eager handshake/cache recovery on H20. Physical multi-GPU serving and
-composition with the separate adapter/Graph profiles remain unqualified.
-See the scoped acceptance in the completion plan.
+Only trusted same-host literal-loopback endpoints are accepted. Cross-host
+activation needs authenticated encryption and physical topology/fault gates.
+The [historical `1ab67a58` installed TP=1 evidence](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/adapters.md#tp-shards-and-host-boundary)
+does not qualify physical TP8, NCCL, HA or the current OrbiTE path.
 
 ## Complete cache blocks and live prompt tails
 
-The cache stores complete engine blocks. Native P/D transfers the live prompt
-including its partial tail, so the removed `orbitkv.pd_tail_save` and
-`orbitkv.pd_tail_load` options have no replacement cache mode.
-`orbitkv.wait_for_full_prefix` remains a remote cache query option; it does not
-coordinate live P/D or watch saves in a shared local Manager.
+Cache stores complete engine blocks. Native P/D transfers live prompt tails;
+there is no cache tail mode. `wait_for_full_prefix` is a cache query option, not
+live P/D coordination or a watch of local saves.
 
 ## Package responsibilities and qualification
 
 | Module | Responsibility |
 | --- | --- |
-| `identity.py` | Model artifacts and computation fingerprinting |
-| `client/` | Connection configuration and GPU registration handoff |
-| `vllm/connector.py`, `scheduler.py`, `worker.py` | vLLM contract and scheduler/worker ownership |
-| `vllm/layout.py`, `metadata.py` | Cache groups and transfer intents |
-| `sglang/layout.py`, `recovery.py` | Pool geometry and state/checkpoint handoff |
-| `sglang/events.py` | Graph-capture events and per-forward restore dependencies |
-| `sglang/linker.py`, `plugin.py` | External linker and backend registration |
-| `orbitkv-state`, `orbitkv-channel`, core execution owners | Shared semantics, native client and physical lifetime |
+| `identity.py` | Artifact/computation fingerprinting |
+| `client/` | Connection configuration and registration handoff |
+| `vllm/connector.py`, `scheduler.py`, `worker.py` | Released callbacks and scheduler/worker ownership |
+| `vllm/layout.py`, `metadata.py` | Groups and intents |
+| `sglang/layout.py`, `recovery.py` | Geometry and recovery handoff |
+| `sglang/events.py` | Capture events and forward dependencies |
+| `sglang/linker.py`, `plugin.py` | External linker/backend registration |
+| Rust state/channel/Core | Shared semantics, native client and physical lifetime |
 
-Tests live in `python/tests/`; benchmark programs live in `benches/`; neither is
-runtime wheel content. Keep source-only unit tests separate from native and engine
-gates. Qualify disabled-backend startup, native HBM hits, cold/partial/full misses,
-DRAM/SSD/peer restores, request cancellation, preemption, restart and advertised
-eager/graph modes. Record actual transfer bytes and resource drain, not output alone.
-TP/PP/attention-DP/EP, heterogeneous P/D and containers each need explicit cells.
-Latest releases are the upgrade reference; unrun cells remain open.
+Keep source-only tests separate from native/engine gates. Installed qualification
+checks actual bytes and drain as well as output: disabled startup, native HBM,
+cold/partial/full hits, DRAM/SSD/peer, cancel/preemption/restart and each advertised
+Graph/rank/container profile. See [test gates](../python/tests/README.md).
 
 ### Registered TP query-control transport
 
-The experimental `--enable-query-control` Manager option enables a bounded
-query-interest service on `--addr` for trusted processes on the same host.
-Both the bound and advertised addresses must be loopback with nonzero ports;
-invalid endpoints are rejected before CUDA initialization. The transport does not
-provide local multi-user authentication or encrypted port forwarding. Cross-host
-activation requires an authenticated encrypted transport and separate qualification.
-It is disabled by default and does not require etcd. `CacheManagerClient.export_query_target()` exports opaque
-sealed-registration authority over authenticated local UDS, for engine handshake
-metadata. Network interest cannot register/unregister GPU mappings. Explicit Claim
-retains the same result for reply-loss retries; Close/expiry releases unconsumed
-shares and leaves accepted native work with its completion owner.
+The disabled-by-default Manager option uses `--addr` without needing etcd.
+Bound/advertised addresses must be literal loopback with nonzero ports, checked
+before CUDA. This is not local multi-user authentication or encrypted forwarding.
+`export_query_target()` transfers sealed authority through authenticated UDS;
+network interest cannot register/unregister GPU mappings.
 
-Each interest admits at most 128 operation identities over its lifetime. Terminal
-identities remain retained for replay fencing, and Claim does not retire interest
-admission. Consumers must open a fresh interest per lookup and close it after
-native ownership handoff/completion; idle expiry is a bounded failure fallback.
-
-This transport primitive is independently accepted for the trusted same-host
-loopback authority and lease scope. The subsequent native common-prefix
-coordinator and official vLLM handshake are independently accepted at `1ab67a58`
-for the same-host installed-artifact scope above. Cross-host native TP model, HA
-and S3 fault qualification remain open. See S5.5 in the completion plan for
-physical topology and lifetime gates.
+Claim retains the same result across reply loss. Close/expiry releases unconsumed
+shares while accepted native work remains with its completion owner. Each
+interest permits 128 lifetime operation identities, including terminal replay
+fences. Open one interest per lookup and close it after handoff/completion; Claim
+does not reset admission. Cross-host and physical multi-rank qualification stays
+in the [completion plan](completion-plan.md#s55--deployment-matrix-and-upstream-maintenance).

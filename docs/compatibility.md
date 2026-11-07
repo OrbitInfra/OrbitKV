@@ -12,10 +12,10 @@ The [completion plan](completion-plan.md) owns remaining delivery work.
 
 ## Official engine releases
 
-| Engine | Pinned release | External-cache entry point | Qualified starting profile |
+| Engine | Pinned release | External-cache entry point | Starting configuration (requires re-qualification) |
 | --- | --- | --- | --- |
 | vLLM | `0.31.0` | `OrbitKVConnector` through the official KV Connector API | V1 runner, one attention cache group, dense TP=1/PP=1 |
-| SGLang | `0.5.22` | `OrbitKVLinker` through UnifiedRadixCache's external linker and public load completion | Qwen3-8B dense TP=1/PP=1, installed DRAM/io_uring bytes and model/restart controls |
+| SGLang | `0.5.22` | `OrbitKVLinker` through UnifiedRadixCache's external linker and public load completion | Qwen3-8B dense TP=1/PP=1, DRAM/io_uring |
 
 Set `VLLM_USE_V2_MODEL_RUNNER=0` before starting vLLM. V2, multiple cache groups
 and recurrent external-cache profiles are rejected until released lifecycle
@@ -31,8 +31,8 @@ newer release. Historical results retain their original engine versions.
 
 ## Deployment profiles
 
-SGLang 0.5.22 repeats the Qwen3-8B BF16/raw normal path on H20, CUDA 13 and
-Python 3.11, with direct copies and TP=1/PP=1: complete GPU byte checks,
+The historical SGLang 0.5.22 qualification repeats the Qwen3-8B BF16/raw normal
+path on H20, CUDA 13 and Python 3.11, with direct copies and TP=1/PP=1: complete GPU byte checks,
 independent consumer leases, known-unsubmitted cancellation, HBM flush,
 engine restart, four concurrent recovery requests and a changed-identity miss.
 The installed official engine files remain unchanged. Native worker exits
@@ -40,7 +40,7 @@ The installed official engine files remain unchanged. Native worker exits
 not qualify physical cancellation or page reuse. Broader SGLang profiles below
 retain their measured 0.5.21 versions until their own gates are repeated.
 
-| Profile | Current evidence and limit |
+| Profile | Historical evidence and unchanged limit |
 | --- | --- |
 | Single engine, DRAM or io_uring SSD | Qwen3-8B repeated on official SGLang 0.5.22; other accepted models retain their recorded release. Manager stays alive during engine restart |
 | Two engines sharing one Manager | H20 900-second dense eager direct/kernel io_uring pressure profile accepted for correctness, progress and bounded resources; fairness and tail isolation remain open |
@@ -52,6 +52,7 @@ retain their measured 0.5.21 versions until their own gates are repeated.
 | Separate containers | Shared socket, IPC resources, credentials and process visibility are required; separate-container deployment remains unqualified |
 | Native GDS/cuFile | Backend implemented; working io_uring or compatibility-mode cuFile is not evidence of native GDS qualification |
 
+These records do not qualify current OrbiTE hardware or installed operation.
 Use [deployment recipes](deployment.md), [shared-cache evidence](shared-cache-qualification.md)
 and [P/D boundaries](pd.md) for each profile's exact configuration. Manager shared-cache
 traffic uses OrbiTE; real-time P/D uses the engine's native backend.
@@ -75,9 +76,10 @@ engines do not automatically share interchangeable KV bytes.
 | --- | --- | --- |
 | CUDA 13 | `orbitkv-llm` | `orbitkv` |
 
-CUDA 13 is the only release runtime; NVIDIA R580 or newer is required, with
-toolkit-compatible PTX/NVRTC support for runtime kernels. Version 0.1.0 is being prepared
-for release; build the complete wheel using the [quickstart](single-node.md).
+CUDA 13 is the only release runtime; normally use NVIDIA R580 or newer with
+toolkit-compatible PTX/NVRTC support. Supported older data-center drivers need
+the explicit [forward-compatibility runtime profile](releases.md#packages).
+Version 0.1.0 is being prepared for release; build the complete wheel using the [quickstart](single-node.md).
 Upgrade native clients and Manager together. The wheel supplies native binaries;
 the host supplies compatible Python, CUDA and selected RDMA libraries, and the
 Manager also requires compatible PyTorch. See [release artifact requirements](releases.md).

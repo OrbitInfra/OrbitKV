@@ -179,7 +179,7 @@ message QueryBlocksForTransferResponse {
   ResponseStatus status = 1;
   repeated TransferBlockInfo blocks = 2;
   uint32 lock_timeout_secs = 3;         // Source overdue threshold; expiry never releases pins
-  string transfer_endpoint = 4;        // OrbiTE endpoint (orbite scheme and host:port)
+  string transfer_endpoint = 4;        // Transfer endpoint (scheme and host:port)
   string native_source_epoch = 5;      // Captured from the registered source engine, not discovery
 }
 

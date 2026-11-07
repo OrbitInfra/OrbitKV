@@ -1,21 +1,24 @@
 # OrbitKV completion plan
 
+**Current focus: C4 documentation slimming, awaiting independent review.**
+The OrbiTE-only implementation was accepted in [PR #326](https://github.com/OrbitInfra/OrbitKV/pull/326),
+merge `1f30895a`. After C4 review, the maintainer will supply the hybrid-attention
+design/experiment-plan task; no implementation of that design starts here.
+
 **Maintainer decision, 2026-11-07:** OrbiTE is the sole transfer engine before
-hardware re-qualification. The TENT implementation is removed; all earlier
-TENT results and accepted stages below are historical at their original revisions.
-The engine-family/default comparison gate is dropped. No current OrbiTE GPU,
-RDMA, GDS or installed profile is qualified by those records. CPU/TCP and io_uring
-remain CI evidence. C4 follows review of this removal; do not begin C4 yet.
+hardware re-qualification. The TENT implementation and engine-family/default
+comparison gate are removed. Historical acceptances retain their original
+backends, revisions and limits. No current OrbiTE GPU, RDMA, GDS or installed
+profile inherits them; CPU/TCP, io_uring and CUDA-shim checks remain CI evidence.
 
-Ship a reliable external KV cache for official vLLM and SGLang: reuse prefixes
-from DRAM, SSD and peer Managers, then demonstrate the effect on real inference.
-Engines own scheduling and GPU pages; Rust owns cache resources; OrbiTE
-moves shared-cache bytes. Native P/D keeps its engine-owned transport.
+Ship a reliable external cache for official vLLM and SGLang, then demonstrate
+its effect on real inference. Engines own scheduling/HBM; Rust owns cache
+resources; OrbiTE moves bytes. Live P/D retains its engine-native transport.
 
-This is the only execution queue. [Compatibility](compatibility.md) describes
-what users can run; [models](models.md) provides recipes;
-[performance](performance.md) reports reviewed measurements. Architecture pages
-define contracts, not additional delivery queues.
+This is the only execution queue and status record. [Compatibility](compatibility.md)
+describes current boundaries, [models](models.md) gives recipes, and
+[performance](performance.md) links reviewed measurements. Architecture guides
+specify contracts rather than independent completion claims.
 
 ## Delivery status and dependencies
 
@@ -36,32 +39,23 @@ Missing hardware is unqualified, never passed.
 
 ## Current delivery sequence
 
-The immediate product is dense TP=1/PP=1 caching on vLLM 0.31.0 and SGLang
-0.5.22, using DRAM, io_uring SSD and already accepted scoped peer profiles.
-Finish one useful delivery at a time; do not turn each failed experiment into
-another permanent controller or parallel roadmap.
+The first release profile is dense TP=1/PP=1 on vLLM 0.31.0 and SGLang 0.5.22,
+with DRAM, io_uring SSD and the already accepted scoped peer profiles, all
+re-qualified on the current path before publication.
 
-1. **Maintainable product surface — delivered in [PR #289](https://github.com/OrbitInfra/OrbitKV/pull/289) and [PR #295](https://github.com/OrbitInfra/OrbitKV/pull/295).**
-   Retire completed campaign-specific code and
-   duplicate reports; keep reusable benchmarks and tests with a current consumer.
-   Organize README, model recipes and website around installation, features,
-   deployment, operations and performance. Preserve support limits and verify
-   historical references before removing their source collections.
-2. **Reliable consumed cache path.** Finish S3 ownership prerequisites used by
-   the selected engine profile. Validate complete bytes, cold/partial/full hits,
-   cancellation, bounded resources and normal shutdown. Do not advertise fault
-   reclamation when unknown work can only be retained until process exit.
-3. **Measured serving improvement.** Use existing serving/transfer benchmarks
-   with equal model, inputs and budgets. Compare native caching, OrbitKV and the
-   applicable LMCache/HiCache profile. Fix the measured production bottleneck;
-   qualify benefit and regressions under contention before selecting a default.
-4. **Installable delivery.** Run claimed profiles with final wheels/images
-   outside the source checkout. Publish concise recipes and support boundaries.
-   Then extend hybrid models, native P/D faults and additional ranks individually.
+1. **Current review:** finish C4 concise guides with unchanged qualification
+   claims. Product-surface predecessors are [#289](https://github.com/OrbitInfra/OrbitKV/pull/289)
+   and [#295](https://github.com/OrbitInfra/OrbitKV/pull/295).
+2. **Reliable consumed path:** finish required ownership contracts and qualify
+   bytes, cold/partial/full hits, cancellation, bounds and normal shutdown.
+   Retaining unknown work is not eventual fault reclamation.
+3. **Measured serving benefit:** compare native caching, OrbitKV and applicable
+   LMCache/HiCache profiles with equal inputs/budgets and regression controls.
+4. **Installed release:** follow S8's artifact and publication gates. Additional
+   hybrid, P/D-fault and rank profiles need their own scope and evidence.
 
-This ordering preserves every S4/S5 acceptance obligation below. Independent
-healthy-path performance and package work may proceed while a distinct physical
-fault contract or unreleased upstream callback remains blocked.
+Independent healthy-path performance/package work may proceed while a distinct
+upstream or physical-fault contract is blocked; it cannot waive that contract.
 
 ## S2 — Metadata reliability and measured capacity
 
@@ -89,234 +83,79 @@ metadata benchmark continue to exercise the current implementation.
 
 ## S3 — Transfer lifetime and generation-safe ownership
 
-Owners: native client, registration, query/peer leases, storage and transfer
-workers. Extend these owners; do not introduce a Python coordinator or facade.
-See [transport](transport.md), [engine-local restore](engine-local-restore.md)
-and [adapter contracts](adapters.md).
+**Partial.** Native client, registration, query/source leases and workers own
+lifetime. Extend those owners rather than add a Python coordinator. Current
+contracts are in [transport](transport.md), [engine-local Restore](engine-local-restore.md)
+and [adapters](adapters.md).
 
-- [x] Runtime transfer-backend boundary for TENT and OrbiTE, retaining peer
-  grants and completion ownership, with OrbiTE pinned at `2e50af25` and one
-  shared registry `cudarc` 0.19.8. READ/WRITE, registration, cancellation and
-  shutdown contracts are implemented; hardware and installed qualification at
-  this pin remain open. The prior profile results below do not qualify this
-  upgrade. See the
-  [runtime contract and CPU gates](transport.md#transfer-engine).
-- [x] C1a accepted at `67d9ac4b`: foreground/high restores, background/low
-  warming, checkpoint/low SSD write-back, preserved admission deadlines and
-  automatic OrbiTE transport selection. Lifecycle 12 adds `orbite`; matching
-  clients, Managers and peers upgrade together. TENT peer priority is consumed;
-  missing intent/file QoS and CPU priority statistics remain API gaps. See
-  [scheduling contracts](transport.md#scheduling-metadata).
-- [x] C1b accepted at `a683f991`: membership removal and incarnation/epoch changes
-  revoke admission before each requester's cached identities retire. OrbiTE
-  `close_segment` waits for physical drain; timeout/Unquiesced retains owners.
-  Successful retirement drops requester-specific handles to reclaim bounded
-  identity capacity. TENT keeps reversible handle invalidation. Real TCP controls
-  cover in-flight source tickets/buffers, independent peers/requesters, epoch
-  replacement and churn; installed GPU/RDMA retirement remains unqualified.
-  See [peer departure](transport.md#peer-departure).
-- [x] C2 accepted at `70ebeb48`: shared peer, query, planning, storage, transfer
-  ownership and metrics compile without backend features. Native cfgs stay in
-  adapters/build glue; absent providers return typed `Unavailable`. No-backend
-  strict Clippy and CPU ownership controls join CI. Instance/worker admission
-  rejects missing or mismatched OrbiTE local-copy engines, including local-only
-  mode. Wire/lifecycle, bounded budgets and drain contracts are unchanged; installed
-  GPU/RDMA/GDS qualification remains open.
-- [x] C3a accepted (`7f68a1a6`): workspace unsafe-block documentation lint,
-  owner/aliasing/FFI invariants, and removal of redundant unsafe auto-trait impls.
-  TENT construction no longer mutates process environment, raw Rust submissions
-  require an unsafe caller contract, and failed local import uses the existing
-  unregister-before-unmap owner. Pinned-pool cleanup also fails closed on refused
-  unregister. C2 tensor metadata and reverse-engine selection
-  controls are included. Wire and physical-drain receipts are unchanged; installed
-  GPU/RDMA/GDS qualification remains open.
-- [x] C3b implemented for review: source `unwrap_used`, `expect_used` and `panic`
-  lints; fallible pool, payload, lease and Manager boundaries; three documented
-  infallible expectations. Pinned-pool cleanup retains mappings on cudart unloading
-  at exit, with a CPU-shim child-process control for unloading and other errors.
-  Timeout/cancellation/unknown-drain ownership and wire receipts are unchanged.
-  Installed GPU/RDMA/GDS qualification remains open. C3b was independently accepted and merged as `c7fd6144`.
-- [x] OrbiTE-only transfer implementation prepared for review: newest main pin
-  `1312e9b1`, concrete engine owner, auto/tcp/rdma hint and lifecycle 13 without
-  the selected-engine field. TENT source, native build, wheels and custom router
-  are removed. Physical-drain ownership and bounded admission remain unchanged.
-  Full CI and hardware qualification are separate gates; hardware remains open.
-- [x] OrbiTE SSD file-segment integration implemented for io_uring, CUDA staging
-  and opt-in native-only GDS, preserving OrbitKV placement, extents and index
-  publication. A3 below removes the temporary native fallback. CPU file/lifetime
-  gates are required in CI; GPU/GDS
-  and installed qualification remain open. See [file contracts](transport.md#ssd-file-transfers).
-- [x] Peer restores now retain source grants until the selected engine completes
-  remote→GPU READs. Raw ranges land in final pages; encoded payloads land in
-  bounded GPU codec inputs. DRAM-tier Prepare/Warmup keeps host destinations.
-  Imported tensors and codec pools keep persistent registrations; restores batch
-  their layout ranges within native limits. Owners, completion and admission survive unknown
-  drain. CPU controls are implemented; GPU/GDR and installed profiles remain
-  unqualified pending installed runs. See
-  [direct peer restore](transport.md#peer-restore-into-gpu).
-- [x] D's v0.3.14 submodule/build update was independently accepted and merged
-  as `8bc9ba52`, including four runtime libraries, yalantinglibs `45c6463`, CLI11
-  and the original 23 C signatures. Hardware profiles remain unqualified.
-- [x] A3 was independently accepted and merged as `78e31f8a`: all SSD I/O uses engine file segments;
-  TENT uses a **separate file engine** to preserve the peer source-drain contract.
-  Native OrbitKV io_uring/cuFile/slot code and `--ssd-io-engine` are removed.
-  The fork pin advances to `85c270db`, preserving negative native status codes
-  and exposing asynchronous terminal evidence without weakening physical drain.
-  Real-file CPU gates cover both providers; GPU/GDS/installed qualification
-  remains open. See [file contracts](transport.md#ssd-file-transfers).
-- [x] A2 was independently accepted and merged as `25ebc535`: OrbiTE consumes one file
-  vector per extent with `Padding` for gaps/tails, and `gds_enabled` prevents
-  unconfigured cuFile loading. `storage/ssd/gpu.rs` and its zero buffers are
-  deleted. Persistent tensor/codec input registrations and actual codec arena
-  backing survive unknown drain with caller completion/admission. TENT now uses `tent_file_submitv` at fork `1198515d` for RANGE/PADDING
-  elements and bounded unaligned staging. Its OrbitKV adapter and scratch/zero-fill
-  code are deleted; the separate file engine and physical-drain contract remain. CPU real-file and owner
-  gates cover both providers; GPU/GDS/installed profiles remain unqualified.
-- [x] C was independently accepted and merged as `73570259`: OrbiTE owns
-  Manager and client local GPU↔DRAM payload copies through one `LocalCopyEngine`
-  per worker stream. Completions retain registrations and pinned slots through
-  drain; TENT keeps Memcpy/Kernel behind the same boundary. Lifecycle 11 carries
-  the Manager-selected engine to the client. CPU CUDA-shim byte/retention controls
-  and installed direct/kernel gates are written; installed GPU profiles remain
-  unqualified. See [local copy contracts](transport.md#local-gpudram-copies).
-  The dependency, feature, configuration and environment names use `orbite`;
-  matching pre-release clients and Managers upgrade together.
+| Accepted delivery | Retained result |
+| --- | --- |
+| Transfer boundary / dependency, #309–#312 | Typed failures, bounded budgets, registrations and file-segment ownership; later superseded by the concrete OrbiTE owner |
+| Peer GPU Restore, `eb9e9785` (#313) | Persistent tensor/codec registrations and one batch per bounded source plan; DRAM fills retain host destinations |
+| Native SSD removal, `78e31f8a` (#315) | Engine file I/O; no native OrbitKV io_uring/cuFile fallback |
+| Padded file vectors, `25ebc535` (#316), `c1cce1bb` (#319) | Layout ranges/padding reach engines; GPU slots and TENT scratch adapter deleted |
+| Local copies, `73570259` (#317) | OrbiTE stream-local engine, bounded windows/slots and completions retained through drain |
+| Intent/deadlines, `67d9ac4b` (#321) | Foreground/high Restore, background/low preparation, checkpoint/low write-back; Unspec by default |
+| Peer retirement, `a683f991` (#322) | Membership fence before requester-specific close; wait-only retries and identity capacity returned only after drain |
+| cfg confinement, `70ebeb48` (#323) | Shared logic compiles without backends; typed Unavailable, no native startup and strict Clippy |
+| Unsafe hygiene, `7f68a1a6` (#324) | Invariant notes/lint, redundant unsafe impl removal, owner-before-failure and unregister-before-unmap |
+| Panic removal, `c7fd6144` (#325) | Source lints, three justified expectations, typed boundaries and unloading exception to Drop-time abort |
+| OrbiTE only, `1f30895a` (#326) | Pin `1312e9b1`, auto/tcp/rdma hint, concrete engine and lifecycle 13; TENT/submodule/build/wheels/custom router removed; 12 CI checks green |
 
-- [x] Explicit registration identity and failure propagation; retry ownership
-  retained after failed unregister.
-- [x] Prepared Save handles, Rust batching, bounded producer admission and
-  normal-path installed byte/engine controls within recorded profiles.
-- [x] Experimental `orbite` allocation bridge: each canonical host view retains
-  the actual `PinnedAllocation` and access lock. The weak cache avoids a cycle;
-  unregister, cancellation, wait timeout and dropped batches cannot return its
-  slot while OrbiTE still retains accepted work. The source build and explicit
-  real-CUDA allocator gate are described in [transport](transport.md#historical-orbite-allocation-bridge).
-  The TCP peer consumer candidate follows below. Whole-pool registration,
-  transfer-mailbox integration and installed serving remain open; the default
-  transport is still TENT.
-- [x] Experimental OrbiTE TCP peer candidate: explicit provider selection,
-  allocation registrations retained by source tickets, grant-supplied epochs,
-  shared peer planning and gRPC generation completion. Cancellation keeps the
-  blocking owner; a locally unquiesced outcome retains ticket/buffers/admission.
-  See the [profile, limits and gates](transport.md#experimental-orbite-peer-tcp-profile).
-  Independent source review and reruns passed for the same-host H20/CUDA 12.2
-  source-grant and embedded Manager GPU Save/Restore profile at `5a50d092`.
-  See [OrbitKV #304](https://github.com/OrbitInfra/OrbitKV/pull/304) for the
-  external evidence locations. That historical CUDA 12.2 pilot does not qualify
-  installed Manager/serving, CUDA 13, physical cross-host or RDMA/device DMA;
-  the later CUDA 13 and installed scopes follow below.
-- [x] Experimental OrbiTE RDMA source candidate: explicit single RNIC/port/GID,
-  distinct payload namespace and no transport fallback. It shares the TCP
-  candidate's allocation/grant/completion owners and uses the existing owned
-  host-staging verbs path. See the [profile and separate gates](transport.md#experimental-orbite-peer-rdma-profile).
-  The host-only two-node component gate exercises registered READ execution;
-  it is separate from pinned allocation and Manager GPU qualification. Independent
-  source/CPU review and two-host reruns pass at consumer `660f893d`, including
-  both RoCE directions, fragmented bytes/guards, actual CQ counts, absent
-  CUDA/TENT libraries and zero normal-close resource charges. See
-  [OrbitKV #305](https://github.com/OrbitInfra/OrbitKV/pull/305) for frozen source,
-  binary and external review evidence. A-node CUDA 13.1 compatibility runs at
-  `660f893d` additionally pass pinned source grants and embedded Manager GPU
-  Save/Restore through TCP and same-RNIC RDMA staging. R535 with supported
-  compatibility libraries is not a CUDA 13 exclusion; see the
-  [runtime profile](transport.md#experimental-orbite-peer-rdma-profile).
-  Installed serving, physical cross-host Manager/GPU, RNIC faults, GDR, multirail
-  and full TENT parity remain unqualified; the installed IPC substage follows. B-node
-  compute remains untested while GPU leases are busy. Historical CUDA 12.2
-  pilots remain separate from this CUDA 13.1 source evidence.
-- [x] Optional complete-wheel feature forwarding for `orbite` and `orbite-rdma`.
-  The default wheel/provider stays CUDA 13 + TENT; optional RDMA wheel CI checks
-  the installed console's compiled RNIC requirement. The maintained
-  `test_installed_orbite_peer_restores_cuda_ipc_bytes` gate covers matching
-  installed client/Manager IPC registration/Publish, actual peer bytes and
-  original export-credit retirement. Independent H20 reruns at `eb1cc90f` pass
-  installed TCP and same-RNIC RDMA: each restores 16,384 GPU bytes, repays four
-  original IPC slots, normally exits the client/Managers and reaps every owned
-  process with zero GPU residue. The private etcd fixture is killed and reaped;
-  this does not establish graceful-etcd shutdown. The CPython 3.11 wheel uses an explicitly unified Torch CUDA 13.0.96
-  runtime and compatibility driver 590.48.01 on R535; uniform installed CUDA
-  13.1, serving and cross-host Manager/GPU remain open. See the
-  [exact runtime profile](transport.md#installed-client-and-manager-profile)
-  and [release builds](releases.md#build-a-candidate).
-- [ ] Carry allocation/page generations through source grants, destination
-  ownership and actual engine page reuse. Session/registration epochs alone
-  do not establish this contract.
-- [ ] Prove physical completion after timeout, partial submission and cancellation
-  before recycling buffers, mappings, events, pages or registration owners.
-- [ ] Reclaim resources after permanent requester/source loss when a valid
-  termination proof exists; retain unresolved owners within explicit budgets.
-- [ ] Complete current-release installed adapter fault coverage for both engines.
+These implementation acceptances preserve grants, epochs, bounded admission and
+physical-drain receipts. They are not hardware qualification. Source grants remain
+authoritative; every requester owns its `RemoteSegment`. Timeout/cancellation/
+Unquiesced keeps owners and capacity; unknown effects are never replayed.
+CPU/TCP priorities remain advisory without per-priority dispatch statistics.
+Replacing pure transfer-leg timings needs an engine timing API; end-to-end
+KV-path observations remain. No TENT API gap is a current OrbitKV dependency.
 
-The selected engine releases do not expose an allocator-issued identity for the
-physical page allocation carried by their connector/linker handoffs. The generic
-upstream contracts are tracked in
-[vLLM #62810](https://github.com/vllm-project/vllm/issues/62810) and
-[SGLang #45493](https://github.com/sgl-project/sglang/issues/45493). Candidate
-code, an open issue or an upstream merge is not released OrbitKV support; pins
-and consumers change only after the matching release and installed page-reuse
-fault gates pass. Connector-local counters keyed by block/page ID are rejected
-because they cannot observe allocations made by other engine paths.
+- [x] Explicit registration identity/failure propagation and retained retry ownership.
+- [x] Prepared Save, native batching and bounded producer admission.
+- [x] Normal-path registration and selected-release prepared-adapter controls at
+  the historical revisions below.
+- [ ] Carry allocator-issued page generations through source/destination use and reuse.
+- [ ] Qualify physical completion after timeout, partial submission and cancellation.
+- [ ] Reclaim after permanent loss only with valid termination proof; unresolved
+  owners remain bounded and observable.
+- [ ] Complete current-release installed adapter-fault and OrbiTE hardware coverage.
 
-The vLLM source/CPU API candidate in draft
-[vLLM #62819](https://github.com/vllm-project/vllm/pull/62819), exact
-`b37aa38c`, independently passes allocator identity, finish-time ordinary/HMA/
-partial-tail/MultiConnector handoff and compatibility review. It remains
-unmerged, unreleased and unconsumed. Its acceptance does not authorize an engine
-pin change, page reuse or physical fault reclamation.
+Selected releases lack allocator-issued page identity on connector/linker
+handoffs. Registration/session epochs and adapter-local counters cannot observe
+all native allocation/free paths. Track [vLLM #62810](https://github.com/vllm-project/vllm/issues/62810)
+and [SGLang #45493](https://github.com/sgl-project/sglang/issues/45493).
 
-The SGLang source/CPU API candidate in draft
-[SGLang #45548](https://github.com/sgl-project/sglang/pull/45548), exact
-`3cc5121f`, independently passes allocator ownership, Full/SWA descriptor
-geometry, default Rust tree-core adapter enrichment, legacy compatibility,
-overflow/resize and unsupported-profile controls. Its H20 allocator primitive
-also passes warmed steady-state asynchronous issuance/snapshot,
-readiness-event handoff and stale generation rejection. An unwarmed first call
-still waits for preceding CUDA work, and the measured primitive has no serving
-performance threshold. It remains unmerged, unreleased and unconsumed; complete
-installed SGLang page-reuse faults and physical termination stay open.
+| Historical upstream candidate | Accepted evidence | Limit |
+| --- | --- | --- |
+| [vLLM #62819](https://github.com/vllm-project/vllm/pull/62819), `b37aa38c` | Source/CPU allocator identity and ordinary/HMA/partial-tail/MultiConnector finish-time handoff | Unmerged, unreleased and unconsumed at review; no page-reuse or physical-fault acceptance |
+| [SGLang #45548](https://github.com/sgl-project/sglang/pull/45548), `3cc5121f` | Source/CPU ownership/geometry and scoped H20 warmed asynchronous issuance/snapshot/readiness/stale-generation primitive | Unwarmed first call waits; no serving threshold or complete installed faults; unreleased/unconsumed at review |
 
-TENT likewise has no per-transfer receipt proving that failed, canceled or
-timed-out CUDA/RDMA work can no longer touch caller memory; the required native
-contract is tracked in
-[Mooncake #4816](https://github.com/kvcache-ai/Mooncake/issues/4816). The accepted
-unregister-with-active-READ reproducer is OrbitKV
-[PR #237](https://github.com/OrbitInfra/OrbitKV/pull/237), merge `53e69620`.
-Separately, the accepted whole-engine CPU/TCP source-close scope does stop new
-pointer READ admission, wait for admitted CPU handlers and dispatch owners, then
-unregister and release the pool. Unsupported paths, timeouts and unregister
-errors retain the complete engine/registration/pool owner under the existing
-1,024-pool/1-TiB process budget. That is real CPU/TCP reclamation after its valid
-receipt, not a per-ticket, CUDA or RDMA termination proof.
+An upstream merge alone does not change supported pins. Consume the released API
+and pass installed reuse/fault gates before broadening support.
 
-The Python TENT writable-buffer ownership repair in [PR #288](https://github.com/OrbitInfra/OrbitKV/pull/288)
-has source/CPU and installed CPU-native fixture acceptance. It retains real
-buffer exports through failed cleanup; borrowed GPU backing and canonical
-CUDA/RDMA physical lifetime remain unqualified.
+Historical evidence stays scoped:
 
-CPU-native TCP source-close controls are accepted only in that scope. Canonical
-CUDA-native source close can return unsupported status 2 and retain the engine,
-registration and pool until process exit. Token Drop/best-effort destruction,
-borrowed GPU buffers and physical RDMA faults remain separate open boundaries.
+- [OrbiTE TCP source pilot](transport.md#experimental-orbite-peer-tcp-profile),
+  `5a50d092` / #304: same-host H20/CUDA 12.2; not installed serving or CUDA 13.
+- [OrbiTE host RDMA and CUDA 13.1 source profiles](transport.md#experimental-orbite-peer-rdma-profile),
+  `660f893d` / #305–#306: host bytes and A-node embedded Manager; not installed
+  cross-host Manager/GPU, GDR, physical faults or broader topology.
+- [Installed OrbiTE TCP/same-RNIC profile](transport.md#installed-client-and-manager-profile),
+  `eb1cc90f` / #307: frozen CPython 3.11 wheel, unified Torch CUDA 13.0.96,
+  original IPC-credit retirement; not current-path or serving qualification.
+- [Prepared vLLM 0.31.0 pairs](https://github.com/OrbitInfra/OrbitKV/pull/290) and
+  [SGLang 0.5.22 pairs](https://github.com/OrbitInfra/OrbitKV/pull/295): normal
+  DRAM/io_uring retirement; the SGLang pool/linker fixture checks 2,621,440 bytes,
+  sentinels and four original credits with sole/independent exporter holds.
+  [#293](https://github.com/OrbitInfra/OrbitKV/pull/293) retains earlier 0.5.21 results.
+- [Original lifetime ledger](https://github.com/OrbitInfra/OrbitKV/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
+  and [pre-C4 transfer ledger](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
+  preserve exact hashes, failed freezes and earlier TENT source-close/buffer
+  repairs, including #237/#288 and [Mooncake #4816](https://github.com/kvcache-ai/Mooncake/issues/4816).
+  TENT hardware limits and verdicts remain historical, not new OrbiTE work.
 
-Acceptance requires real requester/source crash, delayed/lost grants and release
-ACKs, partial submission, repeated page reuse and restart. No premature recycle;
-retention must be bounded and observable, and reclamation must eventually follow
-a valid proof. TTL, lease expiry and logical errors are not physical drain.
-
-Official vLLM 0.31.0 prepared-adapter DRAM/io_uring healthy pairs are
-accepted in [PR #290](https://github.com/OrbitInfra/OrbitKV/pull/290).
-The selected SGLang 0.5.22 pair for each medium is independently accepted in
-[PR #295](https://github.com/OrbitInfra/OrbitKV/pull/295): the released GPU-pool/linker
-fixture restores all 2,621,440 bytes including sentinels, repays four original
-IPC credits and retires registration with normal process waits. Both sole
-ownership and an independent exporter hold pass; the SSD pair clears DRAM and
-requires reads from the ext4 NVMe file through io_uring. This is a normal
-prepared-adapter fixture, separate from model serving and fault reclamation.
-[PR #293](https://github.com/OrbitInfra/OrbitKV/pull/293) retains the earlier
-0.5.21 results. The
-[immutable lifetime record](https://github.com/OrbitInfra/OrbitKV/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
-preserves exact source/wheel/review/archive hashes and all failed freezes.
-Cancellation, page reuse and physical reclamation remain separate obligations.
+Acceptance still requires real crash, delayed/lost grants/ACKs, partial submit,
+repeated reuse and restart. TTL, lease expiry and logical errors are not drain.
 
 ## S4 — Finish communication execution and demonstrate gains
 
@@ -485,9 +324,10 @@ for user navigation while retaining OrbitKV's Rust owners and website identity.
 - [x] Consolidate the release build into one CUDA 13 `orbitkv-llm` distribution
   and one PyPI Trusted Publishing job. The ten-wheel matrix covers CPython 3.10–3.14
   on Linux x86_64/aarch64; final candidate qualification and publication remain open.
-- [x] Move the consumed TENT fixes into `OrbitInfra/Mooncake`'s pinned integration
-  branch and remove build-time patch application. Native source behavior and
-  existing transport qualification limits are unchanged.
+- [x] Remove TENT native packaging and the fork submodule in #326; historical
+  provenance remains at immutable source links.
+- [ ] C4 concise user/contract guides implemented for independent review; evidence
+  pages and frozen verdicts are preserved, with no runtime or claim change.
 - [ ] Build final Manager/engine images and wheels, preserve licenses/provenance,
   and qualify clean installed artifacts on claimed hosts and profiles.
 - [ ] Re-qualify the current data path before any publication. Qualifications
@@ -534,7 +374,8 @@ gates. Raw results, traces, manifests and per-run reports stay outside Git.
 
 ## Historical evidence
 
-The [pre-cleanup plan](https://github.com/OrbitInfra/OrbitKV/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/completion-plan.md)
+The [pre-C4 plan](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/completion-plan.md)
+preserves the integration and cleanup chronology. The [pre-cleanup plan](https://github.com/OrbitInfra/OrbitKV/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/completion-plan.md)
 preserves detailed accepted/failed runs, commits, artifact locations and frozen
 measurement contracts. It is an evidence reference, not another execution queue.
 Its S2 isolation failures, physical-lifetime limits and unqualified scopes remain

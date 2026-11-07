@@ -123,24 +123,11 @@ not by itself prove that a TP=4 representation can be restored by TP=8.
 
 ## OrbitKV execution order
 
-1. Qualify sustained single-node DRAM/SSD serving for both engines, with
-   bounded requests and resources, cancellation/restart correctness, and
-   native-engine controls. Profile actual copy destinations before attempting
-   to merge H2D restores. See [benchmarks](../benches/README.md).
-2. Qualify two real hosts running independent matching TP=1 replicas, separately
-   for vLLM and SGLang. Count real remote restore bytes, compare outputs and
-   bound failure-to-recompute behavior. Then qualify same-host TP per replica.
-3. Qualify P/D and cache reuse together: a P-side cache hit must still reach D;
-   completed D-side blocks should be available to a later request on another
-   P. Use the released native vLLM/SGLang P/D transports independently of
-   OrbitKV's OrbiTE shared cache.
-4. Replace sharded Catalog discovery with complete local global indexes,
-   historically backed by etcd block metadata and revisioned snapshot/Watch;
-   the S2.8 candidate replaces block traffic with owner inventory streams. Qualify quorum
-   loss, repair and metadata capacity. Cross-host TP/PP, peer-SSD mixed-load
-   qualification and KV-aware routing have separate gates.
+The [completion plan](completion-plan.md) is the sole delivery/status record.
+OrbitKV already uses inventory-fed local indexes with etcd membership, source
+gRPC grants and OrbiTE payload transfer. Do not recreate retired Catalog or
+etcd-block paths from the historical comparisons above.
 
-Transport completion and page-lifetime safety are requirements at every stage.
-Directory hints never authorize memory reuse. Keep engine-to-Manager UDS/iceoryx2,
-peer control gRPC, and OrbiTE payload transfer. Full recovery semantics
-remain tracked in [state identity](state-identity.md).
+Source hints never authorize memory access. Byte movement, engine page lifetime
+and complete recovery must be qualified separately from another project's
+support matrix. See [state identity](state-identity.md) and [compatibility](compatibility.md).

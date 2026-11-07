@@ -18,9 +18,9 @@ Standalone operation needs neither etcd nor a peer gRPC listener.
 
 | Path | Control/ownership | Payload |
 | --- | --- | --- |
-| Local raw DRAM Restore | Native client keeps destination/source holds and readiness dependencies | Selected engine local-copy implementation and completion |
-| Publish and SSD/codec Restore | Manager workers retain accepted-operation resources | Selected engine local/file transfers; GPU codec compute |
-| Peer cached state | Local candidates, authoritative source grant and completion reconciliation | Selected engine READ into GPU restore pages, or DRAM for cache-tier fills |
+| Local raw DRAM Restore | Native client keeps destination/source holds and readiness dependencies | OrbiTE local copies and completion |
+| Publish and SSD/codec Restore | Manager workers retain accepted-operation resources | OrbiTE local/file transfers; GPU codec compute |
+| Peer cached state | Local candidates, authoritative source grant and completion reconciliation | OrbiTE READ into GPU Restore pages, or DRAM for cache-tier fills |
 | Current-request P/D | Official engine lifecycle/backend; independent cache adapter | vLLM NIXL/MultiConnector or SGLang native disaggregation |
 
 In distributed mode etcd maintains protocol identity and leased members. Bounded
@@ -119,7 +119,7 @@ future tokens. See [state identity](state-identity.md) and [hybrid recovery](hyb
 ### Framework adapters
 
 vLLM uses the official KV Connector scheduler/worker callbacks; its current
-qualified cache profile uses V1 and one attention group. SGLang uses the official
+cache configuration requires V1 and one attention group. SGLang uses the official
 UnifiedRadixCache external linker and remaining version-coupled safety hooks.
 Python retains engine allocation/events and Rust owns shared cache state/waits.
 No custom P/D connector, handshake proxy or maintained fork runtime is required.
@@ -135,7 +135,7 @@ release a physically active allocation.
 ### Transfer and backing domains
 
 Raw DRAM Restore executes in the engine through independently registered shared
-arenas. Peer restore submits remote→GPU through the selected transfer engine;
+arenas. Peer restore submits remote→GPU through OrbiTE;
 only DRAM cache-tier fills retain a host destination. The imported tensor owner
 and client completion remain retained on unknown drain. Encoded peer inputs go
 to GPU codec allocations. SSD/codec layouts use Manager workers.
@@ -177,7 +177,7 @@ release dependencies; deleting them does not complete the migration.
 
 Engine-authored page generations must be consumed in registration, grants,
 destination use and reuse decisions. Semantic non-use alone cannot release pages
-still referenced by CUDA, storage or RDMA. This is S3-dependent work.
+still referenced by CUDA, storage or RDMA. The [completion plan](completion-plan.md) tracks this prerequisite.
 
 ## Safety invariant
 
@@ -200,10 +200,10 @@ permanent requester loss and allocation reuse require explicit termination evide
 5. The consumer restores into engine-owned slots and reconciles final release.
 
 Loss of coverage or retired membership blocks stale remote authorization while
-local recovery can continue. Scoped two-host ordinary RDMA serving does not
+local recovery can continue. Historical scoped two-host RDMA serving does not
 qualify independent fault domains, cache HA or safe crash reclamation. See
 [P2P deployment](p2p.md), [shared-cache gates](shared-cache-qualification.md) and
-[the S2 envelope](completion-plan.md#s2--metadata-reliability-and-measured-capacity).
+[metadata qualification](completion-plan.md#s2--metadata-reliability-and-measured-capacity).
 
 ## Planning direction
 
@@ -217,13 +217,11 @@ for blind cross-medium retry.
 Receiver admission/fairness must account for physical NIC/device budgets and
 engine-owned native P/D traffic as well as Manager cache READs. Routing requests
 is separate from choosing a recovery route. General read-set/retention IR,
-checkpoint placement and semantic reclaim remain S7 work. See [planning contracts](state-planning.md).
+checkpoint placement and semantic reclaim remain future work. See [planning contracts](state-planning.md).
 
 ## Ownership boundary by milestone
 
-S2 owns metadata/coverage reliability; S3 owns generations and physical termination;
-S4 optimizes measured execution; S5 consumes released engine contracts; S6 owns
-executed route/admission planning; S7 owns semantic retention; S8 owns final product
-artifacts and publication. [The completion plan](completion-plan.md) records status,
-dependencies and acceptance. The [immutable architecture snapshot](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/architecture.md)
-retains earlier detailed comparisons and design history.
+The [completion plan](completion-plan.md) records status, dependencies and review.
+The [immutable architecture snapshot](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/architecture.md)
+retains earlier comparisons and design history. Current OrbiTE hardware and
+installed profiles require re-qualification.
