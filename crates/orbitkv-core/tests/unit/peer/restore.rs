@@ -251,6 +251,8 @@ async fn uncertainty_retains_actual_backing_and_never_retries_cleanup_or_transfe
                 };
                 // SAFETY: injected failures never dereference these addresses.
                 assert!(matches!(
+                    // SAFETY: the Control backend never dereferences the synthetic address;
+                    // the registration/owner remain live to test admission and drain accounting.
                     unsafe { source.read_gpu(&[slice], std::slice::from_ref(&registration)) },
                     Err(PeerTransferError::Unquiesced)
                 ));

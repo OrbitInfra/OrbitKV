@@ -60,12 +60,20 @@ fn actual_source_owner_preserves_partial_and_unproven_resources() {
     let host_library =
         std::env::var("ORBITKV_TEST_HOST_SHIM").expect("explicit host-registration shim");
     let native_dir = std::env::var("ORBITKV_MOONCAKE_LIB_DIR").expect("explicit TENT shim bundle");
+    // SAFETY: this explicitly selected test fixture implements the audited
+    // CUDA-host shim ABI; the Library stays owned throughout the control.
     let host = unsafe { libloading::Library::new(host_library).unwrap() };
+    // SAFETY: the selected fixture bundle implements the pinned TENT ABI;
+    // its handle remains live until all fixture symbols are no longer used.
     let native = unsafe {
         libloading::Library::new(Path::new(&native_dir).join("libtent_shared.so")).unwrap()
     };
     let counter = |library: &libloading::Library, name: &[u8]| -> u64 {
+        // SAFETY: the fixture defines these counter symbols with this exact C ABI;
+        // the borrowed Library stays loaded through the call.
         let function = unsafe { library.get::<unsafe extern "C" fn() -> u64>(name).unwrap() };
+        // SAFETY: the counter has no pointer inputs and its defining library is
+        // retained by this closure's caller.
         unsafe { function() }
     };
     let shards = if scenario == "partial" { 2 } else { 1 };
@@ -108,6 +116,8 @@ fn actual_source_owner_preserves_partial_and_unproven_resources() {
         );
         assert!(held[0]._engine.local_segment_name().is_ok());
         assert!(Arc::ptr_eq(&held[0]._pool, &memory.upgrade().unwrap()));
+        // SAFETY: this fixture exports the named no-argument C counter; native
+        // stays loaded through the Symbol borrow.
         let pending = unsafe {
             native
                 .get::<unsafe extern "C" fn() -> libc::c_int>(
@@ -116,6 +126,7 @@ fn actual_source_owner_preserves_partial_and_unproven_resources() {
                 .unwrap()
         };
         assert_eq!(
+            // SAFETY: the typed fixture symbol is live and needs no pointer arguments.
             unsafe { pending() },
             1,
             "real native rollback owner must remain discoverable"

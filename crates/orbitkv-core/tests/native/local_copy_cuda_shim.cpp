@@ -149,8 +149,11 @@ int cuMemcpyBatchAsync_v2(Address *dst, Address *src, size_t *sizes, size_t coun
 int cuMemHostAlloc(void **out, size_t size, unsigned) { *out = std::calloc(1, size); return *out ? 0 : 2; }
 int cuMemFreeHost(void *ptr) { std::free(ptr); return 0; }
 int cuMemHostRegister_v2(void *, size_t, unsigned) { return 0; }
-int cuMemHostUnregister(void *) { return 0; }
-int cuMemHostGetDevicePointer_v2(Address *out, void *host, unsigned) { *out = reinterpret_cast<Address>(host); return 0; }
+int cuMemHostUnregister(void *) { return std::getenv("ORBITKV_TEST_IMPORT_UNREGISTER_FAILURE") ? 1 : 0; }
+int cuMemHostGetDevicePointer_v2(Address *out, void *host, unsigned) {
+  if (std::getenv("ORBITKV_TEST_IMPORT_ADDRESS_FAILURE")) return 1;
+  *out = reinterpret_cast<Address>(host); return 0;
+}
 int cuModuleLoadData(void **module, const void *) { *module = reinterpret_cast<void *>(0x4567); return 0; }
 int cuModuleGetFunction(void **function, void *, const char *name) {
   if (std::strcmp(name, "orbite_batch_copy")) return 500;

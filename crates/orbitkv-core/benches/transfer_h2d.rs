@@ -128,6 +128,8 @@ struct MappedHost {
 
 impl Drop for MappedHost {
     fn drop(&mut self) {
+        // SAFETY: all benchmark streams synchronized before this owner drops;
+        // each variant uses its matching allocator, and unmap follows successful unregister.
         unsafe {
             match self.host_memory {
                 HostMemory::CudaHostAlloc => {
@@ -198,10 +200,14 @@ fn alloc_mapped_host(len: usize, host_memory: HostMemory) -> MappedHost {
 
 fn alloc_cuda_host_alloc(len: usize) -> MappedHost {
     let mut p: *mut std::ffi::c_void = std::ptr::null_mut();
+    // SAFETY: the CUDA context is current, p is writable output, and
+    // MappedHost takes ownership of the returned len-byte allocation.
     let r = unsafe { sys::cuMemHostAlloc(&mut p, len, sys::CU_MEMHOSTALLOC_DEVICEMAP) };
     assert_eq!(r, sys::CUresult::CUDA_SUCCESS, "cuMemHostAlloc");
 
     let mut device: sys::CUdeviceptr = 0;
+    // SAFETY: p is the successfully allocated live mapped host range;
+    // device is writable output in the same current context.
     let r = unsafe { sys::cuMemHostGetDevicePointer_v2(&mut device, p, 0) };
     assert_eq!(r, sys::CUresult::CUDA_SUCCESS, "cuMemHostGetDevicePointer");
 
@@ -215,6 +221,8 @@ fn alloc_cuda_host_alloc(len: usize) -> MappedHost {
 
 fn alloc_hugepage_host(len: usize) -> MappedHost {
     let len = align_to_hugepage(len);
+    // SAFETY: this creates a new private anonymous mapping with no borrowed
+    // backing; the returned address is checked before registration.
     let p = unsafe {
         libc::mmap(
             std::ptr::null_mut(),
@@ -227,8 +235,12 @@ fn alloc_hugepage_host(len: usize) -> MappedHost {
     };
     assert_ne!(p, libc::MAP_FAILED, "mmap(MAP_HUGETLB) failed");
 
+    // SAFETY: p owns a writable len-byte mapping and remains retained until
+    // all benchmark submissions drain and deregistration succeeds.
     let r = unsafe { sys::cuMemHostRegister_v2(p, len, sys::CU_MEMHOSTREGISTER_DEVICEMAP) };
     if r != sys::CUresult::CUDA_SUCCESS {
+        // SAFETY: registration failed before any transfer was submitted, so the
+        // fresh mapping has no outstanding native users.
         unsafe {
             libc::munmap(p, len);
         }
@@ -236,6 +248,8 @@ fn alloc_hugepage_host(len: usize) -> MappedHost {
     assert_eq!(r, sys::CUresult::CUDA_SUCCESS, "cuMemHostRegister");
 
     let mut device: sys::CUdeviceptr = 0;
+    // SAFETY: the host mapping was successfully CUDA registered; device is
+    // exclusive output in that retained current context.
     let r = unsafe { sys::cuMemHostGetDevicePointer_v2(&mut device, p, 0) };
     assert_eq!(r, sys::CUresult::CUDA_SUCCESS, "cuMemHostGetDevicePointer");
 
@@ -265,6 +279,8 @@ fn hugepage_size() -> Option<usize> {
 
 fn alloc_device(len: usize) -> u64 {
     let mut d: sys::CUdeviceptr = 0;
+    // SAFETY: the benchmark bound its CUDA context; d is writable output
+    // and this allocation is freed only after all stream work completes.
     let r = unsafe { sys::cuMemAlloc_v2(&mut d, len) };
     assert_eq!(r, sys::CUresult::CUDA_SUCCESS, "cuMemAlloc");
     d
@@ -272,6 +288,8 @@ fn alloc_device(len: usize) -> u64 {
 
 fn fill_host(host: &MappedHost, len: usize) {
     assert!(len <= host.len);
+    // SAFETY: len was bounded by the owned host allocation and callers fill
+    // only before submitting copies or after synchronizing the preceding case.
     let slice = unsafe { std::slice::from_raw_parts_mut(host.host, len) };
     for (idx, byte) in slice.iter_mut().enumerate() {
         *byte = (idx.wrapping_mul(31).wrapping_add(7) & 0xFF) as u8;
@@ -280,6 +298,8 @@ fn fill_host(host: &MappedHost, len: usize) {
 
 fn fill_device(device: u64, len: usize) {
     check_cuda(
+        // SAFETY: the benchmark owns device for len bytes; the previous case
+        // has drained before this synchronous initialization.
         unsafe { sys::cuMemsetD8_v2(device, 0xA5, len) },
         "cuMemsetD8_v2",
     );
@@ -288,6 +308,8 @@ fn fill_device(device: u64, len: usize) {
 fn copy_desc(device: u64, host: &MappedHost, device_offset: usize, host_offset: usize) -> CopyDesc {
     CopyDesc {
         device: device + device_offset as u64,
+        // SAFETY: the layout computes host_offset within its allocated host
+        // range, which remains retained through the benchmark's stream drain.
         host: unsafe { host.host.add(host_offset) },
         host_device: host.device + host_offset as u64,
         size: SEG,
@@ -401,6 +423,8 @@ fn main() {
                 }
             }
 
+            // SAFETY: all copies have synchronized and this is the device allocation
+            // returned by alloc_device; it is freed exactly once.
             check_cuda(unsafe { sys::cuMemFree_v2(device) }, "cuMemFree_v2");
         }
     }

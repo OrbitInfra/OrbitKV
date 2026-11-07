@@ -5,8 +5,7 @@
 //! selection, rails, endpoints, retries, and batch completion.
 
 use std::collections::HashMap;
-use std::ffi::{CString, OsString, c_char, c_void};
-use std::os::unix::ffi::OsStrExt;
+use std::ffi::{CString, c_char, c_void};
 use std::ptr::NonNull;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -173,6 +172,8 @@ pub struct MemoryRegistration {
 // SAFETY: The token never dereferences the address. Its owner guarantees the
 // registered allocation remains valid, and TransferEngine serializes native state.
 unsafe impl Send for MemoryRegistration {}
+// SAFETY: the token does not dereference backing; mutations of its active flag
+// require &mut self and its retained engine synchronizes native state.
 unsafe impl Sync for MemoryRegistration {}
 
 impl MemoryRegistration {
@@ -186,6 +187,8 @@ impl MemoryRegistration {
         if !self.active {
             return Ok(());
         }
+        // SAFETY: this token owns the exact registration range and retains the engine;
+        // its unsafe constructor requires backing/loans to outlive cleanup.
         let result = unsafe { self.engine.unregister_memory(self.address, self.length) };
         if result.is_ok() {
             self.active = false;
@@ -197,12 +200,18 @@ impl MemoryRegistration {
 impl Drop for MemoryRegistration {
     fn drop(&mut self) {
         if self.active {
+            // SAFETY: the unsafe constructor requires the allocation to outlive the token
+            // and all transfers to drain before token drop; the engine Arc stays live here.
             let _ = unsafe { self.engine.unregister_memory(self.address, self.length) };
         }
     }
 }
 
+// SAFETY: the pinned TENT engine supports calls from different threads. Rust
+// cache/admission/notification state is locked, and native lifetime is owned by self.
 unsafe impl Send for TransferEngine {}
+// SAFETY: native TENT synchronizes its shared engine state; Rust mutable state
+// is mutex-protected and destruction requires exclusive ownership.
 unsafe impl Sync for TransferEngine {}
 
 impl TransferEngine {
@@ -214,37 +223,51 @@ impl TransferEngine {
         nic_filter: &[String],
     ) -> Result<Self> {
         native::ensure_loaded().map_err(MooncakeError::NativeRuntime)?;
-        // The upstream C ABI takes its NIC filter from a process-global
-        // environment variable. Serialize initialization and restore the
-        // caller's environment so multiple engines cannot leak filters into
-        // one another.
+        // Native settings are thread-local. Serialize construction with the
+        // separate file engine, without mutating the process environment.
         let _create_guard = ENGINE_CREATE_LOCK
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let _filter_guard = ScopedNicFilter::apply(nic_filter)?;
+        // A null config value clears an earlier thread-local override and lets
+        // the fork consume its usual environment/config defaults.
+        let nic_filter = if nic_filter.is_empty() {
+            CString::new("null")?
+        } else {
+            CString::new(serde_json::json!(nic_filter).to_string())?
+        };
         let metadata = CString::new(metadata)?;
         let local_server_name = CString::new(local_server_name)?;
         let bind_host = CString::new(bind_host)?;
+        // SAFETY: all CStrings remain live through creation; self takes sole native
+        // ownership only after the returned handle and source epoch have been validated.
         let native = unsafe {
             native::create(
                 metadata.as_ptr(),
                 local_server_name.as_ptr(),
                 bind_host.as_ptr(),
                 rpc_port,
+                &nic_filter,
             )
-        };
+        }
+        .map_err(MooncakeError::NativeRuntime)?;
         if native.is_null() {
             return Err(MooncakeError::Create);
         }
         let mut epoch = [0 as c_char; 33];
+        // SAFETY: native is a live newly created engine; epoch is the writable 33-byte
+        // array required by the pinned C ABI.
         if let Err(error) = check("sourceEpoch", unsafe {
             native::source_epoch(native, &mut epoch)
         }) {
+            // SAFETY: creation failed before any registration or request could escape;
+            // this is the only owner and the only destroy attempt.
             unsafe { native::destroy(native) };
             return Err(error);
         }
         let source_epoch = fixed_c_string(&epoch);
         if let Err(error) = source_epoch_bytes(&source_epoch) {
+            // SAFETY: the unexposed engine has no registrations or batches, and this is
+            // its sole destruction attempt.
             unsafe { native::destroy(native) };
             return Err(error);
         }
@@ -260,6 +283,8 @@ impl TransferEngine {
 
     pub fn local_segment_name(&self) -> Result<String> {
         let mut output = [0 as c_char; 256];
+        // SAFETY: self retains the native engine; output has exactly the writable
+        // capacity passed to the C ABI.
         check("getLocalIpAndPort", unsafe {
             native::local_ip_and_port(self.native, output.as_mut_ptr(), output.len())
         })?;
@@ -281,6 +306,8 @@ impl TransferEngine {
         }
         let mut epoch = [0 as c_char; 33];
         let mut active = u64::MAX;
+        // SAFETY: admission has been closed and self retains engine/registrations;
+        // epoch and active are valid outputs, and only success is consumed as drain proof.
         let status = unsafe {
             native::close_source(
                 self.native,
@@ -333,6 +360,8 @@ impl TransferEngine {
             });
         }
         let location = CString::new(location)?;
+        // SAFETY: the unsafe caller retains the registered backing through cleanup;
+        // self owns the live engine and the location CString lasts through the call.
         check("registerLocalMemory", unsafe {
             native::register_memory(
                 self.native,
@@ -349,6 +378,7 @@ impl TransferEngine {
     ///
     /// The allocation must remain valid through every transfer and successful
     /// explicit cleanup. Dropping a token does not prove cleanup succeeded.
+    /// Drain all transfers using the region before unregistering or dropping its token.
     /// `location` must describe the actual memory domain,
     /// for example `cpu:0` or `cuda:0`.
     /// A native registration error may retain partial registrations without
@@ -360,6 +390,8 @@ impl TransferEngine {
         length: usize,
         location: &str,
     ) -> Result<MemoryRegistration> {
+        // SAFETY: this method inherits the caller's backing-lifetime and access
+        // contract and immediately places the resulting registration in its owner token.
         unsafe { self.register_memory(address, length, location)? };
         Ok(MemoryRegistration {
             engine: Arc::clone(self),
@@ -373,14 +405,21 @@ impl TransferEngine {
     ///
     /// The caller must retain the attempted region and its engine until cleanup
     /// succeeds, including a partial registration which returned an error.
+    /// All transfers using the range must already be physically drained.
     /// This is logical deregistration, not physical transfer termination.
     pub unsafe fn unregister_memory(&self, address: NonNull<u8>, length: usize) -> Result<()> {
+        // SAFETY: the unsafe caller owns this exact registered range and has drained
+        // its users; failed unregister does not transfer permission to free backing.
         check("unregisterLocalMemory", unsafe {
             native::unregister_memory(self.native, address.as_ptr().cast::<c_void>(), length)
         })
     }
 
-    pub fn submit_and_wait(
+    /// # Safety
+    /// Each local range must be registered, valid for the requested access and
+    /// free of conflicting access until this call returns. The caller retains
+    /// backing and registration owners while this call waits, even on timeout.
+    pub unsafe fn submit_and_wait(
         &self,
         operation: TransferOp,
         remote_segment: &str,
@@ -388,18 +427,25 @@ impl TransferEngine {
         timeout: Duration,
         expected_source_epoch: Option<&str>,
     ) -> Result<usize> {
-        self.submit_and_wait_inner(
-            operation,
-            remote_segment,
-            slices,
-            timeout,
-            None,
-            expected_source_epoch,
-            None,
-        )
+        // SAFETY: the caller supplies and retains the registered ranges through drain.
+        unsafe {
+            self.submit_and_wait_inner(
+                operation,
+                remote_segment,
+                slices,
+                timeout,
+                None,
+                expected_source_epoch,
+                None,
+            )
+        }
     }
 
-    pub fn submit_and_notify(
+    /// # Safety
+    /// Each local range must be registered, valid for the requested access and
+    /// free of conflicting access until this call returns. The caller retains
+    /// backing and registration owners while this call waits, even on timeout.
+    pub unsafe fn submit_and_notify(
         &self,
         operation: TransferOp,
         remote_segment: &str,
@@ -408,15 +454,18 @@ impl TransferEngine {
         notification: &Notification,
         expected_source_epoch: Option<&str>,
     ) -> Result<usize> {
-        self.submit_and_wait_inner(
-            operation,
-            remote_segment,
-            slices,
-            timeout,
-            Some(notification),
-            expected_source_epoch,
-            None,
-        )
+        // SAFETY: the caller supplies and retains the registered ranges through drain.
+        unsafe {
+            self.submit_and_wait_inner(
+                operation,
+                remote_segment,
+                slices,
+                timeout,
+                Some(notification),
+                expected_source_epoch,
+                None,
+            )
+        }
     }
 
     /// Open metadata under the caller's authoritative epoch. The pinned native
@@ -424,12 +473,18 @@ impl TransferEngine {
     pub fn prepare_segment(&self, remote_segment: &str, expected_source_epoch: &str) -> Result<()> {
         let epoch = source_epoch_bytes(expected_source_epoch)?;
         let segment = self.open_segment(remote_segment)?;
+        // SAFETY: the engine retains the opened segment; epoch is validated and
+        // NUL-terminated, and remains borrowed through this synchronous check.
         check("validateSourceEpochBeforeSubmit", unsafe {
             native::validate_remote_epoch(self.native, segment, &epoch)
         })
     }
 
-    pub fn submit_and_wait_cancellable(
+    /// # Safety
+    /// Each local range must be registered, valid for the requested access and
+    /// free of conflicting access until this call returns. The caller retains
+    /// backing and registration owners while this call waits, even on timeout.
+    pub unsafe fn submit_and_wait_cancellable(
         &self,
         operation: TransferOp,
         remote_segment: &str,
@@ -438,22 +493,25 @@ impl TransferEngine {
         expected_source_epoch: Option<&str>,
         cancellation: &std::sync::atomic::AtomicBool,
     ) -> Result<usize> {
-        self.submit_and_wait_inner(
-            operation,
-            remote_segment,
-            slices,
-            timeout,
-            None,
-            expected_source_epoch,
-            Some(cancellation),
-        )
+        // SAFETY: the caller supplies and retains the registered ranges through drain.
+        unsafe {
+            self.submit_and_wait_inner(
+                operation,
+                remote_segment,
+                slices,
+                timeout,
+                None,
+                expected_source_epoch,
+                Some(cancellation),
+            )
+        }
     }
 
     #[allow(
         clippy::too_many_arguments,
         reason = "the batch owner consumes deadline, cancellation and notification together"
     )]
-    fn submit_and_wait_inner(
+    unsafe fn submit_and_wait_inner(
         &self,
         operation: TransferOp,
         remote_segment: &str,
@@ -495,6 +553,8 @@ impl TransferEngine {
             .transpose()?
             .unwrap_or([0; 33]);
         if expected_source_epoch.is_some() {
+            // SAFETY: the engine retains its segment and validated epoch array for this
+            // check; no payload has been submitted yet.
             check("validateSourceEpochBeforeSubmit", unsafe {
                 native::validate_remote_epoch(self.native, segment, &expected_epoch)
             })?;
@@ -518,12 +578,16 @@ impl TransferEngine {
                 expected_source_epoch: expected_epoch,
             })
             .collect::<Vec<_>>();
+        // SAFETY: self owns a live engine and admission bounds the descriptor count;
+        // the resulting batch is retained until drain and successful native release.
         let batch = unsafe { native::allocate_batch(self.native, slices.len()) };
         if batch == INVALID_BATCH {
             return Err(MooncakeError::InvalidBatch);
         }
         contain_native_unwind(|| {
             let submitted = match notification.as_ref() {
+                // SAFETY: the unsafe caller retains all registered ranges through physical
+                // drain; requests and both notification strings stay owned by this stack.
                 Some((name, message)) => check("tent_submit_notif", unsafe {
                     native::submit_with_notify(
                         self.native,
@@ -533,6 +597,8 @@ impl TransferEngine {
                         message.as_ptr(),
                     )
                 }),
+                // SAFETY: the unsafe caller retains registered ranges and the requests Vec
+                // remains live until drain, including partial-submit failure.
                 None => check("tent_submit", unsafe {
                     native::submit(self.native, batch, &mut requests)
                 }),
@@ -546,12 +612,16 @@ impl TransferEngine {
                         status: STATUS_WAITING,
                         transferred_bytes: 0,
                     };
+                    // SAFETY: drain_batch supplies an in-range task of this retained batch;
+                    // status is writable ABI output and does not itself authorize release.
                     check("getTransferStatus", unsafe {
                         native::transfer_status(self.native, batch, task, &mut status)
                     })?;
                     Ok(status)
                 },
                 |task| {
+                    // SAFETY: the batch remains owned throughout cancellation and subsequent
+                    // drain; requesting cancellation does not release any backing.
                     check("tent_cancel_task", unsafe {
                         native::cancel_task(self.native, batch, task)
                     })
@@ -561,6 +631,8 @@ impl TransferEngine {
                         status: STATUS_WAITING,
                         transferred_bytes: 0,
                     };
+                    // SAFETY: this retained batch is live and status is exclusive writable
+                    // output; the completion check below precedes native batch release.
                     check("tent_overall_status", unsafe {
                         native::batch_status(self.native, batch, &mut status)
                     })?;
@@ -572,6 +644,8 @@ impl TransferEngine {
                     }
                     Ok(status.transferred_bytes as usize)
                 },
+                // SAFETY: drain_batch invokes release only after all tasks prove physical
+                // completion; the engine and descriptors remain live if release is uncertain.
                 || unsafe { native::free_batch(self.native, batch) == 0 },
                 |task, state, cause| {
                     admission.retain();
@@ -594,6 +668,8 @@ impl TransferEngine {
             count: 0,
             records: std::ptr::null_mut(),
         };
+        // SAFETY: self retains the engine and polling is serialized; info is valid
+        // output storage whose native records remain owned until the matching free.
         check("tent_recv_notifs", unsafe {
             native::receive_notifications(self.native, &mut info)
         })?;
@@ -606,6 +682,8 @@ impl TransferEngine {
         if info.records.is_null() {
             return Err(MooncakeError::InvalidNotificationBuffer(info.count));
         }
+        // SAFETY: the pinned ABI returns count initialized records in its allocation;
+        // count is positive and records is non-null, and no free occurs during this borrow.
         let records = unsafe { std::slice::from_raw_parts(info.records, info.count as usize) };
         let notifications = records
             .iter()
@@ -614,6 +692,8 @@ impl TransferEngine {
                 message: fixed_c_string(&record.message),
             })
             .collect();
+        // SAFETY: records have been copied into owned Rust strings; no borrow of the
+        // native allocation remains and this is the matching sole native free.
         unsafe { native::free_notifications(&mut info) };
         Ok(notifications)
     }
@@ -719,6 +799,8 @@ impl TransferEngine {
         let segment = self.open_segment(remote_segment)?;
         let name = CString::new(notification.name.as_str())?;
         let message = CString::new(notification.message.as_str())?;
+        // SAFETY: self retains the engine and segment, and both CString inputs remain
+        // NUL-terminated and live until the synchronous native call copies them.
         check("tent_send_notifs", unsafe {
             native::notify(self.native, segment, name.as_ptr(), message.as_ptr())
         })
@@ -736,6 +818,8 @@ impl TransferEngine {
         let mut stats = vec![empty; INITIAL_CAPACITY];
         loop {
             let mut count = stats.len();
+            // SAFETY: stats owns count initialized entries. The pinned C API respects the
+            // input capacity and reports the required size separately for a later retry.
             check("tent_get_nic_load_stats", unsafe {
                 native::nic_load_stats(self.native, stats.as_mut_ptr(), &mut count)
             })?;
@@ -774,6 +858,8 @@ impl TransferEngine {
         }
         let name = CString::new(remote_segment)?;
         let mut segment = native::INVALID_SEGMENT;
+        // SAFETY: self retains the engine, name is a live CString, and segment is
+        // exclusive writable output; the cache acquires ownership on success.
         check("tent_open_segment", unsafe {
             native::open_segment(self.native, &mut segment, name.as_ptr())
         })?;
@@ -839,57 +925,6 @@ fn fixed_c_string(value: &[c_char]) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-fn set_nic_filter(nics: &[String]) -> Result<()> {
-    if nics.is_empty() {
-        return Ok(());
-    }
-    let value = CString::new(nics.join(","))?;
-    if unsafe { libc::setenv(c"MC_TE_FILTERS".as_ptr(), value.as_ptr(), 1) } == 0 {
-        Ok(())
-    } else {
-        Err(MooncakeError::Operation {
-            operation: "setenv(MC_TE_FILTERS)",
-            status: -1,
-        })
-    }
-}
-
-struct ScopedNicFilter {
-    previous: Option<OsString>,
-    changed: bool,
-}
-
-impl ScopedNicFilter {
-    fn apply(nics: &[String]) -> Result<Self> {
-        let previous = std::env::var_os("MC_TE_FILTERS");
-        let changed = !nics.is_empty();
-        if changed {
-            set_nic_filter(nics)?;
-        }
-        Ok(Self { previous, changed })
-    }
-}
-
-impl Drop for ScopedNicFilter {
-    fn drop(&mut self) {
-        if !self.changed {
-            return;
-        }
-        match self.previous.as_ref() {
-            Some(previous) => {
-                if let Ok(value) = CString::new(previous.as_bytes()) {
-                    unsafe {
-                        libc::setenv(c"MC_TE_FILTERS".as_ptr(), value.as_ptr(), 1);
-                    }
-                }
-            }
-            None => unsafe {
-                libc::unsetenv(c"MC_TE_FILTERS".as_ptr());
-            },
-        }
-    }
-}
-
 impl Drop for TransferEngine {
     fn drop(&mut self) {
         if let Ok(segments) = self.segments.get_mut() {
@@ -920,6 +955,8 @@ fn contain_native_unwind<R>(operation: impl FnOnce() -> R) -> R {
         Err(_panic) => {
             let message =
                 b"OrbitKV: panic after native allocation; retaining all transfer owners\n";
+            // SAFETY: message is a static byte slice of the supplied length; write only
+            // borrows it and stderr ownership is not transferred.
             unsafe {
                 libc::write(libc::STDERR_FILENO, message.as_ptr().cast(), message.len());
             }
@@ -930,6 +967,8 @@ fn contain_native_unwind<R>(operation: impl FnOnce() -> R) -> R {
 
 fn hold_without_termination() -> ! {
     loop {
+        // SAFETY: poll permits a null array when nfds is zero. This wait retains the
+        // current stack and all uncertain native owners indefinitely.
         unsafe {
             libc::poll(std::ptr::null_mut(), 0, 60_000);
         }

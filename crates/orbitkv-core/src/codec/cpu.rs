@@ -203,12 +203,15 @@ unsafe fn encode_with_backend(
         return false;
     }
     let table = tables(format);
-    // SAFETY: caller verifies ISA support; lengths and table bounds are checked.
     let start = match backend {
         Backend::Scalar => Some(0),
         #[cfg(target_arch = "x86_64")]
+        // SAFETY: the caller verified AVX2 support; the length check above bounds
+        // each vector read/write, and u16 indices fit the encoding table.
         Backend::Avx2 => unsafe { avx2_encode(input, output, &table.encode) },
         #[cfg(target_arch = "x86_64")]
+        // SAFETY: the caller verified AVX-512 support; the checked disjoint slices
+        // and full u16 encoding table cover every vector access.
         Backend::Avx512 => unsafe { avx512_encode(input, output, &table.encode) },
     };
     let Some(start) = start else {
@@ -240,12 +243,15 @@ unsafe fn decode_with_backend(
         return false;
     }
     let table = tables(format);
-    // SAFETY: caller verifies ISA support; lengths and table bounds are checked.
     let start = match backend {
         Backend::Scalar => 0,
         #[cfg(target_arch = "x86_64")]
+        // SAFETY: the caller verified AVX2 support; output is twice input's length
+        // and every u8 input indexes the full 256-entry decoding table.
         Backend::Avx2 => unsafe { avx2_decode(input, output, &table.decode) },
         #[cfg(target_arch = "x86_64")]
+        // SAFETY: the caller verified AVX-512 support; the disjoint slices have
+        // checked lengths and all u8 indices fit the decoding table.
         Backend::Avx512 => unsafe { avx512_decode(input, output, &table.decode) },
     };
     for (&value, out) in input[start..]

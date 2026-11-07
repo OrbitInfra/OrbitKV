@@ -2153,6 +2153,7 @@ dependencies = [
  "parking_lot",
  "prometheus",
  "rand 0.10.3",
+ "rustix",
  "serde",
  "serde_json",
  "smallvec",
@@ -2263,6 +2264,7 @@ dependencies = [
  "log",
  "opentelemetry",
  "orbitkv-mooncake-sys",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 

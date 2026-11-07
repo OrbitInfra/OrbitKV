@@ -97,6 +97,8 @@ impl MooncakeTransport {
         };
         for (ptr, len) in regions {
             transport.registrations.push(
+                // SAFETY: transport already owns the pool and partial registrations. Its failure
+                // path retains that backing if native cleanup cannot prove release.
                 unsafe {
                     transport
                         .engine
@@ -560,9 +562,10 @@ impl TransferBackend for MooncakeTransport {
             TransferOp::Read => orbitkv_transfer::TransferOp::Read,
             TransferOp::Write => orbitkv_transfer::TransferOp::Write,
         };
-        let bytes = self
-            .engine
-            .submit_and_wait_cancellable(
+        // SAFETY: TransferBackend's caller retains exclusive destination/source
+        // loans and registrations until this blocking call proves physical drain.
+        let bytes = unsafe {
+            self.engine.submit_and_wait_cancellable(
                 op,
                 endpoint,
                 &native,
@@ -570,7 +573,8 @@ impl TransferBackend for MooncakeTransport {
                 Some(source_epoch),
                 cancellation.flag(),
             )
-            .map_err(tent_error)?;
+        }
+        .map_err(tent_error)?;
         if bytes != total {
             return Err(TransferError::new(
                 ErrorKind::Backend,

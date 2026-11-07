@@ -10,6 +10,8 @@ fn failed_native_unregister_preserves_the_rust_registration_until_retry() {
     struct Library(NonNull<c_void>);
     impl Drop for Library {
         fn drop(&mut self) {
+            // SAFETY: the fixture symbols and all native engines are gone before this sole
+            // dlclose of the owned handle.
             unsafe { libc::dlclose(self.0.as_ptr()) };
         }
     }
@@ -19,43 +21,65 @@ fn failed_native_unregister_preserves_the_rust_registration_until_retry() {
     )
     .unwrap();
     let library = Library(
+        // SAFETY: the explicitly selected test fixture is a trusted library with the
+        // audited control ABI; Library owns the successful handle.
         NonNull::new(unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) })
             .expect("load the matching native control library"),
     );
     let symbol = |name: &std::ffi::CStr| {
+        // SAFETY: library is still loaded and name is a static terminated symbol;
+        // the non-null function address is checked before conversion.
         let pointer = unsafe { libc::dlsym(library.0.as_ptr(), name.as_ptr()) };
         assert!(!pointer.is_null(), "missing native test symbol {name:?}");
         pointer
     };
     let install: unsafe extern "C" fn(native::NativeEngine) =
+        // SAFETY: the fixture declares this symbol as extern C with the exact
+        // annotated function signature; library outlives every use.
         unsafe { std::mem::transmute(symbol(c"orbitkv_test_install_unregister_control")) };
     let refuse: unsafe extern "C" fn(native::NativeEngine, libc::c_int) =
+        // SAFETY: this fixture symbol has the annotated C signature and its
+        // Library remains owned through each call.
         unsafe { std::mem::transmute(symbol(c"orbitkv_test_set_unregister_refusal")) };
     let refuse_registration: unsafe extern "C" fn(native::NativeEngine, libc::c_int) =
+        // SAFETY: this fixture symbol has the annotated C signature and its
+        // Library remains owned through each call.
         unsafe { std::mem::transmute(symbol(c"orbitkv_test_set_registration_refusal")) };
     let state: unsafe extern "C" fn(native::NativeEngine, *mut u32, *mut u32) -> libc::c_int =
+        // SAFETY: the fixture signature matches both writable count outputs;
+        // its defining library remains loaded.
         unsafe { std::mem::transmute(symbol(c"orbitkv_test_unregister_state")) };
     let mut backing = vec![0xa5; 4096];
     let engine =
         Arc::new(TransferEngine::new(P2P_METADATA, "127.0.0.1:0", "127.0.0.1", 0, &[]).unwrap());
     let native = engine.native;
+    // SAFETY: native is a live fixture-backed engine, and the typed control
+    // symbols only mutate its test transport state.
     unsafe {
         install(native);
         refuse_registration(native, 1);
     }
     let address = NonNull::new(backing.as_mut_ptr()).unwrap();
     assert!(
+        // SAFETY: backing owns the full range throughout this rejected registration;
+        // no transfer or conflicting host access is in flight.
         unsafe { engine.register_memory_owned(address, backing.len(), "cpu:0") }.is_err(),
         "actual C ABI provider refusal must not return a Rust registration token"
     );
     let (mut registrations, mut removals) = (0, 0);
     assert_eq!(
+        // SAFETY: native and its fixture library remain owned; both output counters
+        // are exclusive writable Rust variables.
         unsafe { state(native, &mut registrations, &mut removals) },
         0
     );
     assert_eq!(registrations, 1);
+    // SAFETY: native is a live fixture engine and this typed control only
+    // changes its registration-refusal state.
     unsafe { refuse_registration(native, 0) };
     let removals_before_success = removals;
+    // SAFETY: backing is retained until explicit unregister completes; the
+    // registration token retains its actual engine owner.
     let mut registration = unsafe {
         engine
             .register_memory_owned(
@@ -66,10 +90,13 @@ fn failed_native_unregister_preserves_the_rust_registration_until_retry() {
             .unwrap()
     };
     let retained_engine = Arc::downgrade(&engine);
+    // SAFETY: the live typed fixture engine accepts this test-only refusal flag;
+    // no pointer or allocation ownership is transferred.
     unsafe { refuse(native, 1) };
     assert!(registration.try_unregister().is_err());
     assert!(registration.active);
     assert_eq!(
+        // SAFETY: the fixture engine is live and both output counters are writable.
         unsafe { state(native, &mut registrations, &mut removals) },
         1
     );
@@ -80,16 +107,21 @@ fn failed_native_unregister_preserves_the_rust_registration_until_retry() {
         1,
         "token must retain its native engine"
     );
+    // SAFETY: the typed fixture function only updates the live engine's test flag.
     unsafe { refuse(native, 0) };
     registration.try_unregister().unwrap();
     assert!(!registration.active);
     assert_eq!(
+        // SAFETY: the fixture engine is retained by registration and both counters
+        // are valid writable output.
         unsafe { state(native, &mut registrations, &mut removals) },
         0
     );
     assert_eq!((registrations, removals), (2, removals_before_success + 2));
     registration.try_unregister().unwrap();
     assert_eq!(
+        // SAFETY: registration still owns the engine; the typed fixture function
+        // only reads its state into the two writable counters.
         unsafe { state(native, &mut registrations, &mut removals) },
         0
     );
@@ -112,8 +144,8 @@ fn fixed_tent_strings_are_bounded_even_without_a_terminator() {
 
 #[test]
 fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
-    unsafe {
-        libc::setenv(c"MC_FORCE_TCP".as_ptr(), c"1".as_ptr(), 1);
+    if !in_tcp_process("engine::tests::tcp_peers_move_merged_slices_and_count_each_byte_once") {
+        return;
     }
     let engine = Arc::new(
         TransferEngine::new("P2PHANDSHAKE", "127.0.0.1:0", "127.0.0.1", 0, &[])
@@ -127,12 +159,16 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
     let mut memory = vec![0u8; 8192];
     memory[..4096].fill(0xa5);
     let base = NonNull::new(memory.as_mut_ptr()).expect("memory pointer");
+    // SAFETY: memory owns the entire registered range through both engines'
+    // transfers and the explicit unregister below.
     let mut registration = unsafe {
         engine
             .register_memory_owned(base, memory.len(), "cpu:0")
             .expect("register memory")
     };
     assert_eq!(registration.address(), base);
+    // SAFETY: the same backing remains live; test transfers use disjoint source
+    // and destination halves and registrations are released only after drain.
     let mut peer_registration = unsafe {
         peer.register_memory_owned(base, memory.len(), "cpu:0")
             .expect("register peer memory")
@@ -140,17 +176,24 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
     let notification_generation = peer
         .open_notification_scope("loopback")
         .expect("open notification scope");
+    // SAFETY: memory has 8192 bytes; offset 4096 is within its live allocation.
     let destination = unsafe { base.byte_add(4096) };
     let mut slices: Vec<_> = (0..4)
         .map(|index| TransferSlice {
             priority: crate::TransferPriority::High,
+            // SAFETY: index is below four, keeping each 1024-byte source inside the
+            // first half of the retained 8192-byte allocation.
             local: unsafe { base.byte_add(index * 1024) },
+            // SAFETY: these offsets stay in the disjoint destination half of the same
+            // retained allocation; no host access occurs while transfer runs.
             remote_address: unsafe { destination.byte_add(index * 1024) }.as_ptr() as u64,
             length: 1024,
         })
         .collect();
-    let transferred = engine
-        .submit_and_notify(
+    // SAFETY: both registrations retain the disjoint memory halves and the
+    // fixture reads or reuses bytes only after the blocking drain returns.
+    let transferred = unsafe {
+        engine.submit_and_notify(
             TransferOp::Write,
             &segment,
             &slices,
@@ -161,7 +204,8 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
             },
             None,
         )
-        .expect("peer write");
+    }
+    .expect("peer write");
     assert_eq!(
         transferred, 4096,
         "merged task counters must not be added twice"
@@ -202,8 +246,10 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
         }
         memory[..4096].fill(0);
         assert_eq!(
-            engine
-                .submit_and_wait_cancellable(
+            // SAFETY: both registered halves remain owned and disjoint during this
+            // blocking read; host inspection follows its physical drain.
+            unsafe {
+                engine.submit_and_wait_cancellable(
                     TransferOp::Read,
                     &segment,
                     &slices,
@@ -211,7 +257,8 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
                     None,
                     &std::sync::atomic::AtomicBool::new(false),
                 )
-                .unwrap(),
+            }
+            .unwrap(),
             4096
         );
         assert_eq!(&memory[..4096], &memory[4096..]);
@@ -225,6 +272,8 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
         .try_unregister()
         .expect("unregister peer memory");
     registration.try_unregister().expect("unregister memory");
+    // SAFETY: memory remains allocated and unused by native work until this
+    // registration is explicitly released below.
     let mut registration = unsafe {
         engine
             .register_memory_owned(base, memory.len(), "cpu:0")
@@ -235,15 +284,21 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
         engine
             .close_source(Duration::from_secs(1))
             .expect("physical CPU/TCP source receipt");
+        // SAFETY: the live backing is retained even though closed-source admission
+        // rejects this new registration before it can escape.
         assert!(unsafe { engine.register_memory_owned(base, memory.len(), "cpu:0") }.is_err());
         assert!(matches!(
-            engine.submit_and_wait(
-                TransferOp::Read,
-                &segment,
-                &slices,
-                Duration::from_millis(1),
-                None,
-            ),
+            // SAFETY: the original backing/registration remain live while closed-source
+            // admission rejects the batch; the test does not treat cancel as drain.
+            unsafe {
+                engine.submit_and_wait(
+                    TransferOp::Read,
+                    &segment,
+                    &slices,
+                    Duration::from_millis(1),
+                    None,
+                )
+            },
             Err(MooncakeError::BatchAdmissionExhausted)
         ));
         engine
@@ -253,49 +308,45 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
     registration.try_unregister().expect("unregister memory");
     drop(engine);
     drop(registration);
-    unsafe {
-        libc::unsetenv(c"MC_FORCE_TCP".as_ptr());
+}
+
+// Set process inputs before the test harness/native workers start, not via
+// setenv from a running multithreaded test process.
+fn in_tcp_process(name: &str) -> bool {
+    if std::env::var("ORBITKV_TEST_TCP_PROCESS").as_deref() == Ok(name) {
+        return true;
     }
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--nocapture"])
+        .env("ORBITKV_TEST_TCP_PROCESS", name)
+        .env("MC_FORCE_TCP", "1")
+        .env("MC_TE_FILTERS", "original")
+        .env_remove("MC_TENT_CONF")
+        .status()
+        .unwrap();
+    assert!(status.success(), "{name}: {status}");
+    false
 }
 
 #[test]
-fn engine_creation_restores_the_process_nic_filter() {
-    let _guard = ENGINE_CREATE_LOCK
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let original = std::env::var_os("MC_TE_FILTERS");
-    unsafe {
-        libc::setenv(c"MC_TE_FILTERS".as_ptr(), c"original".as_ptr(), 1);
+fn engine_creation_preserves_the_process_nic_filter() {
+    if !in_tcp_process("engine::tests::engine_creation_preserves_the_process_nic_filter") {
+        return;
     }
-    let filter =
-        ScopedNicFilter::apply(&["temporary".to_string()]).expect("apply temporary NIC filter");
-    assert_eq!(
-        std::env::var_os("MC_TE_FILTERS").as_deref(),
-        Some(std::ffi::OsStr::new("temporary"))
-    );
-    drop(filter);
-    assert_eq!(
-        std::env::var_os("MC_TE_FILTERS").as_deref(),
-        Some(std::ffi::OsStr::new("original"))
-    );
-    unsafe {
-        match original {
-            Some(value) => {
-                let value = CString::new(value.as_bytes()).expect("original environment");
-                libc::setenv(c"MC_TE_FILTERS".as_ptr(), value.as_ptr(), 1);
-            }
-            None => {
-                libc::unsetenv(c"MC_TE_FILTERS".as_ptr());
-            }
-        }
+    for nics in [vec!["temporary".into()], Vec::new()] {
+        let engine =
+            TransferEngine::new("P2PHANDSHAKE", "127.0.0.1:0", "127.0.0.1", 0, &nics).unwrap();
+        assert_eq!(std::env::var("MC_TE_FILTERS").unwrap(), "original");
+        engine.close_source(Duration::from_secs(1)).unwrap();
     }
 }
 
 #[test]
 #[cfg(not(feature = "cuda-13"))]
 fn grant_epoch_rejects_first_read_after_same_endpoint_restart() {
-    unsafe {
-        libc::setenv(c"MC_FORCE_TCP".as_ptr(), c"1".as_ptr(), 1);
+    if !in_tcp_process("engine::tests::grant_epoch_rejects_first_read_after_same_endpoint_restart")
+    {
+        return;
     }
     let source_engine =
         Arc::new(TransferEngine::new(P2P_METADATA, "127.0.0.1:0", "127.0.0.1", 0, &[]).unwrap());
@@ -309,6 +360,8 @@ fn grant_epoch_rejects_first_read_after_same_endpoint_restart() {
     let mut destination = vec![0x5au8; source.len()];
     let source_pointer = NonNull::new(source.as_mut_ptr()).unwrap();
     let destination_pointer = NonNull::new(destination.as_mut_ptr()).unwrap();
+    // SAFETY: source stays allocated and registered until its engine proves
+    // source drain, including the same-address epoch replacement control.
     let mut source_registration = unsafe {
         source_engine
             .register_memory_owned(source_pointer, source.len(), "cpu:0")
@@ -316,6 +369,8 @@ fn grant_epoch_rejects_first_read_after_same_endpoint_restart() {
     };
     let requester =
         Arc::new(TransferEngine::new(P2P_METADATA, "127.0.0.1:0", "127.0.0.1", 0, &[]).unwrap());
+    // SAFETY: destination remains exclusively available and registered until
+    // all blocking READs have drained.
     let mut target_registration = unsafe {
         requester
             .register_memory_owned(destination_pointer, destination.len(), "cpu:0")
@@ -328,15 +383,18 @@ fn grant_epoch_rejects_first_read_after_same_endpoint_restart() {
         remote_address: source_pointer.as_ptr() as u64,
         length: source.len(),
     }];
-    requester
-        .submit_and_wait(
+    // SAFETY: source/destination backing and registrations remain owned for
+    // the blocking READ; the oracle runs only after successful drain.
+    unsafe {
+        requester.submit_and_wait(
             TransferOp::Read,
             &endpoint,
             &slices,
             Duration::from_secs(2),
             Some(&grant_epoch),
         )
-        .unwrap();
+    }
+    .unwrap();
     assert_eq!(source, destination);
     destination.fill(0x5a);
     source_engine.close_source(Duration::from_secs(1)).unwrap();
@@ -350,6 +408,8 @@ fn grant_epoch_rejects_first_read_after_same_endpoint_restart() {
     for (i, byte) in source.iter_mut().enumerate() {
         *byte = ((i * 29 + 73) % 251) as u8;
     }
+    // SAFETY: the old source epoch drained before these bytes were changed;
+    // the replacement owner retains them through the new epoch's drain.
     let mut replacement_registration = unsafe {
         replacement
             .register_memory_owned(source_pointer, source.len(), "cpu:0")
@@ -361,13 +421,17 @@ fn grant_epoch_rejects_first_read_after_same_endpoint_restart() {
     } else {
         Some(grant_epoch.as_str())
     };
-    let old_read = requester.submit_and_wait(
-        TransferOp::Read,
-        &endpoint,
-        &slices,
-        Duration::from_secs(2),
-        expected,
-    );
+    // SAFETY: the registered buffers are live and not accessed concurrently;
+    // the stale epoch should reject before admission, with no replay.
+    let old_read = unsafe {
+        requester.submit_and_wait(
+            TransferOp::Read,
+            &endpoint,
+            &slices,
+            Duration::from_secs(2),
+            expected,
+        )
+    };
     println!(
         "old_grant_result={old_read:?} sentinel_unchanged={} replacement_payload_observed={} mutation={mutation}",
         destination.iter().all(|byte| *byte == 0x5a),
@@ -386,15 +450,18 @@ fn grant_epoch_rejects_first_read_after_same_endpoint_restart() {
             "pre-submit rejection retained a native batch"
         );
     }
-    let fresh_read = requester
-        .submit_and_wait(
+    // SAFETY: the fresh epoch registration owns source and the requester owns
+    // the disjoint destination until the blocking READ drains.
+    let fresh_read = unsafe {
+        requester.submit_and_wait(
             TransferOp::Read,
             &endpoint,
             &slices,
             Duration::from_secs(2),
             Some(replacement.source_epoch()),
         )
-        .unwrap();
+    }
+    .unwrap();
     assert_eq!(fresh_read, source.len());
     assert_eq!(source, destination);
     replacement.close_source(Duration::from_secs(1)).unwrap();
@@ -404,9 +471,6 @@ fn grant_epoch_rejects_first_read_after_same_endpoint_restart() {
     println!(
         "same_endpoint_same_address=true old_grant_rejected_before_batch=true fresh_payload_bytes={fresh_read} mutation={mutation}"
     );
-    unsafe {
-        libc::unsetenv(c"MC_FORCE_TCP".as_ptr());
-    }
 }
 
 #[test]
@@ -541,9 +605,6 @@ fn native_tcp_rejection_child() {
     if std::env::var_os("ORBITKV_TEST_NATIVE_TCP_REJECTION").is_none() {
         return;
     }
-    unsafe {
-        libc::setenv(c"MC_FORCE_TCP".as_ptr(), c"1".as_ptr(), 1);
-    }
     let engine =
         Arc::new(TransferEngine::new("P2PHANDSHAKE", "127.0.0.1:0", "127.0.0.1", 0, &[]).unwrap());
     let peer =
@@ -552,11 +613,15 @@ fn native_tcp_rejection_child() {
     let mut destination = vec![0x5au8; 4096];
     let source_ptr = NonNull::new(source.as_mut_ptr()).unwrap();
     let destination_ptr = NonNull::new(destination.as_mut_ptr()).unwrap();
+    // SAFETY: the child retains source and its registration indefinitely after
+    // the intentionally rejected native request; it never frees on timeout.
     let _source_registration = unsafe {
         engine
             .register_memory_owned(source_ptr, source.len(), "cpu:0")
             .unwrap()
     };
+    // SAFETY: destination is retained by this child through every native
+    // operation, including the deliberately invalid remote address control.
     let _destination_registration = unsafe {
         peer.register_memory_owned(destination_ptr, destination.len(), "cpu:0")
             .unwrap()
@@ -572,13 +637,18 @@ fn native_tcp_rejection_child() {
             remote_address: remote,
             length: 4096,
         };
-        let result = transfer_engine.submit_and_wait(
-            TransferOp::Read,
-            &segment,
-            &[slice],
-            Duration::from_secs(5),
-            None,
-        );
+        // SAFETY: the parent fixture keeps the registered local backing alive;
+        // the deliberately unregistered remote range is rejected by native authority.
+        // The child parks with all owners if physical completion remains uncertain.
+        let result = unsafe {
+            transfer_engine.submit_and_wait(
+                TransferOp::Read,
+                &segment,
+                &[slice],
+                Duration::from_secs(5),
+                None,
+            )
+        };
         println!("native_call_returned={result:?}");
     });
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -640,6 +710,8 @@ fn native_failures_hold_caller_buffers_and_never_call_free() {
         let mut child = Command::new(std::env::current_exe().expect("test binary"))
             .args(["--exact", test, "--nocapture"])
             .env(environment, &value)
+            .env("MC_FORCE_TCP", "1")
+            .env_remove("MC_TENT_CONF")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

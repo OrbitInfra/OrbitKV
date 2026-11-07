@@ -135,9 +135,13 @@ fn caller_context_survives_registration_and_readiness_success_and_failure() {
     );
     assert!(rejected.is_err());
     assert_eq!(current(), Some(caller.cu_ctx()));
+    // SAFETY: custom_pointer is owned by the current caller context; rejected
+    // executor creation submitted no work using it.
     unsafe { result::free_sync(custom_pointer) }.unwrap();
     drop(executor);
     primary.bind_to_thread().unwrap();
+    // SAFETY: the executor was dropped after drain and the allocation
+    // context was rebound; address is freed exactly once.
     unsafe { result::free_sync(address) }.unwrap();
 }
 
@@ -219,4 +223,85 @@ fn strided_restore_keeps_each_allocation_boundary_inside_a_shared_arena() {
     drop(executor);
     // SAFETY: every accepted copy has completed and no executor retains the destination.
     unsafe { result::free_sync(device) }.unwrap();
+}
+
+#[test]
+#[ignore = "CPU CUDA shims: failed arena/pool registration must deregister before unmapping"]
+fn failed_import_cleanup_preserves_registered_mapping() {
+    use rustix::fs::{MemfdFlags, SealFlags, fcntl_add_seals, ftruncate, memfd_create};
+    use rustix::process::{Resource, Rlimit, setrlimit};
+    use std::os::unix::process::ExitStatusExt;
+
+    assert_eq!(
+        std::env::var("ORBITKV_REQUIRE_LOCAL_COPY_SHIM").as_deref(),
+        Ok("1")
+    );
+    if std::env::var_os("ORBITKV_TEST_IMPORT_ADDRESS_FAILURE").is_none() {
+        for (kind, refuses) in [
+            ("arena", false),
+            ("arena", true),
+            ("pool", false),
+            ("pool", true),
+        ] {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "transfer::local::tests::failed_import_cleanup_preserves_registered_mapping",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("ORBITKV_TEST_IMPORT_KIND", kind)
+                .env("ORBITKV_TEST_IMPORT_ADDRESS_FAILURE", "1")
+                .env_remove("ORBITKV_TEST_IMPORT_UNREGISTER_FAILURE");
+            if refuses {
+                command.env("ORBITKV_TEST_IMPORT_UNREGISTER_FAILURE", "1");
+            }
+            let output = command.output().unwrap();
+            if refuses {
+                assert_eq!(output.status.signal(), Some(libc::SIGABRT), "{output:?}");
+            } else {
+                assert!(output.status.success(), "{output:?}");
+            }
+        }
+        return;
+    }
+    setrlimit(
+        Resource::Core,
+        Rlimit {
+            current: Some(0),
+            maximum: Some(0),
+        },
+    )
+    .unwrap();
+    if std::env::var("ORBITKV_TEST_IMPORT_KIND").as_deref() == Ok("pool") {
+        use crate::memory::numa::NumaNode;
+        use crate::memory::pinned::{PagePolicy, PinnedMemError, PinnedMemory};
+        assert!(matches!(
+            PinnedMemory::allocate(4096, PagePolicy::Regular, NumaNode::UNKNOWN),
+            Err(PinnedMemError::CudaGetDevicePointerFailed(_))
+        ));
+        return;
+    }
+    let fd = memfd_create(
+        "failed-import",
+        MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
+    )
+    .unwrap();
+    ftruncate(&fd, 4096).unwrap();
+    fcntl_add_seals(&fd, SealFlags::GROW | SealFlags::SHRINK | SealFlags::SEAL).unwrap();
+    let result = ImportedArena::new(
+        PayloadArena {
+            id: 1,
+            size: 4096,
+            fd,
+        },
+        CudaContext::new(0).unwrap(),
+    );
+    assert!(
+        result
+            .err()
+            .unwrap()
+            .contains("payload CUDA address failed")
+    );
 }

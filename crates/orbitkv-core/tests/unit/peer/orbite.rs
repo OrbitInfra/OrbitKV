@@ -57,6 +57,8 @@ fn cpu_auto_backend_reads_and_writes_fragmented_bytes_and_drains() {
     let cancel = Cancellation::default();
     // SAFETY: both registrations and backing remain owned and no access races.
     assert_eq!(
+        // SAFETY: both engine registrations own these bounded ranges through the
+        // blocking READ; the test inspects the destination only after drain.
         unsafe {
             backend.transfer(
                 Operation::Read,
@@ -81,6 +83,8 @@ fn cpu_auto_backend_reads_and_writes_fragmented_bytes_and_drains() {
     local.write(13, &[0x5a; 256]).unwrap();
     // SAFETY: READ has drained and the WRITE source is immutable until return.
     assert_eq!(
+        // SAFETY: the earlier READ drained; the registered WRITE source stays
+        // unchanged until this call physically completes.
         unsafe {
             backend.transfer(
                 Operation::Write,
@@ -563,4 +567,26 @@ fn kv_options_drive_unspec_policy_on_real_tcp() {
     );
     requester.unregister_memory(&local).unwrap();
     source.unregister_memory(&remote).unwrap();
+}
+
+#[test]
+fn tent_selection_rejects_an_orbite_local_engine() {
+    let engine: Arc<dyn TransferBackend> = Arc::new(
+        OrbiteTransport::new(
+            4096,
+            "127.0.0.1:0",
+            Transport::Unspec,
+            None,
+            #[cfg(feature = "orbite-rdma")]
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(engine.local_engine(), crate::PeerTransferBackend::Orbite);
+    let error = crate::transfer_engine::local::validate_engine(
+        crate::PeerTransferBackend::Mooncake,
+        Some(&engine),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Unavailable);
 }

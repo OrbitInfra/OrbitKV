@@ -3,6 +3,8 @@ use super::*;
 #[test]
 fn runtime_requires_all_four_libraries_and_consumed_symbols() {
     let source = Path::new(WORKSPACE_RUNTIME_LIB_DIR);
+    // SAFETY: source is the pinned built TENT bundle; the returned Api
+    // owns every library for the duration of symbol inspection.
     let loaded = unsafe { load_api_from(source) };
     assert!(loaded.as_ref().unwrap().files.is_ok());
     let incomplete =
@@ -11,6 +13,8 @@ fn runtime_requires_all_four_libraries_and_consumed_symbols() {
     for name in ["libtent_shared.so", "libmooncake_common.so", "libasio.so"] {
         std::fs::copy(source.join(name), incomplete.join(name)).unwrap();
     }
+    // SAFETY: the directory contains copies of the trusted pinned bundle;
+    // the absent fourth library causes loader rejection before symbol use.
     assert!(unsafe { load_api_from(&incomplete) }.is_err());
     std::fs::remove_dir_all(incomplete).unwrap();
 }
@@ -45,30 +49,36 @@ fn tent_c_abi_layouts_match_the_pinned_header() {
 }
 
 #[test]
-fn forced_tcp_temporarily_suppresses_general_tent_config() {
-    let original_force = env::var_os("MC_FORCE_TCP");
-    let original_config = env::var_os("MC_TENT_CONF");
-    unsafe {
-        env::set_var("MC_FORCE_TCP", "1");
-        env::set_var("MC_TENT_CONF", "original");
+fn forced_tcp_rejects_config_conflict_without_mutating_environment() {
+    const CHILD: &str = "ORBITKV_TEST_CONFIG_CONFLICT";
+    if env::var_os(CHILD).is_none() {
+        let status = std::process::Command::new(env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::forced_tcp_rejects_config_conflict_without_mutating_environment",
+            ])
+            .env(CHILD, "1")
+            .env("MC_FORCE_TCP", "1")
+            .env("MC_TENT_CONF", "original")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
     }
-    let guard = SuspendedTentConfig::for_forced_tcp().unwrap();
-    assert!(env::var_os("MC_TENT_CONF").is_none());
-    drop(guard);
-    assert_eq!(
-        env::var_os("MC_TENT_CONF").as_deref(),
-        Some(std::ffi::OsStr::new("original"))
-    );
-    unsafe {
-        match original_force {
-            Some(value) => env::set_var("MC_FORCE_TCP", value),
-            None => env::remove_var("MC_FORCE_TCP"),
-        }
-        match original_config {
-            Some(value) => env::set_var("MC_TENT_CONF", value),
-            None => env::remove_var("MC_TENT_CONF"),
-        }
+    // SAFETY: every string is static and terminated; rejection precedes native
+    // construction, and no environment value is changed by this call.
+    let error = unsafe {
+        create(
+            c"P2PHANDSHAKE".as_ptr(),
+            c"127.0.0.1:0".as_ptr(),
+            c"127.0.0.1".as_ptr(),
+            0,
+            c"null",
+        )
     }
+    .unwrap_err();
+    assert!(error.contains("unset MC_TENT_CONF"));
+    assert_eq!(env::var("MC_TENT_CONF").unwrap(), "original");
 }
 
 #[test]

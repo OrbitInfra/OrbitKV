@@ -84,6 +84,8 @@ fn snapshot(
     output: &gpu::EncodedDeviceSegment,
 ) -> (CudaSlice<u8>, Vec<u8>, EncodedSegment) {
     let device = stream.alloc_zeros::<u8>(output.meta.stored_bytes).unwrap();
+    // SAFETY: the borrowed arena output and distinct destination CudaSlice
+    // remain live until the explicit stream synchronization below.
     let copied = unsafe {
         result::memcpy_dtod_async(
             device.device_ptr(stream).0,
@@ -171,6 +173,8 @@ fn gpu_mixed_batches_reuse_scratch_and_crc_failure_precedes_all_target_writes() 
         })
         .collect();
     let budget = 8 * 1024 * 1024;
+    // SAFETY: the fixture owns every source CudaSlice for its declared range
+    // and retains them through the synchronous codec drain and output snapshot.
     let batch = unsafe { codec.encode_batch(&stream, &inputs, budget) }.unwrap();
     assert_eq!(batch.processed, inputs.len());
     let pointers: Vec<_> = batch
@@ -185,6 +189,8 @@ fn gpu_mixed_batches_reuse_scratch_and_crc_failure_precedes_all_target_writes() 
         .collect();
     drop(batch);
     let retained = codec.scratch_bytes();
+    // SAFETY: the fixture owns every source CudaSlice for its declared range
+    // and retains them through the synchronous codec drain and output snapshot.
     let batch = unsafe { codec.encode_batch(&stream, &inputs, budget) }.unwrap();
     assert_eq!(
         pointers,
@@ -221,8 +227,12 @@ fn gpu_mixed_batches_reuse_scratch_and_crc_failure_precedes_all_target_writes() 
     let original = last.1[last.2.stored_bytes - 1];
     let corrupt = [original ^ 1];
     let pointer = last.0.device_ptr(&stream).0 + (last.2.stored_bytes - 1) as u64;
+    // SAFETY: the one-byte source and the final byte of the owned device
+    // allocation remain live until the immediately following stream synchronization.
     unsafe { result::memcpy_htod_async(pointer, &corrupt, stream.cu_stream()) }.unwrap();
     stream.synchronize().unwrap();
+    // SAFETY: the fixture retains all source/target allocations and metadata
+    // through the codec drain; only completed bytes are inspected or reused afterward.
     let error = unsafe { codec.decode_batch(&stream, &decode, budget) }.unwrap_err();
     assert!(
         matches!(&error, DecodeError::Corrupt(message) if message.contains("checksum mismatch")),
@@ -238,9 +248,13 @@ fn gpu_mixed_batches_reuse_scratch_and_crc_failure_precedes_all_target_writes() 
         );
     }
     let repaired = [original];
+    // SAFETY: the one-byte source and the final byte of the owned device
+    // allocation remain live until the immediately following stream synchronization.
     unsafe { result::memcpy_htod_async(pointer, &repaired, stream.cu_stream()) }.unwrap();
     stream.synchronize().unwrap();
     // The failed batch has drained and the same scratch is immediately usable.
+    // SAFETY: the fixture retains all source/target allocations and metadata
+    // through the codec drain; only completed bytes are inspected or reused afterward.
     unsafe { codec.decode_batch(&stream, &decode, budget) }.unwrap();
     let device_results: Vec<_> = targets
         .iter()
@@ -257,6 +271,8 @@ fn gpu_mixed_batches_reuse_scratch_and_crc_failure_precedes_all_target_writes() 
         })
         .collect();
     assert_eq!(
+        // SAFETY: the fixture retains all source/target allocations and metadata
+        // through the codec drain; only completed bytes are inspected or reused afterward.
         unsafe { codec.decode_host_batch(&stream, &host_inputs, retained, None) }.unwrap(),
         inputs.len()
     );
@@ -282,6 +298,8 @@ fn gpu_mixed_batches_reuse_scratch_and_crc_failure_precedes_all_target_writes() 
         ..decode[0]
     };
     assert!(matches!(
+        // SAFETY: the fixture retains all source/target allocations and metadata
+        // through the codec drain; only completed bytes are inspected or reused afterward.
         unsafe { codec.decode_batch(&stream, &[undersized], budget) },
         Err(DecodeError::Runtime(_))
     ));
@@ -312,6 +330,8 @@ fn gpu_decode_classifies_corruption_and_budget_without_target_writes() {
         meta: &meta,
     };
     let error =
+        // SAFETY: the fixture retains all source/target allocations and metadata
+        // through the codec drain; only completed bytes are inspected or reused afterward.
         unsafe { codec.decode_batch(&stream, std::slice::from_ref(&valid), 0) }.unwrap_err();
     assert!(
         matches!(&error, DecodeError::Runtime(message) if message.contains("budget")),
@@ -327,12 +347,16 @@ fn gpu_decode_classifies_corruption_and_budget_without_target_writes() {
         ..valid
     };
     let budget = 64 * 1024;
+    // SAFETY: the fixture retains all source/target allocations and metadata
+    // through the codec drain; only completed bytes are inspected or reused afterward.
     let error = unsafe { codec.decode_batch(&stream, &[corrupt], budget) }.unwrap_err();
     assert!(
         matches!(&error, DecodeError::Corrupt(message) if message.contains("checksum mismatch")),
         "{error}"
     );
     assert_eq!(stream.clone_dtoh(&target).unwrap(), sentinel);
+    // SAFETY: the fixture retains all source/target allocations and metadata
+    // through the codec drain; only completed bytes are inspected or reused afterward.
     unsafe { codec.decode_batch(&stream, &[valid], budget) }.unwrap();
     let mut expected = vec![0; meta.logical_bytes];
     assert!(cpu::decode(meta.format, &encoded, &mut expected));
@@ -368,6 +392,8 @@ fn gpu_batch_limits_make_progress_and_raw_exact_needs_no_arena() {
         })
         .collect();
     let budget = 64 * 1024;
+    // SAFETY: the fixture owns every source CudaSlice for its declared range
+    // and retains them through the synchronous codec drain and output snapshot.
     let batch = unsafe { codec.encode_batch(&stream, &inputs, budget) }.unwrap();
     assert!((1..inputs.len()).contains(&batch.processed));
     assert_eq!(batch.outputs.len(), batch.processed);
@@ -395,9 +421,13 @@ fn gpu_batch_limits_make_progress_and_raw_exact_needs_no_arena() {
             meta,
         })
         .collect();
+    // SAFETY: the fixture retains all source/target allocations and metadata
+    // through the codec drain; only completed bytes are inspected or reused afterward.
     let count = unsafe { codec.decode_host_batch(&stream, &restores, budget, None) }.unwrap();
     assert!((1..restores.len()).contains(&count));
     assert!(codec.scratch_bytes() <= budget);
+    // SAFETY: the fixture owns every source CudaSlice for its declared range
+    // and retains them through the synchronous codec drain and output snapshot.
     let batch = unsafe { codec.encode_batch(&stream, &inputs, 0) }.unwrap();
     assert_eq!(batch.processed, 1);
     assert!(batch.outputs[0].is_none());
@@ -411,6 +441,8 @@ fn gpu_batch_limits_make_progress_and_raw_exact_needs_no_arena() {
             format: StorageFormat::Exact,
         })
         .collect();
+    // SAFETY: the fixture owns every source CudaSlice for its declared range
+    // and retains them through the synchronous codec drain and output snapshot.
     let batch = unsafe { codec.encode_batch(&stream, &raw, 0) }.unwrap();
     assert_eq!(batch.processed, MAX_BATCH_SEGMENTS);
     assert!(batch.outputs.iter().all(Option::is_none));
@@ -428,6 +460,8 @@ fn gpu_batch_limits_make_progress_and_raw_exact_needs_no_arena() {
     assert!(codec.host_decode_fits(&meta, 0).unwrap());
     assert_eq!(codec.scratch_bytes(), 0);
     let target = stream.alloc_zeros::<u8>(host.len()).unwrap();
+    // SAFETY: the fixture retains all source/target allocations and metadata
+    // through the codec drain; only completed bytes are inspected or reused afterward.
     let restored = unsafe {
         codec.decode_host_batch(
             &stream,
@@ -463,6 +497,8 @@ fn gpu_batch_limits_make_progress_and_raw_exact_needs_no_arena() {
         },
     ];
     assert_eq!(
+        // SAFETY: the fixture retains all source/target allocations and metadata
+        // through the codec drain; only completed bytes are inspected or reused afterward.
         unsafe { codec.decode_host_batch(&stream, &mixed, retained, None) }.unwrap(),
         2
     );
@@ -510,6 +546,8 @@ fn gpu_ans_batches_restore_with_the_encode_reservation() {
             format,
         })
         .collect();
+    // SAFETY: the fixture owns every source CudaSlice for its declared range
+    // and retains them through the synchronous codec drain and output snapshot.
     let batch = unsafe { codec.encode_batch(&stream, &inputs, 128 * 1024 * 1024) }.unwrap();
     assert_eq!(batch.processed, inputs.len());
     let saved: Vec<_> = batch
@@ -534,6 +572,8 @@ fn gpu_ans_batches_restore_with_the_encode_reservation() {
         })
         .collect();
     assert_eq!(
+        // SAFETY: the fixture retains all source/target allocations and metadata
+        // through the codec drain; only completed bytes are inspected or reused afterward.
         unsafe { codec.decode_host_batch(&stream, &restore, retained, None) }.unwrap(),
         inputs.len()
     );
@@ -553,6 +593,8 @@ fn gpu_ans_batches_restore_with_the_encode_reservation() {
         meta: &wrong_type,
     };
     assert!(matches!(
+        // SAFETY: the fixture retains all source/target allocations and metadata
+        // through the codec drain; only completed bytes are inspected or reused afterward.
         unsafe { codec.decode_batch(&stream, &[invalid], retained) },
         Err(DecodeError::Corrupt(_))
     ));
@@ -567,6 +609,8 @@ fn gpu_ans_batches_restore_with_the_encode_reservation() {
             meta,
         })
         .collect();
+    // SAFETY: the fixture retains all source/target allocations and metadata
+    // through the codec drain; only completed bytes are inspected or reused afterward.
     unsafe { codec.decode_batch(&stream, &device, retained) }.unwrap();
     for (target, expected) in targets.iter().zip(&hosts) {
         assert_eq!(stream.clone_dtoh(target).unwrap(), *expected);
@@ -628,6 +672,8 @@ fn gpu_crc_checks_exact_payloads_with_unaligned_lengths_and_padding() {
             meta,
         })
         .collect();
+    // SAFETY: the fixture retains all source/target allocations and metadata
+    // through the codec drain; only completed bytes are inspected or reused afterward.
     unsafe { codec.decode_batch(&stream, &inputs, 1024 * 1024) }.unwrap();
     for ((target, host), len) in targets.iter().zip(&hosts).zip(lengths) {
         let actual = stream.clone_dtoh(target).unwrap();
@@ -665,6 +711,8 @@ fn gpu_decode_rejects_overlapping_targets_and_device_sources_before_writes() {
                 meta: &meta,
             })
             .collect();
+        // SAFETY: all ranges lie inside retained real allocations. Deliberate
+        // overlap is rejected by the codec preflight before any native access.
         let error = unsafe { codec.decode_host_batch(&stream, &host, budget, None) }.unwrap_err();
         assert!(error.contains("target ranges overlap"), "{error}");
         assert_eq!(stream.clone_dtoh(&target).unwrap(), sentinel);
@@ -678,6 +726,8 @@ fn gpu_decode_rejects_overlapping_targets_and_device_sources_before_writes() {
                 meta: &meta,
             })
             .collect();
+        // SAFETY: all ranges lie inside retained real allocations. Deliberate
+        // overlap is rejected by the codec preflight before any native access.
         let error = unsafe { codec.decode_batch(&stream, &device, budget) }.unwrap_err();
         assert!(
             matches!(&error, DecodeError::Runtime(message) if message.contains("target ranges overlap")),
@@ -703,6 +753,8 @@ fn gpu_decode_rejects_overlapping_targets_and_device_sources_before_writes() {
                 meta: &meta,
             },
         ];
+        // SAFETY: all ranges lie inside retained real allocations. Deliberate
+        // overlap is rejected by the codec preflight before any native access.
         let error = unsafe { codec.decode_batch(&stream, &device, budget) }.unwrap_err();
         assert!(
             matches!(&error, DecodeError::Runtime(message) if message.contains("source and target ranges overlap")),
@@ -723,6 +775,8 @@ fn gpu_decode_rejects_overlapping_targets_and_device_sources_before_writes() {
             meta: &meta,
         })
         .collect();
+    // SAFETY: the fixture retains all source/target allocations and metadata
+    // through the codec drain; only completed bytes are inspected or reused afterward.
     unsafe { codec.decode_batch(&stream, &device, budget) }.unwrap();
     let mut expected = sentinel.clone();
     for chunk in expected[..64].chunks_exact_mut(32) {

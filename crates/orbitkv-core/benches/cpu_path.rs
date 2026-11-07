@@ -901,6 +901,8 @@ impl GpuBuffer {
         ctx.bind_to_thread().expect("bind CUDA context");
         let mut ptr: sys::CUdeviceptr = 0;
         check_cuda(
+            // SAFETY: the benchmark bound its CUDA context; ptr is writable output
+            // and GpuBuffer retains the resulting allocation until copies finish.
             unsafe { sys::cuMemAlloc_v2(&raw mut ptr, len) },
             "cuMemAlloc_v2",
         );
@@ -922,6 +924,8 @@ impl GpuBuffer {
         assert_eq!(data.len(), self.len);
         self.ctx.bind_to_thread().expect("bind CUDA context");
         check_cuda(
+            // SAFETY: data length matches self.len, and self owns the destination;
+            // the synchronous copy completes before either buffer can be released.
             unsafe { sys::cuMemcpyHtoD_v2(self.ptr, data.as_ptr() as *const c_void, self.len) },
             "cuMemcpyHtoD_v2",
         );
@@ -932,6 +936,8 @@ impl Drop for GpuBuffer {
     fn drop(&mut self) {
         if self.ptr != 0 {
             let _ = self.ctx.bind_to_thread();
+            // SAFETY: this is the fixture's sole device allocation and all benchmark
+            // operations have completed before its final drop.
             check_cuda(unsafe { sys::cuMemFree_v2(self.ptr) }, "cuMemFree_v2");
             self.ptr = 0;
         }

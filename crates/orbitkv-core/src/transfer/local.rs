@@ -178,7 +178,9 @@ pub struct LocalTensor {
     address: u64,
     bytes: usize,
     allocation: usize,
-    _allocation_end: u64,
+    // Keep the original storage bound in every build; descriptor validation and
+    // the OrbiTE adapter use the same imported tensor metadata.
+    allocation_end: u64,
 }
 
 impl LocalTensor {
@@ -215,7 +217,7 @@ impl LocalTensor {
             address,
             bytes: extent,
             allocation,
-            _allocation_end: address
+            allocation_end: address
                 .checked_add(bytes as u64)
                 .ok_or("tensor allocation overflow")?,
         })
@@ -274,32 +276,47 @@ impl ImportedArena {
         if pointer == libc::MAP_FAILED {
             return Err(std::io::Error::last_os_error().to_string());
         }
+        let pointer = NonNull::new(pointer.cast::<u8>()).ok_or_else(|| {
+            // SAFETY: mmap succeeded at address zero, which Rust owners cannot carry;
+            // this exact mapping has not been registered with CUDA or exposed to a reader.
+            unsafe { libc::munmap(pointer, size) };
+            "null payload mapping".to_string()
+        })?;
         // SAFETY: mapping is live and writable for size bytes in the current context.
         if let Err(error) = unsafe {
-            sys::cuMemHostRegister_v2(pointer, size, sys::CU_MEMHOSTREGISTER_DEVICEMAP).result()
+            sys::cuMemHostRegister_v2(
+                pointer.as_ptr().cast(),
+                size,
+                sys::CU_MEMHOSTREGISTER_DEVICEMAP,
+            )
+            .result()
         } {
-            unsafe { libc::munmap(pointer, size) };
+            // SAFETY: CUDA registration failed before admission; no native transfer has
+            // received this freshly owned mmap.
+            unsafe { libc::munmap(pointer.as_ptr().cast(), size) };
             return Err(format!("payload CUDA registration failed: {error}"));
         }
-        let mut device_pointer = 0;
-        // SAFETY: registration succeeded and output pointer is valid.
-        if let Err(error) =
-            unsafe { sys::cuMemHostGetDevicePointer_v2(&mut device_pointer, pointer, 0).result() }
-        {
-            unsafe {
-                sys::cuMemHostUnregister(pointer);
-                libc::munmap(pointer, size);
-            }
-            return Err(format!("payload CUDA address failed: {error}"));
-        }
-        let pointer = NonNull::new(pointer.cast::<u8>()).ok_or("null payload mapping")?;
-        Ok(Self {
+        // Install the owner before the remaining fallible CUDA call, so failure
+        // follows the same unregister-before-unmap rule as normal destruction.
+        let mut imported = Self {
             pointer,
-            device_pointer,
+            device_pointer: 0,
             size,
             _fd: arena.fd,
             context,
-        })
+        };
+        // SAFETY: imported owns the live registration in its retained current
+        // CUDA context; device_pointer is exclusive writable output.
+        unsafe {
+            sys::cuMemHostGetDevicePointer_v2(
+                &mut imported.device_pointer,
+                imported.pointer.as_ptr().cast(),
+                0,
+            )
+            .result()
+        }
+        .map_err(|error| format!("payload CUDA address failed: {error}"))?;
+        Ok(imported)
     }
 }
 
@@ -312,6 +329,8 @@ impl Drop for ImportedArena {
         if unsafe { sys::cuMemHostUnregister(self.pointer.as_ptr().cast()).result() }.is_err() {
             std::process::abort();
         }
+        // SAFETY: the executor drained all uses and CUDA unregistration succeeded;
+        // this owner holds the exact mmap base and length for its sole unmap.
         unsafe { libc::munmap(self.pointer.as_ptr().cast(), self.size) };
     }
 }
@@ -344,9 +363,9 @@ impl CallerContext {
 
 impl Drop for CallerContext {
     fn drop(&mut self) {
-        // SAFETY: this context belonged to the caller before entering native
-        // work; none of these operations destroys it. Null restores no context.
         if let Err(error) =
+            // SAFETY: this is the caller's still-live context captured on entry; none of
+            // our operations destroys it, and null restores the original absence of a context.
             unsafe { result::ctx::set_current(self.0.unwrap_or(std::ptr::null_mut())) }
         {
             log::error!("Cannot restore framework CUDA context: {error}; terminating engine");
@@ -552,7 +571,12 @@ impl LocalRestoreExecutor {
                 .destination_offset
                 .checked_add(source.size)
                 .ok_or("destination copy overflow")?;
-            if end > tensor.bytes as u64 {
+            if end > tensor.bytes as u64
+                || tensor
+                    .address
+                    .checked_add(end)
+                    .is_none_or(|end| end > tensor.allocation_end)
+            {
                 return Err("Restore destination exceeds retained tensor allocation".into());
             }
             copies.push(CopyDesc {
@@ -666,6 +690,8 @@ impl LocalRestoreExecutor {
                     && let Some(event) = layer_events.remove(layer)
                 {
                     // The caller retains the framework event through this operation's drain.
+                    // SAFETY: the framework retains this event through execute's drain. It belongs
+                    // to the caller context and records after the layer's copies on the worker stream.
                     unsafe {
                         result::event::record(event as sys::CUevent, self.stream.cu_stream())
                     }
@@ -675,6 +701,8 @@ impl LocalRestoreExecutor {
             if final_part {
                 // Layers with no required bytes still need a fresh generation of their event.
                 for (_, event) in layer_events.drain() {
+                    // SAFETY: the caller retains these framework events through the final drain;
+                    // recording on the same stream preserves ordering even for empty layers.
                     unsafe {
                         result::event::record(event as sys::CUevent, self.stream.cu_stream())
                     }

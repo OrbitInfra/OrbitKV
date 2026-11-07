@@ -317,6 +317,8 @@ fn monotonic_ns() -> u64 {
     };
     // SAFETY: clock_gettime writes one live timespec; no CUDA owners are touched.
     assert_eq!(
+        // SAFETY: value is correctly aligned writable timespec storage;
+        // CLOCK_MONOTONIC has no pointer inputs.
         unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut value) },
         0
     );

@@ -808,6 +808,8 @@ impl NumaSlab {
             ));
         }
 
+        // SAFETY: end was checked against this slab's allocation capacity, and the
+        // returned Arc keeps the backing live until the reader physically drains.
         let ptr = unsafe { self.allocation.as_non_null().as_ptr().add(self.next_offset) };
         self.next_offset = end;
         let ptr = NonNull::new(ptr).ok_or_else(|| "slab pointer is null".to_string())?;

@@ -73,6 +73,8 @@ impl Copies {
             let memory = match host {
                 // SAFETY: submit's caller coordinates all aliases until drain.
                 LocalHost::Pinned(allocation) => {
+                    // SAFETY: the retained allocation backs this entire host range; its canonical
+                    // OrbiTE alias shares the access lock and the completion retains the loan.
                     unsafe { allocation.orbite_memory() }.map_err(transfer_error)?
                 }
                 LocalHost::Imported(memory) => (*memory).clone(),

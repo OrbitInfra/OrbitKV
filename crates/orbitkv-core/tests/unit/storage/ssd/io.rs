@@ -58,6 +58,8 @@ mod engine {
         let mut info = std::mem::MaybeUninit::<libc::statfs>::uninit();
         // SAFETY: fd is live and info has space for the kernel's statfs output.
         assert_eq!(
+            // SAFETY: fd is retained and info has capacity/alignment for the kernel
+            // statfs output; the following assertion requires successful initialization.
             unsafe { libc::fstatfs(fd.as_raw_fd(), info.as_mut_ptr()) },
             0
         );
@@ -330,6 +332,8 @@ mod engine {
             .unwrap()
             .unwrap_err();
         // The native file owner pins its admitted length; OrbiTE refreshes it.
+        // SAFETY: the engine drain completed and destination owns 2048 initialized
+        // bytes; no native or host writer remains while the oracle borrows them.
         let bytes = unsafe { std::slice::from_raw_parts(destination.as_non_null().as_ptr(), 2048) };
         if selected_backend() == crate::PeerTransferBackend::Mooncake {
             assert_eq!(error.kind, ErrorKind::Backend);

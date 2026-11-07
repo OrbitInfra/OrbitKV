@@ -22,6 +22,8 @@ fn shared_backing_is_size_sealed() {
     for changed_size in [0, size * 2] {
         // SAFETY: the owned memfd remains live throughout the call.
         assert_eq!(
+            // SAFETY: fd remains owned for this size-seal negative control; ftruncate
+            // takes no memory pointer and a refusal leaves the mapping unchanged.
             unsafe { libc::ftruncate(fd.as_raw_fd(), changed_size as libc::off_t) },
             -1
         );

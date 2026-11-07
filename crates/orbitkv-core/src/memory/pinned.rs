@@ -115,13 +115,12 @@ impl std::fmt::Debug for PinnedMemory {
     }
 }
 
-// SAFETY: PinnedMemory owns a pinned memory region that is:
-// - Fixed in physical memory (pinned by CUDA)
-// - Safe to access from any thread
-// The pointer is valid for the lifetime of this struct.
-// Sync is safe because PinnedMemory exposes only an immutable pointer via
-// as_ptr() and has no interior mutability.
+// SAFETY: moving this owner does not move its mapping or CUDA registration.
+// Safe methods expose addresses, not byte references; transfer owners retain
+// the backing and coordinate byte access through their grants and loans.
 unsafe impl Send for PinnedMemory {}
+// SAFETY: the mapping and CUDA registration stay fixed for this owner's lifetime.
+// Safe access exposes addresses only; users serialize byte access and retain loans.
 unsafe impl Sync for PinnedMemory {}
 
 impl PinnedMemory {
@@ -166,23 +165,16 @@ impl PinnedMemory {
         }
 
         let ptr = NonNull::new(ptr.cast::<u8>()).expect("mmap returned null");
-        let device_ptr = match mapped_device_pointer(ptr) {
-            Ok(device_ptr) => device_ptr,
-            Err(err) => {
-                // SAFETY: ptr was successfully registered and mmap'd above.
-                unsafe {
-                    rt::cudaHostUnregister(ptr.as_ptr().cast());
-                    libc::munmap(ptr.as_ptr().cast(), size);
-                }
-                return Err(err);
-            }
-        };
-        Ok(Self {
+        // Establish the unregister-before-unmap owner before the fallible lookup.
+        // The placeholder device address is never exposed on an error path.
+        let mut memory = Self {
             ptr,
-            device_ptr,
+            device_ptr: ptr,
             size,
             fd,
-        })
+        };
+        memory.device_ptr = mapped_device_pointer(ptr)?;
+        Ok(memory)
     }
 
     pub(crate) fn export_fd(&self) -> io::Result<OwnedFd> {
@@ -304,12 +296,12 @@ impl Drop for PinnedMemory {
         // SAFETY: this mapping was registered in this process. Its owner must
         // have drained CUDA work before releasing the final PinnedAllocation.
         let result = unsafe { rt::cudaHostUnregister(self.ptr.as_ptr().cast()) };
-        if result != rt::cudaError::cudaSuccess && result != rt::cudaError::cudaErrorCudartUnloading
-        {
-            eprintln!("Warning: cudaHostUnregister failed: {:?}", result);
+        if result != rt::cudaError::cudaSuccess {
+            eprintln!("cudaHostUnregister failed: {result:?}; preserving mapping and terminating");
+            std::process::abort();
         }
-        // SAFETY: ptr was mapped with this size; other processes own independent
-        // mappings and registrations of the same file.
+        // SAFETY: CUDA unregister succeeded after all users drained. This is the
+        // exact owned mapping; other processes retain independent mappings of the file.
         if unsafe { libc::munmap(self.ptr.as_ptr().cast(), self.size) } == -1 {
             eprintln!("Warning: munmap failed: {}", io::Error::last_os_error());
         }

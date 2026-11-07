@@ -42,6 +42,8 @@ impl GpuBuffer {
         assert!(len > 0);
         let mut ptr: sys::CUdeviceptr = 0;
         check_cuda(
+            // SAFETY: the caller bound the retained CUDA context; ptr is writable
+            // output and this fixture owns the returned allocation until drop.
             unsafe { sys::cuMemAlloc_v2(&raw mut ptr, len) },
             "cuMemAlloc_v2",
         );
@@ -55,6 +57,8 @@ impl GpuBuffer {
     fn copy_from_host(&self, data: &[u8]) {
         assert_eq!(data.len(), self.len);
         check_cuda(
+            // SAFETY: data length equals the owned allocation length; the synchronous
+            // copy completes while both source bytes and destination remain live.
             unsafe { sys::cuMemcpyHtoD_v2(self.ptr, data.as_ptr() as *const c_void, self.len) },
             "cuMemcpyHtoD_v2",
         );
@@ -63,6 +67,8 @@ impl GpuBuffer {
     fn copy_to_host(&self) -> Vec<u8> {
         let mut output = vec![0u8; self.len];
         check_cuda(
+            // SAFETY: output owns self.len writable bytes and self owns the device
+            // range; no transfer is still writing when this synchronous oracle runs.
             unsafe { sys::cuMemcpyDtoH_v2(output.as_mut_ptr() as *mut c_void, self.ptr, self.len) },
             "cuMemcpyDtoH_v2",
         );
@@ -71,6 +77,8 @@ impl GpuBuffer {
 
     fn zero(&self) {
         check_cuda(
+            // SAFETY: self owns this full device range and the previous transfer
+            // has drained before the synchronous sentinel initialization.
             unsafe { sys::cuMemsetD8_v2(self.ptr, 0, self.len) },
             "cuMemsetD8_v2",
         );
@@ -80,6 +88,8 @@ impl GpuBuffer {
 impl Drop for GpuBuffer {
     fn drop(&mut self) {
         if self.ptr != 0 {
+            // SAFETY: self exclusively owns this allocation and all fixture transfers
+            // have completed before this sole free.
             check_cuda(unsafe { sys::cuMemFree_v2(self.ptr) }, "cuMemFree_v2");
             self.ptr = 0;
         }

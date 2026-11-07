@@ -17,4 +17,5 @@ orbitkv-mooncake-sys = { workspace = true, default-features = false }
 thiserror = "2.0"
 libc.workspace = true
 log.workspace = true
+serde_json.workspace = true
 opentelemetry.workspace = true

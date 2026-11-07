@@ -224,6 +224,8 @@ fn save_blocks(
                 })?;
             let ptr = allocation.mapped_ptr().host();
             // Only padding needs initialization; DMA fills every payload byte.
+            // SAFETY: this fresh, exclusively owned allocation covers physical bytes;
+            // only its padding suffix is written before any DMA or publication.
             unsafe {
                 ptr.as_ptr()
                     .add(meta.stored_bytes)
@@ -274,12 +276,16 @@ fn save_blocks(
                         Some(numa),
                     )
                 {
+                    // SAFETY: copy_payload has physically drained; saved_segment retains the
+                    // initialized input.bytes host range and no writer can access it here.
                     let host = unsafe {
                         std::slice::from_raw_parts(
                             saved_segment.segment.host_ptr().as_ptr(),
                             input.bytes,
                         )
                     };
+                    // SAFETY: packed is a distinct fresh allocation covering packed_size bytes;
+                    // no other reader/writer or native request has received this mutable slice.
                     let output = unsafe {
                         std::slice::from_raw_parts_mut(
                             packed.mapped_ptr().host().as_ptr(),
@@ -318,6 +324,8 @@ fn save_blocks(
                         .iter_mut()
                         .filter(|s| s.meta.format == StorageFormat::Exact)
                     {
+                        // SAFETY: all DMA into these retained segments drained before hashing;
+                        // stored_bytes is bounded by the segment allocation and the bytes are immutable.
                         saved.meta.checksum = crc32fast::hash(unsafe {
                             std::slice::from_raw_parts(
                                 saved.segment.host_ptr().as_ptr(),
@@ -538,6 +546,8 @@ pub(super) fn restore(
                 }
                 meta.validate_metadata(raw.segment_size(index).expect("segment count checked"))
                     .map_err(EngineError::Storage)?;
+                // SAFETY: metadata validation bounds stored_bytes by the retained sealed
+                // segment; the restore lease keeps these immutable bytes alive through decode.
                 let host = unsafe {
                     std::slice::from_raw_parts(
                         raw.segment_ptr(index)

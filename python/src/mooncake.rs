@@ -467,6 +467,8 @@ impl PyMooncakeTransferEngine {
                 let region = regions.entry(address).or_insert(region);
                 // The allocation and admission already have an owner if native
                 // registration reports a partially retained range.
+                // SAFETY: address/length were validated before insertion. The map already
+                // retains owned exports, or the borrowed API's caller retains backing through cleanup.
                 let result = unsafe {
                     self.engine.register_memory(
                         NonNull::new_unchecked(address as *mut u8),
@@ -490,6 +492,8 @@ impl PyMooncakeTransferEngine {
         region: &mut RegisteredRegion,
     ) -> orbitkv_transfer::Result<()> {
         if region.state != RegistrationState::Unregistered {
+            // SAFETY: the retained region owns this non-null registered range; source
+            // drain completed before cleanup and errors leave the backing in the map.
             unsafe {
                 engine
                     .unregister_memory(NonNull::new_unchecked(address as *mut u8), region.length)?;
@@ -566,16 +570,23 @@ impl PyMooncakeTransferEngine {
                 }
             }
             let timeout = Duration::from_secs_f64(timeout_s);
-            match notification.as_ref() {
-                Some(notification) => engine.submit_and_notify(
-                    operation,
-                    &remote_endpoint,
-                    &slices,
-                    timeout,
-                    notification,
-                    None,
-                ),
-                None => engine.submit_and_wait(operation, &remote_endpoint, &slices, timeout, None),
+            // SAFETY: the locked registration map retains owned PyBuffer exports;
+            // borrowed registrations require the Python caller to retain backing.
+            // The synchronous transfer keeps both paths borrowed through drain.
+            unsafe {
+                match notification.as_ref() {
+                    Some(notification) => engine.submit_and_notify(
+                        operation,
+                        &remote_endpoint,
+                        &slices,
+                        timeout,
+                        notification,
+                        None,
+                    ),
+                    None => {
+                        engine.submit_and_wait(operation, &remote_endpoint, &slices, timeout, None)
+                    }
+                }
             }
             .map_err(|error| transfer_error("Mooncake TENT transfer failed", error))
         })

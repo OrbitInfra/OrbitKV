@@ -109,10 +109,10 @@ pub fn file_api() -> Result<FileApi, String> {
 ///
 /// # Safety
 /// The runtime must be loaded, and engine creation must be serialized with
-/// peer construction, which temporarily configures process environment values.
+/// peer construction, which uses the same thread-local native settings.
 pub unsafe fn configure_file_engine() {
     // SAFETY: static C strings and thread-local native configuration. The caller
-    // serializes engine creation against the existing environment-scoped peer path.
+    // serializes engine creation against the peer configuration path.
     unsafe {
         set_config(c"metadata_type", c"p2p");
         set_config(c"metadata_servers", c"P2PHANDSHAKE");

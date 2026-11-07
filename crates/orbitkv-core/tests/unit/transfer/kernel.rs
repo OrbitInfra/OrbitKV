@@ -12,6 +12,8 @@ struct MappedHost {
 
 fn alloc_device(len: usize) -> u64 {
     let mut d: sys::CUdeviceptr = 0;
+    // SAFETY: the test bound a live CUDA context; d is valid writable output
+    // and the returned allocation is retained until all test copies drain.
     let r = unsafe { sys::cuMemAlloc_v2(&mut d, len) };
     assert_eq!(r, sys::CUresult::CUDA_SUCCESS, "cuMemAlloc");
     d
@@ -59,13 +61,19 @@ fn kernel_matches_direct_both_directions() {
     let mut pattern = vec![0u8; total];
     let mut out = vec![0u8; total];
     let zeros = vec![0u8; total];
+    // SAFETY: memory owns the entire mapped host region; the test accesses
+    // this slice only before submission or after stream synchronization.
     let host_slice = unsafe { std::slice::from_raw_parts_mut(host.host, total) };
 
     let read_device = |out: &mut [u8]| {
+        // SAFETY: out has total writable bytes, device owns total initialized
+        // bytes, and each test submission has synchronized before this oracle copy.
         let r = unsafe { sys::cuMemcpyDtoH_v2(out.as_mut_ptr() as *mut _, device, total) };
         assert_eq!(r, sys::CUresult::CUDA_SUCCESS, "DtoH");
     };
     let clear_device = || {
+        // SAFETY: zeros owns total source bytes and device owns total destination
+        // bytes; this synchronous copy ends before the next test submission.
         let r = unsafe { sys::cuMemcpyHtoD_v2(device, zeros.as_ptr() as *const _, total) };
         assert_eq!(r, sys::CUresult::CUDA_SUCCESS, "HtoD clear");
     };
@@ -112,6 +120,8 @@ fn kernel_matches_direct_both_directions() {
             for byte in &mut pattern {
                 *byte = byte.wrapping_add(97);
             }
+            // SAFETY: pattern and the device allocation both cover total bytes; the
+            // previous case drained before this synchronous reinitialization.
             let r = unsafe { sys::cuMemcpyHtoD_v2(device, pattern.as_ptr() as *const _, total) };
             assert_eq!(r, sys::CUresult::CUDA_SUCCESS, "HtoD seed");
             host_slice.fill(0);
@@ -126,6 +136,8 @@ fn kernel_matches_direct_both_directions() {
         }
     }
 
+    // SAFETY: all test submissions and oracle reads completed; device is
+    // the exact allocation returned by alloc_device and is freed only once.
     unsafe {
         sys::cuMemFree_v2(device);
     }
