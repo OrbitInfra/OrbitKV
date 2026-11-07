@@ -5,11 +5,9 @@
 > current GPU/RDMA/GDS and installed profiles need fresh hardware qualification.
 > CPU/TCP and io_uring controls remain CI evidence.
 
-
-OrbitKV uses [NVIDIA KDA](https://github.com/NVlabs/kda) for measured CUDA
-optimization. Keep device code in separate `.cu` files and consume it through
-the existing Rust transfer/codec owners. [S4](completion-plan.md#s4--finish-communication-execution-and-demonstrate-gains)
-owns the remaining delivery; historical experiments are linked below.
+OrbitKV keeps end-to-end copy/serving controls; OrbiTE owns local copy kernels.
+Use [NVIDIA KDA](https://github.com/NVlabs/kda) for measured CUDA optimization
+and the [completion plan](completion-plan.md) for remaining delivery gates.
 
 ## Available copy backends
 
@@ -18,12 +16,10 @@ copies fragmented mapped host memory with GPU threads. It does not require a
 second full staging copy into device memory. GPU work still competes with model
 execution, so a faster isolated copy does not select the serving default.
 
-`KernelBackend` reads destination, source and byte count from three `u64` values
-per descriptor. The production shader is
-`crates/orbitkv-core/src/transfer/kernel.cu`, embedded and compiled with NVRTC.
-It uses bounded multi-CTA work, 64-bit indices, aligned vector copies and exact
-scalar tails. Rust owns descriptor scratch, streams and buffer holds until drain.
-DMA retains legal adjacent/strided coalescing.
+Both choices now use [OrbiTE local copies](transport.md#local-gpudram-copies).
+OrbiTE owns copy submission and scratch; OrbitKV retains source and destination
+owners through physical completion. The old OrbitKV `KernelBackend` and
+`MemcpyBackend` have been removed.
 
 Select the explicit route using:
 
@@ -35,8 +31,10 @@ qualify a new MLA model or deployment.
 
 ## Current serving result
 
-The accepted Qwen3-32B BF16/raw H20 profile is TP=1/PP=1, eager and serial.
-Four independent DMA/kernel pairs pass the frozen benefit/regression guards:
+The historical Qwen3-32B BF16/raw H20 profile used TENT at the revisions
+recorded in [performance](performance.md#independent-sglang-kernel-pairs):
+TP=1/PP=1, eager and serial. Four independent DMA/kernel pairs passed the frozen
+benefit/regression guards:
 8K pressure TTFT is 10.45% lower than our DMA route; 4K is effectively unchanged.
 This does not establish a general win over HiCache/LMCache, tails, throughput,
 Graph, concurrency or inference contention. Full context and uncertainty are in
@@ -44,20 +42,14 @@ Graph, concurrency or inference contention. Full context and uncertainty are in
 
 ## Reproduce a component comparison
 
-The existing native benchmark consumes actual `KernelBackend`/`MemcpyBackend`,
-including packing, upload, submission and synchronization:
+The former `native_kernel_copy` benchmark consumed OrbitKV's removed
+`KernelBackend`/`MemcpyBackend`. Reproduce it with the
+[original source and command](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/docs/kernel-optimization.md#reproduce-a-component-comparison).
+New byte-engine microbenchmarks belong in OrbiTE.
 
-```bash
-cargo bench -p orbitkv-core --bench native_kernel_copy \
-  --no-default-features --features cuda-13,mooncake -- \
-  --output /var/tmp/orbitkv-kda/native-001.jsonl --samples 30
-```
-
-It covers empty batches, misalignment, scalar tails, reordered ranges and large
-batches, checking payload and guards in both directions. Freeze source and
-binary; use an external output directory and separate Cargo targets when comparing
-worktrees. Run GPU measurements sequentially. Do not overwrite mapped native
-libraries by building in a live Manager checkout.
+Freeze source, binary and input layout; use an external output directory and
+separate Cargo targets when comparing worktrees. Run GPU measurements
+sequentially. Do not rebuild a mapped native library in a live Manager checkout.
 
 For actual SGLang layouts use `benches.transfer.sglang_kv_oracle`, then the
 matched model comparison `benches.transfer.kernel_pairs`. Their commands and

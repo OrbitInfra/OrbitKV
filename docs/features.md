@@ -3,14 +3,16 @@
 OrbitKV extends the KV cache of official vLLM and SGLang beyond GPU memory.
 Use it for repeated documents, shared system prompts, long conversation prefixes
 and compatible cache reuse between replicas. Begin with the
-[quickstart](single-node.md) and [model recipes](models.md).
+[quickstart](single-node.md) and [model recipes](models.md). OrbiTE moves all
+cache bytes. Current GPU/RDMA/GDS and installed profiles need hardware
+re-qualification; earlier acceptances remain historical. See [compatibility](compatibility.md).
 
 ## Cache storage and reuse
 
 | Feature | Behavior | Current boundary |
 | --- | --- | --- |
 | Host DRAM | Save reusable KV outside HBM and restore after eviction | Dense single-rank profiles on both selected engines |
-| Local SSD | Extend host cache through Manager-owned io_uring reads/writes | SSD file is recreated on Manager startup |
+| Local SSD | Extend host cache through OrbiTE file segments | SSD file is recreated on Manager startup |
 | Engine restart reuse | Reconnect the engine to the existing cache | Keep the Manager and matching model/computation identity alive |
 | Shared Manager | Multiple local engines share DRAM/SSD capacity | Scoped pressure acceptance; fairness/tail isolation remain open |
 | Peer cache | Discover compatible replicas locally and fetch through OrbiTE TCP/RDMA | CPU/TCP CI evidence; GPU/RDMA and installed recovery require re-qualification |
@@ -29,9 +31,9 @@ working sets; see [performance](performance.md).
 - **Inventory-fed discovery.** Etcd maintains leased members and protocol
   identity. Bounded peer streams update covered local indexes; ordinary queries
   avoid per-key etcd calls and obtain authoritative source grants.
-- **Measured transfer choices.** Direct DMA, a production CUDA copy backend and
-  bounded SSD batching share existing native owners. The explicit kernel profile
-  has a scoped model result; defaults require their own serving qualification.
+- **Engine-owned movement.** OrbiTE owns local DMA/kernel copies, file vectors
+  and peer TCP/RDMA. OrbitKV supplies layouts, intent and deadlines while
+  retaining grants and physical-drain ownership.
 - **Explicit state contracts.** Model/computation/layout identity and declared
   recovery requirements prevent treating incompatible or incomplete state as a
   cache hit. General semantic retention/planning remains future work.
@@ -44,9 +46,8 @@ even where conservative ownership prevents premature release.
 
 The selected releases are vLLM 0.31.0 and SGLang 0.5.22. vLLM uses the official
 KV Connector; SGLang uses UnifiedRadixCache's external linker with bounded
-internal lifecycle hooks still present. Qwen3-8B/32B dense recovery has scoped
-acceptance on the recorded releases. SGLang 0.5.22 load completion uses its
-public callback and repeats the Qwen3-8B DRAM/io_uring byte/model profile.
+internal lifecycle hooks still present. Recorded Qwen3-8B/32B dense recovery and SGLang 0.5.22 public load-completion
+results retain their original revisions and transfer paths.
 Hybrid/auxiliary-state models need complete recovery qualification.
 Check [model recipes](models.md) and [compatibility](compatibility.md).
 

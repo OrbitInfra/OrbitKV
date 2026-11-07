@@ -1,73 +1,39 @@
-# OrbitKV Metrics Guide
-
-This guide explains how to collect, export, and visualize metrics from OrbitKV.
+# Metrics and observability
 
 ## Overview
 
-OrbitKV supports two methods for exposing metrics:
-
-### Method 1: Direct Prometheus (Recommended)
-
-```
-Cache Manager → Prometheus → Grafana
-   (/metrics)      (scrape)    (visualize)
-```
-
-- Simpler deployment (2 components)
-- OrbitKV exposes `/metrics` endpoint directly
-- Use `examples/metric-prometheus/`
-
-### Method 2: OTLP via OpenTelemetry Collector (Optional)
-
-```
-Cache Manager → OpenTelemetry Collector → Prometheus → Grafana
-   (OTLP/gRPC)         (HTTP scrape)       (HTTP queries)
-```
-
-- More flexible (supports multiple backends)
-- Useful if you already have OTel infrastructure
-- Use `examples/metric/`
+Scrape the Manager's `/metrics` with Prometheus; use
+[`examples/metric-prometheus`](../examples/metric-prometheus/) for Grafana.
+Existing OpenTelemetry deployments can use
+[`examples/metric`](../examples/metric/) and `--metrics-otel-endpoint` instead.
+Neither export path participates in cache decisions or proves physical drain.
 
 ## Available Metrics
 
-OrbitKV exposes the following metrics for monitoring KV cache operations:
+Query, Publish, peer-ownership, ordinary SSD and load-byte readiness instruments
+initialize to zero before first use. Optional codec/GDS/speculation series may
+remain absent. Missing required gauges are not measured zeros; creating another
+owner adds zero without resetting live values. All six query-phase labels are
+initialized. Phase scrapes may race transitions and are not an atomic budget sum.
 
-The baseline readiness gauges for query reservations, publish inflight bytes,
-peer-transfer ownership and ordinary SSD operations export an explicit zero when
-the Manager initializes its core metrics, before the first request. This does
-not initialize speculative-prefetch, GDS, codec or phase-specific series.
-`orbitkv_load_bytes_total` also starts at zero. Initialization adds zero
-once; subsequent owner increments and releases remain cumulative, and obtaining
-the metrics again does not reset active ownership. Readiness and drain checks
-must still reject missing required gauges; an absent series is not evidence of
-zero outstanding work.
-
-Save worker admission exports initialized `orbitkv_save_active_operations`,
-`orbitkv_save_active_metadata_bytes`, `orbitkv_save_active_logical_bytes` and
-`orbitkv_save_retained_operations` gauges. The process limit is 1,024 accepted
-operations and 32 MiB of SaveTask/request-vector metadata, including spare
-capacity. Worker completion or proven pre-submit rejection releases the charge;
-reply/owner loss keeps it charged and marks retained work. Parked stream/codec
-sync and ordinary-unwind paths remain visible as active work. Logical bytes
-count requested GPU ranges, including overlapping requests; they neither measure
-unique physical residency nor impose a payload budget. Existing allocation,
-SSD, query and GPU owners retain their separate physical limits.
+Save gauges `orbitkv_save_active_operations`, `orbitkv_save_active_metadata_bytes`,
+`orbitkv_save_active_logical_bytes` and `orbitkv_save_retained_operations` track
+the 1,024-operation / 32 MiB metadata admission owner. Completion or proven
+non-submission releases charges; reply loss/unknown drain retains them. Logical
+bytes include overlapping requested ranges and are not unique payload residency.
 `orbitkv_save_admission_rejections_total` counts pre-worker budget refusals.
 
-The source shutdown candidate exposes `orbitkv_peer_retained_source_pools_total`
-and `orbitkv_peer_retained_source_pool_bytes_total` when the peer transport owner
-initializes. Both start at zero. Failure to prove source drain retains the exact
-engine, registrations and pool until process isolation; the counters accumulate
-those owned pools and their full registered backing bytes, including partial
-registration failures. They do not count unique transfer payloads or authorize
-reclamation. These owners remain charged against the process source-pool caps
-of 1,024 pools and 1 TiB registered backing.
+`orbitkv_peer_retained_source_pools_total` and
+`orbitkv_peer_retained_source_pool_bytes_total` accumulate source pools retained
+after failed drain, including partial registration. Full backing remains charged
+against 1,024 pools / 1 TiB. These counters do not authorize reclamation.
 
 ### Bounded cost observations
 
-See the [P4.1 boundaries](state-planning.md#p41-observation-contract) before
-combining measurements. All labels below come from fixed enums; device, peer,
-request and state identities are kept out of the exported series.
+Read [cost boundaries](state-planning.md#p41-observation-contract) before combining
+samples. Fixed path/outcome/stage labels exclude device, peer, request and state
+identities. Internal resource keys retain those distinctions without metric
+cardinality growth.
 
 | Metric family | Labels / meaning |
 | --- | --- |
@@ -82,403 +48,161 @@ request and state identities are kept out of the exported series.
 | `orbitkv_cost_estimate_samples`, `orbitkv_cost_estimate_age_seconds`, `orbitkv_cost_estimate_error_seconds` | Count, sample age and EWMA absolute error supporting known shadow predictions |
 | `orbitkv_cost_estimate_evictions_total` / `orbitkv_cost_estimate_dropped_total` | Fixed-capacity eviction and skipped updates on estimator contention |
 
-`path="ssd_uring_restore"` and `path="ssd_cufile_restore"` identify complete
-SSD restore routes to the same GPU completion target. Their estimates include
-queueing and host materialization/H2D or GPU staging/scatter/decode. Other paths
-continue to estimate service from submission to observed completion; stage
-histograms retain their queue/admission/service/total meanings. Neither failed
-nor cancelled, timed-out or abandoned work trains successful estimates.
-Peer DRAM authorization uses `path="remote_authorization"`; peer SSD uses
-`path="remote_ssd_authorization"`, whose service interval also includes
-source-local io_uring staging. The following `remote_read` remains the OrbiTE
-TE payload interval for either source medium.
-`peer_dram_host_ready` and `peer_ssd_host_ready` are non-additive composite
-samples from authorization start through destination block reconstruction.
-They alone feed the narrow peer-owner execution selector.
-`local_ssd_host_ready` spans queue admission, host allocation, io_uring reads,
-validation and host-block reconstruction. It uses stored bytes and block count,
-matching the peer HostReady shape. Equal-coverage, single-owner alternatives
-enter cross-medium shadow. They affect execution only under the separate
-three-flag experiment gate.
+Composite SSD Restore and HostReady totals overlap their child copy/codec/file
+operations. **Do not sum parent/child timers or bytes.** Logical sizes exclude
+padding only when known; physical bytes are counted at the I/O owner, including
+short I/O. Failed/unknown work cannot train a success estimate.
 
-`prefill_to_decode_handoff` is a decode-owned, enqueue-to-physical-drain
-observation for the registered destination GPU. It records raw logical and wire
-bytes plus target-layout fragment shape after successful completion; failed,
-cancelled and timed-out reports keep physical bytes unknown. The source
-endpoint is hashed into the internal execution-resource key; endpoint text,
-request identity, cache keys
-and transfer generation are not metric labels. The generation is required
-as freshness evidence but is not an estimator dimension. Only
-`admission="admitted", outcome="completed"` trains the estimate.
-`engine_local_restore` records native caller-to-GPU-drain duration, including
-readiness, dispatch, native queue and grant wait. The record is accepted once by
-the source owner for the same session/operation generation. Only a successful
-submitted drain trains its bounded estimate; failure durations are diagnostic.
-Its start boundary differs from `cache_restore` and P/D, so it is excluded from
-cross-route comparison. Cache restore resources separate the source domain,
-destination GPU and registered copy backend, so direct and kernel executions
-do not train the same estimate. Enable `ORBITKV_COST_OBSERVATIONS=1` in both the engine
-and Manager to collect it. `ORBITKV_TRACE_TRANSFERS=1` additionally exposes the
-stage decomposition and native result-consumption delay; tracing alone does not
-enable cost selection.
+| Path | Start/end and interpretation |
+| --- | --- |
+| `ssd_uring_restore`, `ssd_cufile_restore` | Enqueue to GPU-terminal Restore, including queues and materialization/decode |
+| `remote_authorization`, `remote_ssd_authorization` | Source grant; SSD includes source preparation |
+| `remote_read` | OrbiTE payload READ owner |
+| `peer_dram_host_ready`, `peer_ssd_host_ready`, `local_ssd_host_ready` | Whole host preparation through reconstruction; comparable only with equal coverage/shape |
+| `cache_restore` | Manager preparation after page allocation to GPU completion |
+| `engine_local_restore` | Native caller to local drain, accepted once per operation; not interchangeable with Manager or P/D starts |
+| `prefill_to_decode_handoff` | Decode-owned enqueue to physical drain; only admitted completed reports train |
 
-S2.10a publish/query stage diagnosis additionally requires a positive
-`ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT`. It is disabled at zero and capped at 65,536
-events per process. Events bind the authenticated session epoch/token and channel
-request ID, use same-host `CLOCK_MONOTONIC`, and cover client, Manager, insert and
-SSD-writer boundaries. A `diagnostic_timeline_limit` event invalidates the run.
-Client return, insert completion and SSD completion are different endpoints; the
-diagnostic never redefines save submission as SSD durability.
+Engine-local collection needs `ORBITKV_COST_OBSERVATIONS=1` in both processes.
+Complete-route shapes include destination GPU, representation, source stores and
+mixed DRAM presence. Resource snapshots occupy a separate 128-entry/two-second
+cache; they are not labels or reservations. OrbiTE owns coalescing, so
+`dma_ranges=0` means unavailable. Historical TENT counts are not comparable.
 
-With a positive diagnostic limit, existing transfer records and the additional
-stage records share a bounded asynchronous writer instead of synchronously
-formatting output on request/storage threads. The total accepted records, not
-only the additional stage records, consume the process limit. Normal Manager
-shutdown drains request and storage owners before flushing the writer. A missing
-required stage, a limit event or an abnormal process exit remains invalid; the
-buffer does not manufacture completion evidence.
-Required stage and foreground query-path events enter the writer as fixed-size
-records; their JSON representation is built only by the writer. Less common
-legacy transfer records retain their existing structured fields but consume the
-same total bound.
+Observation/shadow is off by default. `ORBITKV_COST_SELECTION=1` additionally
+allows guarded same-medium peer choices; `ORBITKV_CROSS_MEDIUM_SELECTION=1`
+requires both preceding flags for experimental cross-medium HostReady choice.
+The [original overhead failure](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#p41-final-evidence)
+remains unchanged. No prediction authorizes a source or selects an unobserved
+route. The 5% switching margin is empirical, not statistical confidence.
 
-`publish_manager_response_publish` is recorded immediately before the response
-is made visible; `response_publish_to_client_ms` therefore includes response
-publication and notification/wakeup. It is not an after-send timestamp. Normal
-Manager shutdown stops the channel, drains GPU owners, then flushes deferred
-Publish continuations, insert and SSD work before flushing the diagnostic writer.
-Writer-start failure
-emits a limit event and invalidates the run instead of falling back to unbounded
-logging. SSD completion accounting retains every intervening write batch even
-when only one batch carries diagnostic correlation.
+`ORBITKV_TRACE_TRANSFERS=1` emits completion and consumer-observation records.
+A positive `ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT` additionally enables channel/storage
+stages, bounded to 65,536 total records per process. All records share a bounded
+asynchronous writer; required stages are formatted off request threads. Match
+session epoch/token and request ID on one host's monotonic clock.
 
-`cache_restore` supplies the GPU-completed boundary for
-Manager-executed restores, from preparation after framework page allocation
-through terminal GPU completion. Its plan retains `RestoreTargetShape`
-(destination device, bytes and fragment count), source-set identity and source
-geometry. The shape is metadata; a separate permit owns device admission.
-Engine-local raw restores do not train this estimator until their actual
-drain evidence is connected. The observation does not enable direct/P-D
-selection: one execution owner must first acquire both source and handoff
-authority for the alternatives under consideration.
-
-The completion report carries bounded resource values: admitted decode bytes,
-queue depth, queue parallelism, transfer inflight bytes and transfer bandwidth. They
-live in a 128-entry process-local freshness cache for at most two seconds and
-are not exported as labels. Decode-route comparison accounts for queued waves
-and RDMA rail pressure only when every candidate has fresh, shape-compatible
-evidence; TCP legitimately reports an empty OrbiTE NIC rail.
-
-Raw GPU-copy keys use the input descriptor and byte counts. OrbiTE owns
-coalescing and does not export the compiled DMA count, so `dma_ranges` is zero
-(unavailable) in current observations and timeline records. Historical TENT
-records retain their measured range counts. Refining a key does not restart
-queue/admission timing. These fields are bounded estimator dimensions, not
-additional metric labels.
-
-Shadow compares the existing load DMA/kernel pair, save DMA/kernel pair,
-complete io_uring/cuFile restore pair, and equal-coverage HostReady alternatives.
-The first three require matching resource identity. HostReady shadow permits
-different SSD-store/peer resources but still requires known representation and
-identical byte/block shape. Multi-owner peer prefixes have no single resource
-identity and are excluded. Matching buckets never authorize a source or prove
-resource admission. SSD GPU-restore keys additionally retain destination GPU,
-copy backend, source-store set and mixed DRAM presence.
-
-`different` requires the alternative's mean plus empirical error to beat the
-current mean minus its error by more than 5% of the current mean. A faster mean
-that fails this guard yields `within_margin`; a fastest or tied current mean
-yields `agree`. Missing samples yield `unknown`, and incompatible comparison
-families/resources/shapes or unknown representation yield `incomparable` when
-all estimates are present. The 5% margin is a declared shadow threshold, not a
-qualified execution policy or a statistical confidence bound.
-
-The bounded SSD-route key includes buckets for the complete stored source image's
-bytes/fragments and the SSD-derived portion of target bytes/fragments, alongside
-the full task shape, representation and shared SSD/device identity. These fields
-are not metric labels. Stored source sizes do not turn padded raw bytes into
-known logical data. Composite route totals and nested operation timers overlap;
-physical bytes are reported only by their existing I/O owners. Do not sum either
-parent/child timings or logical bytes across those paths.
-
-This family and its shadow work are disabled by default. Enable them with
-`ORBITKV_COST_OBSERVATIONS=1` before Manager startup. Existing operational
-metrics remain enabled independently. See the
-[overhead gate](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#p41-final-evidence) before enabling cost
-observations in serving.
-Execution selection additionally requires `ORBITKV_COST_SELECTION=1`. It is
-currently limited to equal-coverage owners of one peer medium; it does not use
-nested authorization/READ timers as additive costs.
-Cross-medium execution additionally requires
-`ORBITKV_CROSS_MEDIUM_SELECTION=1`. The same `orbitkv_cost_route_decisions_total`
-reports its guarded decision; deployment labels and external transport/NIC
-evidence remain necessary to interpret the result.
+A missing required stage, limit event, writer-start failure or abnormal exit
+invalidates diagnostic linkage. Normal shutdown drains accepted work and storage
+before flushing the writer. `publish_manager_response_publish` is before response
+visibility; its client interval includes publication/wakeup. Save response means
+copy/encode complete and insertion queued, not SSD durability. Full diagnostic
+and overhead guards remain [frozen here](distributed-design.md#s210a-same-host-isolation-diagnostic-contract).
 
 ### Storage encoding
 
-See [codec qualification](storage-formats.md#qualification). `orbitkv_storage_codec_bytes_total`
-labels `logical` and `stored` count encoded publications; stored includes per-segment
-alignment and mixed raw segments. `orbitkv_storage_codec_transfer_bytes_total`
-labels `d2h`/`h2d` count actual codec-path payload transfers, including CPU fallback.
-`orbitkv_storage_codec_reserved_bytes` holds active codec operation reservations
-through completion. `orbitkv_storage_codec_workspace_bytes` measures retained
-GPU arenas, including idle workers and SSD decoder inputs; they are released at
-worker teardown. `orbitkv_storage_codec_workspace_allocations_total` counts arena
-allocations and growth, while `orbitkv_storage_codec_batches_total` and the
-`orbitkv_storage_codec_batch_segments` histogram report actual batch sizes.
-Budgets apply per worker, not across the whole Manager. Duration and decode-failure metrics
-track complete codec transfers, corrupt objects rejected before admission and
-failed GPU codec restores.
-SSD prefetch byte counters now count stored physical segment bytes, including
-encoded payloads and padding. GPU load counters count reconstructed logical bytes.
-Codec transfer counters cover saves through the codec worker and restores of
-encoded slots, including their raw sibling segments; raw-only restores use the
-ordinary copy backend and are excluded from the codec counter.
-GDS counters apply only to cuFile operations and do not prove native GDS.
+| Instrument | Meaning |
+| --- | --- |
+| `orbitkv_storage_codec_bytes_total` | `logical` / `stored` publication bytes; stored includes alignment and raw siblings |
+| `orbitkv_storage_codec_transfer_bytes_total` | `d2h` / `h2d` payload, including CPU fallback and raw siblings in encoded jobs |
+| `orbitkv_storage_codec_reserved_bytes` | Active operation reservations through completion |
+| `orbitkv_storage_codec_workspace_bytes` | Retained GPU arenas, including idle workers and decoder inputs |
+| `orbitkv_storage_codec_workspace_allocations_total` | Arena allocations/growth |
+| `orbitkv_storage_codec_batches_total`, `orbitkv_storage_codec_batch_segments` | Actual batch counts/sizes |
+
+Budgets are per worker. Duration/failure instruments cover complete codec work,
+corrupt-input rejection and failed GPU restores. SSD reads count stored physical
+bytes; GPU load counts reconstructed logical bytes. Raw-only copies are outside
+codec transfer counters. GDS-named counters do not prove native GDS. See
+[codec qualification](storage-formats.md#qualification).
 
 ### Query ownership and preparation
 
-- **orbitkv_query_reserved_bytes** tracks total conservative per-owner bytes.
-  Admission and release update this unlabelled counter under the budget lock;
-  use it to check the configured query budget. Shared physical pages may be
-  counted for several owners. Use the pool metric for actual allocator occupancy.
-- **orbitkv_query_speculative_reserved_bytes** tracks the speculative share under
-  the same lock; compare it with one quarter of the query budget.
-- **orbitkv_query_reserved_peak_bytes** retains the maximum concurrent conservative
-  reservation since this Manager's budget was created, including warm-up.
-- **orbitkv_query_instance_reserved_peak_bytes** retains the largest concurrent
-  reservation of any single instance over that same lifetime. It is neither the
-  sum of per-instance historical peaks nor a per-engine labelled series. Both
-  peaks are updated under the admission owner's existing lock, survive release
-  and unregister, and reset only with a new budget. Scrapes read atomic peaks
-  without acquiring the admission lock. Recording uses atomics, without emitting
-  request events or retaining instance labels.
-  They measure ownership charges, not physical allocator/HBM usage. The pressure
-  gate rejects missing/reset peaks and checks both configured byte limits.
-- **orbitkv_query_reserved_bytes_by_phase** separates `warming`, `preloading`,
-  `prepared`, `preparing`, `ready`, and `restoring`. Phase samples are diagnostic:
-  collection can overlap a transition, so their sum is not an atomic budget
-  snapshot. Owned preparation moves from `preloading` to `prepared`, then
-  into foreground ownership on claim without releasing its total reservation.
-  Unowned warming retains no ready lease; its bytes return to zero after
-  preparation even without polling.
-- **orbitkv_query_budget_waits_total** and **orbitkv_query_budget_bypasses_total**
-  include warmup admission attempts. A skipped warmup does not imply the later
-  demand query will bypass restoration.
-- **orbitkv_query_coalesced_reads_total** counts owners joining an identical
-  backing-read plan. It is not a byte-savings counter.
-- **orbitkv_warmup_prepared_bytes_total**, **orbitkv_warmup_restored_bytes_total**,
-  **orbitkv_warmup_unused_bytes_total**, and **orbitkv_warmup_pending_bytes**
-  follow each speculative-origin page through successful local H2D or last-owner
-  release. A query hit is not use; restored bytes count unique page footprints,
-  not individual layer copies or exact H2D traffic. Both unowned warming and
-  owned preparation use these physical-page counters; compare them in separate runs.
-- **orbitkv_warmup_wait_byte_seconds_total** records byte-weighted time from
-  preparation to first successful H2D or unused release, labelled by `outcome`.
-  Unresolved live intervals are excluded. See the
-  [accounting contract](queued-warming.md#measuring-whether-preparation-was-useful).
-- **orbitkv_warmup_foreground_skips_total** counts unowned warming hints skipped because
-  foreground preparation, leases or GPU transfers already own query bytes.
-  Owned preparation can overlap foreground work within its speculative share
-  and total byte limits. See [request preparation](request-preparation.md).
+| Instrument | Meaning |
+| --- | --- |
+| `orbitkv_query_reserved_bytes` | Conservative per-owner total under the budget lock; shared pages may be charged several times |
+| `orbitkv_query_speculative_reserved_bytes` | Speculative quarter-budget share |
+| `orbitkv_query_reserved_peak_bytes` | Peak total since budget creation, including warm-up |
+| `orbitkv_query_instance_reserved_peak_bytes` | Largest simultaneous charge of any single instance, not sum of historical peaks |
+| `orbitkv_query_reserved_bytes_by_phase` | `warming`, `preloading`, `prepared`, `preparing`, `ready`, `restoring`; diagnostic phases |
+| `orbitkv_query_budget_waits_total`, `orbitkv_query_budget_bypasses_total` | Admission pressure, including warming; not proof of a backing miss |
+| `orbitkv_query_coalesced_reads_total` | Owners joining identical physical plans, not saved bytes |
+| `orbitkv_warmup_prepared_bytes_total`, `orbitkv_warmup_restored_bytes_total`, `orbitkv_warmup_unused_bytes_total`, `orbitkv_warmup_pending_bytes` | Unique speculative-origin page footprints through successful use or last-owner release |
+| `orbitkv_warmup_wait_byte_seconds_total` | Resolved byte-weighted preparation-to-use/release time by outcome; excludes live intervals |
+| `orbitkv_warmup_foreground_skips_total` | Unowned hints skipped while foreground preparation/leases/transfers own query bytes |
 
-Optional [request timelines](queued-warming.md#observing-the-path) correlate
-enqueue, preparation, restore and engine consumption. Cache-tier probe counts
-include warmups and demand; they are not end-user request hit rates.
+Peaks survive release/unregister and reset only with a new budget. Atomics avoid
+scrape locking and per-instance labels. Prepared claims move phases without
+releasing total ownership; warming has no ready lease. A hit is not GPU use.
+Warmup footprints are not individual layer-copy bytes; compare owned preparation
+and unowned warming in separate runs. See [accounting](queued-warming.md#measuring-whether-preparation-was-useful)
+and [request preparation](request-preparation.md).
 
 ### Pool Metrics (Pinned Memory)
-- **orbitkv_pool_used_bytes** (Gauge)
-  - Current pinned memory pool usage in bytes
-  - Use case: Monitor memory pressure
 
-- **orbitkv_pool_capacity_bytes** (Gauge)
-  - Total pinned memory pool capacity in bytes
-  - Use case: Derive pool utilization
+- **orbitkv_pool_used_bytes** (Gauge): Current pinned memory pool usage in bytes
 
-- **orbitkv_pool_largest_free_bytes** (Gauge)
-  - Largest contiguous free region in pinned pool (fragmentation signal)
-  - Use case: Distinguish true exhaustion vs fragmentation (largest_free << free_bytes)
+- **orbitkv_pool_capacity_bytes** (Gauge): Total pinned memory pool capacity in bytes
 
-- **orbitkv_pool_alloc_failures_total** (Counter)
-  - Total allocation failures after eviction retries
-  - Use case: Detect memory exhaustion issues
+- **orbitkv_pool_largest_free_bytes** (Gauge): Largest contiguous free region in pinned pool (fragmentation signal)
 
-### Cache Metrics (Block-level)
-- **orbitkv_cache_candidate_hits_total**, **orbitkv_cache_candidate_misses_total** (Counters)
-  - Metadata-only recovery discovery across attention and auxiliary groups
-  - Attention counts the available contiguous prefix; auxiliary groups count
-    independently available positions. The remaining positions count as misses.
-  - Candidates hold no leases and can become stale. These counters describe
-    planning availability, not completed reads, transferred bytes, or GPU reuse.
+- **orbitkv_pool_alloc_failures_total** (Counter): Total allocation failures after eviction retries
 
-- **orbitkv_cache_block_hits_total** (Counter)
-  - Blocks returned by terminal prefix reads, including warmup reads
-  - Excludes metadata-only candidate discovery; does not prove GPU transfer
+- **orbitkv_cache_candidate_hits_total**, **orbitkv_cache_candidate_misses_total** (Counters): Metadata-only recovery discovery across attention and auxiliary groups Attention counts the available contiguous prefix; auxiliary groups count independently available positions. The remaining positions count as misses. Candidates hold no leases and can become stale. These counters describe planning availability, not completed reads, transferred bytes, or GPU reuse.
 
-- **orbitkv_cache_block_misses_total** (Counter)
-  - Missing suffix blocks reported by terminal prefix reads
-  - Use candidate-miss counters for recovery plans rejected before payload reads
+- **orbitkv_cache_block_hits_total** (Counter): Blocks returned by terminal prefix reads, including warmup reads Excludes metadata-only candidate discovery; does not prove GPU transfer
 
-- **orbitkv_cache_tier_block_requests_total** (Counter)
-  - Per-decision `query_prefetch` block attribution by `tier`
-    (`ram`, `remote`, `ssd`, or `miss`)
-  - Use case: Calculate overall hit ratio and each cache tier's contribution
-    from one consistent denominator
-  - Invariant: for each attributed decision,
-    `ram + remote + ssd + miss == block_hashes.len()`
-  - Semantics: this is decision attribution. `tier="remote"` and `tier="ssd"`
-    mean the block was selected to be satisfied by that backing tier; they do
-    not guarantee the later backing operation succeeded.
+- **orbitkv_cache_block_misses_total** (Counter): Missing suffix blocks reported by terminal prefix reads Use candidate-miss counters for recovery plans rejected before payload reads
 
-- **orbitkv_cache_block_insertions_total** (Counter)
-  - New blocks inserted into cache
-  - Use case: Track cache growth
+- **orbitkv_cache_tier_block_requests_total** (Counter): Per-decision `query_prefetch` block attribution by `tier` (`ram`, `remote`, `ssd`, or `miss`) Invariant: for each attributed decision, `ram + remote + ssd + miss == block_hashes.len()` Semantics: this is decision attribution. `tier="remote"` and `tier="ssd"` mean the block was selected to be satisfied by that backing tier; they do not guarantee the later backing operation succeeded.
 
-- **orbitkv_cache_block_evictions_total** (Counter)
-  - Blocks evicted from cache due to memory pressure
-  - Use case: Monitor eviction frequency, tune pool size
+- **orbitkv_cache_block_insertions_total** (Counter): New blocks inserted into cache
 
-- **orbitkv_cache_block_evictions_by_class_total** (Counter)
-  - Blocks evicted from cache due to memory pressure, labelled by replacement class (`reclaimable`, `probationary` or `retained`)
-  - Use case: Verify remote-fetched replicas are reclaimed before locally produced blocks
+- **orbitkv_cache_block_evictions_total** (Counter): Blocks evicted from cache due to memory pressure
 
-- **orbitkv_cache_block_evictions_still_referenced_total** (Counter)
-  - Evicted blocks that still had external references (eviction did not immediately reclaim pinned memory)
-  - Use case: Explain "evictions spike but pool_used_bytes doesn't drop"
+- **orbitkv_cache_block_evictions_by_class_total** (Counter): Blocks evicted from cache due to memory pressure, labelled by replacement class (`reclaimable`, `probationary` or `retained`)
 
-- **orbitkv_cache_eviction_reclaimed_bytes_total** (Counter)
-  - Estimated bytes actually reclaimed in pinned allocator after cache eviction
-  - Use case: Measure effectiveness of eviction under real reference patterns
+- **orbitkv_cache_block_evictions_still_referenced_total** (Counter): Evicted blocks that still had external references (eviction did not immediately reclaim pinned memory)
 
-- **orbitkv_cache_resident_blocks** (Gauge)
-  - Current number of sealed blocks resident in cache, labelled by replacement class (`reclaimable`, `probationary` or `retained`)
-  - Use case: Track cache size and source-based replacement pressure in blocks
+- **orbitkv_cache_eviction_reclaimed_bytes_total** (Counter): Estimated bytes actually reclaimed in pinned allocator after cache eviction
 
-- **orbitkv_cache_resident_bytes** (Gauge)
-  - Current sealed block bytes resident in cache (sum of footprints)
-  - Use case: Attribute pinned pool usage to cache residency
+- **orbitkv_cache_resident_blocks** (Gauge): Current number of sealed blocks resident in cache, labelled by replacement class (`reclaimable`, `probationary` or `retained`)
 
-- **orbitkv_cache_protected_bytes** (Gauge)
-  - Bytes in the protected segment when `--cache-protected-percent` is enabled;
-    bounded by that percentage of pool capacity. Zero with protection disabled.
-    These bytes are part of residency, not an additional pool reservation.
+- **orbitkv_cache_resident_bytes** (Gauge): Current sealed block bytes resident in cache (sum of footprints)
 
-- **orbitkv_cache_policy_promotions_total**, **orbitkv_cache_policy_demotions_total** (Counters)
-  - Foreground promotions into the protected segment and capacity demotions
-    back to probation. Speculative peeks do not promote. Pressure eviction and
-    cleanup affect protected bytes but are not policy-capacity demotions.
+- **orbitkv_cache_protected_bytes** (Gauge): Bytes in the protected segment when `--cache-protected-percent` is enabled; bounded by that percentage of pool capacity. Zero with protection disabled. These bytes are part of residency, not an additional pool reservation.
 
-- **orbitkv_ssd_write_admission_skips_total** (Counter)
-  - Pages skipped before the SSD write queue, by `reason`: `cold`, `resident`,
-    `pending` or `duplicate`. Intentional policy decisions, separate from
-    `orbitkv_ssd_write_queue_full_total` pressure drops. See [policies](cache-policies.md).
+- **orbitkv_cache_policy_promotions_total**, **orbitkv_cache_policy_demotions_total** (Counters): Foreground promotions into the protected segment and capacity demotions back to probation. Speculative peeks do not promote. Pressure eviction and cleanup affect protected bytes but are not policy-capacity demotions.
 
-- **orbitkv_cache_residence_duration_seconds** (Histogram)
-  - RAM resident block lifetime from its first successful cache insertion to
-    removal, measured in seconds
-  - Labels: `reason` (`pressure` or `cleanup`)
-  - `pressure`: allocator pressure removed the block through LRU reclaim
-  - `cleanup`: the memory-cache cleanup endpoint removed the block
-  - Buckets: `1s`, `5s`, `10s`, `30s`, `1m`, `2m`, `5m`, `10m`, `30m`,
-    `1h`, `2h`, `6h`, `12h`, `24h`, and `+Inf`
-  - Use case: Track typical and tail cache residence time and visualize the
-    eviction-age distribution
-  - Scope: each RAM residence is a separate lifetime. A block reinserted after
-    eviction starts a new lifetime; cache hits, duplicate inserts, and
-    replacement-class changes do not reset the original insertion time.
-  - The lifetime ends when the block leaves the resident cache, even if an
-    outstanding `Arc` keeps its pinned memory allocated. Correlate
-    `orbitkv_cache_block_evictions_still_referenced_total` and
-    `orbitkv_cache_eviction_reclaimed_bytes_total` to diagnose delayed memory
-    reclamation.
-  - SSD ring-cache overwrite and blocks still resident at server shutdown are
-    not observed.
+- **orbitkv_ssd_write_admission_skips_total** (Counter): Pages skipped before the SSD write queue, by `reason`: `cold`, `resident`, `pending` or `duplicate`. Intentional policy decisions, separate from `orbitkv_ssd_write_queue_full_total` pressure drops. See [policies](cache-policies.md).
 
-- **orbitkv_pinned_for_load_entries** (Gauge)
-  - Current number of pinned_for_load entries (instance_id, block_key)
-  - Use case: Diagnose load-path pins keeping evicted blocks alive
+- **orbitkv_cache_residence_duration_seconds** (Histogram): RAM resident block lifetime from its first successful cache insertion to removal, measured in seconds Labels: `reason` (`pressure` or `cleanup`) `pressure`: allocator pressure removed the block through LRU reclaim `cleanup`: the memory-cache cleanup endpoint removed the block Buckets: `1s`, `5s`, `10s`, `30s`, `1m`, `2m`, `5m`, `10m`, `30m`, `1h`, `2h`, `6h`, `12h`, `24h`, and `+Inf` Scope: each RAM residence is a separate lifetime. A block reinserted after eviction starts a new lifetime; cache hits, duplicate inserts, and replacement-class changes do not reset the original insertion time. The lifetime ends when the block leaves the resident cache, even if an outstanding `Arc` keeps its pinned memory allocated. Correlate `orbitkv_cache_block_evictions_still_referenced_total` and `orbitkv_cache_eviction_reclaimed_bytes_total` to diagnose delayed memory reclamation. SSD ring-cache overwrite and blocks still resident at server shutdown are not observed.
 
-- **orbitkv_pinned_for_load_refs** (Gauge)
-  - Current outstanding pinned_for_load consumer refcount (sum of per-entry counts)
-  - Use case: Detect stuck consumers / missing release on load path
+- **orbitkv_pinned_for_load_entries** (Gauge): Current number of pinned_for_load entries (instance_id, block_key)
 
-- **orbitkv_pinned_for_load_unique_blocks** (Gauge)
-  - Current number of unique blocks referenced by pinned_for_load
-  - Use case: Understand how many distinct blocks are being kept alive by pins
+- **orbitkv_pinned_for_load_refs** (Gauge): Current outstanding pinned_for_load consumer refcount (sum of per-entry counts)
 
-- **orbitkv_pinned_for_load_unique_bytes** (Gauge)
-  - Current bytes referenced by pinned_for_load (unique blocks; sum of footprints)
-  - Use case: Attribute pinned pool usage to load-path pins
+- **orbitkv_pinned_for_load_unique_blocks** (Gauge): Current number of unique blocks referenced by pinned_for_load
+
+- **orbitkv_pinned_for_load_unique_bytes** (Gauge): Current bytes referenced by pinned_for_load (unique blocks; sum of footprints)
 
 ### HLL Reuse Metrics
-- **orbitkv_hll_cardinality** (Gauge)
-  - Estimated distinct `(namespace, block hash)` objects classified as misses in a configured sliding window
-  - Labels: `window` (`15m`, `1h`, `1d` by default)
-  - Use case: Derive approximate prefix reuse over longer windows without
-    storing every block hash
 
-- **orbitkv_hll_total_requests** (Gauge)
-  - Total queried blocks in the same configured sliding window, including ready blocks and duplicates
-  - Hybrid recovery records attention-prefix discovery once. Materializing the
-  selected ranges does not count the same lookup again; auxiliary groups and
-    speculative preparation do not enter this denominator. A dense prepared
-    claim counts the ordinary lookup once. Queries stopped before finishing
-    their evidence, including finite-batch prepared claims, do not enter this
-    estimate: an unread page is unknown, not a demonstrated miss.
-  - Labels: `window` (`15m`, `1h`, `1d` by default)
-  - Use case: Denominator for HLL-based reference reuse rate
+| Gauge (`window` label) | Meaning |
+| --- | --- |
+| `orbitkv_hll_cardinality` | Estimated distinct namespace/hash misses |
+| `orbitkv_hll_total_requests` | Queried blocks, including duplicates and ready blocks |
+| `orbitkv_hll_estimated_hit_rate` | Same-snapshot miss-based infinite-cache reuse reference, clamped to [0,1] |
 
-- **orbitkv_hll_estimated_hit_rate** (Gauge)
-  - Server-computed miss-based infinite-cache reuse reference from the same
-    HLL snapshot as the two gauges above
-  - Labels: `window`
-  - Value is clamped to `[0, 1]`
-
-The existing cardinality and total metrics are retained. Existing PromQL
-continues to work, but new dashboards should prefer the direct gauge because
-it applies the same cardinality clamp as the tracker:
-
-```promql
-1 - (
-  orbitkv_hll_cardinality{window="1h"}
-  /
-  clamp_min(orbitkv_hll_total_requests{window="1h"}, 1)
-)
-```
-
-```promql
-orbitkv_hll_estimated_hit_rate{window="1h"}
-```
-
-This is a metrics semantic update, not an `/metrics` protocol breaking change:
-metric names, types, existing labels, and the HTTP endpoint are unchanged;
-the new gauge is additive. The default HLL size changes from 16,384 registers
-(`bucket_bits=14`, about 0.8% standard error) to 65,536 registers
-(`bucket_bits=16`, about 0.4%). Three default windows use about 192 KiB of
-register storage; sliding slots make the live tracker a few MiB per server.
-The setting remains configurable with `--metric-hll-bucket-bits`.
+Hybrid attention discovery counts once; auxiliary groups and speculative reads
+do not enter this denominator. Unread/unfinished evidence is unknown, not a miss.
+Prefer the direct hit-rate gauge. Defaults are `15m,1h,1d` and 65,536 registers
+(`bucket_bits=16`, about 0.4% error); sliding slots use a few MiB. Configure with
+`--metric-hll-windows` / `--metric-hll-bucket-bits` (maximum 18). Empty or duplicate
+windows reject startup. This estimate is not observed finite-cache service success.
 
 ### Save Metrics (GPU → CPU)
-- **orbitkv_save_bytes_total** (Counter)
-  - Logical bytes published from GPU pages, before storage encoding
-  - Use case: Monitor save throughput
 
-- **orbitkv_save_duration_seconds** (Histogram)
-  - Save operation latency distribution
-  - Use case: Track save performance (p50, p99)
+- `orbitkv_save_bytes_total`: logical GPU publication bytes before encoding.
+- `orbitkv_save_duration_seconds`: Save latency histogram.
 
 ### Load Metrics (cache → GPU)
-- **orbitkv_load_bytes_total** (Counter)
-  - Logical bytes restored from DRAM or SSD into engine GPU pages
-  - Use case: Monitor load throughput
 
-- **orbitkv_load_duration_seconds** (Histogram)
-  - Manager-worker restore duration, including SSD reads on the selected cuFile or explicit io_uring restore lane; engine-local caller-to-drain samples are included only when timing is enabled in the engine. Manager retirement time is never used for local samples.
-  - Use case: Track load performance (p50, p99)
-
-- **orbitkv_load_failures_total** (Counter)
-  - Load operation failures (e.g., transfer errors)
-  - Use case: Detect data transfer issues
+- `orbitkv_load_bytes_total`: logical restored bytes.
+- `orbitkv_load_duration_seconds`: Manager-worker duration; engine-local
+  caller-to-drain samples enter only with native timing enabled. Reaping is not
+  local completion time.
+- `orbitkv_load_failures_total`: failed restores.
 
 ### SSD Cache Metrics
 
@@ -487,14 +211,14 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
   engine host materialization thereafter; an explicit cuFile read route does not silently change.
   Logs record the reason.
 - **orbitkv_ssd_cufile_write_bytes_total** (Counter) - Completed GPU file-route bytes, including padding; the historical name does not imply native cuFile/GDS.
-- **orbitkv_ssd_cufile_write_seconds** (Histogram) - Async submission-to-completion latency, including GPU gather and polling; excludes waiting for a slot.
+- **orbitkv_ssd_cufile_write_seconds** (Histogram) - Async submission-to-completion latency, including engine-owned gather and polling; excludes waiting for a slot.
 - **orbitkv_ssd_cufile_write_failures_total** (Counter) - Failed or short GPU-backed writes.
 - **orbitkv_ssd_cufile_read_bytes_total** (Counter) - Completed GPU file-route bytes,
   including aligned edges. The historical name covers engine CUDA staging and GDS.
-- **orbitkv_ssd_cufile_read_seconds** (Histogram) - Async submission-to-completion latency, including GPU scatter and polling; excludes waiting for a slot.
-- **orbitkv_ssd_cufile_read_failures_total** (Counter) - Failed or short cuFile reads.
+- **orbitkv_ssd_cufile_read_seconds** (Histogram) - Async submission-to-completion latency, including engine-owned scatter and polling; excludes waiting for a slot.
+- **orbitkv_ssd_cufile_read_failures_total** (Counter) - Failed or short GPU file-route reads.
 - **orbitkv_ssd_read_pinned_bytes** (Gauge) - SSD extents owned by restore leases.
-- **orbitkv_ssd_cufile_inflight_batches** (Gauge) - Occupied staging slots until I/O and scatter completion, at most two per instance/device.
+- **orbitkv_ssd_cufile_inflight_batches** (Gauge) - Outstanding file receipts through I/O completion, at most two per instance/device.
 - **orbitkv_ssd_gpu_write_fallbacks_total** (Counter) - Write jobs using host publication after the eight-job GPU write admission limit is reached.
 - **orbitkv_ssd_gpu_read_fallbacks_total** (Counter) - Automatically selected cuFile restores changed to io_uring before submission because another instance owns this CUDA device's persistent staging. Explicit cuFile routes do not increment this counter or switch paths.
 - **orbitkv_ssd_pinned_write_skips_total** (Counter) - Reservations rejected to
@@ -519,119 +243,41 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
 
 ### Tier Attribution Semantics
 
-`orbitkv_cache_tier_block_requests_total{tier}` is the canonical metric for
-explaining how each cache tier contributes to prefix-query hit ratio. It is
-emitted once for each `query_prefetch` decision and uses exactly one label:
-`tier`.
+`orbitkv_cache_tier_block_requests_total{tier}` counts one decision per requested
+block: `ram`, `remote`, `ssd` or `miss`, summing to the query's hash count. It
+attributes selected sources, not successful backing I/O. Candidate discovery
+counters hold no leases; terminal read hits still do not prove GPU reuse.
+Correlate load bytes and failures rather than adding these denominators.
 
-Tier values:
+| Instrument | Interpretation |
+| --- | --- |
+| `orbitkv_remote_fetch_total{status}` | `rejected` is source denial before submission; `error` is other fetch failure |
+| `orbitkv_remote_fetch_plan_segments`, `orbitkv_remote_fetch_plan_completed_segments` | Attempted alternatives versus completed segments |
+| `orbitkv_remote_stage_duration_seconds{stage,status}` | Authorization (including setup), allocation, read, rebuild and release-to-ACK/retry latency |
+| `orbitkv_orbite_nic_inflight_bytes`, `orbitkv_orbite_nic_bandwidth_bytes_per_second` | Engine RDMA load by NIC after successful batches; not proof of that batch's transport |
+| `orbitkv_transfer_reserved_bytes` | Whole source allocations charged once per session, including overdue holds |
+| `orbitkv_transfer_expired_sessions`, `orbitkv_transfer_lock_timeouts_total` | Retained overdue sessions and their once-only timeout transitions |
+| `orbitkv_transfer_completion_outstanding` | Requester slots through source release ACK: 1,024 total / 64 per source incarnation |
+| `orbitkv_transfer_completion_retries_total`, `orbitkv_transfer_completion_rejections_total` | Failed releases / new authorizations skipped at capacity |
+| `orbitkv_transfer_lock_rejections_total{reason="bytes|sessions"}` | Source-budget refusal |
 
-- `ram`: blocks already present in the resident RAM cache at the decision point
-- `remote`: blocks selected to be satisfied by OrbiTE remote fetch
-- `ssd`: blocks selected to be satisfied by SSD prefetch
-- `miss`: blocks no tier selected for that decision, including SSD prefetch
-  backpressure and residual blocks after OrbiTE partial availability
-
-This metric intentionally records decisions, not completed service outcomes.
-For backing failure correlation, use:
-
-- `orbitkv_candidate_cache_lookups{result="hit|miss"}` counts key checks before
-  lookup coalescing; `orbitkv_candidate_lookup_rpcs{result="ok|error|timeout"}` counts
-  actual batched directory RPCs (an OK RPC can still contain a miss).
-- `orbitkv_remote_fetch_total{status="rejected"}` counts source authorization
-  rejection before payload submission; `status="error"` counts other fetch failures.
-- `orbitkv_remote_fetch_plan_segments` includes attempted alternative-source
-  segments; `orbitkv_remote_fetch_plan_completed_segments` counts completed ones.
-- `orbitkv_orbite_nic_inflight_bytes` and `orbitkv_orbite_nic_bandwidth_bytes_per_second`
-  sample OrbiTE's live RDMA rail state after successful peer batches, labelled by
-  NIC. They are resource-pressure evidence, not proof that the sampled batch
-  used RDMA.
-- `orbitkv_ssd_prefetch_failures_total` for SSD prefetch failures
-- `orbitkv_remote_stage_duration_seconds{stage,status}` separates
-  `authorization`, `allocation`, `read`, `rebuild` and `release`. Allocation/read/rebuild
-  describe completed successful transfers.
-  Authorization includes first-use window setup and its bounded single-flight wait.
-  Release measures time from native completion/abandonment to acknowledgement,
-  including retry delays.
-- `orbitkv_transfer_reserved_bytes` counts whole source allocations once per
-  session, including overdue holds. `orbitkv_transfer_expired_sessions` counts
-  overdue sessions still retaining memory; `orbitkv_transfer_lock_timeouts_total`
-  counts the transition once. Timeout is not a release condition.
-- `orbitkv_native_transfer_batches` and `orbitkv_native_transfer_request_bytes`
-  count admitted native calls and their C request descriptor footprint. Retained
-  calls continue to consume the same 1,024-batch / 32 MiB per-engine budget.
-- `orbitkv_native_transfer_retained_batches` counts calls held after a logical
-  timeout/error or an unproven native failure. The corresponding
-  `orbitkv_native_transfer_retained_descriptor_bytes` sums their requested payload
-  lengths, including overlap, and must not be interpreted as allocation bytes.
-  Only drained successful tasks may clear temporary retention; native
-  failed/canceled/timeout/invalid/unknown statuses leave the owner isolated.
-- `orbitkv_native_transfer_admission_rejections_total` counts refusal at the
-  native batch/descriptor budget. These instruments are observations, not
-  physical termination or permission to recycle buffers.
-- `orbitkv_transfer_completion_outstanding` counts requester slots from window setup
-  through source release acknowledgement (1024 total, at most 64 per source incarnation).
-  `orbitkv_transfer_completion_retries_total` counts failed release attempts;
-  `orbitkv_transfer_completion_rejections_total` counts new authorizations skipped
-  at capacity. Outstanding records must drain as well as source pins.
-- `orbitkv_transfer_lock_rejections_total{reason="bytes|sessions"}` counts bounded
-  source admission failures. Source pins and query reservations must both drain
-  after successful remote restoration.
-
-`orbitkv_cache_block_hits_total` and `orbitkv_cache_block_misses_total` count
-terminal prefix reads. Metadata discovery has separate candidate counters, so a
-cold hybrid lookup can record a candidate miss without issuing a payload read.
-Use `orbitkv_cache_tier_block_requests_total{tier}` for read-tier decisions;
-do not add candidate counters to that denominator. Verify actual GPU reuse with
-`orbitkv_load_bytes_total`, not candidate or query hits alone.
+Timeout never releases memory. Requester completion records and source pins must
+both drain. Removed Catalog RPC and TENT native-batch counters have no current
+producer; see the [historical metric reference](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/metrics.md#tier-attribution-semantics)
+for old captures.
 
 ## Configuration
 
 ### Cache Manager Parameters
 
-**Metrics Parameters:**
-
-- `--http-addr`: HTTP server address for health check and Prometheus metrics (default: `0.0.0.0:9091`)
-  - Always enabled for health check at `/health`
-  - `/metrics` is enabled by default
-
-- `--enable-prometheus`: Enable Prometheus `/metrics` endpoint (default: `true`)
-  - When enabled, metrics are available at `http://<http-addr>/metrics`
-  - Health check is always available at `http://<http-addr>/health`
-
-- `--metrics-otel-endpoint`: OTLP gRPC endpoint for metrics export (optional)
-  - Example: `http://127.0.0.1:4321`
-  - Leave unset to disable OTLP export
-
-- `--metrics-period-secs`: Metric export interval in seconds (default: `10`)
-  - Only used when `--metrics-otel-endpoint` is set
-
-- `--metric-hll-windows`: Comma-separated HLL sliding windows for estimated
-  prefix reuse (default: `15m,1h,1d`)
-  - Supported units: `s`, `m`, `h`, `d`
-  - Each configured duration becomes a canonical `window` label. For example,
-    the default config exports `window="15m"`, `window="1h"`, and `window="1d"`.
-  - Empty entries such as `15m,,1h` and duplicate durations such as `1h,60m`
-    are rejected at startup.
-
-- `--metric-hll-bucket-bits`: HLL bucket index bits (default: `16`)
-  - `2^16 = 65,536` registers per window and about 0.4% standard error.
-  - Higher values use more memory and lower estimation error; `18` remains
-    the supported maximum.
-
-**Example: Prometheus Metrics**
-```bash
-cargo run -r --bin orbitkv-cache-manager -- \
-  --addr 127.0.0.1:50055 \
-  --devices 0 \
-  --pool-size 30gb \
-  --http-addr 0.0.0.0:9091 \
-  --enable-prometheus
-```
-
-For an existing OpenTelemetry deployment, add
-`--metrics-otel-endpoint http://127.0.0.1:4321` with the collector's configured
-endpoint. Direct Prometheus remains available.
+| Flag | Default / purpose |
+| --- | --- |
+| `--http-addr` | `0.0.0.0:9091`; health always available |
+| `--enable-prometheus` | `true`; exposes `/metrics` |
+| `--metrics-otel-endpoint` | Unset; optional OTLP gRPC endpoint |
+| `--metrics-period-secs` | 10; OTLP export interval only |
+| `--metric-hll-windows` | `15m,1h,1d`; durations use s/m/h/d |
+| `--metric-hll-bucket-bits` | 16; maximum 18 |
 
 ### Distributed metadata progress
 
@@ -696,215 +342,76 @@ connectivity and etcd membership health. See [metadata recovery](distributed-cac
 
 ### Environment Variables
 
-- `RUST_LOG`: Control logging verbosity (e.g., `info,orbitkv_core=debug`)
-- `ORBITKV_TRACE_TRANSFERS=1`: Enable opt-in timeline records.
-- `ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT=<1..65536>`: Bound S2.10a channel/storage
-  stage records; zero or omission disables those additional events.
+- `RUST_LOG`: logging verbosity, for example `info,orbitkv_core=debug`.
+- `ORBITKV_TRACE_TRANSFERS=1`: opt-in transfer timeline.
+- `ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT=<1..65536>`: bounded additional stages;
+  zero/omission disables them. Cost flags are described above.
 
 ## Quick Start: Direct Prometheus (Recommended)
 
-The `examples/metric-prometheus/` directory provides a simple monitoring stack.
-
-### 1. Start Cache Manager
-
 ```bash
-# From repository root
-cargo run -r --bin orbitkv-cache-manager -- \
-  --addr 127.0.0.1:50055 \
-  --devices 0 \
-  --pool-size 30gb \
-  --http-addr 0.0.0.0:9091 \
-  --enable-prometheus
-```
-
-### 2. Start the Monitoring Stack
-
-```bash
+orbitkv-cache-manager --pool-size 30gb --http-addr 0.0.0.0:9091
+curl --fail http://localhost:9091/metrics
 cd examples/metric-prometheus
-
 docker compose up -d
-# To stop: docker compose down
 ```
 
-This starts two services:
-- **Prometheus** (port: 9090) - Scrapes metrics from OrbitKV
-- **Grafana** (port: 3000) - Visualizes metrics
-
-### 3. Access Grafana Dashboard
-
-1. Open browser: http://localhost:3000
-2. Login: `admin` / `admin`
-3. Navigate to **Dashboards** → **OrbitKV Metrics**
-
-### 4. Test Metrics Endpoint
-
-```bash
-curl http://localhost:9091/metrics
-```
+Prometheus runs on 9090 and Grafana on 3000. The example Grafana login is
+`admin` / `admin`, dashboard **OrbitKV Metrics**. Stop the example with
+`docker compose down`. OTLP users point the Manager at their configured collector;
+Prometheus can remain enabled. See [Manager options](server.md).
 
 ## Architecture details
 
-### Direct Prometheus
-
-```
-┌─────────────────┐
-│ Cache Manager   │
-│ :9091 /metrics  │
-└────────┬────────┘
-         │ Prometheus scrape
-         ▼
-┌─────────────────┐
-│   Prometheus    │
-│     :9090       │
-└────────┬────────┘
-         │ PromQL queries
-         ▼
-┌─────────────────┐
-│    Grafana      │
-│     :3000       │
-└─────────────────┘
-```
+Prometheus scrapes the Manager directly, or an OTLP collector exports to it;
+Grafana queries Prometheus. These are observation paths only.
 
 ### Port Reference
 
-| Service | Port or path | Protocol | Purpose |
-| --- | --- | --- | --- |
-| Cache Manager | `/tmp/orbitkv-<addr-port>.sock` | UDS and iceoryx2 | Inference process connection |
-| Cache Manager | 50055 | gRPC | Peer source authorization and release in distributed mode |
-| Cache Manager | 9091 | HTTP | Health and Prometheus metrics |
-| OTel Collector | configured endpoint | gRPC | Optional OTLP receiver |
-| Prometheus | 9090 | HTTP | Query API and Web UI |
-| Grafana | 3000 | HTTP | Dashboard UI |
+| Service | Port or path | Purpose |
+| --- | --- | --- |
+| Cache client | `/tmp/orbitkv-<addr-port>.sock` | UDS/iceoryx2 lifecycle and operations |
+| Manager peer | 50055 | Distributed inventory, source grants and release |
+| Manager HTTP | 9091 | Health and metrics |
+| OTLP | Configured | Optional gRPC receiver |
+| Prometheus / Grafana | 9090 / 3000 | Queries / dashboard |
 
 ## PromQL Query Examples
 
 ```promql
-# Overall cache hit ratio from decision attribution (last 5 minutes)
+# Decision hit ratio; use tier="ram", "remote" or "ssd" for one contribution
 sum(rate(orbitkv_cache_tier_block_requests_total{tier!="miss"}[5m])) /
 sum(rate(orbitkv_cache_tier_block_requests_total[5m]))
 
-# RAM contribution to total requested blocks
-sum(rate(orbitkv_cache_tier_block_requests_total{tier="ram"}[5m])) /
-sum(rate(orbitkv_cache_tier_block_requests_total[5m]))
+# Save p50 and load p99 (quantiles, not averages)
+histogram_quantile(0.5, sum by (le) (rate(orbitkv_save_duration_seconds_bucket[5m])))
+histogram_quantile(0.99, sum by (le) (rate(orbitkv_load_duration_seconds_bucket[5m])))
 
-# Remote contribution to total requested blocks
-sum(rate(orbitkv_cache_tier_block_requests_total{tier="remote"}[5m])) /
-sum(rate(orbitkv_cache_tier_block_requests_total[5m]))
-
-# SSD contribution to total requested blocks
-sum(rate(orbitkv_cache_tier_block_requests_total{tier="ssd"}[5m])) /
-sum(rate(orbitkv_cache_tier_block_requests_total[5m]))
-
-# Miss ratio from the same denominator
-sum(rate(orbitkv_cache_tier_block_requests_total{tier="miss"}[5m])) /
-sum(rate(orbitkv_cache_tier_block_requests_total[5m]))
-
-# Average save latency (p50)
-histogram_quantile(0.5, rate(orbitkv_save_duration_seconds_bucket[5m]))
-
-# Average load latency (p99)
-histogram_quantile(0.99, rate(orbitkv_load_duration_seconds_bucket[5m]))
-
-# Save throughput (MB/s)
+# Save MB/s and pool utilization
 rate(orbitkv_save_bytes_total[1m]) / 1e6
-
-# Pool memory utilization
 orbitkv_pool_used_bytes / orbitkv_pool_capacity_bytes
 
-# RAM cache residence-time quantiles for pressure evictions
-histogram_quantile(
-  0.50,
-  sum by (le) (
-    rate(orbitkv_cache_residence_duration_seconds_bucket{reason="pressure"}[5m])
-  )
-)
-
-histogram_quantile(
-  0.95,
-  sum by (le) (
-    rate(orbitkv_cache_residence_duration_seconds_bucket{reason="pressure"}[5m])
-  )
-)
-
-histogram_quantile(
-  0.99,
-  sum by (le) (
-    rate(orbitkv_cache_residence_duration_seconds_bucket{reason="pressure"}[5m])
-  )
-)
-
-# RAM cache residence-time buckets for a Grafana heatmap
-sum by (le) (
+# Pressure eviction residence p95; use the bucket expression for a heatmap
+histogram_quantile(0.95, sum by (le) (
   rate(orbitkv_cache_residence_duration_seconds_bucket{reason="pressure"}[5m])
-)
+))
 
-# HLL estimated hit rate for the 1h window (preferred)
 orbitkv_hll_estimated_hit_rate{window="1h"}
-
-# Backward-compatible derivation from the retained gauges
-1 - (
-  orbitkv_hll_cardinality{window="1h"}
-  /
-  clamp_min(orbitkv_hll_total_requests{window="1h"}, 1)
-)
-
-# HLL estimated hit rate for every configured window
-1 - (
-  orbitkv_hll_cardinality
-  /
-  clamp_min(orbitkv_hll_total_requests, 1)
-)
 ```
 
 ## Troubleshooting
 
-### Metrics not appearing (Direct Prometheus)
+Check `/metrics`, then Prometheus `/targets`. Docker examples may need
+`extra_hosts: ["host.docker.internal:host-gateway"]` to reach the host.
 
-1. Check OrbitKV is exposing metrics:
-   ```bash
-   curl http://localhost:9091/metrics
-   ```
-
-2. Check Prometheus targets:
-   - Open http://localhost:9090/targets
-   - Verify `orbitkv` target is UP
-
-3. If Docker cannot reach host, ensure `extra_hosts` is configured:
-   ```yaml
-   extra_hosts:
-     - "host.docker.internal:host-gateway"
-   ```
-
-## Best Practices
-
-1. **Monitor tier-attributed hit ratio** using `orbitkv_cache_tier_block_requests_total`
-   - Low hit rate → consider increasing `--pool-size`
-
-2. **Watch eviction rate**: High evictions indicate memory pressure
-   - Use `rate(orbitkv_cache_block_evictions_total[5m])`
-
-3. **Track allocation failures**: Any failures indicate critical issues
-   - Alert on `orbitkv_pool_alloc_failures_total > 0`
-
-4. **Analyze latency distributions**: Use histogram quantiles
-   - p50: Typical case performance
-   - p99: Worst-case user experience
+Pool allocation failures or high evictions need capacity/fragmentation diagnosis;
+evictions without reclaimed bytes can reflect retained consumers. Use query/source
+ownership gauges to distinguish charged work from resident cache. Histograms
+report distributions; p99 is not a worst-case bound. Inspect retained operations
+and actual drain rather than resetting gauges to conceal them.
 
 ## References
 
-- [Prometheus Query Language](https://prometheus.io/docs/prometheus/latest/querying/basics/)
-- [Grafana Dashboard Guide](https://grafana.com/docs/grafana/latest/dashboards/)
-- [OpenTelemetry Documentation](https://opentelemetry.io/docs/)
-
-The inventory publication/install clocks are same-host diagnostics for the latest
-exact sequence. A progress confirmation at unchanged sequence preserves the
-original install time; snapshot/delta commit updates it after the index becomes
-complete under its write lock. A benchmark must reject superseded targets and
-verify the host clock domain; these timestamps do not give a cross-host latency.
-
-The query-budget owner initializes all six `orbitkv_query_reserved_bytes_by_phase`
-labels when it is created, before any reservation. Zero initialization adds a
-zero delta; creating another owner does not reset live values. Qualification
-harnesses must require the metric and each applicable ownership/SSD metric to
-exist; a missing series is not a measured zero. This readiness contract does
-not establish native drain or safe reclamation.
+- [Prometheus query language](https://prometheus.io/docs/prometheus/latest/querying/basics/)
+- [Grafana dashboards](https://grafana.com/docs/grafana/latest/dashboards/)
+- [OpenTelemetry](https://opentelemetry.io/docs/)

@@ -49,9 +49,9 @@ import { localUrl, sourceUrl } from "../../data/site";
     <strong>Current scope</strong>
     <p>
       The pinned official engines are vLLM 0.31.0 and SGLang 0.5.22.
-      The SGLang Qwen3-8B DRAM/io_uring byte and model/restart controls pass.
-      Start with dense single-rank recovery. Public lifecycle, broader topology,
-      native P/D faults and HA retain separate gates.{" "}
+      Start with dense single-rank recovery. OrbiTE is the only transfer engine;
+      current GPU/RDMA/GDS and installed profiles need hardware re-qualification.
+      Earlier engine and backend results retain their original scope.{" "}
       <a href={localUrl("/docs/compatibility/")}>Check compatibility and support.</a>
     </p>
   </div>
@@ -69,6 +69,12 @@ import { localUrl, sourceUrl } from "../../data/site";
     </section>
   ))}
   <h2>Build and contribute</h2>
+  <p>
+    New contributors: read <a href={localUrl("/docs/transport/")}>transport</a>, then{" "}
+    <a href={localUrl("/docs/engine-local-restore/")}>engine-local Restore</a>,{" "}
+    <a href={localUrl("/docs/distributed-cache/")}>distributed cache</a>, and{" "}
+    <a href={localUrl("/docs/adapters/")}>adapter contracts</a> to follow byte ownership from client to peer.
+  </p>
   <p>
     Technical pages are published directly from the repository's documentation.
     Start with the <a href={sourceUrl("AGENTS.md")}>contributor guide</a>,{" "}

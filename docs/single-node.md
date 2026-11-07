@@ -4,6 +4,8 @@ Run one independent Cache Manager on the inference host. The engine owns HBM and
 scheduling; the Manager owns shared DRAM and optional SSD. Standalone caching
 needs neither etcd nor a peer gRPC listener. Check [compatibility](compatibility.md)
 and [model qualification](models.md) before enabling a new layout or topology.
+These are current configuration recipes; OrbiTE GPU/installed paths require
+hardware re-qualification before any support or performance claim.
 
 ## Install and start the common manager
 
@@ -18,7 +20,7 @@ CUDA 13 is the default and only release runtime. Select the newly built wheel
 in `target/wheels` explicitly and use its absolute path in the installation commands
 below. A complete wheel includes the Manager and extension with OrbiTE linked in;
 `maturin build` alone does not stage all of them. The Manager also needs compatible
-PyTorch/CUDA 13 and an NVIDIA R580 or newer driver; see [runtime requirements](releases.md#packages).
+PyTorch/CUDA 13 and a compatible driver; see [runtime requirements](releases.md#packages).
 It does not load
 model weights. Install the same OrbitKV build in client and Manager environments.
 
@@ -71,7 +73,7 @@ VLLM_USE_V2_MODEL_RUNNER=0 .venv/vllm-release/bin/vllm serve /path/to/immutable-
   }'
 ```
 
-The supported starting profile has one attention cache group. V2, multiple groups
+The starting configuration has one attention cache group. V2, multiple groups
 and recurrent external recovery are rejected. vLLM uses its native HBM prefix
 cache first; OrbitKV restores missing compatible blocks and saves newly computed
 full blocks. For another Manager port, set `orbitkv.port` in
@@ -80,8 +82,8 @@ an explicit socket. See [adapter configuration](adapters.md).
 
 ## SGLang
 
-Use Python 3.11+ for SGLang 0.5.22. Start with the installed Qwen3-8B dense
-DRAM/io_uring profile in [compatibility](compatibility.md). Broader historical
+Use Python 3.11+ for SGLang 0.5.22. Start with the Qwen3-8B dense
+DRAM/io_uring configuration in [compatibility](compatibility.md). Broader historical
 0.5.21 profiles retain their recorded versions.
 
 Use a separate official release environment:

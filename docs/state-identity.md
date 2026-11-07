@@ -52,9 +52,9 @@ vLLM compiles full-attention, sliding-window and aligned recurrent groups;
 hybrid P/D-tail restrictions remain. `StateDescriptor` and `StateFormat`
 remain planning types; their fields are not a new per-page wire
 protocol. Publish still uses raw engine block IDs without generation checks.
-Cross-engine reuse, dynamic LoRA and live weight updates are unsupported: LoRA
-is rejected at startup; weight changes require an engine restart and a new
-artifact identity. Engine-specific hashes remain in separate identity domains.
+Cross-engine reuse, dynamic LoRA and live weight updates are unsupported.
+Immutable local static LoRA follows the [declared adapter-set contract](adapters.md#immutable-static-lora);
+weight changes require restart and a new artifact identity. Engine-specific hashes remain in separate identity domains.
 
 `ORBITKV_CACHE_SCOPE` optionally separates tenants or experiments within the
 same deployment. It never replaces the model fingerprint. Both engines use
@@ -102,17 +102,8 @@ implementation check or a conversion path.
 
 ## Order and acceptance gates
 
-| Order | Work | Gate |
-| --- | --- | --- |
-| 1 | Record cold/warm/partial/restart correctness and TTFT, TPOT, throughput, P50/P95 query/save/restore latency, CPU/GPU use, pinned-memory footprint, and save amplification for both release targets | External loads are proved by counters after engine restart, and a cold run supplies output parity; measurements include native-engine and no-cache baselines |
-| 2 | Add a versioned model fingerprint and canonical key at both adapters, then carry it through Query, Publish, storage, and remote lookup | Weight revision, tokenizer/processor, adapter, dtype, layout, rank, and token-span changes never produce a false hit; identical immutable deployments can still hit |
-| 3 | Validate bundle coverage and model-specific recovery rules; move vLLM hybrid reconciliation to shared logic | Full-attention, MLA, supported hybrid boundaries, partial prefixes, and unsupported components each have explicit correctness tests |
-| 4 | Add generation-qualified GPU references and cancellation/restart fences | Recycled page IDs, delayed transfers, manager restart, and cancellation cannot corrupt or falsely restore state |
-| 5 | Tune admission, batching, prefetch, and copy backend from measured traces | Tail latency and throughput improve or stay within an agreed budget versus the baseline, with bounded memory and save-worker stalls |
-| 6 | Make the distributed directory recoverable, then add KV-aware routing | Remote candidates are revalidated by their owner; router decisions use complete, versioned state evidence |
-
-The remaining design is a work plan. Single-node GPU recovery and model/storage
-identity isolation are implemented for the validated adapters and layouts;
-further model capabilities, page-generation enforcement
-and full performance qualification remain open. See [single-node deployment](single-node.md),
-[architecture](architecture.md), and [the implementation checklist](completion-plan.md).
+The [completion plan](completion-plan.md) owns delivery order and qualification.
+Identity and declared recovery validation are implemented; allocator-issued page
+generations, complete model capabilities and physical fault reclamation retain
+separate gates. The [original staged design](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/state-identity.md#order-and-acceptance-gates)
+is historical, not another implementation queue.

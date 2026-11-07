@@ -82,9 +82,9 @@ sequenceDiagram
     B->>A: Authorize exact incarnation and residency sequences
     A->>A: Pin sources and reserve bytes
     A-->>B: Source grant and registered-memory descriptors
-    B->>A: OrbiTE READ
+    B->>A: OrbiTE READ into GPU or DRAM destination
+    B->>B: Validate/decode and observe native drain
     B->>A: Release after native completion
-    B->>B: Restore to engine HBM
     B-->>A: Bounded inventory snapshot / delta
 ```
 
@@ -93,36 +93,19 @@ geometry. Source authorization, rather than metadata freshness, protects memory
 reads. Validate vLLM-to-vLLM and SGLang-to-SGLang separately; these tests do not
 establish cross-engine byte compatibility or hybrid-state completeness.
 
-The requesting Manager authorizes the next planned segment while the current
-segment's READ runs. There is one execution strategy, with bounded lookahead.
-Remote source NUMA identifiers describe the source host only. The receiver
-allocates each fetched slot beside its own registered GPU, using the sealed
-local layer/group topology. Receiver placement is excluded from the storage
-namespace, included in pending-read coalescing, and retained when fetched
-blocks are published again. A source/receiver slot-count mismatch fails before
-allocating or submitting a READ.
+GPU-destined Restore keeps source descriptors/tickets until a bounded READ batch
+can target persistent tensor or codec-input registrations. DRAM cache fills keep
+host destinations; receiver placement uses its own GPU/NUMA topology, never the
+source's NUMA IDs. Query sharing retains destination intent and deadline.
 
-Only one READ and one following authorization can be active per fetch plan;
-the following segment allocates destination memory only when consumed. A failed
-or partial current READ discards the unused grant. A speculative authorization
-failure is retried on demand after the current READ drains, subject to the
-existing admission limits. On resource exhaustion, authorization may wait up to
-three seconds for that peer's releases already in progress before the attempt,
-then retry once. It does not wait for unrelated active READs; a rejected ticket's
-own cleanup cannot satisfy that wait.
-The three-second bound covers only this release wait; authorization RPCs retain
-their own existing deadlines.
-Cancellation uses the existing known-ticket cleanup
-owner, including when the authorization response was lost.
-
-Source grants awaiting release acknowledgement can outlive those two active
-stages; the existing per-source 64 and global 1024 completion limits bound them.
-Lookahead can retain source memory earlier, so benchmark with identical source
-budgets and delayed release ACKs. `prepared_wait` records residence between
-authorization and consumption; speculative grants do not train the sequential
-composite route estimate. No distributed throughput improvement is claimed yet.
-See the [communication implementation sequence](completion-plan.md#s4--finish-communication-execution-and-demonstrate-gains) for
-batched metadata and engine-side execution work that remains planned.
+The host-fill reader permits one READ and one authorization lookahead. On source
+resource exhaustion it can wait up to three seconds for that peer's already
+pending releases, then retry authorization once. This is pre-submit admission,
+not a payload replay or a reset of the read deadline. Lost authorization replies
+use the known-ticket cleanup owner. Source release ACKs may outlive active READs;
+64 per source incarnation / 1,024 globally bound completion records.
+See [peer Restore](transport.md#peer-restore-into-gpu) and
+[peer control](peer-control.md) for retained owners and retirement.
 
 ## Failure and configuration behavior
 

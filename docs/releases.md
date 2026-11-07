@@ -168,9 +168,8 @@ The downloaded CPython 3.11/CUDA 13/x86_64 artifact is
 `908b176e86e3c1af599f3a4e1ca84a5ffb97643b15f58e771f200d7d54ecf2c3`.
 It passes the wheel checker and both installed-package H20 restart gates:
 vLLM 0.29.0 and SGLang 0.5.20 each save and restore 90 MiB, reproduce their
-initial output and release all query reservations. The tests run with isolated
-Python imports, reject removed TENT library mappings and verify loaded
-runtime paths under the installed package.
+initial output and release all query reservations. The historical tests use isolated Python imports, remove external TENT library
+directories and verify the bundled runtime paths; see the [original record](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/docs/releases.md#layer-readiness-candidate-qualification-2026-09-29).
 
 Logs, installed paths, native library identities and the wheel manifest are in
 `/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/layered-restore-20260929/ci-wheel/`. This qualifies the new
@@ -198,8 +197,8 @@ extension-only audit had incorrectly labeled this artifact `manylinux_2_34`.
 Both dedicated engine environments install this wheel non-editably. The H20
 Qwen3-8B release smoke passes for vLLM 0.29.0 and SGLang 0.5.20: each restarts
 the engine, restores 90 MiB to GPU, matches its initial output, and drains query
-reservations. The test rejects removed TENT library mappings and verifies the
-three loaded primary libraries under the installed package.
+reservations. The historical test removes external TENT library paths and verifies the
+three bundled primary libraries; see the [original record](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/docs/releases.md#cuda-13-candidate-qualification-2026-09-28).
 
 The same SHA256 is installed on the remote A100. The installed Manager console
 scripts and native clients pass 8 MiB of exact GPU recovery in each direction
@@ -226,18 +225,13 @@ equality or publication to PyPI.
 
 ## Scope of 0.1.0
 
-The initial release targets single-node DRAM/SSD cache recovery with vLLM and
-SGLang. Supported hybrid layouts use compiled range selection and leased-state
-validation. Cancellation, lost notifications and engine/Manager restart have
-native and model-serving gates.
+The [release plan](completion-plan.md#s8--product-organization-final-artifacts-and-release)
+is authoritative: no publication before current-path GPU re-qualification,
+OrbiTE 0.1.0 first, installed dense and scoped-peer reruns, then 0.1.0rc1,
+clean installed qualification and 0.1.0. Before release replace the OrbiTE git
+pin with `orbite = "0.1"`. Publishing remains the maintainer's action.
 
-Request preparation and read cutoffs remain opt-in. The repeated Qwen3-8B
-controls show a throughput/latency tradeoff on SGLang; see
-[the policy results](request-preparation.md#measured-results).
-Distributed serving, metadata HA, automatic hybrid lookahead and cross-host TP
-remain outside the qualified single-node release scope. See
-[deployment support](deployment.md) and [the completion plan](completion-plan.md).
-
-The removed TENT installed CPU gate and its original pins remain in the
-[historical release record](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/docs/releases.md). Current CI exercises real
-OrbiTE CPU/TCP and io_uring byte paths; installed GPU qualification remains open.
+CI builds and historical TENT/OrbiTE runs are not current hardware acceptance.
+Request preparation and read cutoffs remain opt-in; their
+[recorded tradeoffs](request-preparation.md#measured-results) are unchanged.
+Broader hybrid, rank, HA and P/D fault claims need separate qualification.

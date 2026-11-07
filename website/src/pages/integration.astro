@@ -98,11 +98,12 @@ import { localUrl } from "../data/site";
       <h2>Tune and deploy</h2>
       <p class="reading-copy">
         Begin with ordinary demand and size DRAM/SSD for your working set.
-        Optional request preparation has three matched Qwen3-8B controls per
-        engine: vLLM improves modestly, while SGLang gains throughput with worse
-        P95 latency. It stays disabled by default. Scoped two-H20 RDMA dense recovery and controlled restarts have acceptance.
-        Native P/D faults, distributed HA, isolation and broader topology remain
-        separate qualifications.
+        Historical request-preparation measurements contain three matched Qwen3-8B
+        controls per engine: vLLM improved modestly, while SGLang gained throughput
+        with worse P95 latency. Preparation stays disabled by default. Those results
+        and scoped two-H20 RDMA recovery acceptance predate the OrbiTE-only path;
+        they do not qualify it. Current GPU/RDMA/GDS and installed profiles,
+        native P/D faults and distributed HA retain their hardware gates.
       </p>
       <a class="text-link" href={localUrl("/docs/completion-plan/")}>
         Read the implementation gates <span aria-hidden="true">↗</span>

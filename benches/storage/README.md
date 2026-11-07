@@ -106,8 +106,9 @@ because aggregate read counters cannot separate demand from preparation reads.
 The manifest records `ssd_backend` and `ssd_read_path` separately from the
 `O_DIRECT` file flag. Verify positive cuFile write bytes and io_uring read bytes
 alongside GPU restores; cuFile initialization does not prove the read route.
-Use the [documented compatibility environment](../../docs/gds.md#enable-and-qualify)
-for this container. A forced io_uring read is not native GDS read qualification
+Use the [historical compatibility environment](../../docs/gds.md#historical-native-ssd-qualification)
+with its original native-SSD revision; that mode is not an OrbiTE GDS profile.
+A forced io_uring read is not native GDS read qualification
 and cannot use `--gds-stats`. These are reproduction commands, not new performance
 results; the existing qualification matrix is unchanged.
 

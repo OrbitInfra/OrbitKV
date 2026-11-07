@@ -12,7 +12,7 @@ P/D does not require the same transport.
 
 Native P/D plus OrbitKV is a **qualification candidate**, not a generally
 supported deployment. The current status and remaining fault gates are in
-[S5.4](completion-plan.md#s54--official-native-pd-and-independent-cache).
+[the completion plan](completion-plan.md#s54--official-native-pd-and-independent-cache).
 Ordinary cache serving does not require NIXL, a P/D router, or an engine patch.
 
 | Responsibility | vLLM | SGLang |

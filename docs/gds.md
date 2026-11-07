@@ -6,7 +6,7 @@ compute. The native OrbitKV io_uring/cuFile fallback and
 `--ssd-io-engine` option are removed. See [SSD file transfers](transport.md#ssd-file-transfers)
 for the contracts, bounds and exact GPU gate commands.
 
-GPU staging and native GDS at this revision are implemented but unqualified.
+GPU staging and native GDS are implemented but unqualified.
 Historical measurements below apply to their original native SSD implementation.
 CPU file bytes and ownership controls cannot qualify CUDA or GDS.
 
@@ -51,7 +51,7 @@ padding elements, written as zeros or discarded on READ by the engine. The old
 GPU layout slots and zero buffers are deleted. Imported tensors and codec inputs
 retain persistent registrations, while encoded writes retain their actual codec
 arena. Unknown drain keeps caller completion/admission and fences the worker.
-Local GPU↔DRAM migration remains a separate step.
+Local GPU↔DRAM also uses OrbiTE; see [local copies](transport.md#local-gpudram-copies).
 
 OrbiTE rejects explicit GDS padding without fallback. Its `gds_enabled` stays
 false unless `cufile` is configured, even when GDS is compiled.
@@ -115,23 +115,10 @@ its [MP configuration](https://github.com/LMCache/LMCache/blob/05a013b29da78cf23
 describes the L1 medium switch. Neither its slot count nor OrbitKV's 8 MiB size
 establishes an optimum for another model or storage device.
 
-The next implementation gates, in order, are:
-
-1. **Native measurements.** Qualify first writes, overwrites and mixed demand on
-   supported hardware. Compare the two-slot stream path with batch I/O for small
-   scattered ranges; tune slot size/count and polling from request latency, GPU
-   budgets and CPU use rather than copying an upstream default.
-2. **Placement and source-page hold time.** Measure the cost of producing both
-   DRAM and SSD copies. Evaluate selective hot-DRAM admission and releasing engine
-   pages after their final copy into owned staging; the staging and SSD reservation
-   must survive until disk completion. Large objects still need bounded chunking.
-   Publish visibility must never precede complete successful writes.
-
-Physical allocation, cross-lease read coalescing, bounded asynchronous submission
-and read/write scheduling are implemented. They do not establish a measured
-native-GDS performance advantage. Benchmark both
-engines with matched DRAM/SSD capacities, HBM budgets, working sets and native-I/O
-statistics. Direct peer GPU placement is implemented separately and remains hardware-unqualified.
+This comparison records the removed implementation. Current engine-file contracts
+are above; [the completion plan](completion-plan.md) owns hardware qualification
+and future placement decisions. The [original evaluation requirements](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/gds.md#historical-review-against-lmcache)
+remain available without forming a second queue.
 
 ## Historical native SSD qualification
 

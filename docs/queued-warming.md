@@ -3,10 +3,11 @@
 For artifact locations and verification limits, see [benchmark evidence](benchmark-evidence.md).
 The [pre-migration report](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/queued-warming.md) retains full tables and historical run details.
 
-The vLLM 0.30.0 and SGLang 0.5.20 adapters can announce an exact missing prefix when a
-request enters their ordinary serving queue. OrbitKV uses that interval to
-prepare DRAM pages from SSD or a peer. This is the first P3 implementation;
-it does not predict future prompts or decide engine admission.
+The adapters can announce missing prefix hashes when a request enters the
+ordinary queue. OrbitKV prepares DRAM through OrbiTE file or peer requests; it
+does not predict prompts or decide engine admission. Selected release contracts
+are in [adapters](adapters.md). The measurements below retain their historical
+engine versions and paths; they do not qualify current OrbiTE GPU/installed use.
 
 ## Request lifecycle
 
@@ -81,7 +82,7 @@ The explicit `CacheManagerClient.warm_prefix()` API always attempts the supplied
 hint; the environment switch controls automatic engine enqueue hooks only.
 Transport failures in this optional enqueue hint are logged by the adapters
 without raising out of the already-accepted request's queue callback.
-Manager and Python extension must both use channel ABI 11; earlier ABIs are not supported.
+Use matching Manager/client [protocol versions](transport.md#bootstrap-registration-and-versions).
 
 ## Observing the path
 
@@ -262,82 +263,19 @@ reproduction command above with a fresh output directory and this source revisio
 
 ## Reference implementations and policy order
 
-Source review: September 22, 2026. The following implementations inform the
-next P3 changes; the proposed OrbitKV policies below are **not implemented**.
-Source availability alone does not qualify another project's performance on
-OrbitKV's engine releases or workload.
+The [September 22 reference audit](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/queued-warming.md#reference-implementations-and-policy-order)
+retains pinned LMCache, SGLang, FlexKV and Dynamo mechanisms and proposal status.
+Demand-owned preparation differs from warming: the former retains a ready lease
+for a particular consumer, the latter leaves pages evictable. Retention policy,
+write admission and read scheduling need separate comparisons.
 
-| Reference | Verified behavior | Application to OrbitKV |
-| --- | --- | --- |
-| [LMCache v0.5.5 prefetch controller](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/distributed/storage_controllers/prefetch_controller.py) | Request lookup transfers completed write reservations into reader locks; WARM finishes writes without retaining reader locks. | Keep demand-owned preparation distinct from optional warming. Reuse existing query/lease ownership when preparing an actual consumer's prefix. |
-| [SGLang v0.5.20 HiCache](https://github.com/sgl-project/sglang/blob/94602c9c2b7cbdb8efd5c52802dac6a1c180089e/python/sglang/srt/mem_cache/hiradix_cache.py) | Minimum prefetch size, rate limiting, and `best_effort`, `timeout`, `wait_complete` termination; completed results are clamped to a usable prefix. | Define when the engine stops waiting, and expose only a completed legal recovery boundary. Validate rank agreement separately. |
-| [FlexKV replacement policies](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/docs/eviction_policy/README_en.md) and [transfer scheduler](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/flexkv/transfer/scheduler.py) | LRU/LFU/SLRU and per-tier reclamation are separate from dependency-driven transfer graphs. | Compare retention policies independently from read admission; preserve completion dependencies across SSD, DRAM and GPU. |
-| [Dynamo v1.4.2 KVBM offload](https://github.com/ai-dynamo/dynamo/blob/2ecbdfdf192c69c02c6d21e931d20d3b4a0bb64a/lib/kvbm-engine/docs/offload.md) and [onboarding](https://github.com/ai-dynamo/dynamo/blob/2ecbdfdf192c69c02c6d21e931d20d3b4a0bb64a/lib/kvbm-engine/docs/onboarding.md) | Offload filters precede batching; transfer commitment retains ownership. Session holders protect blocks from eviction until released. | Separate write admission from read prefetch and replacement; preserve transfer lifetimes. Keep OrbiTE for cache bytes and request routing as a separate integration. |
+Use [consumer preparation](request-preparation.md) for its implemented contract
+and the [completion plan](completion-plan.md) for pending work. Compare demand,
+warming and owned preparation with equal bytes, traces and budgets, independent
+reversed-order runs, cancellation/reordering/expiry controls and HBM-hit overhead.
+Actual page use, amplification and drain matter more than probe hit counts.
 
-LMCache's [warm-prefetch entry point](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/multiprocess/warm_prefetch.py)
-explicitly leaves prepared pages unpinned. Thus, "pin every warmup" is not the
-lesson from its request lookup path. OrbitKV already retains demand query
-results through leases and GPU completion. The separate
-[consumer-owned preparation experiment](request-preparation.md) now starts
-selected required-range reads before admission and retains ready leases within
-the query budget until claim, cancellation or expiry. It is opt-in and uses
-the same bounded ownership rather than pinning an entire queue.
-
-Two useful references have a different maturity status:
-
-- [FlexKV #291](https://github.com/taco-project/FlexKV/pull/291), checked open
-  and unmerged at head `fb7cc97d6723553688bd64ce0639d206ea3fb325`, proposes
-  chunked prefetch, stopping new submissions, draining submitted work, and
-  protected-result handoff. Treat it as a design proposal, not a shipped
-  baseline or an established speedup.
-- [Mooncake RFC #3504](https://github.com/kvcache-ai/Mooncake/issues/3504)
-  proposes cached membership and peer route authorities outside the metadata
-  hot path. It informs the distributed catalog plan, not a ready-made SSD
-  prefetch policy. OrbitKV keeps etcd membership and uses OrbiTE for byte movement.
-
-Implement and measure in this order:
-
-1. **Bound demand preparation and retention.** Keep ordinary demand as the
-   control. Where an engine exposes candidates close to admission, try a small
-   byte-bounded lookahead using the existing query operation/revision and lease
-   lifecycle. Account for in-flight buffers and prepared-but-unconsumed pages
-   until consumption, cancellation or expiry. Preserve foreground headroom;
-   unavailable budget falls back to normal demand. A consumer must acquire its
-   validated page references before preparation ownership is released. HBM
-   hits, request reordering, boundary changes and disconnects must retire stale
-   interest. Queue knowledge must come from the engine; enqueue time alone is
-   not an execution-time estimate. This is an experiment, not guaranteed gain.
-2. **Add explicit stop policies and bounded submission.** Begin with
-   best-effort at actual scheduling eligibility and a relative wait budget;
-   retain wait-complete as a control with lifecycle expiry. Stop issuing new
-   bounded read batches after cancellation/deadline. Submitted SSD/TE work
-   drains while its buffers remain owned. Return only completed contiguous
-   pages at a valid component/checkpoint boundary. Shared-read consumers have
-   independent interest: cancelling one must not revoke another's work.
-3. **Tune retention and write admission separately.** Compare the existing
-   replacement classes with the optional Rust
-   [reuse-based protected segment and selective SSD admission](cache-policies.md);
-   do not promote
-   speculative peeks as demand hits. Measure SSD write admission independently
-   from read prefetch. A retained replica still needs normal pressure eviction;
-   a live transfer's references remain protected. Model-specific recovery
-   requirements always take precedence over replacement scores.
-4. **Calibrate timing after the lifecycle baseline.** Only then add expected
-   first-use estimates, bandwidth/queue cost and priority tuning. Use observed
-   data to decide whether restoration beats recomputation in P4. Keep these
-   decisions in the existing query/prefetch/storage owners, with engine hints
-   supplied by the adapters.
-
-Qualification compares demand-only, current optional warming, bounded
-consumer-owned preparation, and then chunked stopping as separate steps.
-Keep bytes, model, request sequence, tracing and hardware equal; repeat in
-reversed order. Include pressure, duplicate prefixes, cancellation, queue
-reordering, expiry without polling and an HBM-hit workload for hook overhead.
-Require exact restoration and bounded resource cleanup before claiming lower
-TTFT or higher throughput. Report read/write amplification, useful/unused
-footprints, prepared-page residency and exposed wait, not just hit counts.
-
-## Qualification and remaining P3 work
+## Qualification and remaining work
 
 CPU gates cover foreground budget headroom, operation pressure, unpolled
 completion cleanup, client cancellation and fresh demand tickets. The SGLang
@@ -353,10 +291,6 @@ HBM and host cache. Compare `--queue-warmup on` and `off` at equal capacities;
 `--trace-transfers` enables timeline capture. A quiet serial server may see no
 benefit, and an overloaded backend may perform extra reads.
 
-P3 follows the [reference-based order](#reference-implementations-and-policy-order):
-bounded demand preparation/retention, explicit stopping and drain, then
-calibrated priority/deadline hints. Per-device/staging reservations,
-engine-consumption-level usefulness and fault qualification remain open.
-The fixed warmup share is an initial admission policy, not a cost-aware scheduler.
-Restore-versus-recompute decisions remain P4. See the
-[implementation sequence](completion-plan.md).
+Per-device fairness, engine-consumption usefulness and physical fault gates
+remain in the [completion plan](completion-plan.md). The fixed warming share is
+an admission bound, not a calibrated cost scheduler.

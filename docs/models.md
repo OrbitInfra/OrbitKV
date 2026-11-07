@@ -7,6 +7,10 @@ vLLM or SGLang does not establish external-cache recovery.
 
 ## Choose a model
 
+The table records historical evidence at the releases and revisions linked below.
+OrbiTE is now the sole transfer engine; current GPU and installed profiles need
+fresh hardware qualification. Earlier acceptances do not carry over.
+
 | Model/profile | vLLM 0.31.0 | SGLang evidence | How to use it |
 | --- | --- | --- | --- |
 | Qwen3-8B, dense attention | Scoped DRAM/io_uring recovery and engine restart accepted | 0.5.22 installed DRAM/io_uring byte/model recovery and engine restart | Start with the dense recipe below |

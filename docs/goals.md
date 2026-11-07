@@ -10,7 +10,8 @@ the official engine adapter. Begin with the [quickstart](single-node.md).
 The starting profile is dense TP=1/PP=1 inference on official vLLM 0.31.0 or
 SGLang 0.5.22. Engines own HBM and scheduling; OrbitKV owns external replicas,
 query budgets and transfer completion. Raw DRAM Restore executes in the engine;
-Publish and SSD/codec work execute in the Manager.
+Publish and SSD/codec work execute in the Manager. OrbiTE owns byte movement;
+its GPU/RDMA/GDS and installed profiles require fresh hardware qualification.
 
 Optional peer caching uses Manager inventory streams for local discovery and
 OrbiTE for data transfer. Native P/D uses the engines' own transports with
