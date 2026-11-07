@@ -141,7 +141,11 @@ batched metadata and engine-side execution work that remains planned.
   addresses. Both DRAM and SSD can be advertised for one StateKey.
 - Losing a Manager does not remove another Manager's index. A sole lost payload
   still requires another replica or recomputation. Removing its leased membership
-  hides candidates even before all block-delete events arrive.
+  hides candidates even before all block-delete events arrive. Removal or an
+  epoch/incarnation change also revokes cached transfer identities on every
+  requester. OrbiTE closes and drains each identity; TENT invalidates its handle
+  after wrapper drain. Neither timeout nor Unquiesced releases grants or pins.
+  See [peer departure](transport.md#peer-departure).
 - Losing an etcd member permits recovery through surviving endpoints if quorum
   remains. Losing quorum stops updates; new remote admission stops when local
   lease validity expires. Local DRAM/SSD operations continue, and submitted

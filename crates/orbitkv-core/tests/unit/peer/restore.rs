@@ -135,6 +135,22 @@ impl TransferBackend for Control {
         Ok(())
     }
     fn invalidate_segment(&self, _: &str) {}
+    fn retire_peer(
+        &self,
+        _: &str,
+        _: &str,
+        _: std::time::Duration,
+        drained: bool,
+    ) -> Result<(), TransferError> {
+        if drained {
+            Ok(())
+        } else {
+            Err(TransferError::new(
+                ErrorKind::Unquiesced,
+                "control still active",
+            ))
+        }
+    }
     fn record_nic_load(&self) {}
 }
 
@@ -148,17 +164,18 @@ pub(crate) fn source(
     };
     let membership = Arc::new(orbitkv_catalog::MembershipView::new(source_owner.clone()));
     membership.renew(Instant::now(), std::time::Duration::from_secs(120));
-    membership.replace_members([("control".into(), source_owner.clone())]);
+    membership.replace_members([("control".into(), 1, source_owner.clone())]);
     let options = crate::transfer_engine::tests::demand();
     control.admissions.lock().unwrap().push(options);
+    let segments = PeerSegments::new(control, membership.clone());
+    let peer = segments
+        .get(membership.lease(&source_owner).unwrap(), "control", "epoch")
+        .unwrap();
     PeerRestoreBlock {
         grant: Arc::new(Grant {
             _lock: TransferLockGuard::test_detached(),
-            membership,
-            source_owner,
-            transfer: control,
-            endpoint: "control".into(),
-            epoch: "epoch".into(),
+            _segments: segments,
+            peer,
             options,
         }),
         slots: validate_slots(&info, info.len()).unwrap().into(),
@@ -266,9 +283,12 @@ async fn epoch_deadline_and_membership_fences_reject_before_submission() {
         let mut source = source(control.clone(), vec![]);
         let grant = Arc::get_mut(&mut source.grant).unwrap();
         match fence {
-            0 => grant.epoch = "stale".into(),
+            0 => {
+                grant.peer =
+                    crate::peer::segment::tests::with_epoch(&grant._segments, &grant.peer, "stale");
+            }
             1 => grant.options.deadline = Instant::now(),
-            _ => grant.membership.fence(),
+            _ => crate::peer::segment::tests::fence(&grant._segments),
         }
         // SAFETY: preflight fences reject before any payload use.
         assert!(unsafe { source.read_gpu(&[slice], std::slice::from_ref(&owner)) }.is_err());

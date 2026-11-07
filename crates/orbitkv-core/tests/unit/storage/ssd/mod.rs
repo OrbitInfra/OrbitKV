@@ -265,7 +265,7 @@ async fn cancelled_ssd_authorization_keeps_admission_with_queued_batch() {
         std::time::Instant::now(),
         std::time::Duration::from_secs(30)
     ));
-    membership.replace_members([("source".into(), owner.clone())]);
+    membership.replace_members([("source".into(), 1, owner.clone())]);
     let dram = Arc::new(crate::storage::dram::DramStore::with_inventory(
         1 << 20,
         false,

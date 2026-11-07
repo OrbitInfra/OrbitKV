@@ -86,13 +86,18 @@ with 4 MiB windows/64 MiB staging charged to its separate file engine; the
 OrbitKV scratch adapter is deleted. Its native GDS accepts padded GPU vectors,
 while OrbiTE rejects explicit GDS padding without fallback. `gds_enabled` prevents unconfigured cuFile
 loading. GPU/GDS remains unqualified. See `docs/transport.md#ssd-file-transfers`.
-OrbiTE `6c530773` uses Unspec selection in `--peer-transfer-backend orbite`;
+OrbiTE `2e50af25` uses Unspec selection in `--peer-transfer-backend orbite`;
 `orbite-tcp` and `orbite-rdma` remain explicit hints. Read deadlines survive
 queues and grants; Demand is foreground/high, Prepare/Warmup is background/low,
 and SSD write-back is checkpoint/low. Lifecycle 12 requires matching clients
 and Managers, and all peers must upgrade for the new authorization budget. It keeps
 failover, HP-TCP, SHM and MNNVL disabled. Historical hardware results below do not
-qualify this new dependency revision. See `docs/transport.md#runtime-transfer-backend`.
+qualify this new dependency revision. Membership removal or epoch/incarnation
+replacement fences scheduling before per-requester segment retirement. OrbiTE
+close timeouts keep grants/pins and retry only the wait; TENT handle close remains
+reversible after wrapper drain. A successful receipt drops cached descriptors;
+uncertain cleanup keeps its admission charge. See
+`docs/transport.md#peer-departure` and `docs/transport.md#runtime-transfer-backend`.
 Tensor import registers GPU storage once; aliases share its persistent owner.
 Restore batches layout ranges within 64 MiB/16,384-descriptor limits and reuses
 registrations, including its bounded codec input pool. Release must drain loans

@@ -39,7 +39,8 @@ replies have bounded retries. Orphan revocation and cross-host failure qualifica
 remain unresolved. See [deployment and failure boundaries](../../../../docs/p2p.md).
 
 `export.rs` owns source admission and held allocations. `read.rs` and
-`completion.rs` own requester reads and terminal release; `transport.rs` holds
+`completion.rs` own requester reads and terminal release;
+`segment.rs` owns bounded requester-specific handles and membership retirement; `transport.rs` holds
 both the Mooncake registration and pinned pool. The inbound gRPC adapter lives
 in `orbitkv-server/src/peer.rs`. No remote SSD or engine HBM export is implied
 by this module layout.

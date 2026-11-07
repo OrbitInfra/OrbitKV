@@ -221,6 +221,7 @@ async fn membership_compaction_and_restarts_preserve_incarnations_without_block_
     let (member_a, index_a, _) = join(&server, "recovery", "a", a.clone(), 60).await;
     let (member_b, _, _) = join(&server, "recovery", "b", b.clone(), 60).await;
     wait_for(|| a.permits(b.owner()) && b.permits(a.owner())).await;
+    let old_identity = a.lease(b.owner()).unwrap();
     assert!(index_a.status().membership_revision.is_some());
 
     let mut client = Client::connect(&server.endpoints, None).await.unwrap();
@@ -238,10 +239,12 @@ async fn membership_compaction_and_restarts_preserve_incarnations_without_block_
     client.compact(later, None).await.unwrap();
     member_b.shutdown().await;
     wait_for(|| !a.permits(b.owner())).await;
+    assert!(old_identity.revoked());
     let replacement = view(51002);
     let (new_b, _, _) = join(&server, "recovery", "b", replacement.clone(), 60).await;
     wait_for(|| a.permits(replacement.owner())).await;
     assert!(!a.permits(b.owner()));
+    assert!(!a.permits_lease(&old_identity));
     assert_eq!(
         client
             .get("/orbitkv/v2/recovery/epochs/b", None)

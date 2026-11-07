@@ -11,6 +11,7 @@ use super::{
         AuthorizationError, AuthorizationMode, FetchResult, SegmentFetcher, execute_fetch_plan,
     },
     read::{AuthorizedSegment, PeerReader, transfer_timeout_from_server},
+    segment::{PeerIdentity, PeerSegments},
 };
 use crate::planning::peer::{FetchPlan, FetchSegment};
 use crate::transfer_engine::{
@@ -35,12 +36,9 @@ pub(crate) struct PeerSlot {
 
 struct Grant {
     _lock: TransferLockGuard,
-    transfer: Arc<dyn TransferBackend>,
-    endpoint: String,
-    epoch: String,
+    _segments: Arc<PeerSegments>,
+    peer: Arc<PeerIdentity>,
     options: TransferOptions,
-    membership: Arc<orbitkv_catalog::MembershipView>,
-    source_owner: orbitkv_state::CacheOwner,
 }
 
 impl PeerSlot {
@@ -71,7 +69,7 @@ impl PeerRestoreBlock {
     }
 
     pub(crate) fn source_id(&self) -> u64 {
-        crate::cost::resource_id(&(&self.grant.endpoint, &self.grant.epoch))
+        self.grant.peer.source_id()
     }
 
     pub(crate) fn grant_id(&self) -> usize {
@@ -81,7 +79,7 @@ impl PeerRestoreBlock {
         Arc::ptr_eq(&self.grant, &other.grant)
     }
     pub(crate) fn backend(&self) -> Arc<dyn TransferBackend> {
-        Arc::clone(&self.grant.transfer)
+        Arc::clone(&self.grant.peer.backend)
     }
 
     /// All ranges belong to persistent registrations. The engine slices and
@@ -96,11 +94,6 @@ impl PeerRestoreBlock {
         owners: &[Arc<CudaRegistration>],
     ) -> Result<usize, PeerTransferError> {
         let grant = &self.grant;
-        if !grant.membership.permits(&grant.source_owner) {
-            return Err(PeerTransferError::Failed(
-                "peer GPU source membership is fenced".into(),
-            ));
-        }
         crate::transfer_engine::remaining(grant.options.deadline)?;
         let total = crate::transfer_engine::validate_slices(slices)?;
         if slices.len() > 16_384 || total > 64 << 20 || owners.len() != slices.len() {
@@ -122,18 +115,14 @@ impl PeerRestoreBlock {
         registrations.dedup_by(|a, b| Arc::ptr_eq(a, b));
         let _loans = registrations
             .iter()
-            .map(|owner| owner.loan(&grant.transfer))
+            .map(|owner| owner.loan(&grant.peer.backend))
             .collect::<Result<Vec<_>, _>>()?;
-        let peer =
-            grant
-                .transfer
-                .open_peer(&grant.endpoint, &grant.epoch, grant.options.deadline)?;
+        let peer = grant.peer.open(grant.options.deadline)?;
         let result = catch_unwind(AssertUnwindSafe(|| {
             // SAFETY: registrations and source authority are held through physical drain.
             unsafe {
-                grant.transfer.transfer(
+                peer.transfer(
                     TransferOp::Read,
-                    &peer,
                     slices,
                     grant.options,
                     &Cancellation::default(),
@@ -210,15 +199,12 @@ impl SegmentFetcher for RestoreReader<'_> {
             .ok_or(())?;
         let owner = Arc::new(Grant {
             _lock: grant.lock_guard,
-            transfer: Arc::clone(&self.0.transfer),
-            endpoint: grant.response.transfer_endpoint,
-            epoch: grant.response.native_source_epoch,
+            _segments: grant.segments,
+            peer: grant.peer,
             options: TransferOptions {
                 deadline: grant.options.deadline.min(deadline),
                 ..grant.options
             },
-            membership: Arc::clone(&self.0.membership),
-            source_owner: segment.owner.clone(),
         });
         Ok(segment
             .records

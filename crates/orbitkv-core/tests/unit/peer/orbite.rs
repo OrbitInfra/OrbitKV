@@ -1,6 +1,9 @@
 use super::*;
 use crate::transfer_engine::PeerTransferError;
 
+#[path = "orbite/retirement.rs"]
+mod retirement;
+
 #[test]
 fn cpu_auto_backend_reads_and_writes_fragmented_bytes_and_drains() {
     use crate::transfer_engine::TransferOp as Operation;
@@ -161,36 +164,24 @@ fn peer_protocol_and_granted_epoch_are_preserved_across_source_restart() {
     let source = TransferEngine::new(EngineConfig::default()).unwrap();
     let endpoint = source.endpoint();
     let granted_epoch = source.source_epoch().to_string();
-    let requester: Arc<dyn TransferBackend> = Arc::new(
-        OrbiteTransport::new(
-            4096,
-            "127.0.0.1:0",
-            Transport::Tcp,
-            None,
-            #[cfg(feature = "orbite-rdma")]
-            None,
-        )
-        .unwrap(),
-    );
+    let requester = OrbiteTransport::new(
+        4096,
+        "127.0.0.1:0",
+        Transport::Tcp,
+        None,
+        #[cfg(feature = "orbite-rdma")]
+        None,
+    )
+    .unwrap();
+    let deadline = || Instant::now() + Duration::from_secs(3);
     let named_endpoint = format!("{}{endpoint}", prefix(Transport::Tcp));
     assert!(matches!(
-        requester.read(&endpoint.to_string(), &[], crate::transfer_engine::TransferOptions::read(crate::QueryMode::Demand, std::time::Instant::now() + Duration::from_secs(2)), &granted_epoch),
-        Err(PeerTransferError::Failed(reason)) if reason.contains("protocol mismatch")
+        requester.open_peer(&endpoint.to_string(), &granted_epoch, deadline()),
+        Err(error) if error.message.contains("protocol mismatch")
     ));
-    assert_eq!(
-        requester
-            .read(
-                &named_endpoint,
-                &[],
-                crate::transfer_engine::TransferOptions::read(
-                    crate::QueryMode::Demand,
-                    std::time::Instant::now() + Duration::from_secs(2)
-                ),
-                &granted_epoch
-            )
-            .unwrap(),
-        0
-    );
+    requester
+        .open_peer(&named_endpoint, &granted_epoch, deadline())
+        .unwrap();
     source.close_source(Duration::from_secs(2)).unwrap();
     drop(source);
     let replacement = TransferEngine::new(EngineConfig {
@@ -201,23 +192,12 @@ fn peer_protocol_and_granted_epoch_are_preserved_across_source_restart() {
     let fresh_epoch = replacement.source_epoch().to_string();
     assert_ne!(granted_epoch, fresh_epoch);
     assert!(matches!(
-        requester.read(&named_endpoint, &[], crate::transfer_engine::TransferOptions::read(crate::QueryMode::Demand, std::time::Instant::now() + Duration::from_secs(2)), &granted_epoch),
-        Err(PeerTransferError::Failed(reason)) if reason.contains("epoch")
+        requester.open_peer(&named_endpoint, &granted_epoch, deadline()),
+        Err(error) if error.kind == ErrorKind::EpochMismatch
     ));
-    assert_eq!(
-        requester
-            .read(
-                &named_endpoint,
-                &[],
-                crate::transfer_engine::TransferOptions::read(
-                    crate::QueryMode::Demand,
-                    std::time::Instant::now() + Duration::from_secs(2)
-                ),
-                &fresh_epoch
-            )
-            .unwrap(),
-        0
-    );
+    requester
+        .open_peer(&named_endpoint, &fresh_epoch, deadline())
+        .unwrap();
     replacement.close_source(Duration::from_secs(2)).unwrap();
 }
 
@@ -391,20 +371,9 @@ fn rdma_configuration_and_payload_namespaces_are_explicit() {
     assert!(requester.accepts_endpoint(&format!("{}{endpoint}", prefix(Transport::Rdma))));
     let named = format!("{}{endpoint}", prefix(Transport::Rdma));
     let old_epoch = source.source_epoch().to_string();
-    assert_eq!(
-        requester
-            .read(
-                &named,
-                &[],
-                crate::transfer_engine::TransferOptions::read(
-                    crate::QueryMode::Demand,
-                    std::time::Instant::now() + Duration::from_secs(2)
-                ),
-                &old_epoch
-            )
-            .unwrap(),
-        0
-    );
+    requester
+        .open_peer(&named, &old_epoch, Instant::now() + Duration::from_secs(2))
+        .unwrap();
     source.close_source(Duration::from_secs(2)).unwrap();
     drop(source);
     let replacement = TransferEngine::new(EngineConfig {
@@ -413,7 +382,7 @@ fn rdma_configuration_and_payload_namespaces_are_explicit() {
     })
     .unwrap();
     assert!(
-        matches!(requester.read(&named, &[], crate::transfer_engine::TransferOptions::read(crate::QueryMode::Demand, std::time::Instant::now() + Duration::from_secs(2)), &old_epoch), Err(PeerTransferError::Failed(reason)) if reason.contains("epoch"))
+        matches!(requester.open_peer(&named, &old_epoch, Instant::now() + Duration::from_secs(2)), Err(error) if error.kind == ErrorKind::EpochMismatch)
     );
     replacement.close_source(Duration::from_secs(2)).unwrap();
 }

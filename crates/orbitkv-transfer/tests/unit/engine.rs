@@ -194,6 +194,9 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
     engine.close_notification_scope("cancelled", cancelled_generation);
     assert_eq!(waiter.join().expect("join waiter").unwrap(), None);
     for priority in [crate::TransferPriority::Low, crate::TransferPriority::High] {
+        engine.invalidate_segment(&segment).unwrap();
+        engine.invalidate_segment(&segment).unwrap();
+        assert!(!engine.segments.lock().unwrap().contains_key(&segment));
         for slice in &mut slices {
             slice.priority = priority;
         }
@@ -212,6 +215,10 @@ fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
             4096
         );
         assert_eq!(&memory[..4096], &memory[4096..]);
+        assert!(
+            engine.segments.lock().unwrap()[&segment].is_some(),
+            "TENT close remains reversible"
+        );
     }
     let _ = engine.nic_load_stats().expect("query TENT NIC load stats");
     peer_registration

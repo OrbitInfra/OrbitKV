@@ -407,8 +407,9 @@ impl PyMooncakeTransferEngine {
             .map_err(|error| transfer_error("read TENT NIC load stats failed", error))
     }
 
-    fn invalidate_segment(&self, remote_endpoint: String) {
-        self.engine.invalidate_segment(&remote_endpoint);
+    fn invalidate_segment(&self, py: Python<'_>, remote_endpoint: String) -> PyResult<()> {
+        py.detach(|| self.engine.invalidate_segment(&remote_endpoint))
+            .map_err(|error| transfer_error("retire TENT peer handle failed", error))
     }
 }
 

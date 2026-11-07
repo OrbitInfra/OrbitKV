@@ -207,7 +207,7 @@ The `orbite-rdma` feature adds `--orbite-rdma-device` (required for that mode),
 host-staging profile without a TCP/native payload fallback; `--nics` remains
 Mooncake-specific. Read the [RDMA profile](transport.md#experimental-orbite-peer-rdma-profile)
 for separate staging budgets and host versus CUDA 13 Manager qualification.
-The current OrbiTE pin is `6c53077332467d78f80c8211d60bf7a9f11b3ccc`;
+The current OrbiTE pin is `2e50af25007ca9681912ba5175109d09488a8f99`;
 historical hardware results below the [transport contract](transport.md#runtime-transfer-backend)
 do not qualify this revision. SSD can use [engine file segments](transport.md#ssd-file-transfers); OrbiTE local CUDA copies use its local-copy engine, while TENT keeps the
 OrbitKV copy implementations behind the backend boundary.

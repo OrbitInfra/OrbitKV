@@ -438,4 +438,4 @@ impl Drop for TransferLockGuard {
 
 #[cfg(test)]
 #[path = "../../tests/unit/peer/completion.rs"]
-mod tests;
+pub(in crate::peer) mod tests;

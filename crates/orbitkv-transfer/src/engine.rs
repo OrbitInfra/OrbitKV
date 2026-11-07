@@ -151,7 +151,9 @@ impl Drop for AdmittedBatch<'_> {
 pub struct TransferEngine {
     native: native::NativeEngine,
     source_epoch: String,
-    segments: Mutex<HashMap<String, native::SegmentId>>,
+    // None retains a charged entry after an uncertain native close. It cannot
+    // be reopened or destroyed again without a new engine lifetime.
+    segments: Mutex<HashMap<String, Option<native::SegmentId>>>,
     notification_poll: Mutex<()>,
     notification_mailbox: Mutex<NotificationMailbox>,
     admission: Mutex<BatchAdmission>,
@@ -762,7 +764,10 @@ impl TransferEngine {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         if let Some(segment) = segments.get(remote_segment) {
-            return Ok(*segment);
+            return segment.ok_or(MooncakeError::Operation {
+                operation: "retained peer close",
+                status: -135,
+            });
         }
         if segments.len() >= MAX_PEER_SEGMENTS {
             return Err(MooncakeError::SegmentAdmissionExhausted);
@@ -778,20 +783,29 @@ impl TransferEngine {
                 status: -1,
             });
         }
-        segments.insert(remote_segment.to_string(), segment);
+        segments.insert(remote_segment.to_string(), Some(segment));
         Ok(segment)
     }
 
     /// Drop a cached peer segment after a failed transfer or peer restart.
-    pub fn invalidate_segment(&self, remote_segment: &str) {
-        let segment = self
+    pub fn invalidate_segment(&self, remote_segment: &str) -> Result<()> {
+        let mut segments = self
             .segments
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .remove(remote_segment);
-        if let Some(segment) = segment {
-            let _ = unsafe { native::close_segment(self.native, segment) };
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(slot) = segments.get_mut(remote_segment) {
+            let segment = slot.take().ok_or(MooncakeError::Operation {
+                operation: "retained peer close",
+                status: -135,
+            })?;
+            // SAFETY: this engine owns the cached handle. Leave its tombstone
+            // charged before entering native cleanup, including on failure.
+            check("tent_close_segment", unsafe {
+                native::close_segment(self.native, segment)
+            })?;
+            segments.remove(remote_segment);
         }
+        Ok(())
     }
 }
 
@@ -879,10 +893,21 @@ impl Drop for ScopedNicFilter {
 impl Drop for TransferEngine {
     fn drop(&mut self) {
         if let Ok(segments) = self.segments.get_mut() {
-            for segment in segments.values() {
-                let _ = unsafe { native::close_segment(self.native, *segment) };
+            for segment in segments.values_mut() {
+                let Some(segment) = segment.take() else {
+                    return;
+                };
+                // SAFETY: each cached handle is closed at most once. A failed
+                // close retains the native engine instead of retrying teardown.
+                if unsafe { native::close_segment(self.native, segment) } != 0 {
+                    return;
+                }
             }
+        } else {
+            return;
         }
+        // SAFETY: all cached handles closed successfully and Rust engine
+        // ownership is exclusive at this final Drop.
         unsafe { native::destroy(self.native) };
     }
 }

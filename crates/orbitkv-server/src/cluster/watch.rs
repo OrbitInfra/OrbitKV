@@ -151,7 +151,7 @@ async fn bootstrap(
                 .revision();
         }
         for kv in response.kvs() {
-            decode(
+            let _ = decode(
                 prefix,
                 kv,
                 false,
@@ -250,7 +250,7 @@ async fn follow(
             } else {
                 kv
             };
-            decode(
+            if let Some(previous) = decode(
                 prefix,
                 value,
                 deleted,
@@ -258,7 +258,10 @@ async fn follow(
                 members,
                 &mut format_valid,
             )
-            .map_err(FollowError::Rebuild)?;
+            .map_err(FollowError::Rebuild)?
+            {
+                view.revoke(&previous);
+            }
             if !format_valid || members.get(&registration.node_id) != Some(registration) {
                 view.fence();
                 return Ok(());
@@ -287,7 +290,7 @@ fn install_members(
     view.replace_members(
         members
             .values()
-            .map(|member| (member.node_id.clone(), member.owner.clone())),
+            .map(|member| (member.node_id.clone(), member.epoch, member.owner.clone())),
     );
     inventory.replace_members(revision, members.clone());
 }
@@ -299,7 +302,7 @@ fn decode(
     expected_format: &ClusterFormat,
     members: &mut BTreeMap<String, Member>,
     format_valid: &mut bool,
-) -> Result<(), String> {
+) -> Result<Option<orbitkv_state::CacheOwner>, String> {
     let suffix = kv
         .key_str()
         .map_err(|error| error.to_string())?
@@ -308,6 +311,7 @@ fn decode(
     if kv.value().len() > MEMBER_BYTES {
         return Err("membership record exceeds byte limit".into());
     }
+    let mut removed = None;
     if suffix == "format" {
         *format_valid = !deleted
             && kv.lease() == 0
@@ -318,6 +322,10 @@ fn decode(
         }
     } else if let Some(node) = suffix.strip_prefix("members/") {
         let member = decode_member(node, kv)?;
+        removed = members
+            .get(node)
+            .filter(|previous| deleted || *previous != &member)
+            .map(|previous| previous.owner.clone());
         if deleted {
             members.remove(node);
         } else {
@@ -341,7 +349,7 @@ fn decode(
     } else {
         return Err("block metadata is forbidden by the inventory-stream format".into());
     }
-    Ok(())
+    Ok(removed)
 }
 
 fn decode_member(node: &str, kv: &KeyValue) -> Result<Member, String> {

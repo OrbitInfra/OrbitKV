@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::mem::ManuallyDrop;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use orbite::{
@@ -60,6 +61,7 @@ pub(crate) struct OrbiteTransport {
     pool_bytes: u64,
     files_enabled: bool,
     pub(super) payload: Transport,
+    drained: AtomicBool,
 }
 
 /// Explicit registration references plus the actual allocation and provider
@@ -215,6 +217,7 @@ impl OrbiteTransport {
             pool_bytes,
             files_enabled: storage.is_some(),
             payload,
+            drained: AtomicBool::new(false),
         })
     }
 
@@ -697,10 +700,35 @@ impl TransferBackend for OrbiteTransport {
     }
 
     fn shutdown(&self, deadline: Instant) -> Result<(), TransferError> {
+        if self.drained.load(Ordering::Acquire) {
+            return Ok(());
+        }
         self.engine
             .close(deadline.saturating_duration_since(Instant::now()))
+            .map_err(transfer_error)?;
+        self.drained.store(true, Ordering::Release);
+        Ok(())
+    }
+    fn retire_peer(
+        &self,
+        endpoint: &str,
+        epoch: &str,
+        timeout: Duration,
+        _requesters_drained: bool,
+    ) -> Result<(), TransferError> {
+        // A successful whole-engine close also drains these handles. Its
+        // RequesterClosed fence alone, or a failed shutdown, supplies no receipt.
+        if self.drained.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let endpoint = parse_endpoint(endpoint)
+            .map_err(|error| TransferError::new(ErrorKind::InvalidRequest, error))?;
+        let epoch = epoch.parse().map_err(transfer_error)?;
+        self.engine
+            .close_segment(endpoint, epoch, timeout)
             .map_err(transfer_error)
     }
+    // Transfer failure alone is not an authoritative membership departure.
     fn invalidate_segment(&self, _endpoint: &str) {}
     fn record_nic_load(&self) {
         #[cfg(feature = "orbite-rdma")]
@@ -753,9 +781,10 @@ fn transfer_error_ref(error: &Error) -> TransferError {
         Error::EpochMismatch => ErrorKind::EpochMismatch,
         Error::PermissionDenied => ErrorKind::PermissionDenied,
         Error::ResourceExhausted => ErrorKind::ResourceExhausted,
-        Error::Unavailable(_) | Error::SourceClosed | Error::RequesterClosed => {
-            ErrorKind::Unavailable
-        }
+        Error::Unavailable(_)
+        | Error::SourceClosed
+        | Error::RequesterClosed
+        | Error::PeerClosed => ErrorKind::Unavailable,
         Error::InvalidRange
         | Error::ForeignRegistration
         | Error::RegionNotFound

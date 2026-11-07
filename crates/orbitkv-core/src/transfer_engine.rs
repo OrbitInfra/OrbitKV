@@ -11,7 +11,6 @@ use std::sync::Arc;
 #[cfg(any(feature = "mooncake", feature = "orbite"))]
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(any(feature = "mooncake", feature = "orbite"))]
 use std::time::Duration;
 use std::time::Instant;
 
@@ -448,6 +447,22 @@ pub trait TransferBackend: Send + Sync {
     /// Irreversibly fence admission and drain both source and requester work.
     /// An error requires retaining this backend and its registrations.
     fn shutdown(&self, deadline: Instant) -> Result<(), TransferError>;
+    /// Retire a membership identity. Errors never supply a release receipt.
+    /// Repeated calls may wait again, but must never retry native destruction.
+    /// TENT's reversible cache close additionally requires all wrapper requests
+    /// to have drained, since a pending wrapper request could reopen its handle.
+    fn retire_peer(
+        &self,
+        _endpoint: &str,
+        _epoch: &str,
+        _timeout: Duration,
+        _requesters_drained: bool,
+    ) -> Result<(), TransferError> {
+        Err(TransferError::new(
+            ErrorKind::Unavailable,
+            "peer retirement unavailable",
+        ))
+    }
     fn invalidate_segment(&self, endpoint: &str);
     fn record_nic_load(&self);
 }
@@ -499,12 +514,10 @@ impl dyn TransferBackend {
     )]
     pub(crate) fn read(
         self: &Arc<Self>,
-        endpoint: &str,
+        peer: crate::peer::segment::PeerOperation,
         slices: &[PeerReadSlice],
         options: TransferOptions,
-        expected_epoch: &str,
     ) -> Result<usize, PeerTransferError> {
-        let deadline = options.deadline;
         let descriptors = slices
             .iter()
             .map(|slice| {
@@ -525,12 +538,10 @@ impl dyn TransferBackend {
             .map(|slice| Arc::clone(&slice.allocation))
             .collect::<Vec<_>>();
         let registration = Arc::clone(self).register_pinned(&allocations, Permission::LocalOnly)?;
-        let peer = self.open_peer(endpoint, expected_epoch, deadline)?;
         // SAFETY: source grants and destination owners stay with TransferLockGuard.
         let result = unsafe {
-            self.transfer(
+            peer.transfer(
                 TransferOp::Read,
-                &peer,
                 &descriptors,
                 options,
                 &Cancellation::default(),
