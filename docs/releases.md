@@ -1,5 +1,10 @@
 # Python releases
 
+> OrbiTE is now the only transfer engine. GPU/RDMA/GDS and installed profiles
+> require fresh hardware qualification. Earlier measurements retain their original
+> revisions and backend (TENT where recorded); CPU/TCP and io_uring checks are CI
+> evidence, not installed GPU qualification.
+
 OrbitKV 0.1.0 is being prepared for its first Python release. Build from source
 until a release is published. This page describes the artifact contract and
 how to validate a candidate without uploading it to PyPI.
@@ -21,7 +26,7 @@ that every engine/GPU combination works on every Python version; serving
 qualification uses Python 3.11 on H20 and A100, with each result tied to its
 engine release. See [S5.1](completion-plan.md#s51--release-and-interface-audit).
 
-The wheel contains the PyO3 extension, Manager executable, Mooncake libraries,
+The wheel contains the PyO3 extension, Manager executable with OrbiTE linked in,
 engine plugins, type stubs, Apache-2.0 license and third-party attribution in
 `NOTICE`. The host supplies its NVIDIA
 driver and compatible PyTorch/CUDA 13 environment. CUDA 13 normally requires
@@ -51,20 +56,19 @@ From the repository root, select a Python interpreter with shared `libpython`
 (required by the embedded Manager) and use a CUDA 13 toolkit:
 
 ```bash
-git submodule update --init --recursive third-party/mooncake
 PYO3_PYTHON=/absolute/path/to/python3.11 \
   ./scripts/build-wheel.sh --release
 ```
 
-CUDA 13 and Mooncake are the default Cargo features. The script builds and stages
-the Manager and Mooncake libraries, builds the extension for the selected Python,
+CUDA 13 and OrbiTE are the default Cargo features. The script builds and stages
+the Manager, builds the extension for the selected Python,
 audits every bundled ELF file with auditwheel, repairs its non-host dependencies,
 checks the package version/content, and imports the installed wheel in a fresh
 non-editable environment. The initial maturin output uses a Linux tag; only the
 whole-wheel audit selects the final manylinux tag. Auditing the extension alone
-misses libraries loaded dynamically by TENT and the embedded-Python Manager.
+misses dependencies of the embedded-Python Manager.
 
-An experimental wheel can additionally compile OrbiTE TCP and RDMA:
+A wheel can additionally enable OrbiTE RDMA:
 
 ```bash
 CC=gcc CXX=g++ PYO3_PYTHON=/absolute/path/to/python3.11 \
@@ -72,14 +76,14 @@ CC=gcc CXX=g++ PYO3_PYTHON=/absolute/path/to/python3.11 \
 python3 scripts/check-wheel.py target/wheels/*.whl --install-smoke --require-orbite-rdma
 ```
 
-`--features orbite` enables only the TCP candidate. Complete wheels still
-include CUDA 13 and TENT, and default to TENT; choose the experimental provider
-explicitly at Manager startup as described in [transport](transport.md#experimental-orbite-peer-rdma-profile).
+`orbite` is enabled by default; `orbite-rdma` adds the RDMA transport.
+Use `--transfer-transport auto|tcp|rdma` to select an operator hint.
 These build options do not create a second Python distribution. The installed
-CLI smoke checks compiled RDMA arguments before any GPU access. Separate
-independent H20 byte/lifetime reruns qualify the CPython 3.11 single-runtime
+CLI smoke checks compiled RDMA arguments before any GPU access. Earlier
+independent H20 byte/lifetime reruns covered the historical CPython 3.11 single-runtime
 profile in [transport](transport.md#installed-client-and-manager-profile), with
-explicit Torch CUDA 13.0.96 selection. Its private unversioned runtime alias is
+explicit Torch CUDA 13.0.96 selection. That result does not qualify the current
+OrbiTE path. Its private unversioned runtime alias is
 needed because the Rust loader tries `libcudart.so` before Torch's `.so.13`.
 Building with a CUDA 13.1 compiler does not establish a loaded CUDA 13.1 runtime
 or qualify other installed environments. CI builds both the default and optional RDMA
@@ -91,7 +95,7 @@ CI builds on Ubuntu with protoc 27.5, `auditwheel==6.8.2`,
 `patchelf>=0.14.5`, maturin and wheel. Both release architectures use the same
 protocol compiler; Ubuntu 22.04's system protoc cannot compile the current
 proto3 optional fields without an experimental flag. Dependency copyright files are retained from the Debian/Ubuntu package
-database, together with referenced common license texts and Mooncake's license.
+database, together with referenced common license texts.
 An externally staged dependency must supply `<library-filename>.license` beside
 its original shared library if it has no OS package provenance; missing notices
 fail the build. The repaired artifact also retains auditwheel's dependency SBOM.
@@ -100,8 +104,7 @@ Python's shared library, CUDA driver/runtime/cuFile and RDMA core/provider
 libraries remain host dependencies; the repair step must neither bundle driver
 libraries nor remove the standalone Manager's `libpython` dependency. Wheels
 are written to `target/wheels/`.
-Do not run native builds while a source-built Manager is using the staged
-Mooncake libraries. `maturin build` alone does not stage the complete runtime.
+`maturin build` alone does not stage the Manager executable; use the wheel script.
 
 ## Validate before publishing
 
@@ -113,9 +116,8 @@ Mooncake libraries. `maturin build` alone does not stage the complete runtime.
 3. Install a candidate wheel into each engine environment. From outside the
    source checkout, check the installed import path, Manager help and health,
    then verify a completion and an external restore after engine restart.
-   The smoke gate removes external TENT search paths, initializes TENT, and
-   checks `/proc/self/maps` to prove that its three primary libraries came from
-   the installed package. It verifies pinned versions and installed RECORD hashes,
+   The smoke gate excludes source overrides, imports the installed Rust extension
+   and rejects removed TENT libraries. It verifies installed RECORD hashes,
    then compares cold, native HBM, full and partial recovery against native
    controls in DRAM and io_uring SSD cells. The installed console entry executes
    the Manager directly: SIGTERM must drain and exit 0; forced cleanup fails.
@@ -167,7 +169,7 @@ The downloaded CPython 3.11/CUDA 13/x86_64 artifact is
 It passes the wheel checker and both installed-package H20 restart gates:
 vLLM 0.29.0 and SGLang 0.5.20 each save and restore 90 MiB, reproduce their
 initial output and release all query reservations. The tests run with isolated
-Python imports, remove external TENT library directories and verify loaded
+Python imports, reject removed TENT library mappings and verify loaded
 runtime paths under the installed package.
 
 Logs, installed paths, native library identities and the wheel manifest are in
@@ -196,7 +198,7 @@ extension-only audit had incorrectly labeled this artifact `manylinux_2_34`.
 Both dedicated engine environments install this wheel non-editably. The H20
 Qwen3-8B release smoke passes for vLLM 0.29.0 and SGLang 0.5.20: each restarts
 the engine, restores 90 MiB to GPU, matches its initial output, and drains query
-reservations. The test removes external TENT library paths and verifies the
+reservations. The test rejects removed TENT library mappings and verifies the
 three loaded primary libraries under the installed package.
 
 The same SHA256 is installed on the remote A100. The installed Manager console
@@ -236,14 +238,6 @@ Distributed serving, metadata HA, automatic hybrid lookahead and cross-host TP
 remain outside the qualified single-node release scope. See
 [deployment support](deployment.md) and [the completion plan](completion-plan.md).
 
-The installed host-buffer TCP regression lives in
-`python/tests/release/test_installed_tent_tcp.py` and is marked `release_smoke`
-and `integration`. Run it from a fresh fixture directory with the installed
-wheel and without source-package import paths. It checks changing READ/WRITE
-payloads, untouched gaps, source stability, native mappings and explicit
-unregistration. This gate requires no GPU and does not replace the healthy GPU,
-RDMA, Manager SSD or adapter lifetime gates. Native source builds consume the
-pinned [OrbitInfra/Mooncake integration commit](../crates/orbitkv-mooncake-sys/README.md#native-source)
-without build-time patches. Freeze that commit and the resulting library bytes
-with the wheel; upstream releases and arbitrary prebuilt TENT libraries are not
-interchangeable with its source-epoch ABI.
+The removed TENT installed CPU gate and its original pins remain in the
+[historical release record](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/docs/releases.md). Current CI exercises real
+OrbiTE CPU/TCP and io_uring byte paths; installed GPU qualification remains open.

@@ -15,9 +15,6 @@ use pyo3::{
 };
 use std::time::Duration;
 
-#[cfg(feature = "mooncake")]
-mod mooncake;
-
 mod client;
 mod local_restore;
 mod recovery;
@@ -299,8 +296,6 @@ fn orbitkv(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<client::PyBlockHashes>()?;
     m.add_class::<client::PyRestoreHandle>()?;
     m.add_class::<client::RestoreStatus>()?;
-    #[cfg(feature = "mooncake")]
-    mooncake::add_classes(m)?;
     // Register custom exceptions for error classification
     m.add("OrbitKVError", m.py().get_type::<OrbitKVError>())?;
     m.add("OrbitKVInternal", m.py().get_type::<OrbitKVInternal>())?;

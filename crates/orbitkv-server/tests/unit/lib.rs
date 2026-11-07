@@ -184,65 +184,6 @@ fn cli_accepts_channel_options() {
 }
 
 #[test]
-fn cli_nics_accepts_comma_separated_values() {
-    let cli =
-        Cli::try_parse_from(["orbitkv-cache-manager", "--nics", "mlx5_0,mlx5_1,mlx5_2"]).unwrap();
-
-    assert_eq!(
-        cli.nics.unwrap(),
-        [
-            "mlx5_0".to_string(),
-            "mlx5_1".to_string(),
-            "mlx5_2".to_string()
-        ]
-    );
-}
-
-#[test]
-fn cli_nics_trims_comma_separated_values() {
-    let cli =
-        Cli::try_parse_from(["orbitkv-cache-manager", "--nics", "mlx5_0, mlx5_1, mlx5_2"]).unwrap();
-
-    assert_eq!(
-        cli.nics.unwrap(),
-        [
-            "mlx5_0".to_string(),
-            "mlx5_1".to_string(),
-            "mlx5_2".to_string()
-        ]
-    );
-}
-
-#[test]
-fn cli_nics_rejects_empty_comma_separated_values() {
-    let err =
-        Cli::try_parse_from(["orbitkv-cache-manager", "--nics", "mlx5_0,,mlx5_1"]).unwrap_err();
-
-    assert!(err.to_string().contains("empty NIC name"), "{err}");
-}
-
-#[test]
-fn cli_nics_accepts_repeated_values_after_flag() {
-    let cli = Cli::try_parse_from([
-        "orbitkv-cache-manager",
-        "--nics",
-        "mlx5_0",
-        "mlx5_1",
-        "mlx5_2",
-    ])
-    .unwrap();
-
-    assert_eq!(
-        cli.nics.unwrap(),
-        [
-            "mlx5_0".to_string(),
-            "mlx5_1".to_string(),
-            "mlx5_2".to_string()
-        ]
-    );
-}
-
-#[test]
 fn cli_explicit_metric_hll_windows_parses_without_panic() {
     let cli = Cli::try_parse_from([
         "orbitkv-cache-manager",
@@ -328,11 +269,7 @@ fn query_control_requires_loopback_before_runtime_initialization() {
 
 #[test]
 fn orbite_rdma_cli_requires_explicit_device_and_valid_port() {
-    let base = [
-        "orbitkv-cache-manager",
-        "--peer-transfer-backend",
-        "orbite-rdma",
-    ];
+    let base = ["orbitkv-cache-manager", "--transfer-transport", "rdma"];
     assert!(Cli::try_parse_from(base).is_err());
     assert!(
         Cli::try_parse_from(base.into_iter().chain([
@@ -355,10 +292,7 @@ fn orbite_rdma_cli_requires_explicit_device_and_valid_port() {
         "3",
     ]))
     .unwrap();
-    assert_eq!(
-        cli.peer_transfer_backend,
-        orbitkv_core::PeerTransferBackend::OrbiteRdma
-    );
+    assert_eq!(cli.transfer_transport, orbitkv_core::TransportHint::Rdma);
     assert!(!cli.orbite_rdma_gpu_direct);
     assert!(Cli::try_parse_from(["orbitkv-cache-manager", "--orbite-rdma-gpu-direct"]).is_err());
     let direct = Cli::try_parse_from(base.into_iter().chain([
@@ -373,19 +307,17 @@ fn orbite_rdma_cli_requires_explicit_device_and_valid_port() {
     assert_eq!(
         Cli::try_parse_from(["orbitkv-cache-manager"])
             .unwrap()
-            .peer_transfer_backend,
-        orbitkv_core::PeerTransferBackend::Mooncake
+            .transfer_transport,
+        orbitkv_core::TransportHint::Auto
     );
 }
 
 #[test]
 fn ssd_uses_selected_engine_and_rejects_removed_legacy_switch() {
-    use orbitkv_core::{PeerTransferBackend, SsdCacheConfig};
+    use orbitkv_core::SsdCacheConfig;
     assert_eq!(
-        SsdCacheConfig::default()
-            .validate_transfer_engine(PeerTransferBackend::Mooncake)
-            .is_ok(),
-        cfg!(feature = "mooncake")
+        SsdCacheConfig::default().validate_transfer_engine().is_ok(),
+        cfg!(feature = "orbite")
     );
     for value in ["auto", "transfer", "legacy"] {
         assert!(
@@ -402,26 +334,26 @@ fn ssd_uses_selected_engine_and_rejects_removed_legacy_switch() {
 }
 
 #[test]
-fn orbite_auto_is_opt_in_and_explicit_transport_hints_remain_available() {
-    use orbitkv_core::PeerTransferBackend;
+fn auto_is_default_and_explicit_transport_hints_remain_available() {
+    use orbitkv_core::TransportHint;
     for (value, expected) in [
-        ("orbite", PeerTransferBackend::Orbite),
-        ("orbite-tcp", PeerTransferBackend::OrbiteTcp),
-        ("orbite-rdma", PeerTransferBackend::OrbiteRdma),
+        ("auto", TransportHint::Auto),
+        ("tcp", TransportHint::Tcp),
+        ("rdma", TransportHint::Rdma),
     ] {
-        let mut args = vec!["orbitkv-cache-manager", "--peer-transfer-backend", value];
-        if value == "orbite-rdma" {
+        let mut args = vec!["orbitkv-cache-manager", "--transfer-transport", value];
+        if value == "rdma" {
             args.extend(["--orbite-rdma-device", "mlx5_0"]);
         }
         assert_eq!(
-            Cli::try_parse_from(args).unwrap().peer_transfer_backend,
+            Cli::try_parse_from(args).unwrap().transfer_transport,
             expected
         );
     }
     assert_eq!(
         Cli::try_parse_from(["orbitkv-cache-manager"])
             .unwrap()
-            .peer_transfer_backend,
-        PeerTransferBackend::Mooncake
+            .transfer_transport,
+        TransportHint::Auto
     );
 }

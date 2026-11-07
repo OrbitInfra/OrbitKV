@@ -152,8 +152,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Initialize native build dependency
-        run: git submodule update --init --recursive --depth 1 third-party/mooncake
       - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
@@ -164,7 +162,7 @@ jobs:
       - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libcli11-dev liburing-dev libboost-dev patchelf
+          sudo apt-get install -y pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev liburing-dev patchelf
       - name: Install protocol compiler
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
         with:
@@ -181,13 +179,9 @@ jobs:
         run: scripts/configure-rustc-wrapper.sh
       - name: Run rust clippy check
         run: |
-          cargo clippy --locked -p orbitkv-core -p orbitkv-server -p orbitkv-py --all-targets --no-default-features --features cuda-13 -- -D warnings
-          cargo clippy --workspace --exclude orbitkv-py --all-targets -- -D warnings
-          cargo clippy -p orbitkv-server --all-targets --features test-hooks -- -D warnings
-          cargo clippy -p orbitkv-core --all-targets --features orbite -- -D warnings
-          cargo clippy -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbite -- -D warnings
-          CC=gcc CXX=g++ cargo clippy -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbite-rdma -- -D warnings
-          CC=gcc CXX=g++ cargo clippy --locked --workspace --all-targets --no-default-features --features cuda-13,mooncake,orbite-rdma,orbite-gds,test-hooks -- -D warnings
+          cargo clippy --locked --workspace --all-targets --no-default-features --features cuda-13,test-hooks -- -D warnings
+          cargo clippy --locked --workspace --all-targets --features test-hooks -- -D warnings
+          CC=gcc CXX=g++ cargo clippy --locked --workspace --all-targets --no-default-features --features cuda-13,orbite-rdma,orbite-gds,test-hooks -- -D warnings
         env:
           LIBCLANG_PATH: /usr/lib/llvm-18/lib
           CLANG_PATH: /usr/bin/clang-18
@@ -245,8 +239,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Initialize native build dependency
-        run: git submodule update --init --recursive --depth 1 third-party/mooncake
       - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
@@ -257,7 +249,7 @@ jobs:
       - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libcli11-dev liburing-dev libboost-dev patchelf
+          sudo apt-get install -y pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev liburing-dev patchelf
       - name: Install protocol compiler
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
         with:
@@ -275,7 +267,6 @@ jobs:
       - name: Run cargo check
         run: |
           cargo check -p orbitkv-core
-          cargo check -p orbitkv-core --features orbite
           cargo check -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbite
           CC=gcc CXX=g++ cargo clippy --locked -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbite-rdma -- -D warnings
           CC=gcc CXX=g++ cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-rdma --lib peer::orbite::tests
@@ -298,19 +289,16 @@ jobs:
           for filter in peer:: query:: planning:: cost:: metrics:: transfer_engine::tests \
             codec:: engine::restore:: storage::inventory:: \
             transfer::worker::drain_tests::nonresident_payloads_return_errors_without_host_access \
-            local_only_orbite missing_orbite_worker_engine no_backend_storage; do
+            transfer::tests::raw_copy_shape transfer::worker::drain_tests::raw_copy_candidates \
+            missing_orbite_worker_engine no_backend_storage; do
             LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --no-default-features --features cuda-13 --lib "$filter" -- --test-threads=1
           done
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib peer::
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --lib peer::
-          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --features orbite --lib peer::
-          cargo test --locked -p orbitkv-transfer --no-default-features --lib
-          cargo test --locked -p orbitkv-mooncake-sys --no-default-features --lib
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib query::read::tests
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib transfer_engine::tests
-          cargo test --locked -p orbitkv-server --lib tests::orbite_auto_is_opt_in_and_explicit_transport_hints_remain_available -- --exact
+          cargo test --locked -p orbitkv-server --lib tests::auto_is_default_and_explicit_transport_hints_remain_available -- --exact
           cargo test --locked -p orbitkv-core --lib query::read::tests
-          cargo test --locked -p orbitkv-server --lib registry::tests::tensor_owner_survives_registry_removal -- --exact
         env:
           CUDA_PATH: /usr/local/cuda
           LIBCLANG_PATH: /usr/lib/llvm-18/lib
@@ -324,10 +312,10 @@ jobs:
           # Driver calls move CPU fixture bytes, not hardware-qualified GPU bytes.
           export LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-local-copy-control:$RUNNER_TEMP/orbitkv-cpu-host-control"
           export ORBITKV_REQUIRE_LOCAL_COPY_SHIM=1
+          cargo test --locked -p orbitkv-server --lib registry::tests::tensor_owner_survives_registry_removal -- --exact --ignored
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib peer::orbite::local::tests -- --ignored --test-threads=1
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib transfer::local::tests::failed_import_cleanup_preserves_registered_mapping -- --exact --ignored
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib memory::pinned::tests::unregister_failure_policy -- --exact --ignored
-          cargo test --locked -p orbitkv-core --features orbite --lib peer::orbite::local::tests -- --ignored --test-threads=1
           cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,test-hooks --lib -- --test-threads=1
           cargo test --locked -p orbitkv-server --features orbite,test-hooks --lib -- --test-threads=1
         env:
@@ -343,22 +331,15 @@ jobs:
           export ORBITKV_SSD_TEST_FS=ext4
           mkdir -p "$ORBITKV_SSD_TEST_ROOT"
           test "$(findmnt -n -o FSTYPE -T "$ORBITKV_SSD_TEST_ROOT")" = ext4
-          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=orbite cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
-          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=orbite ORBITKV_SSD_TEST_ROOT=/dev/shm ORBITKV_SSD_TEST_FS=tmpfs cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
-          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=tent cargo test --locked -p orbitkv-core --no-default-features --features mooncake,cudarc/cuda-13000,cudarc/nvrtc --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
-          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE=tent ORBITKV_SSD_TEST_ROOT=/dev/shm ORBITKV_SSD_TEST_FS=tmpfs cargo test --locked -p orbitkv-core --no-default-features --features mooncake,cudarc/cuda-13000,cudarc/nvrtc --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
-          # Both selections must work in the same binary, with separate file owners.
-          for engine in tent orbite; do
-            LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_ENGINE="$engine" cargo test --locked -p orbitkv-core --no-default-features --features mooncake,orbite,cudarc/cuda-13000,cudarc/nvrtc --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
+          for fs in ext4 tmpfs; do
+            if [[ "$fs" == tmpfs ]]; then export ORBITKV_SSD_TEST_ROOT=/dev/shm; fi
+            LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_FS="$fs" cargo test --locked -p orbitkv-core --no-default-features --features orbite-gds,cudarc/cuda-13000,cudarc/nvrtc --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
           done
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --lib storage::ssd:: -- --test-threads=1
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib peer::orbite::tests::compiled_gds_stays_unloaded_without_configuration -- --exact
           cargo test --locked -p orbitkv-core --lib transfer::worker::ssd:: -- --test-threads=1
           cargo test --locked -p orbitkv-server --lib tests::ssd_uses_selected_engine_and_rejects_removed_legacy_switch -- --exact
         env:
-          # The separate TENT file engine still uses io_uring; its peer engine's
-          # source-drain receipt is deliberately limited to the CPU/TCP profile.
-          MC_FORCE_TCP: "1"
           CUDA_PATH: /usr/local/cuda
           LIBCLANG_PATH: /usr/lib/llvm-18/lib
           CLANG_PATH: /usr/bin/clang-18
@@ -388,7 +369,7 @@ jobs:
       max-parallel: 1
       matrix:
         include:
-          - check-name: build Python 3.14 wheel (CUDA 13)
+          - check-name: build Python 3.14 wheel (CUDA 13, OrbiTE TCP)
             features: ""
             artifact: orbitkv-wheel-ci
           - check-name: build Python 3.14 wheel (CUDA 13, OrbiTE RDMA)
@@ -402,8 +383,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Initialize native build dependency
-        run: git submodule update --init --recursive --depth 1 third-party/mooncake
 
       - name: Set up Python 3.14
         uses: actions/setup-python@v5

@@ -121,7 +121,7 @@ impl OrbitKVEngine {
     }
 
     /// All-or-nothing membership fetch over one hybrid-cache storage group,
-    /// eligible for the same SSD prefetch and Catalog + Mooncake remote fetch
+    /// eligible for the same SSD prefetch and Catalog + OrbiTE remote fetch
     /// as prefix queries.
     ///
     /// Where [`Self::query_group_membership`] allows sparse hits, this treats

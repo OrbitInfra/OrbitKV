@@ -46,8 +46,8 @@ pipelines block publication and lease updates. Borrow local discovery and batche
 background work; do not assume periodic rebuilding or changing databases removes
 the cost of distributing all records to all readers.
 
-OrbitKV's [native integration](../crates/orbitkv-mooncake-sys/README.md#native-source)
-uses upstream base `719735896c86b56fabec6cf3e825fb2ea640597a`.
+OrbitKV's [historical TENT integration](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/crates/orbitkv-mooncake-sys/README.md#native-source)
+used upstream base `719735896c86b56fabec6cf3e825fb2ea640597a` at that audit.
 [Store](https://github.com/kvcache-ai/Mooncake/blob/719735896c86b56fabec6cf3e825fb2ea640597a/docs/source/design/store/mooncake-store.md)
 uses a Master for object metadata and allocation, with peer payload movement.
 Its [optional HA OpLog](https://github.com/kvcache-ai/Mooncake/blob/719735896c86b56fabec6cf3e825fb2ea640597a/docs/source/deployment/mooncake-store-deployment-guide.md#high-availability-ha)
@@ -72,10 +72,10 @@ make them optional. Watch freshness is not a linearizable read guarantee.
 | Identity | Namespace binds model, computation and representation; group hash includes group zero | Preserve exact bytes and generation semantics |
 | etcd | Members, epochs, publisher cursors and leased block records | Members, epochs, protocol identity and infrequent configuration only |
 | Discovery | Complete local `GlobalIndex` from etcd snapshot/Watch | Same owner, fed by per-source inventory streams with explicit coverage |
-| Peer access | Source authorization, bounded pins/staging, TENT READ, terminal release | Preserve authority; extend planning after S3 and S6 gates |
+| Peer access | Source authorization, bounded pins, OrbiTE READ, terminal release | Preserve authority; extend planning after S3 and S6 gates |
 | Execution | One READ overlaps authorization for the following segment | Preserve existing overlap; optimize only measured critical-path work |
 | Selection | Bounded candidates; experimental cost choices among selected alternatives | Complete-route comparisons, bounded replanning and physical admission |
-| Transport | TENT P2P metadata handshake already used | No block metadata added to Mooncake; no new payload backend |
+| Transport | OrbiTE P2P discovery and epoch retirement | Keep block metadata in OrbitKV |
 
 The target has three planes. Solid edges below reuse existing responsibilities;
 dotted edges are proposed inventory synchronization. The diagram describes the
@@ -93,7 +93,7 @@ flowchart TB
     I --> P["Existing recovery planner"]
     M --> P
     P --> A["Source validates generations and pins bytes"]
-    A --> T["TENT READ to requester-owned memory"]
+    A --> T["OrbiTE READ to requester-owned memory"]
     T --> G["Decode and GPU restore with final drain"]
 ```
 
@@ -575,8 +575,8 @@ Ordinary queries continue to use local evidence without fresh network probing.
 S6 admission uses both a bounded in-flight byte window and pacing for each
 physical NIC/direction. The node-local owner must account for participating
 Manager READ and engine P/D WRITE submitters through a consumed native boundary.
-Credits are leased in bounded batches; payloads still move directly through
-TENT. A Manager-only limit cannot claim node-wide control while P/D bypasses it.
+Credits are leased in bounded batches; Manager payloads move through OrbiTE
+and live P/D uses the inference engine's native transport. A Manager-only limit cannot claim node-wide control while P/D bypasses it.
 
 Source egress caps complement receiver admission. Schedule by eligible deadline,
 remaining required state work, per-instance fairness and aging. Preserve headroom

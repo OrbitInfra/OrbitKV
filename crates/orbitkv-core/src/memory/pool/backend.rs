@@ -69,44 +69,6 @@ impl PinnedAllocation {
     }
 }
 
-#[cfg(feature = "mooncake")]
-impl PinnedMemoryPool {
-    /// Return the base pointer and length of the backing pinned memory.
-    fn memory_region(&self) -> (NonNull<u8>, usize) {
-        let ptr = self.backing.as_non_null();
-        (ptr, self.backing.size())
-    }
-}
-
-#[cfg(feature = "mooncake")]
-impl ShardedPinnedPool {
-    /// Return all backing memory regions (one per shard).
-    fn memory_regions(&self) -> Vec<(NonNull<u8>, usize)> {
-        self.shards.iter().map(|s| s.memory_region()).collect()
-    }
-}
-
-#[cfg(feature = "mooncake")]
-impl NumaAwarePinnedPools {
-    /// Return all backing memory regions across all NUMA nodes and shards.
-    fn memory_regions(&self) -> Vec<(NonNull<u8>, usize)> {
-        self.pools
-            .values()
-            .flat_map(|p| p.memory_regions())
-            .collect()
-    }
-}
-
-#[cfg(feature = "mooncake")]
-impl PinnedAllocator {
-    /// Return all backing memory regions as `(ptr, len)` pairs.
-    pub(crate) fn memory_regions(&self) -> Vec<(NonNull<u8>, usize)> {
-        match self {
-            Self::Global(pool) => pool.memory_regions(),
-            Self::Numa(pools) => pools.memory_regions(),
-        }
-    }
-}
 #[cfg(all(test, feature = "orbite"))]
 #[path = "../../../tests/unit/memory/orbite.rs"]
 mod orbite_tests;

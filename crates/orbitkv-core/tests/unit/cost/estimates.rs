@@ -237,3 +237,12 @@ fn local_restore_estimates_separate_copy_backend_and_source_domain() {
         );
     }
 }
+
+impl CostEstimateKey {
+    pub(in crate::cost) fn with_dma_ranges(self, ranges: usize) -> Self {
+        Self {
+            dma_ranges: super::super::bucket(ranges as u64),
+            ..self
+        }
+    }
+}

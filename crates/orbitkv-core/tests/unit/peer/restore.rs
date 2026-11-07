@@ -10,6 +10,7 @@ use std::time::Instant;
 
 #[derive(Default)]
 pub(crate) struct Control {
+    engine: Mutex<std::sync::Weak<TransferEngine>>,
     pub(crate) result: Mutex<Option<ErrorKind>>,
     pub(crate) registrations: AtomicUsize,
     pub(crate) reads: AtomicUsize,
@@ -28,24 +29,47 @@ enum Failure {
     CleanupPanic,
 }
 
-impl TransferBackend for Control {
-    fn transfer_endpoint(&self) -> &str {
+impl Control {
+    pub(crate) fn engine(self: &Arc<Self>) -> Arc<TransferEngine> {
+        let mut cached = self.engine.lock().unwrap();
+        if let Some(engine) = cached.upgrade() {
+            return engine;
+        }
+        #[cfg(feature = "orbite")]
+        let mut engine = TransferEngine::new(
+            4096,
+            "127.0.0.1:0",
+            orbite::Transport::Tcp,
+            None,
+            #[cfg(feature = "orbite-rdma")]
+            None,
+        )
+        .unwrap();
+        #[cfg(not(feature = "orbite"))]
+        let mut engine = TransferEngine { control: None };
+        engine.control = Some(self.clone());
+        let engine = Arc::new(engine);
+        *cached = Arc::downgrade(&engine);
+        engine
+    }
+
+    pub(crate) fn transfer_endpoint(&self) -> &str {
         "control"
     }
-    fn source_epoch(&self) -> &str {
+    pub(crate) fn source_epoch(&self) -> &str {
         "epoch"
     }
-    fn accepts_endpoint(&self, _: &str) -> bool {
+    pub(crate) fn accepts_endpoint(&self, _: &str) -> bool {
         true
     }
-    fn register_pinned(
+    pub(crate) fn register_pinned(
         self: Arc<Self>,
         _: &[Arc<PinnedAllocation>],
         _: Permission,
     ) -> Result<Registration, TransferError> {
         panic!("GPU restore must not allocate/register pinned payloads")
     }
-    unsafe fn register_cuda(
+    pub(crate) unsafe fn register_cuda(
         self: Arc<Self>,
         _: u64,
         _: usize,
@@ -68,7 +92,10 @@ impl TransferBackend for Control {
             inner: RegistrationInner::Control(owner),
         })
     }
-    unsafe fn unregister(&self, registration: &mut Registration) -> Result<(), TransferError> {
+    pub(crate) unsafe fn unregister(
+        &self,
+        registration: &mut Registration,
+    ) -> Result<(), TransferError> {
         assert!(matches!(&registration.inner, RegistrationInner::Control(_)));
         self.cleanups.fetch_add(1, Ordering::SeqCst);
         if matches!(*self.failure.lock().unwrap(), Some(Failure::CleanupPanic)) {
@@ -80,7 +107,7 @@ impl TransferBackend for Control {
             Ok(())
         }
     }
-    fn open_peer(
+    pub(crate) fn open_peer(
         &self,
         _: &str,
         epoch: &str,
@@ -97,7 +124,7 @@ impl TransferBackend for Control {
             inner: Segment::Control,
         })
     }
-    unsafe fn transfer(
+    pub(crate) unsafe fn transfer(
         &self,
         op: TransferOp,
         segment: &PeerSegment,
@@ -133,11 +160,7 @@ impl TransferBackend for Control {
         }
         Ok(slices.iter().map(|slice| slice.length).sum())
     }
-    fn shutdown(&self, _: Instant) -> Result<(), TransferError> {
-        Ok(())
-    }
-    fn invalidate_segment(&self, _: &str) {}
-    fn retire_peer(
+    pub(crate) fn retire_peer(
         &self,
         _: &str,
         _: &str,
@@ -153,7 +176,6 @@ impl TransferBackend for Control {
             ))
         }
     }
-    fn record_nic_load(&self) {}
 }
 
 pub(crate) fn source(
@@ -169,7 +191,7 @@ pub(crate) fn source(
     membership.replace_members([("control".into(), 1, source_owner.clone())]);
     let options = crate::transfer_engine::tests::demand();
     control.admissions.lock().unwrap().push(options);
-    let segments = PeerSegments::new(control, membership.clone());
+    let segments = PeerSegments::new(control.engine(), membership.clone());
     let peer = segments
         .get(membership.lease(&source_owner).unwrap(), "control", "epoch")
         .unwrap();
@@ -191,7 +213,7 @@ pub(crate) fn registered(
     owner: Arc<dyn Send + Sync>,
 ) -> Arc<CudaRegistration> {
     // SAFETY: CPU control retains host backing or uses only non-dereferencing fixtures.
-    unsafe { CudaRegistration::new(Some(control), address, length, 0, owner) }.unwrap()
+    unsafe { CudaRegistration::new(Some(control.engine()), address, length, 0, owner) }.unwrap()
 }
 
 #[test]
@@ -234,7 +256,7 @@ async fn uncertainty_retains_actual_backing_and_never_retries_cleanup_or_transfe
         let backing = Arc::downgrade(&owner);
         // SAFETY: these controls fail without dereferencing fixture addresses.
         let registration =
-            unsafe { CudaRegistration::new(Some(control.clone()), 8192, 16, 0, owner) };
+            unsafe { CudaRegistration::new(Some(control.engine()), 8192, 16, 0, owner) };
         if let Ok(registration) = registration {
             if matches!(failure, Some(Failure::CleanupPanic)) {
                 assert!(registration.close().is_err());
@@ -309,7 +331,7 @@ fn release_waits_for_active_loans_and_failed_unregister_retains_backing() {
     let backing = Arc::new(());
     let weak = Arc::downgrade(&backing);
     let owner = registered(control.clone(), 8192, 16, backing);
-    let backend: Arc<dyn TransferBackend> = control.clone();
+    let backend = control.engine();
     let loan = owner.loan(&backend).unwrap();
     let other = owner.clone();
     control.cleanup_failed.store(true, Ordering::SeqCst);

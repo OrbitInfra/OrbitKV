@@ -41,7 +41,7 @@ struct BenchFixture {
     engine: OrbitKVEngine,
     registration_generation: [u8; 16],
     _ctx: Arc<CudaContext>,
-    _gpu: GpuBuffer,
+    _gpu: Arc<GpuBuffer>,
     num_blocks: usize,
     block_ids: Vec<usize>,
 }
@@ -138,7 +138,7 @@ impl BenchFixture {
         let total_bytes = registered_blocks
             .checked_mul(bytes_per_block)
             .expect("registered GPU size overflow");
-        let gpu = GpuBuffer::new(Arc::clone(&ctx), total_bytes);
+        let gpu = Arc::new(GpuBuffer::new(Arc::clone(&ctx), total_bytes));
         let mut host = vec![0u8; total_bytes];
         fill_test_pattern(&mut host, bytes_per_block);
         gpu.copy_from_host(&host);
@@ -149,8 +149,20 @@ impl BenchFixture {
             .expect("pool size overflow");
         let engine = OrbitKVEngine::new_with_config(pool_size, false, config).expect("engine");
 
+        // SAFETY: gpu owns the allocation/context, initialization drained, and
+        // the fixture coordinates all access until engine and client completion.
+        let registered = unsafe {
+            orbitkv_core::transfer_engine::CudaRegistration::new(
+                engine.transfer_backend(),
+                gpu.as_u64(),
+                total_bytes,
+                DEVICE_ID,
+                gpu.clone(),
+            )
+        }
+        .expect("register owned benchmark tensor");
         let registration_generation = engine
-            .register_context_layer_batch(
+            .register_context_layer_batch_strided(
                 INSTANCE_ID,
                 NAMESPACE,
                 DEVICE_ID,
@@ -165,8 +177,12 @@ impl BenchFixture {
                 &[bytes_per_block],
                 &[0],
                 &[1],
+                None,
+                None,
+                None,
                 transfer_mode,
                 false,
+                Some(&[registered]),
             )
             .expect("register layer");
 
@@ -177,7 +193,7 @@ impl BenchFixture {
                     LAYER_NAME.into(),
                     gpu.as_u64(),
                     total_bytes,
-                    0,
+                    gpu.as_u64() as usize,
                     registered_blocks,
                     bytes_per_block,
                     0,
@@ -187,6 +203,7 @@ impl BenchFixture {
             ],
             engine.payload_arenas().expect("export payload arenas"),
             transfer_mode,
+            gpu.clone(),
         )
         .expect("import payload arenas");
         Self {
@@ -300,7 +317,7 @@ struct MultiLayerBenchFixture {
     engine: OrbitKVEngine,
     registration_generation: [u8; 16],
     _ctx: Arc<CudaContext>,
-    _gpu: GpuBuffer,
+    _gpu: Arc<GpuBuffer>,
     layer_names: Vec<String>,
     num_blocks: usize,
 }
@@ -354,7 +371,7 @@ impl MultiLayerBenchFixture {
                 .checked_mul(MULTI_LAYER_COUNT)
                 .expect("multi-layer GPU size overflow"),
         };
-        let gpu = GpuBuffer::new(Arc::clone(&ctx), gpu_bytes);
+        let gpu = Arc::new(GpuBuffer::new(Arc::clone(&ctx), gpu_bytes));
         let mut host = vec![0u8; gpu_bytes];
         fill_test_pattern(&mut host, bytes_per_block);
         gpu.copy_from_host(&host);
@@ -393,8 +410,21 @@ impl MultiLayerBenchFixture {
         let strides = vec![0; MULTI_LAYER_COUNT];
         let segments = vec![1; MULTI_LAYER_COUNT];
 
+        // SAFETY: the fixture retains the entire allocation/context and all producer
+        // copies drained; aliases share this one registration through completion.
+        let registered = unsafe {
+            orbitkv_core::transfer_engine::CudaRegistration::new(
+                engine.transfer_backend(),
+                gpu.as_u64(),
+                gpu_bytes,
+                DEVICE_ID,
+                gpu.clone(),
+            )
+        }
+        .expect("register multi-layer allocation");
+        let owners = vec![registered; MULTI_LAYER_COUNT];
         let registration_generation = engine
-            .register_context_layer_batch(
+            .register_context_layer_batch_strided(
                 INSTANCE_ID,
                 NAMESPACE,
                 DEVICE_ID,
@@ -409,8 +439,12 @@ impl MultiLayerBenchFixture {
                 &block_sizes,
                 &strides,
                 &segments,
+                None,
+                None,
+                None,
                 TransferMode::Direct,
                 false,
+                Some(&owners),
             )
             .expect("register layers");
 

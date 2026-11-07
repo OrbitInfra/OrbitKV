@@ -177,7 +177,6 @@ def test_strict_manager_start_records_actual_command_and_keeps_failed_record_own
     monkeypatch.setattr(cache_manager, "wait_for_server_ready", lambda *_args, **_kwargs: True)
     monkeypatch.setenv("ORBITKV_TEST_STRICT_SHUTDOWN", "1")
     monkeypatch.setenv("PYTHONNOUSERSITE", "1")
-    monkeypatch.setenv("MC_FORCE_TCP", "1")
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-CPU-fixture")
     monkeypatch.setenv("LD_LIBRARY_PATH", "/selected/cuda/compat:/selected/cuda/lib")
     package_directory = (

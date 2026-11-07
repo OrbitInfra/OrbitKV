@@ -62,10 +62,6 @@ def test_official_engines_share_manager(tier, model, tmp_path, request, orbitkv_
     sglang_files = before["sglang"]["distributions"]["orbitkv"]
     for relative in (
         "orbitkv-cache-manager-py",
-        "libtent_shared.so",
-        "libtent_metrics.so",
-        "libmooncake_common.so",
-        "libasio.so",
     ):
         assert (
             vllm_files["files"][str(Path(vllm_files["package_root"]) / relative)]

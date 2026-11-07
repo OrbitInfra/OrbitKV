@@ -926,15 +926,11 @@ impl PyCacheManagerClient {
                     TransferMode::Kernel => LocalTransferMode::Kernel,
                 };
                 let arena_count = arenas.len();
-                let executor = LocalRestoreExecutor::with_engine(
+                let executor = LocalRestoreExecutor::new(
                     device,
                     bindings,
                     arenas,
                     mode,
-                    receipt
-                        .transfer_engine
-                        .parse()
-                        .map_err(OrbitKVInternal::new_err)?,
                     exporter_owners.clone(),
                 )
                 .map_err(OrbitKVInternal::new_err)?;

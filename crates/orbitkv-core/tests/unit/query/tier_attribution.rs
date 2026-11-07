@@ -9,7 +9,7 @@ fn partial_backing_decisions_keep_selected_tier_and_residual_contract() {
             TierAttribution::classify(7, 3, 0, None).unwrap(),
             (3, 0, 0, 4, 7),
         ),
-        // Mooncake found only part of the non-RAM prefix.
+        // OrbiTE found only part of the non-RAM prefix.
         (
             TierAttribution::classify(5, 1, 3, Some(AttributionSource::Remote)).unwrap(),
             (1, 3, 0, 1, 5),

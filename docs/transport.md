@@ -1,5 +1,9 @@
 # OrbitKV transport architecture
 
+> OrbiTE is the only transfer engine. All current GPU/RDMA/GDS and installed
+> profiles require hardware re-qualification. Historical results below retain
+> their original backends and revisions; they do not qualify this data path.
+
 Prepared Save requests share the existing
 native pending owner with submitted requests. Metadata stays charged until its
 last owner drops, including caller-held completed handles; registration tensors
@@ -11,7 +15,7 @@ This document separates the inference-to-Cache-Manager channel, remote data
 movement, and replica discovery so none of them becomes an accidental second
 source of KV truth. "Same-host" describes where the client connects; the
 Cache Manager decides whether a requested block is resident in RAM, needs SSD
-prefetch, or can be fetched from a peer with Mooncake.
+prefetch, or can be fetched from a peer through OrbiTE.
 
 ## Native cleanup at shutdown
 
@@ -32,7 +36,7 @@ the mapping. Other unregister failures still abort.
 | --- | --- | --- | --- |
 | inference process to local Cache Manager | iceoryx2 requests and shared grants | raw DRAM via engine-imported payload arenas; Publish/SSD/codec via Manager CUDA IPC bindings | raw local executor integrated; qualification gates tracked separately |
 | local bootstrap and lifecycle | Unix socket with credentials and file-descriptor passing | descriptor/grant memfds, three eventfds, and GPU-registration payload arena FDs | implemented |
-| Cache Manager to Cache Manager | Mooncake P2P handshake | Mooncake BatchTransfer over RDMA/TCP | stable Mooncake runtime integrated |
+| Cache Manager to Cache Manager | OrbiTE P2P discovery and epoch fencing | OrbiTE READ/WRITE over TCP or RDMA | CPU/TCP CI evidence; GPU/RDMA profiles unqualified |
 | replica directory | soft-state network API | no KV bytes | embedded fixed shards; replication planned |
 | administration | HTTP | no KV bytes | existing |
 
@@ -49,7 +53,7 @@ lookup. Both adapters capture it when queuing their producing step. The native
 client validates the original client and generation after acquiring its worker
 lock, so a wait or late callback cannot bind a replacement registration. Each
 Publish chunk carries the captured generation; the Core owner rechecks the same
-retained instance before topology or GPU pointer binding. Matching lifecycle 12
+retained instance before topology or GPU pointer binding. Matching lifecycle 13
 and cache schema 10 artifacts remain required; retired schemas are rejected.
 
 This is registration lifetime fencing, not allocation/page generation or a
@@ -174,98 +178,17 @@ separates iceoryx2's persistent counter, shared resources and stale-node cleanup
 from a retained historical domain; unique service names alone do not. The default
 deployment still uses the dependency's standard configuration.
 
-### Native TENT failure retention
+### Physical drain
 
-The pinned TENT C ABI's `tent_free_batch()` accepts a deferred free request; its
-zero return is not an independent physical-termination acknowledgement. Native
-`FAILED`, `CANCELED`, `TIMEOUT`, `INVALID` or unknown task states do not authorize
-source release or destination reuse. OrbitKV retains the synchronous native
-call, batch descriptors and caller-owned buffers after observing one. It does
-not send source release from that call or recycle its admission slot. A wrapper
-deadline initiates best-effort cancellation and retains ownership while tasks
-remain pending; only later successful completion of every task permits return
-of the original logical failure. A native failure is not converted into success
-by a later poll or replacement transport.
+Cancellation, a deadline and a logical terminal state are not release receipts.
+OrbitKV retains grants, leases, registrations and actual backing until physical
+drain. Unknown effects are never replayed. The OrbiTE contracts below preserve
+these rules for peer, file and local transfers.
 
-Each TENT engine admits at most 1,024 batches and 32 MiB of C request descriptors
-across live and retained calls, rejecting excess before native allocation or
-submission. These limits bound descriptor memory, not the retained payload;
-physical memory remains owned by the existing pool/query/source budgets. Native
-transport failover on polling is disabled until the preceding attempt's
-termination can be established. Successful normal TCP/RDMA/CUDA transfers keep
-the existing completion path; physical-failure recovery remains unqualified.
-
-[Mooncake #4816](https://github.com/kvcache-ai/Mooncake/issues/4816) requests a
-per-transfer physical termination receipt for this retained boundary. The
-independently accepted public reproducer is OrbitKV
-[PR #237](https://github.com/OrbitInfra/OrbitKV/pull/237), merge `53e69620`: it
-pauses an admitted TCP READ, observes successful logical unregister, mutates
-still-valid source bytes and then observes the old READ consume the replacement
-payload. The control proves why unregister is not a drain; it does not simulate
-freed memory or establish CUDA/RDMA behavior.
-
-Retention is visible through `orbitkv_native_transfer_batches`,
-`orbitkv_native_transfer_request_bytes`,
-`orbitkv_native_transfer_retained_batches`,
-`orbitkv_native_transfer_retained_descriptor_bytes` and admission rejections.
-The retained descriptor-byte sum counts requested payload lengths, including
-overlapping slices; it is not a physical allocation-size gauge. Uncertain calls
-keep the owning process isolated and can prevent graceful shutdown. Retention
-does not authorize killing that process or reclaiming remote buffers. See S3 in
-the completion plan for the remaining native termination and installed gates.
-
-The source shutdown candidate closes a whole native engine's TCP admission
-before waiting for inbound pointer handlers. Handler acquisition precedes
-address resolution, and release follows synchronous CPU access. A closed gate
-never reopens; local Rust requester admission also closes, and active requester
-owners prevent a successful close. Only then does the Manager pool owner
-unregister and release its backing. Timeout, unsupported transport or error
-preserves engine, tokens and pool without an unregister/destructor retry.
-The process charges live and retained pools against 1,024 registrations of pools
-and 1 TiB registered backing. These are additional source-owner caps, not a
-change to the 1,024 batch/32 MiB request-descriptor limits or pool/query budgets.
-
-The candidate TCP wire carries a random 128-bit native engine epoch and an
-explicit success marker on READ replies. Old epochs are denied before resolving
-pointers, including after source restart; a retry cannot upgrade the request to
-a different epoch. Peers require matching candidate packages. The pinned
-upstream ABI does not provide this extension; it is not released upstream
-support. The receipt covers CPU-only/TCP-only source shutdown. It does not prove
-device/RDMA termination, close an individual transfer ticket, or permit live
-allocation/page reuse. Those paths remain retained and unqualified.
-The original packet control captured its native epoch at the first segment
-lookup and proved packet/retry fencing only. The separately accepted
-grant-epoch code adds `native_source_epoch` to transfer
-authorization. Manager captures it from its actual registered TENT owner,
-not discovery. Rust rejects missing/malformed values, refreshes the existing
-TENT descriptor before native batch allocation, and passes the same expected
-epoch into each C request. TCP requires that expectation at its first attempt
-and preserves it through retry; request merging keeps different epochs apart.
-The same-endpoint/address CPU restart gate checks stale rejection with untouched
-sentinels and exact replacement bytes for a fresh grant. Clearing the expected
-epoch is a deliberate negative control. Matching peer/native artifacts are
-required. Independent `ACCEPTED_CODE_CPU_SCOPE` at `02ab7fe3` covers this
-source-grant/first-TCP-attempt code and CPU control boundary. The decisive
-restart control establishes a healthy replacement connection, then explicitly
-rejects the old expected epoch; clearing that expectation reads all replacement
-bytes. Earlier EOF-only race evidence remains rejected. Actual installed
-Manager/server RPC, GPU and RDMA qualification remain open. This does not
-qualify allocation/page reuse, RDMA endpoint fencing or a new physical-drain
-receipt; see S3 in the completion plan and the immutable grant-epoch artifact
-root for review and hashes.
-The CPU/TCP receipt profile rejects delegated raw-pointer transfers: that
-staging API lacks a source epoch and would bypass the guarded pointer ingress.
-Ordinary CPU/TCP READ/WRITE remains available. Other transport profiles still
-cannot produce a physical receipt.
-Delegate, Pin and Unpin use the same pointer admission owner. They are refused
-before parsing in the CPU/TCP receipt profile; other profiles count accepted
-callbacks and still return unsupported physical drain. RPC readiness is
-published only after all engine initialization. Per-agent dispatch ownership
-is acquired before a handler is queued on YLT's global executor and released
-after actual callback completion. Source close shares its five-second deadline
-with dispatch drain. Native teardown joins those owned callbacks before
-stopping I/O and resetting service/transport fields; it does not stop the shared
-global executor. A queued callback keeps the source owner retained.
+The removed TENT implementation's failure controls and original revisions remain
+in the [historical ownership record](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/docs/transport.md#native-tent-failure-retention),
+including [Mooncake #4816](https://github.com/kvcache-ai/Mooncake/issues/4816).
+That TENT evidence does not qualify OrbiTE.
 
 `orbitkv-channel` uses iceoryx2 `0.10.0` and a fixed 64-byte command carrying
 protocol version, opcode, request identity, Manager epoch, descriptor offset,
@@ -290,7 +213,7 @@ size-sealed. Descriptor request/response generations advance monotonically,
 including when a slot is reused by a replacement session.
 
 After bootstrap, the persistent UDS carries epoch-checked lifecycle version
-**11** frames, with a 64 MiB metadata limit. Registration reuses protobuf metadata
+**13** frames, with a 64 MiB metadata limit. Registration reuses protobuf metadata
 without HTTP/2 or gRPC. A successful GPU registration reply also attaches
 payload arena FDs, identities, and sizes with `SCM_RIGHTS`. The engine validates
 the seals and independently maps and CUDA-registers each backing. This setup
@@ -583,152 +506,50 @@ correctness checks, not multi-host reliability or throughput measurements.
 The SGLang multi-rank and cross-host TP paths still need qualification. See
 [Python test gates](../python/tests/README.md) and the [completion plan](completion-plan.md).
 
-## Mooncake findings
+## Transfer engine
 
-Mooncake separates three responsibilities:
+OrbiTE is OrbitKV's only byte-transfer engine. The default build enables `orbite`
+and CUDA 13. `--transfer-transport auto` uses `Transport::Unspec`; `tcp` and
+`rdma` are explicit operator hints. RDMA requires `orbite-rdma` plus an explicit
+RNIC configuration. `orbite-gds` enables optional cuFile support, loaded only
+when GDS is configured. HP-TCP, SHM, NVLink, MNNVL and automatic failover remain off.
 
-1. `TransferEngine` exposes Segment, Buffer, and BatchTransfer abstractions.
-2. Transfer metadata publishes protocol, topology, registered regions, and
-   connection endpoints.
-3. Mooncake Store Master owns generic object allocation and the
-   `PROCESSING -> COMPLETE` replica lifecycle.
+The Rust dependency is pinned to
+[`1312e9b180ec9029535f8c2fb751d57c4da93b76`](https://github.com/OrbitInfra/OrbiTE/commit/1312e9b180ec9029535f8c2fb751d57c4da93b76).
+Only its Rust API is consumed. OrbitKV and OrbiTE share `cudarc` 0.19.8.
+`orbitkv-core::transfer_engine::TransferEngine` is a concrete owner for retained
+pinned/CUDA registrations, epoch-bound peer handles, file segments and stream
+bindings. The former multi-backend trait, TENT crates, native libraries and local
+copy implementations are removed. Source grants remain authoritative; engine
+registration permissions do not replace authorization.
 
-The useful transport mechanisms are:
+Peer, planning, storage and ownership code compile without backend features.
+Such a build starts no native engine; networking, SSD and local byte movement
+return typed `Unavailable` errors. GPU workers reject missing engines before
+CUDA initialization. `scripts/check-backend-features.py` confines optional native
+code to adapters and build glue. There is no local-copy fallback.
 
-- topology-aware path selection across CPU, GPU, and multiple NICs;
-- request slicing and multi-rail bandwidth aggregation;
-- on-demand endpoint creation with a bounded SIEVE endpoint pool;
-- two-phase endpoint retirement after outstanding work requests drain;
-- retry on alternate local or peer rails;
-- SHM, TCP, RDMA, EFA, NVMe-oF, and accelerator-specific backends behind one
-  BatchTransfer interface.
+OrbiTE bounds registrations to 4,096 regions and the configured pool bytes plus
+2 GiB for persistent GPU tensor/codec registrations. Peer batches admit 16,384
+descriptors and 64 MiB; outstanding work is capped at 32 batches and 64 MiB.
+Process-wide registration admission remains 1,024 pools / 1 TiB. Uncertain owners
+keep those charges. Transport slicing and pipelining belong to OrbiTE.
 
-`P2PHANDSHAKE` does not mean that Mooncake is control-plane-free. It starts a
-custom TCP socket daemon, exchanges JSON metadata and QP/MR information, and
-then uses the selected data transport. Larger deployments may instead publish
-Segment metadata through etcd, Redis, or HTTP.
+Requests carry intent, priority and the scheduler deadline. Owners survive
+cancel, timeout and Unquiesced until a separate physical-drain receipt.
+Shutdown fences both directions; failure retains engine, backing and admission.
+Remote WRITE uncertainty never permits replay. Source epochs come from grants;
+each requester opens its own `RemoteSegment`.
 
-OrbitKV pins [OrbitInfra/Mooncake](https://github.com/OrbitInfra/Mooncake/tree/85c270db5ad7b9a8a91a851e4a4c7ef684939760)
-integration commit `85c270db5ad7b9a8a91a851e4a4c7ef684939760`, based on upstream
-`v0.3.14`, and builds the TENT `tent_shared` target in
-`orbitkv-mooncake-sys` without applying build-time patches. Native
-loading first checks `ORBITKV_MOONCAKE_LIB_DIR`, then the executable or Python
-extension directory, then the local `.orbitkv/mooncake/{cuda|cpu}/lib` build cache. Wheels
-bundle `libtent_shared.so`, `libtent_metrics.so`, `libmooncake_common.so`, and
-`libasio.so`; the legacy
-`libtransfer_engine.so` is removed from staged runtimes. System
-RDMA/CUDA libraries remain deployment prerequisites.
+Real CPU/TCP controls exercise policy selection, fragmented READ/WRITE, bytes,
+cancellation, epochs, retirement and churn. Linux io_uring controls check actual
+files; CUDA-shim controls check CPU bytes and ownership only. **All current
+OrbiTE GPU, RDMA, GDS and installed profiles remain unqualified until hardware
+re-qualification.** Older TENT and OrbiTE measurements below retain their
+original revisions and do not qualify this data path.
 
-The v0.3.14 build requires CLI11 headers (`libcli11-dev`) and yalantinglibs
-`45c6463c0afbcc46262e373effa30635be3846a0` (upstream #5132). Discard the old
-native dependency cache with `cargo clean -p orbitkv-mooncake-sys` before the
-first rebuild. Metrics may stay disabled, but `libtent_metrics.so` must still
-ship. The 23 consumed C function signatures and their Rust layouts are unchanged.
-
-The fork's generic integer-returning C wrappers now preserve negative native
-codes: `-134` (`RpcConnectionError`) maps to `Unavailable` and proves the RPC
-was not sent; `-135` (`RpcUnknownEffect`) maps to `Unquiesced`; `-2`
-(`TooManyRequests`) maps to `ResourceExhausted`. File results use their separate,
-positive `TENT_FILE_*` codes. `tent_close_source` also keeps its dedicated
-physical-drain convention; its status 2 never means capacity exhaustion.
-
-`tent_terminal_result` exposes cached asynchronous native code and effect certainty.
-OrbitKV records that evidence when retaining a failed peer batch. This call does
-not progress or drain a transfer. Even a known logical outcome cannot release
-owners or authorize replay of an entire batch with successful siblings. The
-existing conservative failed-batch retention and disabled failover remain.
-The original 23 C signatures are unchanged; this integration additionally consumes
-the terminal query and six file functions through a separate TENT file engine.
-
-## Runtime transfer backend
-
-Peer authorization, query planning, transfer ownership, storage and metrics compile
-in every build. Backend feature gates are confined to native adapters and their
-module/build glue; `scripts/check-backend-features.py` checks that boundary.
-A local-only TENT configuration may omit the peer engine. Configuring networking,
-SSD or OrbiTE without its compiled provider returns `Unavailable` before backend
-initialization. RDMA CLI/config fields are available in every build; using them
-still requires the `orbite-rdma` feature. No-backend CI checks strict Clippy, shared
-ownership controls and that local storage loads no native transfer library.
-
-The selected backend travels with instance and worker creation. A missing or
-mismatched OrbiTE engine fails before CUDA setup, including local-only mode;
-only a TENT selection may bind the built-in local-copy implementation without a
-peer engine. This refactor changes no wire or lifecycle version.
-
-`orbitkv-core::transfer_engine::TransferBackend` is the consumed peer, file and local transfer
-boundary: retained pinned/CUDA registrations, explicit unregister, epoch-bound
-peer open, READ/WRITE batches with an absolute deadline and cancellation, typed
-errors, and irreversible shutdown/drain. The existing `--peer-transfer-backend`
-selects TENT (`mooncake`, default) or OrbiTE (`orbite`) at startup.
-`orbite-tcp` and `orbite-rdma` are explicit operator transport hints.
-Both implementations can be compiled together. Missing features fail before
-Manager CUDA initialization. No fallback crosses the engine boundary.
-WRITE is available at the byte-transfer boundary; this does not implement cache
-replication or authorize writes to immutable source grants.
-OrbiTE enforces registration permissions; TENT retains its existing whole-pool
-registration because the pinned C ABI has no per-range permission argument.
-OrbitKV source grants remain authoritative for peer access in both profiles.
-
-The lower-level `orbitkv-transfer` raw Rust submit methods are unsafe: callers
-retain registered backing and exclude conflicting accesses until physical drain.
-Timeout and cancellation do not shorten that obligation. The core backend
-adapter supplies these owners and loans; this changes no wire or drain receipt.
-
-OrbiTE is pinned to
-[`2e50af25007ca9681912ba5175109d09488a8f99`](https://github.com/OrbitInfra/OrbiTE/commit/2e50af25007ca9681912ba5175109d09488a8f99).
-Run the same OrbitKV build on both peers.
-The `orbite` mode uses `Transport::Unspec` and the engine selector chooses from
-enabled providers; TCP is enabled and RDMA requires an explicit device config.
-An explicit `orbite-tcp` or `orbite-rdma` selection pins that request transport.
-The endpoint scheme (`orbite://`, `orbite+tcp://`, `orbite+rdma://`) identifies
-the source configuration; all three use the same OrbiTE handshake. The requester
-keeps its own transport hint and opens its own `RemoteSegment`. Requests carry
-an absolute deadline, and automatic failover remains disabled. HP-TCP, SHM, NVLink, MNNVL and remote CUDA
-staging are disabled, including when `MC_ENABLE_MNNVL` is set in the environment.
-`orbite` enables CUDA registration and `io-uring`; `orbite-rdma`
-additionally enables RDMA. `orbite-gds` separately enables the runtime-loaded
-cuFile transport. Native metrics remain off; existing OrbitKV metrics are the
-reporting surface. The Manager inherits the RDMA defaults: signal every
-payload WR and cap initiator/responder READ depth at 16, clamped to the local
-HCA. The optional `rdma-adaptive` feature remains disabled.
-
-The OrbiTE profile bounds registrations to 4,096 regions and the configured
-pool bytes plus 2 GiB for persistent GPU tensor and codec registrations, submissions to 16,384 descriptors and 64 MiB, and outstanding work
-to 32 batches and 64 MiB. Each descriptor may cover up to 64 MiB; transport
-slicing belongs to the engine. TENT retains its native batch/descriptor budgets and caps
-cached peer segments at 1,024. Process-wide registered owners retain their
-1,024-pool/1 TiB admission even after failed shutdown. The CUDA registration
-contract requires the actual allocation and CUDA context owner, completed
-producers and coordinated aliases. Local stream ordering uses the separate
-completion contract below.
-
-A cancellation only requests termination. An expired wait with active physical
-owners returns `Unquiesced`; registrations, source tickets and destination
-allocations remain retained. A logical timeout permits release only after drain
-was independently established. Unknown remote WRITE effects likewise retain
-ownership and are never replayed. OrbiTE submission reports provide additive
-byte totals; merged public task counters are not summed. Source epochs always
-come from the authoritative grant. Shutdown fences both directions; failure
-retains engine/backing/admission. TENT still holds its blocking owner when the
-pinned C ABI cannot prove termination; its metadata open has no interruptible
-deadline API, so the wrapper checks the deadline before and after that call.
-
-OrbitKV and OrbiTE share registry `cudarc` 0.19.8 in `Cargo.lock`. OrbiTE's
-compatible dependency range accepts OrbitKV's regenerated bindings, so no
-separate Git dependency identity is needed. Only raw addresses and retained
-owners cross the boundary; OrbiTE source is not patched.
-
-The CPU gate `peer::orbite::tests::cpu_auto_backend_reads_and_writes_fragmented_bytes_and_drains`
-uses real TCP, two engines, fragmented/merged READ and WRITE, byte guards,
-pre-submit cancellation/deadlines, unregister and normal drain. CI runs the
-existing peer suite with TENT, OrbiTE and both features using an explicitly
-labelled CPU host-registration shim. That shim exercises ownership, not CUDA.
-The existing epoch-restart and isolated unquiesced-completion tests remain gates.
-GPU, RDMA, GDS, installed serving and cross-host operation at the new revision
-remain unqualified; historical results below apply only to their recorded pins.
-
-Local GPU↔DRAM copies use the selected backend's [local-copy implementation](#local-gpudram-copies).
+The [TENT implementation and native provenance](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/docs/transport.md#mooncake-findings)
+are historical. No Mooncake fork or OrbiTE C ABI is loaded by this build.
 
 ## Peer restore into GPU
 
@@ -736,7 +557,7 @@ Demand and WaitForFullPrefix peer queries return immutable source descriptors an
 retain the authorization ticket; they allocate no requester pinned payloads.
 Restore binds the descriptors to the registered layer/page layout, including
 split K/V and sparse block destinations, and submits READs to the selected
-`TransferBackend`. Raw bytes land in the final GPU pages. Encoded bytes land in
+`TransferEngine`. Raw bytes land in the final GPU pages. Encoded bytes land in
 GPU codec input allocations; OrbitKV retains representation checks and GPU
 decode compute. Exact siblings go directly to their final pages. Peer ranges
 never enter OrbitKV's pinned-pool/H2D restore path.
@@ -779,26 +600,24 @@ instance drain fails; no client receipt permits page reuse.
 OrbiTE owns bounded CUDA staging for TCP and, by default, RDMA.
 `--orbite-rdma-gpu-direct` selects strict Direct CUDA registration and requires
 `MLX5_SCATTER_TO_CQE=0` before startup; failure never silently stages or replays.
-TENT uses its existing CUDA registration and READ API. No upstream API addition
-is needed for B; TENT's interruptible-open/drain limitation above remains.
+
 
 CPU controls drive the production planner, submission and lifetime owners with
 host backing: eight restores register once and never unregister before tensor
 release; an 18 MiB, two-range restore submits once with full byte and guard checks.
 They also cover input-pool reuse, batch limits, layouts/codec bounds, source
 fences, concurrent release, failed cleanup, unwinds and unknown drain. CI runs
-these under TENT, OrbiTE and both feature sets. These controls do not qualify
+these with OrbiTE and the no-backend ownership controls. These controls do not qualify
 CUDA/RDMA. `peer_gpu_restore` cost samples stay separate from H2D and HostReady.
 
 Installed GPU byte gates are written, compiled and **unrun**. With CUDA 13,
 `ETCD_BIN`, isolated test-owned peers and external artifact paths configured:
 
 ```bash
-cargo test --locked -p orbitkv-server --lib cluster::tests::p2p_mooncake::p2p_mooncake_remote_fetch_roundtrip -- --exact --ignored --nocapture
-cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbite --lib cluster::tests::p2p_mooncake::p2p_orbite_remote_fetch_roundtrip -- --exact --ignored --nocapture
-cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbite-rdma --lib cluster::tests::p2p_mooncake::p2p_orbite_rdma_remote_fetch_roundtrip -- --exact --ignored --nocapture
-cargo test --locked -p orbitkv-server --lib cluster::tests::p2p_mooncake::encoded_peer_payloads_restore_the_same_gpu_image -- --exact --ignored --nocapture
-cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbite --lib cluster::tests::p2p_mooncake::orbite_encoded_peer_gpu_restore -- --exact --ignored --nocapture
+cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbite --lib cluster::tests::p2p_orbite::p2p_orbite_remote_fetch_roundtrip -- --exact --ignored --nocapture
+cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbite-rdma --lib cluster::tests::p2p_orbite::p2p_orbite_rdma_remote_fetch_roundtrip -- --exact --ignored --nocapture
+cargo test --locked -p orbitkv-server --lib cluster::tests::p2p_orbite::encoded_peer_payloads_restore_the_same_gpu_image -- --exact --ignored --nocapture
+cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbite --lib cluster::tests::p2p_orbite::orbite_encoded_peer_gpu_restore -- --exact --ignored --nocapture
 ```
 
 The RDMA gate additionally requires `ORBITKV_TEST_ORBITE_RDMA_DEVICE`,
@@ -832,18 +651,15 @@ Peer gRPC carries foreground/background intent and the remaining read budget in
 milliseconds. A source caps that relative budget at 30 seconds for materializing
 its SSD export; the requester still enforces its original absolute deadline.
 This does not assume synchronized host clocks. A missing/zero budget is rejected.
-Upgrade all peers together; lifecycle 12 also requires matching clients and
-Managers and rejects lifecycle 11.
+Upgrade all peers together; lifecycle 13 requires matching clients and
+Managers and rejects lifecycle 12. The registration reply no longer selects an engine.
 
 OrbiTE receives all three fields on peer and file requests. `--ssd-backend auto`
 uses Unspec file selection; explicit io_uring/GDS choices remain hints. Only
-configured providers are enabled, so auto does not load cuFile. TENT's peer C
-requests carry High=0 / Low=2 priority. Its pinned C API exposes neither intent
-nor a scheduler deadline, and its file API exposes no priority/intent. TENT keeps
-its existing wrapper deadline/cancel/drain behavior. Local stream copies have
-no QoS fields in either consumed API and retain caller-stream ordering.
+configured providers are enabled, so auto does not load cuFile. Local stream copies have
+no QoS fields in the consumed API and retain caller-stream ordering.
 
-CPU/TCP priorities are advisory. Neither consumed engine API exposes per-priority
+CPU/TCP priorities are advisory. The consumed engine API does not expose per-priority
 CPU queue/dispatch statistics, so the CPU tests prove field mapping, policy
 consumption and real bytes, not foreground-before-background service. RDMA
 priority ordering and serving improvements require installed hardware controls.
@@ -852,8 +668,7 @@ quietly selecting the same route.
 
 OrbiTE RDMA NIC load is read from `nic_load_stats` and exported as
 `orbitkv_orbite_nic_inflight_bytes` and
-`orbitkv_orbite_nic_bandwidth_bytes_per_second`, alongside the existing TENT NIC
-snapshots. These aggregate engine statistics cannot replace the cost module's
+`orbitkv_orbite_nic_bandwidth_bytes_per_second`. These aggregate engine statistics cannot replace the cost module's
 per-KV-path latency samples. Codec, SSD and restore observations remain; replacing
 pure transfer-leg latency estimates needs a per-transfer engine timing API and
 is a follow-up.
@@ -886,12 +701,7 @@ receipt. A successful whole-engine shutdown supplies a physical receipt too.
 A fresh identity uses the new epoch from the authoritative source grant; stale
 grants remain fenced and Describe rejects a mismatched native source epoch.
 
-TENT's `closeSegment` remains reversible handle invalidation, unlike OrbiTE's
-native admission fence. OrbitKV revokes scheduling first and waits for its
-wrapper operations to drain before invalidating the cached TENT handle. A later
-authoritative open may recreate it. A failed close leaves a charged tombstone;
-neither another open nor Drop retries uncertain cleanup. Ticket release and RPC
-acknowledgement retries retain their existing independent completion ownership.
+Ticket release and RPC acknowledgement retries retain their independent completion ownership.
 
 CPU/TCP controls hold an actual reply while membership removes the peer, verify
 source pins and destination owners survive the retirement timeout, and finish
@@ -908,15 +718,9 @@ SSD flush waits for logical write outcomes. It does not promise fsync durability
 or prove physical drain of failed operations. Only complete successful writes
 become index-visible.
 
-Every SSD byte transfer goes through the selected backend. OrbiTE uses its
-file segments; TENT uses `tent_create_engine_with_files`, `tent_file_open`,
-`tent_file_submitv`, `tent_file_drain`, `tent_file_release_batch` and
-`tent_file_close`. TENT's file engine is separate from its peer engine, where
-file transports remain disabled to preserve the CPU/TCP source-drain contract.
-Standalone SSD creates the selected backend even without cluster membership.
+Every SSD byte transfer uses OrbiTE file segments, including local-only deployments.
 The native OrbitKV io_uring/cuFile owners and `--ssd-io-engine` switch are removed.
-Missing engine file support fails initialization. Failure after submission never
-switches engines or replays a WRITE.
+Failure after submission never selects a different engine or replays a WRITE.
 
 OrbitKV still creates/truncates and sizes the shards, owns placement, eviction,
 logical ring extents, encoding metadata and index publication. The engine sees
@@ -927,15 +731,11 @@ Offsets are byte offsets from file base zero. Whole host extents preserve
 may be unaligned. Layout holes and tails are `Padding` elements: WRITE emits
 zeros and READ discards file bytes without a local allocation.
 
-For either backend, `--ssd-backend uring` uses host materialization; `auto`
-additionally permits GPU destinations through engine-owned CUDA staging and
-io_uring. `cufile` requests native-only GDS. OrbiTE requires `orbite-gds`;
-TENT requires a native CUDA build with the cuFile headers and library detected by
-CMake. The default wheel toolchain does not install the GDS SDK. OrbiTE rejects explicit GDS
-requests with padding. TENT supports padded GPU vectors through engine-owned
-GDS staging, with 4 KiB-aligned extents. Neither silently changes to io_uring.
-The `cufile` read-route spelling selects a GPU destination, while the engine
-owns how bytes reach it. Local GPU↔DRAM migration remains a separate step.
+`--ssd-backend uring` uses host materialization; `auto` additionally permits GPU
+destinations through OrbiTE-owned CUDA staging and io_uring. `cufile` requests
+native-only GDS and requires `orbite-gds`; padded vectors explicitly return
+Unavailable for GDS. This does not silently select io_uring. The `cufile` read
+route selects a GPU destination; OrbiTE owns how bytes reach it.
 
 OrbiTE receives **one `TransferRequest::file_vectored` per extent**, including
 its padding. It owns gather/scatter and storage staging; OrbitKV has no GPU
@@ -952,69 +752,38 @@ Each store admits at most 32 file operations, including queued and retained work
 Each vector is capped at 64 MiB and **1,024 elements including padding**, with a
 30-second deadline. Two file receipts per GPU worker, at most one WRITE, bound
 its active work. Repeated file ranges targeting different GPU destinations
-require separate vectors: neither API expresses fan-out in one vector. Raw reads
+require separate vectors: the API does not express fan-out in one vector. Raw reads
 are grouped by immutable extent generation, never across source generations.
-There are at most 256 shards (128 with TENT GDS, which reserves two handles per
-shard); SSD queue/inflight settings must be 1–1,024. Unknown drain or failed
+There are at most 256 shards; SSD queue/inflight settings must be 1–1,024. Unknown drain or failed
 unregister retains the exact fd, engine, registration, backing, extent lease and
 admission until process exit. A failed WRITE stays unpublished and cannot be
 evicted or overwritten. `orbitkv_ssd_engine_retained_operations_total` records
 such retention. A failed or short READ never becomes a cache hit.
 
-TENT uses `tent_file_submitv` with RANGE/PADDING elements and native retain/release
-callbacks on its **separate file engine**. Only `drained == 1`, followed by
-successful batch release, permits owner destruction. Cancel, deadline, a dropped
-receiver and logical terminal status do not. Cleanup is never retried. A retained
-file or receipt prevents successful shutdown.
-
-The fork at `1198515dc7d4b234a990ae7d8919f13e4404e585` owns padded and
-unaligned vectors. `peer/transport/file.rs` and its host/device scratch, zero-fill
-and private copy stream are deleted. TENT stages at most 4 MiB per window, within
-its 64 MiB per-file-engine staging budget; native GDS charges both host zero-fill
-and GPU windows. Its rings have depth 32 and CUDA pinned staging has four 16 MiB
-slots. Unknown drain retains native staging and charges as well as OrbitKV's
-actual backing and admission. The receipt counts the completed file prefix,
-including padding; short READs scatter only that prefix. No WRITE is replayed.
-
-TENT uses buffered io_uring for extents not aligned to 4 KiB, and direct I/O for
-aligned extents when the filesystem supports it. OrbitKV preserves its 512-byte
-host/4 KiB GPU extent constraints. Dependent or overlapping accesses wait for
-successful full-byte physical drain; ext4/XFS direct-I/O page-cache coherence
-makes sequential buffered/direct batches visible without a consumer fsync.
-This is visibility, not a durability guarantee or cross-batch range lock.
+OrbiTE owns padded/unaligned staging. Only a physical receipt permits owner
+destruction. Cancel, deadline, receiver loss and logical terminal status do not.
+Cleanup is never retried after uncertainty. The file prefix includes padding;
+a short READ is not a cache hit.
 
 `storage/ssd/gpu.rs` is deleted. SSD reader/writer code plans layouts, manages
 queues/leases and publishes metadata; file bytes move through the selected
 engine. All-padded extents are legal and need no consumer-owned buffer.
 
-CI requires real Linux io_uring and real file bytes, with an explicitly labelled
-CPU host-registration shim. Its TENT source-drain control requires `MC_FORCE_TCP=1`
-with `MC_TENT_CONF` unset before startup, so an RDMA device on the runner cannot
-change that CPU/TCP profile; the separate file engine still uses io_uring.
-Conflicting configuration returns an error. OrbitKV no longer temporarily
-mutates process environment; explicit NIC whitelists use the fork's thread-local
-configuration. The file controls cover sharded raw/encoded metadata, extent
-leases, padded/odd-sized vectors above 4 MiB, all-padding extents, explicit GDS
-unconfigured GDS rejection, alignment and truncated-file errors, cancellation before submission,
-detached completion, and retained owners after injected uncertainty. TENT callback
-controls also cover short receipts, failed release/close and shutdown retention. The latter are ownership controls, not simulated storage qualification.
-The same file gate runs for both engines on ext4 and tmpfs, requiring
-`ORBITKV_SSD_TEST_FS=ext4|tmpfs` and checking the actual filesystem. The ext4
-vector control also requires an engine-owned O_DIRECT descriptor. Truncation
-checks cover EOF inside padding and data: TENT scatters only the completed
-prefix; OrbiTE rejects the shortened file before touching the destination. GPU/CUDA staging,
-GDS and installed serving remain unqualified. Source GPU byte gates are written
-in `crates/orbitkv-core/tests/ssd_engine.rs` and have not been run:
+CI requires real Linux io_uring and real bytes, with a labelled CPU host-pin
+shim. Controls cover raw/encoded shards, leases, padded and odd vectors above
+4 MiB, all-padding extents, unconfigured GDS rejection, alignment, truncation,
+pre-submit cancellation, detached completion and uncertain receipts. The latter
+uses a receipt-only fault seam because normal file I/O cannot produce a lying
+or missing physical receipt. Engine creation, backing and files remain real.
+Both ext4 and tmpfs runs verify the filesystem type; ext4 additionally verifies
+an engine-owned O_DIRECT descriptor. EOF within padding or data is rejected
+before touching the destination. GPU/CUDA staging, GDS and installed serving
+remain unqualified. Source hardware gates are written but unrun:
 
 ```bash
-ORBITKV_SSD_TEST_ENGINE=orbite ORBITKV_SSD_TEST_ROOT=/path/to/test-owned/ssd cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --test ssd_engine -- --ignored --exact cuda_staged_file_roundtrip --test-threads=1
-ORBITKV_SSD_TEST_ENGINE=orbite ORBITKV_SSD_TEST_ROOT=/path/to/test-owned/ssd cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --test ssd_engine -- --ignored --exact native_gds_file_roundtrip --test-threads=1
+ORBITKV_SSD_TEST_ROOT=/path/to/test-owned/ssd cargo test --locked -p orbitkv-core --test ssd_engine -- --ignored --exact cuda_staged_file_roundtrip --test-threads=1
+ORBITKV_SSD_TEST_ROOT=/path/to/test-owned/ssd cargo test --locked -p orbitkv-core --features orbite-gds --test ssd_engine -- --ignored --exact native_gds_file_roundtrip --test-threads=1
 ```
-
-For TENT, use `ORBITKV_SSD_TEST_ENGINE=tent` and `--features cuda-13,mooncake`
-with the same two tests. Its padded native-GDS gate additionally runs
-`--ignored --exact tent_native_gds_padded_file_roundtrip --test-threads=1`.
-These source gates are written, not hardware evidence.
 
 Native GDS qualification also requires cuFile/nvidia-fs route evidence from that
 same installed run; configuration and successful bytes alone do not prove the
@@ -1025,16 +794,12 @@ eligible file submission; a missing runtime SDK fails that request.
 
 ## Local GPU↔DRAM copies
 
-The selected engine also owns local payload movement in Manager Publish/Restore,
-codec payload uploads/downloads, mixed SSD jobs, and the native client's raw DRAM
-Restore. `TransferBackend::bind_local` binds once to each worker stream using a
-persistent tensor registration. TENT uses OrbitKV's existing MemcpyBackend and
-KernelBackend behind this method. OrbiTE uses `cuda::local_copy::LocalCopyEngine`;
-its path never constructs or calls either OrbitKV copy implementation. Existing
-`direct`/`kernel` instance choices map to OrbiTE DMA/kernel selection. Rust callers
-must supply owned tensor registrations for OrbiTE; unowned layouts fail binding.
-The native TENT helper trait is named `TentCopy`; `TransferBackend` is the shared
-engine boundary.
+OrbiTE owns local payload movement in Manager Publish/Restore, codec payload
+uploads/downloads, mixed SSD jobs and the native client's raw DRAM Restore.
+`TransferEngine::bind_local` binds `cuda::local_copy::LocalCopyEngine` once per
+worker stream with a persistent tensor registration. OrbitKV's MemcpyBackend,
+KernelBackend and TentLocalCopy are deleted. `direct`/`kernel` instance choices
+map to OrbiTE DMA/kernel selection. Unowned layouts fail binding.
 
 OrbitKV supplies checked block/layer ranges. OrbiTE compiles contiguous and
 strided rows and owns descriptor uploads, copy kernels, events and DMA. A worker
@@ -1054,8 +819,8 @@ tensor so it cannot retain an obsolete codec arena. CPU decode writes into a
 charged pinned output slot. Codec kernels, descriptor/codebook uploads and status
 readback remain codec compute; they do not implement payload transport.
 
-Lifecycle **12** returns the Manager's selected engine with the registration
-receipt, requiring matching client/Manager artifacts. The client registers its
+Lifecycle **13** removes the selected-engine field from the registration receipt.
+Clients and Managers must upgrade together; version 12 is rejected. The client registers its
 actual retained tensor exporters and imported arena pins once. It records each
 framework layer event after that layer's engine submission and holds native
 completions through the whole-operation drain before publishing `Drained`.
@@ -1079,17 +844,15 @@ profile, run:
 ```sh
 ORBITKV_TEST_INSTALLED_ORBITE=1 ORBITKV_TEST_STRICT_SHUTDOWN=1 \
   python -m pytest -m release_smoke tests/release/test_installed_orbite.py \
-  -k orbite-tcp
+  -k tcp
 ```
 
 This gate remains unrun for this revision. GPU, RDMA, GDS, serving and fault
-qualification remain separate. The git dependency uses the `orbite` crate and imports, with `orbite`,
-`orbite-rdma` and `orbite-gds` features. Lifecycle 12 adds the automatic `orbite` selection to the existing explicit
-`orbite-tcp`/`orbite-rdma` hints; pre-release clients and Managers must
-upgrade together. Peer endpoints use `orbite://`, `orbite+tcp://` or `orbite+rdma://`;
+qualification remain open for the current pin. The git dependency uses the `orbite` crate and imports, with `orbite`,
+`orbite-rdma` and `orbite-gds` features. Lifecycle 13 requires matching client and Manager packages. Peer endpoints use `orbite://`, `orbite+tcp://` or `orbite+rdma://`;
 run matching builds across the cluster. No old-name aliases are accepted.
 
-## Experimental OrbiTE allocation bridge
+## Historical OrbiTE allocation bridge
 
 The opt-in `orbitkv-core/orbite` feature pins
 [OrbiTE `2e50af25`](https://github.com/OrbitInfra/OrbiTE/commit/2e50af25007ca9681912ba5175109d09488a8f99).
@@ -1136,18 +899,10 @@ crash recovery from a TCP ownership gate.
 
 ## Experimental OrbiTE peer TCP profile
 
-An opt-in `orbite` build can select `--peer-transfer-backend orbite-tcp`.
-The default remains `mooncake`. Build the standalone Rust payload path with:
-
-```sh
-cargo build --locked -p orbitkv-server --no-default-features --features cuda-13,orbite
-```
-
-Shared discovery, planning, authorization and completion compile when either
-`mooncake` or `orbite` selects a payload transport. The standalone profile does
-not compile or load Mooncake. It still needs OrbitKV's ordinary CUDA/Python
-prerequisites; this is an experimental source profile, not an installed wheel
-or serving qualification. Select one provider across the tested cluster.
+OrbiTE TCP is compiled by default. Select `--transfer-transport tcp` to pin TCP,
+or leave `auto` for engine policy. The `orbite-rdma` feature additionally enables
+RDMA. CPU/TCP CI evidence does not qualify installed serving or GPU transfers.
+Run matching builds across peers.
 
 Manager still authorizes residency and holds generation-scoped gRPC tickets.
 The OrbiTE source registers the actual allocations of each accepted grant and
@@ -1166,7 +921,7 @@ shutdown fences admission even if requester drain fails; failed cleanup retains
 its engine and process pool budget.
 
 This TCP profile requires a concrete numeric advertised IP and has no RDMA NIC
-filter. It uses the [runtime registration and batch limits](#runtime-transfer-backend).
+filter. It uses the [runtime registration and batch limits](#transfer-engine).
 A source registration or READ exceeding those limits is rejected before payload
 I/O; GPU restore plans partition larger requests into bounded batches without
 reregistering. Use bounded source grants. Whole-pool MR caching, multirail,
@@ -1186,7 +941,7 @@ cargo test --locked -p orbitkv-core --features orbite --lib \
   -- --exact --ignored --test-threads=1
 ETCD_BIN=/path/to/etcd ORBITKV_METADATA_ARTIFACT_DIR=/var/tmp/orbitkv-peer-gate \
   cargo test --locked -p orbitkv-server --features orbite --lib \
-  cluster::tests::p2p_mooncake::p2p_orbite_remote_fetch_roundtrip \
+  cluster::tests::p2p_orbite::p2p_orbite_remote_fetch_roundtrip \
   -- --exact --ignored --test-threads=1
 ```
 
@@ -1217,18 +972,18 @@ CC=gcc CXX=g++ cargo build --locked -p orbitkv-server --no-default-features \
   --features cuda-13,orbite-rdma
 ```
 
-Select `--peer-transfer-backend orbite-rdma --orbite-rdma-device mlx5_0
+Select `--transfer-transport rdma --orbite-rdma-device mlx5_0
 --orbite-rdma-port 1 --orbite-rdma-gid-index 3` alongside the ordinary
 membership/peer flags. Device/port/GID must match the actual RNIC and route;
 these values describe the supplied RoCE test profile, not device discovery.
-The device is required. The Mooncake `--nics` filter is rejected. Rust users
+The device is required. Rust users
 set `EngineConfig.orbite_rdma` with the re-exported `OrbiteRdmaConfig`.
-The default provider remains TENT; the `orbite` feature alone does not enable RDMA.
+The default `orbite` feature does not enable RDMA.
 
 The provider advertises `orbite+rdma://IP:port` and fixes every payload request
 to `Transport::Rdma`. Metadata, descriptor bootstrap and DONE/ACK use TCP;
 payload bytes use RC verbs and private host staging. An unavailable device,
-source or build feature returns an error without selecting TCP or TENT payloads.
+source or build feature returns an error without silently selecting TCP payloads.
 Device availability is checked when the first native endpoint opens, not by
 successful metadata lookup. A TCP namespace cannot authorize this provider.
 The pinned allocation, grant epoch, registration references, cancellation owner
@@ -1291,7 +1046,7 @@ ORBITKV_TEST_ORBITE_RDMA_DEVICE=mlx5_0 ORBITKV_TEST_ORBITE_RDMA_PORT=1 \
 ORBITKV_TEST_ORBITE_RDMA_GID_INDEX=3 \
   cargo test --locked -p orbitkv-server --no-default-features \
   --features cuda-13,orbite-rdma --lib \
-  cluster::tests::p2p_mooncake::p2p_orbite_rdma_remote_fetch_roundtrip \
+  cluster::tests::p2p_orbite::p2p_orbite_rdma_remote_fetch_roundtrip \
   -- --exact --ignored --test-threads=1
 ```
 
@@ -1321,9 +1076,12 @@ loader, resource and independent-review evidence linked from
 B-node GPU computation remains untested while its canonical GPU leases are busy.
 That embedded profile does not qualify installed CUDA IPC. The separate
 installed profile follows below. Installed serving, physical cross-host
-Manager/GPU, RNIC faults, GDR and full TENT parity remain open.
+At that revision, Manager/GPU, RNIC faults and GDR remained open. The former
+TENT-parity qualification requirement is retired.
 
 ### Installed client and Manager profile
+
+**Historical evidence at the revisions below. It does not qualify the current OrbiTE path.**
 
 [PR #307](https://github.com/OrbitInfra/OrbitKV/pull/307), source `eb1cc90f`, adds
 complete optional wheels and a maintained two-Manager installed gate. Independent
@@ -1371,132 +1129,22 @@ and independent review are outside the checkout at
 DRAM Restore uses the client's local H2D executor; CUDA IPC is exercised by
 registration and Publish. This scoped gate does not qualify Manager IPC Restore,
 inference serving, physical cross-host Manager/GPU, RNIC faults, GDR, multirail
-or complete TENT parity. A uniform installed CUDA 13.1 runtime remains open;
+or broader hardware profiles. A uniform installed CUDA 13.1 runtime remains open;
 the separately accepted CUDA 13.1 embedded/source profile above is unchanged.
 
-## What OrbitKV reuses
+## Historical TENT implementation
 
-The default `orbitkv-transfer::TransferEngine` is a narrow wrapper over the pinned upstream
-Mooncake TENT C ABI. There is no legacy runtime selector and no OrbitKV-owned verbs
-implementation. Authorized plans are lowered directly to Mooncake Segment
-addresses, BatchTransfer operations, and notifications.
-
-Memory registration returns a `MemoryRegistration` token. Its nonconsuming
-`try_unregister` keeps the retry handle and TransferEngine after an error; a
-successful call marks the token inactive. Drop the inactive token when its
-engine reference is no longer needed. Token destruction still attempts cleanup
-on a best-effort basis and cannot report failure or prove native drain.
-The token does not own the allocation itself: retain the actual backing and
-token while explicit cleanup is unresolved. The current host pool remains
-beside its tokens in `MooncakeTransport`, whose owner requires a source-close
-receipt before unregistering and retains the pool and engine on failure.
-The experimental Python TENT API uses `register_memory([memoryview(buffer)])`
-for nonempty writable contiguous byte views of built-in `bytearray` storage.
-It retains an actual buffer export, preventing view release and backing resize,
-and returns the registered addresses. Registration attempts become owned before
-entering native code, including a failed call that returns no token. Local
-READ/WRITE slices must fit a successfully registered range; cleanup serializes
-with synchronous transfers. Caller writes must still be ordered after transfers.
-
-`close()` retires the whole source, requires a successful source-drain receipt,
-then unregisters every attempt before releasing exports. An error preserves
-the successful prefix, failed range, engine and charged backing for an explicit
-retry. GC does not retry a preceding failure; it retains that owner until process
-exit. The current native receipt profile supports CPU-only TENT/TCP. CUDA builds
-or other loaded transports reject close, so this API does not qualify physical
-GPU/RDMA termination or reclamation.
-
-The separately named `register_memory_borrowed(regions)` accepts raw CPU/GPU
-pointers for existing experiments. It does **not** retain allocations: callers
-must keep their actual backing through registration errors, unknown completion,
-cleanup failure and engine GC. Its explicit `unregister_memory(addresses)` is
-logical registration cleanup, not a physical drain receipt. Owned and borrowed
-registrations cannot share an engine. The installed TCP gate isolates borrowed
-calls in a child that exits without Python teardown on an unknown failure; this
-does not establish safe device reuse after process exit.
-
-Python live and retained owners share a process cap of 1,024 regions and 1 TiB.
-Owned views charge each complete bytearray allocation, including capacity; aliases
-are conservatively charged again. Borrowed pointers can charge only their declared
-ranges. `MooncakeTransferEngine.memory_usage()` returns region count, charged
-bytes and retained-engine count. These diagnostics are not completion receipts
-and are separate from the Core source-pool budget.
-A future engine-HBM export must similarly keep its page-generation grant beside
-the token, using Mooncake's `cuda:N` location, until native completion drains.
-The current C ABI does not report the data transport actually selected for a
-batch, so OrbitKV does not infer TCP/RDMA/GPUDirect from `--nics` or success;
-qualification records Mooncake logs and NIC/device counters externally.
-
-TENT task cancellation is best effort. OrbitKV requests cancellation after a
-deadline or partial submit and continues polling. It calls `tent_free_batch`
-only after every task reports `COMPLETED`; a successful free request is not a
-completion fence. A native non-completed terminal or unknown status retains the
-call and its source/destination buffers, as described in
-[native failure retention](#native-tent-failure-retention).
-After every task completes, the call returns the first recorded submission,
-polling or cancellation error. It returns `Timeout` only when no such error was
-recorded and the logical deadline expired.
-
-OrbitKV also exposes TENT's bounded NIC load snapshot: device name, in-flight
-bytes and EWMA bandwidth. This is live rail-pressure evidence, not a per-batch
-transport receipt. P/D may use the aggregate for diagnostics, while shared-cache
-qualification still checks external NIC counters before claiming RDMA or
-GPUDirect.
-
-The runtime loader resolves only `tent_*` symbols from `libtent_shared.so`.
-CPU and CUDA variants are built separately from the same pinned source; the
-CUDA variant includes CUDA/GDS/NVLink-capable TENT components. Missing TENT
-artifacts fail startup and never fall back to `libtransfer_engine.so`.
-
-### TENT versus the legacy Transfer Engine
-
-The important change is the execution contract, not just a renamed shared
-library. TENT exposes one segment and batch model across CPU, CUDA, file and
-network-capable transports; extended registration carries memory location and
-permission, while topology and rail selection remain inside Mooncake. Its C ABI
-also exposes per-task terminal status, cancellation, notifications and NIC-load
-snapshots. OrbitKV retains each allocation while the exact batch lacks completion
-evidence and can feed live resource pressure into planning without owning an
-RDMA implementation. Native failure statuses do not establish physical drain.
-
-The legacy wrapper primarily exposed submit/poll/free around the older
-TransferEngine object. In particular, freeing its batch handle was too easy to
-misread as a completion fence, and its Python integrations commonly held only
-raw addresses rather than registration owners. OrbitKV's TENT path instead
-uses Rust RAII registration tokens and cancellation with completion or retained
-ownership. This does not make every transfer automatically faster: HBM-to-HBM speed still
-depends on the selected transport, topology, registration cost and chunking.
-It does make the ownership and observability needed for safe high-performance
-selection explicit. Because the current C ABI has no per-batch transport
-receipt, RDMA or GPUDirect must still be proven with runtime logs and hardware
-counters rather than inferred from a successful call.
-
-TENT implements a real peer probe internally, but the pinned stable C ABI does
-not export it. `tent_available` reports only local-engine health, and segment
-metadata can remain thread-locally cached for an hour, so neither is a valid
-substitute. OrbitKV therefore rejects SGLang's optional failed-session probe
-mode instead of allowing a false-positive unblacklist. A failed native batch
-keeps its caller and source-completion owner held; it does not return to
-invalidate a cached peer segment while physical termination remains unproven.
-
-OrbitKV does not adopt Mooncake Store Master as its semantic authority. Today
-the cache engine handles versioned model/storage keys and leases above Mooncake.
-The common recovery plan additionally includes:
-
-- validated `StateDescriptor`, `StateBundle`, and `RecoveryContract` evidence;
-- replica selection and restore-versus-recompute planning;
-- query leases and generation validation;
-- semantic and execution frontiers;
-- publication only after every required component is complete.
-
-The current Catalog advertises candidate owners, not durable KV data or
-permanent raw addresses/rkeys. A selected source authorizes and pins current
-bytes before transfer. Fixed shards and owner replay are implemented; directory replication is future work.
+TENT is removed, including its C wrapper, Python API, separate file engine,
+status mapping and built-in copy code. Its [original contracts and source pins](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/docs/transport.md#what-orbitkv-reuses)
+and [registration failure controls](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/docs/transport.md#native-registration-error-control)
+remain immutable historical evidence. They do not qualify OrbiTE.
+Confirmed upstream defects should receive an issue promptly and a focused fix
+PR when the cause is clear; OrbitKV does not duplicate a competing transport.
 
 ## Remote operation choice
 
-- current demand-driven remote cache reuse uses Mooncake READ into destination
-  pinned memory before restoring into framework HBM;
+- current demand-driven remote cache reuse uses OrbiTE READ into the final GPU destination;
+  DRAM cache fills keep a host destination;
 - vLLM live P/D uses the official NIXL connector and its native ownership;
 - SGLang live P/D uses the official disaggregation backend. OrbitKV's external
   linker is independent and disables historical restores on D;
@@ -1512,32 +1160,10 @@ see [hybrid recovery](hybrid-recovery.md). Logical framework page generations
 remain separate from the local source allocation IDs used by raw grants.
 
 
-### TCP copy error propagation candidate
+### Historical TCP copy error controls
 
-The pinned integration branch carries the scoped backports of merged Mooncake
-#3476 and #3973; see [native source provenance](../crates/orbitkv-mooncake-sys/README.md#native-source).
-TCP client
-and server copy errors propagate to native FAILED. A READ error response whose
-length equals the requested payload is padded, preventing error text from being
-consumed as valid bytes. CUDA host-only copies use memcpy, while device copies
-use the allocation-owning device and the driver's pointer classification.
-Unexpected pointer-query failures do not select host memcpy, and error exits
-after device selection restore the caller's device when one was previously
-active. Controlled CUDA API checks cover these failure paths; healthy-GPU
-execution remains unqualified. After a CUDA memcpy attempt reports an error,
-the native owner retains the stream, current frame and RPC staging buffers;
-errors are not a DMA termination proof. Its separate live/retained device-copy
-admission is 64 calls and 1 GiB logical copy bytes; RPC strings allocated before
-that boundary are separate transient allocations. Existing Rust descriptor
-and physical-memory owners keep their budgets. Unusable CUDA bundle admission
-fails before transport startup. No timeout-based reclamation is introduced.
-
-These changes preserve the existing conservative failed-batch retention. A copy
-error or FAILED status does not prove physical quiescence, and the wrapper does
-not free retained source or destination owners. Deterministic CPU controls and
-installed host-buffer byte tests have a separate trigger from healthy-GPU,
-GPUDirect RDMA, Manager SSD and adapter-fault qualification. The fixed pin is not
-replaced by an unreviewed upstream-main bundle.
+The [TENT copy-error record](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/docs/transport.md#tcp-copy-error-propagation-candidate)
+retains its original fork revision, CPU scope and unqualified hardware limits.
 
 ## Remaining work
 
@@ -1548,66 +1174,10 @@ CUDA IPC metadata still serves Publish and Manager SSD/codec routes. Peer
 metadata currently uses gRPC. The local global index is synchronized through
 bounded Manager inventory snapshots/deltas, with etcd limited to membership,
 and has no foreground discovery RPC. Source grants/completions retain gRPC;
-TENT retains payload READ/WRITE. The custom native metadata bus is outside the
+OrbiTE owns payload READ/WRITE. The custom native metadata bus is outside the
 delivery plan. See the [communication plan](completion-plan.md#s4--finish-communication-execution-and-demonstrate-gains) and
 [peer-control boundary](peer-control.md).
 
-The next TCP worker candidate owns its callback and batch ID before terminal
-publication, then avoids task access after the state becomes visible. A staging
-exception is converted to FAILED and remains subject to OrbitKV's permanent
-failure retention. CPU callback/exception controls are separate from delayed
-batch notification, address reuse and physical transport termination gates.
-
-### Native registration error control
-
-Run `crates/orbitkv-transfer/tests/native/run_unregister_error.py` with
-`--native-build` pointing to the matching native CMake build, `--runtime` to
-its frozen libraries and `--output` to a new external evidence directory.
-The runner uses the build's exact include paths and definitions, hashes the
-compiler inputs and actual mapped libraries, and records actual child waits.
-It does not rebuild or overwrite the runtime libraries. Compilation is bounded
-to 60 seconds and each CPU scene to 20 seconds; any forced timeout cleanup is
-recorded separately and cannot establish drain.
-
-The actual engine receives a deterministic test-only `removeMemoryBuffer`
-failure through its existing transport test hook. Stable host backing remains
-alive; no payload transfer or device registration is submitted. The default
-fixed-runtime gate requires successful strict refusal/retry, partial-transport,
-reference-count, wildcard, publication-tombstone and batch controls. The
-historical-defect reproduction scene must fail against the fixed library.
-Batch controls include failed publication after multiple final removals,
-same-base wildcard suffix retry, and an older publication completing after
-newer withdrawals. Completed prefixes remain protected until a successful
-publication covers their actual withdrawal revision.
-Use `--expect-defect` for an archived historical runtime: its strict refusal
-must fail, and its explicit defect reproduction must succeed. Neither negative
-control is a qualification pass.
-
-Use `--control rdma` to call the actual native MR and local buffer owners with
-an injected verbs refusal. These controls require retention of failed MRs and
-retry of unfinished rails only. `-fno-access-control` is limited to the test
-executable; it does not expose new production APIs or replace production
-method implementations. Use a complete build with matching headers, not a
-library combined with independently patched transport translation units.
-
-Add `--build-rust-control` to the engine gate to emit `unregister-control.so`.
-With that matching CPU runtime, run the ignored Rust owner boundary explicitly:
-
-```bash
-MC_FORCE_TCP=1 ORBITKV_MOONCAKE_LIB_DIR=/path/to/frozen/cpu/lib \
-ORBITKV_UNREGISTER_CONTROL_LIBRARY=/external/control/unregister-control.so \
-cargo test -p orbitkv-transfer --no-default-features --lib \
-  failed_native_unregister_preserves_the_rust_registration_until_retry \
-  -- --ignored --nocapture --test-threads=1
-```
-
-The production unregister subset adapts existing upstream #4573 and #4249;
-see the [original ownership notes](https://github.com/OrbitInfra/OrbitKV/blob/4cd00b809b4ee81de89e4712fadda8208459840f/crates/orbitkv-mooncake-sys/patches/README.md#unregister-errors-and-retry-ownership)
-and the [current native pin](../crates/orbitkv-mooncake-sys/README.md#native-source).
-It preserves unfinished transport cleanup and failed-publication tombstones,
-rejects same-base registration during retirement and returns failures through
-the C ABI to Rust `try_unregister`. Partial registration rollback, consuming
-`unregister`/`Drop`, terminal destruction and physical-failure reclamation
-remain unqualified. Test-only owner reconciliation is not a production drain
-receipt. These controls are distinct from the earlier real TCP admitted-READ/unregister counterexample
-and do not qualify RNIC failure, device drain or allocation/page reuse.
+The removed TENT worker and unregister fault candidates remain in the
+[original record](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/docs/transport.md#remaining-work); they are not pending
+OrbitKV implementations. Current OrbiTE hardware and installed gates remain open.

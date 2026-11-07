@@ -85,7 +85,7 @@ pub(crate) struct GpuCodec {
     codebooks: Vec<f32>,
     ans: Option<ans::Library>,
     arena: Option<Arc<Arena>>,
-    transfer: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
+    transfer: Option<Arc<crate::transfer_engine::TransferEngine>>,
     registration: Option<Arc<crate::transfer_engine::CudaRegistration>>,
     upload: Vec<u8>,
     readback: Vec<u8>,
@@ -380,7 +380,7 @@ impl GpuCodec {
 
     pub(crate) fn with_transfer(
         mut self,
-        transfer: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
+        transfer: Option<Arc<crate::transfer_engine::TransferEngine>>,
     ) -> Self {
         self.transfer = transfer;
         self

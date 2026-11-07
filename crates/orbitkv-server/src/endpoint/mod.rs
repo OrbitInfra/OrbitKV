@@ -651,8 +651,8 @@ fn dispatch_completion_observation(
             decode_page_bytes: request.decode_page_bytes,
             queue_depth: request.handoff_queue_depth,
             queue_parallelism: request.handoff_queue_parallelism,
-            tent_inflight_bytes: request.tent_inflight_bytes,
-            tent_bandwidth_bytes_per_second: request.tent_bandwidth_bytes_per_second,
+            transfer_inflight_bytes: request.transfer_inflight_bytes,
+            transfer_bandwidth_bytes_per_second: request.transfer_bandwidth_bytes_per_second,
         },
         admission: match request.admission {
             orbitkv_channel::CompletionAdmission::Admitted => CompletionAdmission::Admitted,

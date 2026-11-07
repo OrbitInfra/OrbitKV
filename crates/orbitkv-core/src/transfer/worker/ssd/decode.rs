@@ -8,7 +8,7 @@ use crate::codec::{
 };
 use crate::metrics::core_metrics;
 use crate::transfer::finish_gpu_transfer;
-use crate::transfer_engine::{CudaRegistration, TransferBackend};
+use crate::transfer_engine::{CudaRegistration, TransferEngine};
 
 struct DeviceInput {
     stream: Arc<CudaStream>,
@@ -63,7 +63,7 @@ pub(super) enum DecodeCommand {
     Prepare {
         bytes: usize,
         budget: usize,
-        backend: Arc<dyn TransferBackend>,
+        backend: Arc<TransferEngine>,
     },
     Decode(Vec<DecodeRange>),
 }

@@ -10,9 +10,8 @@ workspace = true
 
 [features]
 test-hooks = []
-default = ["cuda-13", "mooncake"]
-cuda-13 = ["cudarc/cuda-13000", "cudarc/nvrtc", "orbitkv-transfer?/cuda-13"]
-mooncake = ["dep:orbitkv-transfer"]
+default = ["cuda-13", "orbite"]
+cuda-13 = ["cudarc/cuda-13000", "cudarc/nvrtc"]
 orbite = ["dep:orbite", "orbite/cuda", "orbite/io-uring"]
 orbite-gds = ["orbite", "orbite/gds"]
 orbite-rdma = ["orbite", "orbite/rdma"]
@@ -47,9 +46,8 @@ tonic.workspace = true
 dashmap.workspace = true
 smallvec.workspace = true
 orbitkv-proto = { path = "../orbitkv-proto" }
-orbitkv-transfer = { path = "../orbitkv-transfer", default-features = false, optional = true }
 mea.workspace = true
-orbite = { git = "https://github.com/OrbitInfra/OrbiTE", rev = "2e50af25007ca9681912ba5175109d09488a8f99", default-features = false, optional = true }
+orbite = { git = "https://github.com/OrbitInfra/OrbiTE", rev = "1312e9b180ec9029535f8c2fb751d57c4da93b76", default-features = false, optional = true }
 
 [dev-dependencies]
 rustix.workspace = true
@@ -78,24 +76,6 @@ harness = false
 name = "cpu_codec"
 path = "../../benches/storage/native/cpu_codec.rs"
 harness = false
-
-[[bench]]
-name = "transfer_h2d"
-harness = false
-
-[[bench]]
-name = "native_kernel_copy"
-path = "../../benches/transfer/native/native_kernel_copy.rs"
-harness = false
-
-[[bench]]
-name = "native_copy_layout"
-path = "../../benches/transfer/native/native_copy_layout.rs"
-harness = false
-
-[[test]]
-name = "native_copy_layout"
-path = "../../benches/tests/transfer/native_copy_layout.rs"
 
 [[example]]
 name = "pinned_alloc"

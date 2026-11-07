@@ -1,29 +1,8 @@
-//! TENT local GPU<->CPU copy implementations and KV layout planning.
-//!
-//! A transfer is a batch of independent contiguous copies, each described by a
-//! [`CopyDesc`] (`device` address, `host` address, `size`). The same batch can
-//! be moved by two backends with different tradeoffs:
-//!
-//! - [`MemcpyBackend`]: coalesces contiguous ranges and equal-width strided rows
-//!   into directional 1D or 2D DMA submissions. Drives the copy engines
-//!   (DMA); best for few/large transfers and overlaps with compute.
-//! - [`KernelBackend`]: a single grid-strided kernel reads/writes mapped pinned
-//!   host memory directly (zero-copy over PCIe). One launch regardless of the
-//!   number of fragments; best when the batch is highly fragmented and the
-//!   per-call launch latency of the memcpy path dominates.
-//!
-//! The shared `transfer_engine::TransferBackend` selects the stream binding.
-//! Only its TENT implementation uses these native backends. Both only *enqueue* onto the caller's stream and never synchronize,
-//! so a caller can batch many layers and synchronize exactly once.
+//! KV layout descriptors and OrbiTE local-copy completion ownership.
 
-mod kernel;
 pub(crate) mod layout;
 pub mod local;
-mod memcpy;
 pub(crate) mod worker;
-
-pub use kernel::KernelBackend;
-pub use memcpy::MemcpyBackend;
 
 use std::sync::Arc;
 
@@ -35,8 +14,7 @@ use cudarc::driver::CudaStream;
 /// address used by CUDA memcpy. `host_device` is the device-visible address for
 /// the same mapped pinned memory, queried at allocation time; registered and
 /// write-combined host memory must not assume host and device pointer values are
-/// identical. The direction is fixed by which [`TentCopy`] method is
-/// called, not stored.
+/// identical. The local-copy submission supplies the direction.
 #[derive(Clone, Copy)]
 pub struct CopyDesc {
     pub device: u64,
@@ -53,21 +31,7 @@ pub struct CopyDesc {
 // the Rust side, so moving the descriptor across threads is sound.
 unsafe impl Send for CopyDesc {}
 
-/// Enqueue a batch of copies onto a CUDA stream. Implementations must only
-/// submit work; synchronization is the caller's responsibility.
-pub trait TentCopy: Send {
-    /// Host -> device.
-    fn h2d(&self, copies: &[CopyDesc], stream: &Arc<CudaStream>) -> Result<(), String>;
-    /// Device -> host.
-    fn d2h(&self, copies: &[CopyDesc], stream: &Arc<CudaStream>) -> Result<(), String>;
-    /// Short name for logging (matches the CLI value that selects it).
-    fn name(&self) -> &'static str;
-}
-
-/// Which [`TentCopy`] an instance's GPU worker pools use. The connector
-/// picks this per model (kernel for MLA, direct otherwise) and sends it with
-/// the registration; the pools are spawned per (instance, GPU), so each
-/// instance can run a different backend.
+/// Operator/layout hint consumed by OrbiTE's local CUDA copy engine.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TransferMode {
     /// Directional DMA over contiguous ranges or explicit constant-pitch rows.
@@ -117,11 +81,12 @@ pub(crate) fn finish_gpu_transfer(
 
 fn raw_copy_shape(
     copies: &[CopyDesc],
-    max_pitch: usize,
+    _max_pitch: usize,
 ) -> orbitkv_common::timeline::RawCopyTimelineFields {
     let mut fields = orbitkv_common::timeline::RawCopyTimelineFields {
         descriptors: copies.len() as u64,
-        dma_ranges: memcpy::dma_copies(copies, max_pitch).count() as u64,
+        // OrbiTE owns coalescing; zero means the compiled DMA count is unavailable.
+        dma_ranges: 0,
         min_bytes: copies.first().map_or(0, |copy| copy.size as u64),
         ..Default::default()
     };

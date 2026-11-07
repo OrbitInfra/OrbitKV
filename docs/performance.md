@@ -1,5 +1,11 @@
 # Performance and benchmarks
 
+> Historical qualification below applies only to its original revisions and
+> recorded backend, including TENT. OrbitKV now uses OrbiTE exclusively; all
+> current GPU/RDMA/GDS and installed profiles need fresh hardware qualification.
+> CPU/TCP and io_uring controls remain CI evidence.
+
+
 OrbitKV has reviewed recovery, copy and peer-transfer measurements. A component
 speedup is not an end-to-end serving advantage. The official-release Qwen3-32B
 local comparison below is a reviewed descriptive collection. The separate

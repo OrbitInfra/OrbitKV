@@ -11,7 +11,7 @@ use parking_lot::Mutex;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::transfer_engine::{
-    Cancellation, ErrorKind, PeerSegment, TransferBackend, TransferError, TransferOp,
+    Cancellation, ErrorKind, PeerSegment, TransferEngine, TransferError, TransferOp,
     TransferOptions, TransferSlice,
 };
 
@@ -27,7 +27,7 @@ struct Identity {
 }
 
 pub(super) struct PeerSegments {
-    backend: Arc<dyn TransferBackend>,
+    backend: Arc<TransferEngine>,
     membership: Arc<MembershipView>,
     entries: Mutex<HashMap<Identity, Arc<PeerIdentity>>>,
     budget: Arc<Semaphore>,
@@ -35,7 +35,7 @@ pub(super) struct PeerSegments {
 
 pub(super) struct PeerIdentity {
     identity: Identity,
-    pub(super) backend: Arc<dyn TransferBackend>,
+    pub(super) backend: Arc<TransferEngine>,
     membership: Arc<MembershipView>,
     state: Mutex<State>,
     active: AtomicUsize,
@@ -63,10 +63,7 @@ impl PeerSegments {
         clippy::mem_forget,
         reason = "a failed retirement worker retains its native owners"
     )]
-    pub(super) fn new(
-        backend: Arc<dyn TransferBackend>,
-        membership: Arc<MembershipView>,
-    ) -> Arc<Self> {
+    pub(super) fn new(backend: Arc<TransferEngine>, membership: Arc<MembershipView>) -> Arc<Self> {
         let segments = Arc::new(Self {
             backend,
             membership,

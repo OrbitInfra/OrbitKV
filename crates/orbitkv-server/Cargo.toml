@@ -11,9 +11,8 @@ workspace = true
 
 [features]
 test-hooks = ["orbitkv-core/test-hooks"]
-default = ["cuda-13", "mooncake"]
+default = ["cuda-13", "orbite"]
 cuda-13 = ["orbitkv-core/cuda-13"]
-mooncake = ["orbitkv-core/mooncake"]
 orbite = ["orbitkv-core/orbite"]
 orbite-gds = ["orbite", "orbitkv-core/orbite-gds"]
 orbite-rdma = ["orbite", "orbitkv-core/orbite-rdma"]

@@ -1,5 +1,11 @@
 # Single-node offload under SSD pressure
 
+> Historical qualification below applies only to its original revisions and
+> recorded backend, including TENT. OrbitKV now uses OrbiTE exclusively; all
+> current GPU/RDMA/GDS and installed profiles need fresh hardware qualification.
+> CPU/TCP and io_uring controls remain CI evidence.
+
+
 For artifact locations and verification limits, see [benchmark evidence](benchmark-evidence.md).
 The [pre-migration report](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/ssd-performance.md) retains full tables and historical run details.
 

@@ -1,5 +1,13 @@
 # Peer-cache and TENT benchmarks
 
+> The TENT launchers and native probes on this page were retired. These recipes
+> and measurements are historical at their original revisions; reproduce them
+> from [the frozen TENT checkout](https://github.com/OrbitInfra/OrbitKV/tree/c7fd6144592b64c487bf58a27e547a6f44ab8c26/benches/distributed).
+> Current OrbitKV uses OrbiTE only and awaits GPU/RDMA/GDS re-qualification.
+> `shared_cache_serving` remains the KV-level workload; `tent_trace` only analyzes
+> historical artifacts and does not start a transport.
+
+
 Run commands from the repository root. [Benchmark navigation](../README.md).
 
 ### GPU-pointer and full-Manager RDMA profile

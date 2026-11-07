@@ -18,7 +18,7 @@ ENGINE_COMMITS = {
     "vllm": "db9527a46873454610df6dbedf79a36d6bf1a7f6",
     "sglang": "baa9befa381511cd4d56f83980951e5a45fffc6d",
 }
-NATIVE_LIBRARIES = {
+REMOVED_LIBRARIES = {
     "libtent_shared.so",
     "libtent_metrics.so",
     "libmooncake_common.so",
@@ -39,11 +39,10 @@ def isolated_environment(environment: dict[str, str], directory: Path) -> dict[s
         if part
         and "/.orbitkv/" not in part
         and not part.endswith("/python/orbitkv")
-        and not any((Path(part) / name).exists() for name in NATIVE_LIBRARIES)
+        and not any((Path(part) / name).exists() for name in REMOVED_LIBRARIES)
     )
     env.update(
         ORBITKV_CACHE_SCOPE=directory.name,
-        MC_FORCE_TCP="1",
         VLLM_USE_V2_MODEL_RUNNER="0",
         VLLM_BATCH_INVARIANT="1",
         HF_HUB_OFFLINE="1",
@@ -117,7 +116,7 @@ def distribution_snapshot(distribution, package: str) -> dict:
     }
 
 
-def installation_snapshot(engine: str, initialize_transfer: bool = False) -> dict:
+def installation_snapshot(engine: str, initialize_native: bool = False) -> dict:
     purelib = Path(sysconfig.get_path("purelib")).resolve()
     owners = metadata.packages_distributions().get("orbitkv", [])
     assert len(owners) == 1, f"Expected one OrbitKV distribution, got {owners}"
@@ -149,22 +148,19 @@ def installation_snapshot(engine: str, initialize_transfer: bool = False) -> dic
         "Plugin discovery initialized the GPU/native runtime"
     )
     assert orbitkv.__version__ == distribution.version
-    loaded = []
-    if initialize_transfer:
-        transfer = orbitkv.MooncakeTransferEngine(bind_host="127.0.0.1")
-        loaded = sorted(
-            {
-                str(Path(line.split()[-1]).resolve())
-                for line in Path("/proc/self/maps").read_text().splitlines()
-                if Path(line.split()[-1]).name in NATIVE_LIBRARIES
-            }
-        )
-        assert {Path(path).name for path in loaded} == NATIVE_LIBRARIES, loaded
-        assert all(Path(path).parent == Path(orbitkv.__file__).parent for path in loaded), loaded
-        del transfer
+    native_extension = None
+    if initialize_native:
+        native = importlib.import_module("orbitkv.orbitkv")
+        native_extension = str(Path(native.__file__).resolve())
+        assert Path(native_extension).is_relative_to(purelib)
+        assert not hasattr(native, "MooncakeTransferEngine")
+        assert not any(
+            Path(line.split()[-1]).name in REMOVED_LIBRARIES
+            for line in Path("/proc/self/maps").read_text().splitlines()
+        ), "removed native backend loaded"
     return {
         "distributions": snapshots,
-        "native_libraries": loaded,
+        "native_extension": native_extension,
         "python": sys.executable,
         "python_libdir": sysconfig.get_config_var("LIBDIR"),
         "pythonhome": os.environ.get("PYTHONHOME"),

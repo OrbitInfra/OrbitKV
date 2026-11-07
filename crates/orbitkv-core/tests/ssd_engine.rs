@@ -1,16 +1,11 @@
 //! Explicit GPU byte gates. Compilation is not hardware qualification.
-#![cfg(any(feature = "mooncake", feature = "orbite"))]
+#![cfg(feature = "orbite")]
 mod common;
 
 use common::TestEnvBuilder;
-use orbitkv_core::{EngineConfig, PeerTransferBackend, RestoreSource, SsdBackend, SsdCacheConfig};
+use orbitkv_core::{EngineConfig, RestoreSource, SsdBackend, SsdCacheConfig, TransportHint};
 
 async fn roundtrip(backend: SsdBackend, padded: bool) {
-    let engine = match std::env::var("ORBITKV_SSD_TEST_ENGINE").as_deref() {
-        Ok("tent") => PeerTransferBackend::Mooncake,
-        Ok("orbite") => PeerTransferBackend::OrbiteTcp,
-        _ => panic!("set ORBITKV_SSD_TEST_ENGINE=tent|orbite"),
-    };
     let root = std::env::var_os("ORBITKV_SSD_TEST_ROOT")
         .expect("set a test-owned directory on the qualification SSD");
     let directory = tempfile::tempdir_in(root).unwrap();
@@ -19,7 +14,7 @@ async fn roundtrip(backend: SsdBackend, padded: bool) {
         .split_layer("split", 3, 4096, 3 * 4096)
         .pool_size(32 << 20)
         .storage(EngineConfig {
-            peer_transfer_backend: engine,
+            transfer_transport: TransportHint::Tcp,
             ssd_cache_config: Some(SsdCacheConfig {
                 cache_paths: vec![directory.path().join("cache.bin")],
                 capacity_bytes: 64 << 20,
@@ -78,15 +73,4 @@ async fn cuda_staged_file_roundtrip() {
 #[ignore = "requires CUDA 13 and native-only GDS; preserve cuFile/nvidia-fs route evidence separately"]
 async fn native_gds_file_roundtrip() {
     roundtrip(SsdBackend::Cufile, false).await;
-}
-
-#[cfg(feature = "mooncake")]
-#[tokio::test]
-#[ignore = "requires CUDA 13 and native-only TENT GDS with padded vectors; preserve native route evidence"]
-async fn tent_native_gds_padded_file_roundtrip() {
-    assert_eq!(
-        std::env::var("ORBITKV_SSD_TEST_ENGINE").as_deref(),
-        Ok("tent")
-    );
-    roundtrip(SsdBackend::Cufile, true).await;
 }

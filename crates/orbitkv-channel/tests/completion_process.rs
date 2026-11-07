@@ -391,6 +391,8 @@ fn shared_completion_child() {
                     session.notify().unwrap();
                 }
                 GrantState::Drained => session.completions().reap(id).unwrap(),
+                // A coalesced notification can be observed after reap or client ACK.
+                GrantState::Reaped | GrantState::Acknowledged => {}
                 _ => panic!("unexpected grant state: {state:?}"),
             }
         }

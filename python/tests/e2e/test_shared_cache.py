@@ -93,7 +93,7 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
                 orbitkv_transfer_backend=None,
             )
             launch = configure(args, bpt)
-            launch.env["MC_FORCE_TCP"] = "1"
+
             launch.manager_command.extend(
                 [
                     "--etcd-endpoints",

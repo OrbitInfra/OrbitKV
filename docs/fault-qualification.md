@@ -1,5 +1,11 @@
 # Single-node fault qualification
 
+> Historical qualification below applies only to its original revisions and
+> recorded backend, including TENT. OrbitKV now uses OrbiTE exclusively; all
+> current GPU/RDMA/GDS and installed profiles need fresh hardware qualification.
+> CPU/TCP and io_uring controls remain CI evidence.
+
+
 The deterministic process gate runs a real Cache Manager, retained engine
 tensors, independently imported shared payload arenas, CUDA IPC physical routes,
 and SSD reads. It uses a separate `test-hooks` build; default release
@@ -135,13 +141,13 @@ does not qualify arbitrary graph modes, hybrid models, or multiple GPUs.
 
 ## Reproduce
 
-Build before starting any native/GPU tests: Mooncake shared libraries are
-restaged by Cargo and must not be replaced under running processes.
+Build the matching OrbiTE artifacts before starting any native/GPU tests.
+These commands target the current path; the historical results above must be rerun.
 
 ```bash
 PYO3_PYTHON=$PWD/.venv/sglang-release/bin/python \
   cargo build --release -p orbitkv-server -p orbitkv-py \
-  --no-default-features --features cuda-13,mooncake,orbitkv-server/test-hooks
+  --no-default-features --features cuda-13,orbite,orbitkv-server/test-hooks
 # Install the matching extension using the development/build instructions.
 cd python
 ORBITKV_CACHE_MANAGER_BINARY=../target/release/orbitkv-cache-manager-py \

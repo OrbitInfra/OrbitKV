@@ -13,12 +13,11 @@ with leased DRAM, SSD and peer cache storage. The Apache-2.0 license is provided
 in LICENSE. NVIDIA nvCOMP is an optional separately installed dependency;
 its headers and binaries are not redistributed in this package.
 
-Mooncake TENT runtime
+OrbiTE transfer engine
 
-The wheel includes Mooncake TENT and its common libraries from the pinned
-third-party/mooncake source. Mooncake's Apache-2.0 license is retained in the
-wheel's native license directory. Native dependencies bundled by auditwheel
-retain their package copyright notices and referenced license texts in that
-directory; its dependency SBOM records the available package provenance.
+OrbiTE is linked into the Rust extension and Manager under Apache-2.0.
+https://github.com/OrbitInfra/OrbiTE
+Native dependencies bundled by auditwheel retain their package copyright
+notices and referenced license texts in the wheel's native license directory.
 Python, NVIDIA CUDA runtime/driver and RDMA driver libraries are supplied by
 the runtime environment and are not redistributed by this build step.

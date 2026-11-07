@@ -121,8 +121,8 @@ pub struct CompletionObservationRequest {
     pub decode_page_bytes: u64,
     pub handoff_queue_depth: u32,
     pub handoff_queue_parallelism: u32,
-    pub tent_inflight_bytes: u64,
-    pub tent_bandwidth_bytes_per_second: u64,
+    pub transfer_inflight_bytes: u64,
+    pub transfer_bandwidth_bytes_per_second: u64,
     pub admission: CompletionAdmission,
     pub outcome: CompletionOutcome,
 }
@@ -162,8 +162,8 @@ impl CompletionObservationRequest {
         push_u64(&mut bytes, self.decode_page_bytes);
         push_u32(&mut bytes, self.handoff_queue_depth);
         push_u32(&mut bytes, self.handoff_queue_parallelism);
-        push_u64(&mut bytes, self.tent_inflight_bytes);
-        push_u64(&mut bytes, self.tent_bandwidth_bytes_per_second);
+        push_u64(&mut bytes, self.transfer_inflight_bytes);
+        push_u64(&mut bytes, self.transfer_bandwidth_bytes_per_second);
         bytes.extend_from_slice(instance_id);
         bytes.extend_from_slice(source_endpoint);
         Ok(bytes)
@@ -203,8 +203,8 @@ impl CompletionObservationRequest {
         let decode_page_bytes = decoder.u64()?;
         let handoff_queue_depth = decoder.u32()?;
         let handoff_queue_parallelism = decoder.u32()?;
-        let tent_inflight_bytes = decoder.u64()?;
-        let tent_bandwidth_bytes_per_second = decoder.u64()?;
+        let transfer_inflight_bytes = decoder.u64()?;
+        let transfer_bandwidth_bytes_per_second = decoder.u64()?;
         let instance_id = decoder.string(instance_len, "completion_instance_id")?;
         let source_endpoint = decoder.string(source_len, "completion_source_endpoint")?;
         decoder.finish()?;
@@ -223,8 +223,8 @@ impl CompletionObservationRequest {
             decode_page_bytes,
             handoff_queue_depth,
             handoff_queue_parallelism,
-            tent_inflight_bytes,
-            tent_bandwidth_bytes_per_second,
+            transfer_inflight_bytes,
+            transfer_bandwidth_bytes_per_second,
             admission,
             outcome,
         };

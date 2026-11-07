@@ -1,8 +1,15 @@
 # OrbitKV completion plan
 
+**Maintainer decision, 2026-11-07:** OrbiTE is the sole transfer engine before
+hardware re-qualification. The TENT implementation is removed; all earlier
+TENT results and accepted stages below are historical at their original revisions.
+The engine-family/default comparison gate is dropped. No current OrbiTE GPU,
+RDMA, GDS or installed profile is qualified by those records. CPU/TCP and io_uring
+remain CI evidence. C4 follows review of this removal; do not begin C4 yet.
+
 Ship a reliable external KV cache for official vLLM and SGLang: reuse prefixes
 from DRAM, SSD and peer Managers, then demonstrate the effect on real inference.
-Engines own scheduling and GPU pages; Rust owns cache resources; Mooncake TENT
+Engines own scheduling and GPU pages; Rust owns cache resources; OrbiTE
 moves shared-cache bytes. Native P/D keeps its engine-owned transport.
 
 This is the only execution queue. [Compatibility](compatibility.md) describes
@@ -93,7 +100,7 @@ and [adapter contracts](adapters.md).
   shutdown contracts are implemented; hardware and installed qualification at
   this pin remain open. The prior profile results below do not qualify this
   upgrade. See the
-  [runtime contract and CPU gates](transport.md#runtime-transfer-backend).
+  [runtime contract and CPU gates](transport.md#transfer-engine).
 - [x] C1a accepted at `67d9ac4b`: foreground/high restores, background/low
   warming, checkpoint/low SSD write-back, preserved admission deadlines and
   automatic OrbiTE transport selection. Lifecycle 12 adds `orbite`; matching
@@ -128,7 +135,12 @@ and [adapter contracts](adapters.md).
   infallible expectations. Pinned-pool cleanup retains mappings on cudart unloading
   at exit, with a CPU-shim child-process control for unloading and other errors.
   Timeout/cancellation/unknown-drain ownership and wire receipts are unchanged.
-  Installed GPU/RDMA/GDS qualification remains open. Stop for review before C4.
+  Installed GPU/RDMA/GDS qualification remains open. C3b was independently accepted and merged as `c7fd6144`.
+- [x] OrbiTE-only transfer implementation prepared for review: newest main pin
+  `1312e9b1`, concrete engine owner, auto/tcp/rdma hint and lifecycle 13 without
+  the selected-engine field. TENT source, native build, wheels and custom router
+  are removed. Physical-drain ownership and bounded admission remain unchanged.
+  Full CI and hardware qualification are separate gates; hardware remains open.
 - [x] OrbiTE SSD file-segment integration implemented for io_uring, CUDA staging
   and opt-in native-only GDS, preserving OrbitKV placement, extents and index
   publication. A3 below removes the temporary native fallback. CPU file/lifetime
@@ -178,7 +190,7 @@ and [adapter contracts](adapters.md).
   the actual `PinnedAllocation` and access lock. The weak cache avoids a cycle;
   unregister, cancellation, wait timeout and dropped batches cannot return its
   slot while OrbiTE still retains accepted work. The source build and explicit
-  real-CUDA allocator gate are described in [transport](transport.md#experimental-orbite-allocation-bridge).
+  real-CUDA allocator gate are described in [transport](transport.md#historical-orbite-allocation-bridge).
   The TCP peer consumer candidate follows below. Whole-pool registration,
   transfer-mailbox integration and installed serving remain open; the default
   transport is still TENT.
@@ -406,7 +418,7 @@ aligned with code guards.
 ### S5.4 — Official native P/D and independent cache
 
 - [x] Native vLLM NIXL/MultiConnector and SGLang disaggregation selected;
-  obsolete custom P/D code removed. Manager shared-cache bytes stay on TENT.
+  obsolete custom P/D code removed. Manager shared-cache bytes now use OrbiTE.
 - [ ] Qualify installed native P/D plus independent cache for cancellation,
   peer loss, partial submission, delayed ACK, restart and page reuse.
 
@@ -483,8 +495,7 @@ for user navigation while retaining OrbitKV's Rust owners and website identity.
   `storage/ssd/gpu.rs`, and OrbiTE local copies do **not** carry over. Preserve
   those records as historical evidence; they cannot qualify the new path.
 - [ ] Before release, replace the OrbiTE git revision with the crates.io release
-  (`orbite = "0.1"`) and document the exact pinned `OrbitInfra/Mooncake`
-  `orbitkv-integration-v0.3.14` fork head in the release provenance.
+  (`orbite = "0.1"`) and document the resolved engine version in release provenance.
 - [ ] Publish only after GPU re-qualification and maintainer authorization.
   **0.1.0 is OrbitKV's first release.** `orbitkv-llm` stays unpublished until
   then; wheel CI and candidate artifacts do not authorize publication.
@@ -492,7 +503,7 @@ for user navigation while retaining OrbitKV's Rust owners and website identity.
 Once hardware returns, use this order:
 
 1. OrbiTE **0.1.0**.
-2. Re-run OrbitKV's claimed profiles with **installed wheels on both backends**:
+2. Re-run OrbitKV's claimed profiles with **installed wheels with OrbiTE**:
    vLLM **0.31.0** and SGLang **0.5.22**, dense **TP=1/PP=1**, DRAM plus
    io_uring SSD, and the accepted scoped peer profiles. Record current artifacts,
    bytes, ownership/drain and fault evidence; do not expand a scoped claim.
@@ -500,10 +511,10 @@ Once hardware returns, use this order:
 4. Perform clean installed-artifact qualification on the claimed hosts.
 5. **0.1.0**.
 
-OrbiTE becomes the default only if it matches or beats TENT in matched serving
-and transfer benchmarks **and** passes the fault controls. Otherwise 0.1.0 ships
-with **TENT as the default and OrbiTE opt-in**. Freeze the chosen defaults and
-matching dependency artifacts for the candidate and final installed gates.
+OrbiTE is the only transfer engine. The former comparison that selected TENT or
+OrbiTE as the release default is removed by the 2026-11-07 maintainer decision.
+Matched benchmarks and fault controls still inform qualification; publication
+remains blocked on the installed hardware gates.
 
 Maintain concise README, quickstart, configuration and benchmark guidance with
 each future behavior change. Publication remains the maintainer's action;

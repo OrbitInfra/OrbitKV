@@ -1,7 +1,7 @@
 """Real Manager processes: inventory-stream faults and exact GPU recovery.
 
 Requires ETCD_BIN, a frozen Cache Manager/native extension, CUDA and
-MC_FORCE_TCP=1 on one host. This is not cross-host qualification.
+OrbiTE TCP on one host. This is not cross-host qualification.
 """
 
 from __future__ import annotations
@@ -296,7 +296,6 @@ def test_manager_graceful_shutdown_fences_inventory_and_restarts_node(tmp_path, 
     from orbitkv import CacheManagerClient
     from orbitkv.client.gpu import resolve_device_id
 
-    monkeypatch.setenv("MC_FORCE_TCP", "1")
     pages, block_bytes = 8, 4096
     payload_bytes = pages * block_bytes
     cluster = f"s210-shutdown-{uuid.uuid4().hex[:12]}"
@@ -437,7 +436,6 @@ def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, m
     from orbitkv import CacheManagerClient
     from orbitkv.client.gpu import resolve_device_id
 
-    monkeypatch.setenv("MC_FORCE_TCP", "1")
     pages, block_bytes = 8, 4096
     payload_bytes = pages * block_bytes
     cluster = f"s28-{medium}-{uuid.uuid4().hex[:12]}"
@@ -732,7 +730,6 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
     from orbitkv import CacheManagerClient
     from orbitkv.client.gpu import resolve_device_id
 
-    monkeypatch.setenv("MC_FORCE_TCP", "1")
     pages, block_bytes = 8, 4096
     payload_bytes = pages * block_bytes
     selected_identity = f"s2.9:selected:{uuid.uuid4().hex}"

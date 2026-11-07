@@ -16,8 +16,8 @@ fn completion_observation() -> CompletionObservationRequest {
         decode_page_bytes: 32 * 1024,
         handoff_queue_depth: 3,
         handoff_queue_parallelism: 16,
-        tent_inflight_bytes: 64 * 1024,
-        tent_bandwidth_bytes_per_second: 20_000_000_000,
+        transfer_inflight_bytes: 64 * 1024,
+        transfer_bandwidth_bytes_per_second: 20_000_000_000,
         admission: CompletionAdmission::Admitted,
         outcome: CompletionOutcome::Completed,
     }

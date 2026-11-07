@@ -13,7 +13,7 @@ and compatible cache reuse between replicas. Begin with the
 | Local SSD | Extend host cache through Manager-owned io_uring reads/writes | SSD file is recreated on Manager startup |
 | Engine restart reuse | Reconnect the engine to the existing cache | Keep the Manager and matching model/computation identity alive |
 | Shared Manager | Multiple local engines share DRAM/SSD capacity | Scoped pressure acceptance; fairness/tail isolation remain open |
-| Peer cache | Discover compatible replicas locally and fetch through TENT TCP/RDMA | Scoped two-H20 dense recovery accepted; full cache HA unqualified |
+| Peer cache | Discover compatible replicas locally and fetch through OrbiTE TCP/RDMA | CPU/TCP CI evidence; GPU/RDMA and installed recovery require re-qualification |
 
 Do not expect a benefit when requests have little compatible prefix reuse or
 when native HBM already serves the data. Compare equal memory budgets and
@@ -51,7 +51,7 @@ Hybrid/auxiliary-state models need complete recovery qualification.
 Check [model recipes](models.md) and [compatibility](compatibility.md).
 
 Native P/D uses vLLM NIXL/MultiConnector or SGLang native disaggregation. OrbitKV
-supplies an independent cache adapter; Manager-to-Manager sharing stays on TENT.
+supplies an independent cache adapter; Manager-to-Manager sharing uses OrbiTE.
 P/D cancellation/peer-loss/page-reuse composition remains unqualified.
 
 ## Optional and experimental features

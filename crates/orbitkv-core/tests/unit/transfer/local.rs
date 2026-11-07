@@ -107,9 +107,14 @@ fn caller_context_survives_registration_and_readiness_success_and_failure() {
         LocalTensor::new("layer".into(), pointer, 64, pointer as usize, 1, 64, 0, 1).unwrap()
     };
 
-    let mut executor =
-        LocalRestoreExecutor::new(0, vec![binding(address)], Vec::new(), TransferMode::Direct)
-            .unwrap();
+    let mut executor = LocalRestoreExecutor::new(
+        0,
+        vec![binding(address)],
+        Vec::new(),
+        TransferMode::Direct,
+        Arc::new(()),
+    )
+    .unwrap();
     assert_eq!(current(), Some(caller.cu_ctx()));
     executor
         .wait_for_destination(destination_stream.cu_stream() as u64)
@@ -132,6 +137,7 @@ fn caller_context_survives_registration_and_readiness_success_and_failure() {
         vec![binding(custom_pointer)],
         Vec::new(),
         TransferMode::Direct,
+        Arc::new(()),
     );
     assert!(rejected.is_err());
     assert_eq!(current(), Some(caller.cu_ctx()));
@@ -192,6 +198,7 @@ fn strided_restore_keeps_each_allocation_boundary_inside_a_shared_arena() {
         vec![tensor],
         pool.payload_arenas().unwrap(),
         TransferMode::Direct,
+        Arc::new(()),
     )
     .unwrap();
     let part = RawRestorePart::decode(&plan.encode_parts().unwrap()[0]).unwrap();

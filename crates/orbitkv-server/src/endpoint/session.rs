@@ -178,7 +178,6 @@ async fn dispatch(
                 .unwrap_or_default();
             let mut reply = CudaRegistrationReply {
                 export_owner_generation: generation,
-                transfer_engine: lifecycle.transfer_engine().into(),
                 credits: vec![CudaCreditDisposition::Unknown as i32; count],
                 ..Default::default()
             };

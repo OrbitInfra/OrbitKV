@@ -1,9 +1,14 @@
 # Distributed KV cache
 
+> OrbiTE is now the only transfer engine. GPU/RDMA/GDS and installed profiles
+> require fresh hardware qualification. Earlier measurements retain their original
+> revisions and backend (TENT where recorded); CPU/TCP and io_uring checks are CI
+> evidence, not installed GPU qualification.
+
 Every Manager keeps a local global index of advertised block locations. etcd owns
 only the protocol identity, persistent node epochs and leased membership;
 Managers exchange bounded inventory snapshots/deltas directly on the existing
-peer listener. Mooncake TENT carries KV bytes. Source grants and release remain
+peer listener. OrbiTE carries KV bytes. Source grants and release remain
 OrbitKV gRPC. See the [protocol](distributed-cache.md).
 
 ## Leased Manager membership
@@ -32,12 +37,9 @@ orbitkv-cache-manager \
 ```
 
 Use concrete peer addresses reachable from the other hosts. Peer gRPC and
-Mooncake's P2P handshake/data endpoints use separate ports on that host. Optional
-`--nics mlx5_0,mlx5_1` filters RDMA rails; omitted, Mooncake selects an available
-transport including TCP. For a same-host TCP test set `MC_FORCE_TCP=1`; OrbitKV
-then disables TENT RDMA/NVLink/MNNVL for that engine creation and temporarily
-suppresses `MC_TENT_CONF` so a general config cannot invalidate the forced-TCP
-control.
+OrbiTE's P2P handshake/data endpoints use separate ports. The default `auto`
+transport lets OrbiTE choose among configured providers. Use `--transfer-transport tcp`
+for a TCP control; RDMA requires `orbite-rdma` and explicit RNIC configuration.
 When a proxy or test fault gate owns the advertised address, keep `--addr` as the
 actual listener and set `--peer-advertise-addr` to the concrete address peers can
 reach. It is an endpoint mapping, not a forwarding metadata service.
@@ -80,7 +82,7 @@ sequenceDiagram
     B->>A: Authorize exact incarnation and residency sequences
     A->>A: Pin sources and reserve bytes
     A-->>B: Source grant and registered-memory descriptors
-    B->>A: Mooncake TENT READ
+    B->>A: OrbiTE READ
     B->>A: Release after native completion
     B->>B: Restore to engine HBM
     B-->>A: Bounded inventory snapshot / delta
@@ -143,8 +145,7 @@ batched metadata and engine-side execution work that remains planned.
   still requires another replica or recomputation. Removing its leased membership
   hides candidates even before all block-delete events arrive. Removal or an
   epoch/incarnation change also revokes cached transfer identities on every
-  requester. OrbiTE closes and drains each identity; TENT invalidates its handle
-  after wrapper drain. Neither timeout nor Unquiesced releases grants or pins.
+  requester. OrbiTE closes and drains each identity. Neither timeout nor Unquiesced releases grants or pins.
   See [peer departure](transport.md#peer-departure).
 - Losing an etcd member permits recovery through surviving endpoints if quorum
   remains. Losing quorum stops updates; new remote admission stops when local
@@ -205,28 +206,28 @@ unaccounted large slab. Concurrent sessions each reserve their full allocation
 footprint. Exhaustion returns a bounded miss to the requesting cache path.
 
 Run native builds and runtime gates sequentially in a checkout; builds restage
-shared Mooncake libraries. The etcd gate starts isolated temporary processes:
+OrbiTE build prerequisites. The etcd gate starts isolated temporary processes:
 
 ```bash
 ETCD_BIN=/path/to/etcd cargo test --release \
-  --no-default-features --features cuda-13,mooncake,test-hooks \
+  --no-default-features --features cuda-13,orbite,test-hooks \
   --lib cluster::tests::etcd -- --ignored
 
 ETCD_BIN=/path/to/etcd ORBITKV_METADATA_ARTIFACT_DIR=/external/run \
   cargo test --release -p orbitkv-server \
-  --no-default-features --features cuda-13,mooncake,test-hooks \
+  --no-default-features --features cuda-13,orbite,test-hooks \
   cluster::inventory::tests -- --ignored --nocapture --test-threads=1
 
-ETCD_BIN=/path/to/etcd MC_FORCE_TCP=1 cargo test --release -p orbitkv-server \
-  --no-default-features --features cuda-13,mooncake,test-hooks \
-  --lib cluster::tests::p2p_mooncake -- --ignored
+ETCD_BIN=/path/to/etcd cargo test --release -p orbitkv-server \
+  --no-default-features --features cuda-13,orbite,test-hooks \
+  --lib cluster::tests::p2p_orbite -- --ignored
 ```
 
 The etcd gate covers protocol/registration identity, incarnation restart,
 compaction, leader loss and quorum-loss fencing. The ignored inventory-stream
 gates cover atomic snapshots/deltas, journal-overflow repair, all-to-all capacity,
 zero block keys and installed fence semantics. The GPU gate exercises source
-authorization and Mooncake READ across 260 blocks plus encoded payloads. Set
+authorization and OrbiTE READ across 260 blocks plus encoded payloads. Set
 `ORBITKV_NVCOMP_LIBRARY` for the ANS case. These gates run on one host; physical
 host loss and RDMA need their own qualification.
 
@@ -245,13 +246,10 @@ PYTHONPATH=. ../.venv/vllm-release/bin/python -m pytest -m integration \
 
 ## OrbiTE TCP development profile
 
-The experimental `orbite` build and explicit `--peer-transfer-backend orbite-tcp`
-selection use the same inventory, source grants and generation-scoped release
-RPCs. The [transport profile](transport.md#experimental-orbite-peer-tcp-profile)
-defines its 64 MiB READ/4,096-region limits and source/GPU gate commands. The
-standalone build excludes Mooncake. Default deployment recipes and published
-artifacts continue to use TENT; the OrbiTE path needs installed-artifact and
-serving qualification before it becomes a supported deployment recipe.
+The default `orbite` build uses the same inventory, source grants and
+generation-scoped release RPCs. `--transfer-transport tcp` is an explicit hint.
+The [transport profile](transport.md#experimental-orbite-peer-tcp-profile) records
+its bounded requests and gates. Installed serving remains unqualified at the new pin.
 
 An `orbite-rdma` build can explicitly select the single-rail
 [OrbiTE RDMA staging candidate](transport.md#experimental-orbite-peer-rdma-profile).

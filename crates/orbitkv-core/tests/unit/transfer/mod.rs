@@ -3,8 +3,8 @@ use cudarc::driver::CudaContext;
 use std::sync::mpsc as std_mpsc;
 
 #[test]
-fn raw_copy_shape_uses_physical_registration_and_actual_dma_compiler() {
-    let mut copies = [0, 4096, 8192].map(|offset| CopyDesc {
+fn raw_copy_shape_reports_layout_without_guessing_engine_dma_calls() {
+    let copies = [0, 4096, 8192].map(|offset| CopyDesc {
         device: 0x10000 + offset,
         host: (0x100000 + offset) as *mut u8,
         host_device: 0x200000 + offset,
@@ -15,13 +15,9 @@ fn raw_copy_shape_uses_physical_registration_and_actual_dma_compiler() {
     let shape = raw_copy_shape(&copies, usize::MAX);
     assert_eq!(shape.bytes, 12288);
     assert_eq!(shape.descriptors, 3);
-    assert_eq!(shape.dma_ranges, 1);
+    assert_eq!(shape.dma_ranges, 0, "engine DMA count is unavailable");
     assert_eq!(shape.size_histogram, [0, 3, 0, 0, 0, 0, 0, 0]);
     assert_eq!((shape.min_bytes, shape.max_bytes), (4096, 4096));
-    copies[1].host_registration = 3;
-    assert_eq!(raw_copy_shape(&copies, usize::MAX).dma_ranges, 3);
-    copies.reverse();
-    assert_eq!(raw_copy_shape(&copies, usize::MAX).dma_ranges, 3);
 }
 
 #[test]

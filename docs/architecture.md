@@ -28,7 +28,7 @@ scoped owner inventory streams install local candidate views with explicit cover
 Queries use those views rather than per-key etcd RPCs. Grants revalidate source
 incarnation, representation and allocation generation. See [distributed design](distributed-design.md).
 
-![Local recovery, peer TENT READ and native P/D ownership](../website/public/architecture.svg)
+![Local recovery, peer OrbiTE READ and native P/D ownership](../website/public/architecture.svg)
 
 ## API and crate boundaries
 
@@ -39,7 +39,7 @@ incarnation, representation and allocation generation. See [distributed design](
 | `orbitkv-core` | Storage/leases, query budgets, source plans, transfers and codecs |
 | `orbitkv-server` | Manager endpoints, cluster membership/inventory and peer protocol |
 | `orbitkv-catalog` | Covered local indexes and cached member admission |
-| `orbitkv-transfer` / `orbitkv-mooncake-sys` | TENT ownership, terminal batches and pinned native ABI |
+| `transfer_engine/` and `peer/orbite.rs` | OrbiTE registrations, requests and physical drain |
 | Python adapters | Engine callbacks, layout inspection, allocation and GPU handoff |
 
 Use the behavior owner directly. Avoid a Python coordinator, second catalog,
@@ -84,7 +84,7 @@ Detailed contracts live in [transport](transport.md), [engine-local Restore](eng
 
 [LMCache](https://github.com/LMCache/LMCache) guides user documentation and released
 engine entry points. [FlexKV's integration](adapters.md#lmcache-and-flexkv-reference)
-provides a transfer reference. Mooncake TENT supplies Manager data transfer;
+provides a transfer reference. OrbiTE supplies Manager data transfer;
 its RPC or metadata format does not own OrbitKV's cache semantics.
 
 The [Mooncake RFC #3504](https://github.com/kvcache-ai/Mooncake/issues/3504) is a
@@ -102,7 +102,7 @@ flowchart TD
   M --> S[Core storage, query and source owners]
   M --> I[Catalog: covered inventory views]
   M --> X[etcd: leased members and protocol]
-  S --> T[TENT peer bytes]
+  S --> T[OrbiTE peer bytes]
 ```
 
 The current layers execute recovery validation and bounded concrete routes.
@@ -139,16 +139,13 @@ arenas. Peer restore submits remote→GPU through the selected transfer engine;
 only DRAM cache-tier fills retain a host destination. The imported tensor owner
 and client completion remain retained on unknown drain. Encoded peer inputs go
 to GPU codec allocations. SSD/codec layouts use Manager workers.
-`TransferBackend` moves file bytes through io_uring or opt-in GDS; OrbitKV keeps
+`TransferEngine` moves file bytes through io_uring or opt-in GDS; OrbitKV keeps
 extent leases and metadata publication. OrbiTE consumes layout vectors with
 padding directly into GPU pages or persistent codec inputs; its engine owns
-storage gather/scatter and staging. TENT consumes RANGE/PADDING vectors through
-`tent_file_submitv` and owns its bounded unaligned staging; the OrbitKV adapter
-is deleted. TENT owns a separate file engine so its
-peer source-drain contract remains unchanged. Unknown drain
+storage gather/scatter and staging. Unknown drain
 retains backing, the immutable/unpublished extent and the file-operation budget.
 See [SSD file transfers](transport.md#ssd-file-transfers). Peer SSD uses
-exact-generation source-side staging before the same TENT READ contract. Per-layer
+exact-generation source-side staging before the same OrbiTE READ contract. Per-layer
 readiness, multipart partitioning and whole-operation drain retain distinct owners.
 Native GDS and broad transport-fault qualification remain open.
 
@@ -167,7 +164,7 @@ are separate from complete released hybrid model recovery.
 Official native disaggregation owns real-time handoff. Independent OrbitKV cache
 currently restores/saves on P and saves only on D in the composition candidate,
 so native incoming pages have one writer. Manager-to-Manager cache bytes continue
-through TENT regardless of the engine's live P/D transport. Partial submission,
+through OrbiTE regardless of the engine's live P/D transport. Partial submission,
 late ACK, cancellation and page reuse require the [native P/D fault gates](pd.md).
 
 ### Future: Radix lifecycle bridge for routing
@@ -199,7 +196,7 @@ permanent requester loss and allocation reuse require explicit termination evide
 1. Member leases establish current cluster identity/incarnation.
 2. Bounded owner streams atomically install covered local inventory views.
 3. Query planning selects compatible candidates under byte budgets.
-4. The source grants an exact owned allocation; TENT READ moves the bytes.
+4. The source grants an exact owned allocation; OrbiTE READ moves the bytes.
 5. The consumer restores into engine-owned slots and reconciles final release.
 
 Loss of coverage or retired membership blocks stale remote authorization while

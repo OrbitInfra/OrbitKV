@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="850" viewBox="0 0 1280 850" role="img" aria-labelledby="title desc">
   <title id="title">OrbitKV process ownership and communication paths</title>
-  <desc id="desc">Engines own HBM, scheduling and raw DRAM Restore. Managers own DRAM, SSD, Publish, codecs, source grants and budgets. UDS/iceoryx2 carries local control and CUDA IPC supports Manager GPU work. Bounded inventory streams maintain covered local indexes; etcd maintains protocol identity and leased membership. Peer grants authorize historical DRAM/SSD recovery through TENT READ over TCP or RDMA. Official native engine backends own real-time P/D; composition fault qualification remains open. Layer readiness is separate from final physical drain and process reaping. Unified route planning and broader lifetime/HA qualification remain open.</desc>
+  <desc id="desc">Engines own HBM, scheduling and raw DRAM Restore. Managers own DRAM, SSD, Publish, codecs, source grants and budgets. UDS/iceoryx2 carries local control and CUDA IPC supports Manager GPU work. Bounded inventory streams maintain covered local indexes; etcd maintains protocol identity and leased membership. Peer grants authorize historical DRAM/SSD recovery through OrbiTE READ over TCP or RDMA. Official native engine backends own real-time P/D; composition fault qualification remains open. Layer readiness is separate from final physical drain and process reaping. Unified route planning and broader lifetime/HA qualification remain open.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 10 5 0 10" fill="#203b30"/></marker>
     <marker id="arrow-start" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M10 0 0 5 10 10" fill="#203b30"/></marker>
@@ -86,7 +86,7 @@
 <text x="640" y="285" font-size="12" text-anchor="middle" fill="#60695f">NIXL / native disaggregation</text>
 <path d="M524 494H756" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)" marker-start="url(#arrow-start)"/>
 <text x="640" y="421" font-size="15" text-anchor="middle" font-weight="700">SHARED CACHE</text>
-<text x="640" y="448" font-size="19" text-anchor="middle" font-weight="700">TENT READ</text>
+<text x="640" y="448" font-size="19" text-anchor="middle" font-weight="700">OrbiTE READ</text>
 <text x="640" y="472" font-size="13" text-anchor="middle">Historical DRAM / SSD KV</text>
 <text x="640" y="518" font-size="12" text-anchor="middle" fill="#60695f">RDMA or TCP payload transport</text>
 <path d="M524 602H756" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)" marker-start="url(#arrow-start)" stroke-dasharray="5 5"/>

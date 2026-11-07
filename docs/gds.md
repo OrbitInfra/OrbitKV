@@ -1,9 +1,8 @@
 # GPU storage
 
-All SSD byte movement belongs to the selected transfer engine. OrbitKV owns
+All SSD byte movement belongs to the OrbiTE engine. OrbitKV owns
 placement, extents, index publication, DRAM policy, layout descriptors and codec
-compute. TENT uses a separate file engine so file transports cannot weaken its
-peer source-drain contract. The native OrbitKV io_uring/cuFile fallback and
+compute. The native OrbitKV io_uring/cuFile fallback and
 `--ssd-io-engine` option are removed. See [SSD file transfers](transport.md#ssd-file-transfers)
 for the contracts, bounds and exact GPU gate commands.
 
@@ -20,10 +19,9 @@ the same cache API; no separate cuFile service is needed.
 | --- | --- |
 | `auto` (default) | Direct layout vectors plus engine-owned CUDA staging/io_uring; host materialization remains available for DRAM policy and unsupported layout shapes. |
 | `uring` | Host materialization through engine io_uring. |
-| `cufile` | Native-only GDS. OrbiTE requires `orbite-gds`; TENT requires a CUDA runtime built with the cuFile SDK. Missing support is an error. |
+| `cufile` | Native-only GDS. Requires `orbite-gds` and the matching runtime cuFile SDK. Missing support is an error. |
 
-The default wheel toolchain does not install the GDS SDK for TENT. Native GDS
-requires the matching source-built runtime, supported filesystem and installed
+Native GDS requires a matching cuFile runtime, supported filesystem and installed
 route evidence. Neither library presence nor successful bytes prove native GDS.
 A failed submitted operation is never replayed through another route.
 
@@ -55,10 +53,6 @@ retain persistent registrations, while encoded writes retain their actual codec
 arena. Unknown drain keeps caller completion/admission and fences the worker.
 Local GPU↔DRAM migration remains a separate step.
 
-TENT consumes the same RANGE/PADDING layouts through `tent_file_submitv` on a
-separate file engine. Its 4 MiB windows and 64 MiB staging budget replace the
-OrbitKV adapter, scratch and zero-fill buffers. TENT native GDS supports padded
-GPU vectors with 4 KiB-aligned extents; GPU staging remains unqualified.
 OrbiTE rejects explicit GDS padding without fallback. Its `gds_enabled` stays
 false unless `cufile` is configured, even when GDS is compiled.
 
@@ -79,12 +73,11 @@ for unsubmitted work. Opt-in route costs remain observational.
 
 Run the two explicit `ssd_engine` GPU byte gates from
 [the transport guide](transport.md#ssd-file-transfers) with
-`ORBITKV_SSD_TEST_ENGINE=tent` or `orbite`, the matching build features and a
-test-owned directory on the qualification SSD. The broader `cufile` integration
+the `orbite`/`orbite-gds` build features and a test-owned directory on the
+qualification SSD. The broader `cufile` integration
 tests cover layouts, codec inputs, cancellation and extent lifetime under native
 GDS; compatibility-mode qualification of the removed implementation does not
-qualify these engines. Do not run Cargo native builds while a serving process
-has the staged libraries mapped.
+qualify OrbiTE. Build the artifacts before starting the serving processes.
 
 Preserve native-route evidence from the same installed run: cuFile logs or
 nvidia-fs/PCI P2PDMA counters, successful byte checks, device topology, budgets,
@@ -233,7 +226,7 @@ Build the ordinary Manager, a separate `test-hooks` Manager, the matching Python
 extension in **both** engine environments, and the Rust `cufile` test executable
 before starting. Use the CUDA feature matching the machine. Obtain the test
 executable path from `cargo test --release -p orbitkv-core --no-default-features
---features cuda-13,mooncake --test cufile --no-run`. Copy each Manager before
+--features cuda-13,orbite-gds --test cufile --no-run`. Copy each Manager before
 building the other variant. The script accepts these prebuilt artifacts and
 never invokes Cargo while services are running.
 

@@ -264,7 +264,6 @@ def _install_native_extension_stub() -> None:
         message: str = ""
 
     module.RestoreStatus = getattr(module, "RestoreStatus", _RestoreStatus)
-    module.MooncakeTransferEngine = getattr(module, "MooncakeTransferEngine", MagicMock)
     module.OrbitKVError = getattr(module, "OrbitKVError", type("OrbitKVError", (Exception,), {}))
     module.OrbitKVInternal = getattr(
         module, "OrbitKVInternal", type("OrbitKVInternal", (Exception,), {})

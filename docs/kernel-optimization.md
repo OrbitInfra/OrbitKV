@@ -1,5 +1,11 @@
 # CUDA copy kernels
 
+> Historical qualification below applies only to its original revisions and
+> recorded backend, including TENT. OrbitKV now uses OrbiTE exclusively; all
+> current GPU/RDMA/GDS and installed profiles need fresh hardware qualification.
+> CPU/TCP and io_uring controls remain CI evidence.
+
+
 OrbitKV uses [NVIDIA KDA](https://github.com/NVlabs/kda) for measured CUDA
 optimization. Keep device code in separate `.cu` files and consume it through
 the existing Rust transfer/codec owners. [S4](completion-plan.md#s4--finish-communication-execution-and-demonstrate-gains)

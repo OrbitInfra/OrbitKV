@@ -7,19 +7,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use orbite::{
-    EngineConfig, Error, Permission, RegisteredMemory, TransferEngine, TransferOp, TransferRequest,
-    Transport,
+    EngineConfig, Error, Permission, RegisteredMemory, TransferEngine as NativeEngine, TransferOp,
+    TransferRequest, Transport,
 };
 
 use crate::memory::pool::PinnedAllocation;
 use crate::transfer_engine::backend::{
-    FileSegmentInner, MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, REGISTERED_POOLS,
-    RegistrationInner, Segment,
+    MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, REGISTERED_POOLS, RegistrationInner, Segment,
 };
 use crate::transfer_engine::{
     Cancellation, ErrorKind, FileIoElement, FileMemory, FileSegment, FileTransfer, FileTransport,
-    PeerSegment, Registration, TransferBackend, TransferError, TransferOptions, TransferSlice,
-    remaining, validate_slices,
+    PeerSegment, Registration, TransferError, TransferOptions, TransferSlice, remaining,
+    validate_slices,
 };
 
 fn request_options(request: TransferRequest, options: TransferOptions) -> TransferRequest {
@@ -57,20 +56,22 @@ pub(super) fn parse_endpoint(endpoint: &str) -> Result<SocketAddr, String> {
         .map_err(|error| format!("invalid OrbiTE endpoint: {error}"))
 }
 
-pub(crate) struct OrbiteTransport {
-    engine: Arc<TransferEngine>,
+pub struct TransferEngine {
+    engine: Arc<NativeEngine>,
     pub(super) endpoint: String,
     pub(super) epoch: String,
     pool_bytes: u64,
     files_enabled: bool,
     pub(super) payload: Transport,
     drained: AtomicBool,
+    #[cfg(test)]
+    pub(crate) control: Option<Arc<crate::peer::restore::tests::Control>>,
 }
 
 /// Explicit registration references plus the actual allocation and provider
 /// lifetime. Source tickets and requester READ owners hold these together.
 pub(crate) struct RegistrationSet {
-    transport: Arc<OrbiteTransport>,
+    transport: Arc<TransferEngine>,
     regions: Vec<RegisteredMemory>,
     cleanup_failed: bool,
 }
@@ -83,7 +84,7 @@ impl RegistrationSet {
                 "OrbiTE registration cleanup remains retained",
             ));
         }
-        let result = self.transport.unregister(&mut self.regions);
+        let result = self.transport.unregister_regions(&mut self.regions);
         self.cleanup_failed = result.is_err();
         result
     }
@@ -105,7 +106,7 @@ impl Drop for RegistrationSet {
     }
 }
 
-impl OrbiteTransport {
+impl TransferEngine {
     pub(crate) fn new(
         pool_bytes: u64,
         advertise: &str,
@@ -195,7 +196,7 @@ impl OrbiteTransport {
             remote_staging: false,
             ..EngineConfig::default()
         };
-        let engine = Arc::new(TransferEngine::new(config).map_err(|error| error.to_string())?);
+        let engine = Arc::new(NativeEngine::new(config).map_err(|error| error.to_string())?);
         let epoch = engine.source_epoch().to_string();
         let endpoint = format!("{}{}", prefix(payload), engine.endpoint());
         {
@@ -221,6 +222,8 @@ impl OrbiteTransport {
             files_enabled: storage.is_some(),
             payload,
             drained: AtomicBool::new(false),
+            #[cfg(test)]
+            control: None,
         })
     }
 
@@ -381,7 +384,7 @@ impl OrbiteTransport {
         })
     }
 
-    fn unregister(&self, regions: &mut Vec<RegisteredMemory>) -> Result<(), TransferError> {
+    fn unregister_regions(&self, regions: &mut Vec<RegisteredMemory>) -> Result<(), TransferError> {
         while let Some(region) = regions.last() {
             self.engine
                 .unregister_memory(region)
@@ -392,16 +395,8 @@ impl OrbiteTransport {
     }
 }
 
-impl TransferBackend for OrbiteTransport {
-    fn local_engine(&self) -> crate::PeerTransferBackend {
-        match self.payload {
-            Transport::Unspec => crate::PeerTransferBackend::Orbite,
-            Transport::Rdma => crate::PeerTransferBackend::OrbiteRdma,
-            _ => crate::PeerTransferBackend::OrbiteTcp,
-        }
-    }
-
-    fn bind_local(
+impl TransferEngine {
+    pub fn bind_local(
         self: Arc<Self>,
         stream: Arc<cudarc::driver::CudaStream>,
         mode: crate::transfer::TransferMode,
@@ -410,28 +405,50 @@ impl TransferBackend for OrbiteTransport {
         Ok(Box::new(local::Copies::new(self, stream, mode, device)?))
     }
 
-    fn transfer_endpoint(&self) -> &str {
+    pub fn transfer_endpoint(&self) -> &str {
+        #[cfg(test)]
+        if let Some(control) = &self.control {
+            return control.transfer_endpoint();
+        }
+
         &self.endpoint
     }
-    fn source_epoch(&self) -> &str {
+    pub fn source_epoch(&self) -> &str {
+        #[cfg(test)]
+        if let Some(control) = &self.control {
+            return control.source_epoch();
+        }
+
         &self.epoch
     }
-    fn accepts_endpoint(&self, endpoint: &str) -> bool {
+    pub fn accepts_endpoint(&self, endpoint: &str) -> bool {
+        #[cfg(test)]
+        if let Some(control) = &self.control {
+            return control.accepts_endpoint(endpoint);
+        }
+
         parse_endpoint(endpoint).is_ok()
     }
 
-    fn register_pinned(
+    pub fn register_pinned(
         self: Arc<Self>,
         allocations: &[Arc<PinnedAllocation>],
         permission: crate::transfer_engine::Permission,
     ) -> Result<Registration, TransferError> {
+        #[cfg(test)]
+        if let Some(control) = &self.control {
+            return Arc::clone(control).register_pinned(allocations, permission);
+        }
+
         self.register(allocations.iter(), permission.into())
             .map(|registration| Registration {
                 inner: RegistrationInner::Orbite(registration),
             })
     }
 
-    unsafe fn register_cuda(
+    /// # Safety
+    /// The owner retains the CUDA allocation and context; coordinate producers and aliases through physical drain and unregister.
+    pub unsafe fn register_cuda(
         self: Arc<Self>,
         address: u64,
         length: usize,
@@ -439,6 +456,14 @@ impl TransferBackend for OrbiteTransport {
         owner: Arc<dyn Send + Sync>,
         permission: crate::transfer_engine::Permission,
     ) -> Result<Registration, TransferError> {
+        #[cfg(test)]
+        if let Some(control) = &self.control {
+            // SAFETY: the same caller ownership and drain contract applies to the fault control.
+            return unsafe {
+                Arc::clone(control).register_cuda(address, length, device, owner, permission)
+            };
+        }
+
         // SAFETY: the caller retains the allocation/context and coordinates aliases.
         let memory = Arc::new(
             unsafe { orbite::cuda::CudaMemory::from_raw_parts(address, length, owner) }
@@ -465,7 +490,15 @@ impl TransferBackend for OrbiteTransport {
         })
     }
 
-    unsafe fn unregister(&self, registration: &mut Registration) -> Result<(), TransferError> {
+    /// # Safety
+    /// Every operation using this registration has physically drained; errors require retaining the registration.
+    pub unsafe fn unregister(&self, registration: &mut Registration) -> Result<(), TransferError> {
+        #[cfg(test)]
+        if let Some(control) = &self.control {
+            // SAFETY: the same caller ownership and drain contract applies to the fault control.
+            return unsafe { control.unregister(registration) };
+        }
+
         match &mut registration.inner {
             RegistrationInner::Orbite(registration)
                 if registration.transport.epoch == self.epoch =>
@@ -479,12 +512,17 @@ impl TransferBackend for OrbiteTransport {
         }
     }
 
-    fn open_peer(
+    pub fn open_peer(
         &self,
         endpoint: &str,
         expected_epoch: &str,
         deadline: Instant,
     ) -> Result<PeerSegment, TransferError> {
+        #[cfg(test)]
+        if let Some(control) = &self.control {
+            return control.open_peer(endpoint, expected_epoch, deadline);
+        }
+
         let endpoint = parse_endpoint(endpoint)
             .map_err(|e| TransferError::new(ErrorKind::InvalidRequest, e))?;
         let epoch = expected_epoch.parse().map_err(transfer_error)?;
@@ -498,7 +536,9 @@ impl TransferBackend for OrbiteTransport {
         })
     }
 
-    unsafe fn transfer(
+    /// # Safety
+    /// Retain registered local ranges and remote grants, with exclusive READ destinations and immutable WRITE sources, through physical drain.
+    pub unsafe fn transfer(
         &self,
         operation: crate::transfer_engine::TransferOp,
         peer: &PeerSegment,
@@ -506,6 +546,12 @@ impl TransferBackend for OrbiteTransport {
         options: TransferOptions,
         cancellation: &Cancellation,
     ) -> Result<usize, TransferError> {
+        #[cfg(test)]
+        if let Some(control) = &self.control {
+            // SAFETY: the same caller ownership and drain contract applies to the fault control.
+            return unsafe { control.transfer(operation, peer, slices, options, cancellation) };
+        }
+
         validate_profile(slices)?;
         if peer.owner_epoch != self.epoch {
             return Err(TransferError::new(
@@ -514,7 +560,7 @@ impl TransferBackend for OrbiteTransport {
             ));
         }
         #[cfg_attr(
-            not(feature = "mooncake"),
+            not(test),
             allow(
                 clippy::infallible_destructuring_match,
                 reason = "single-provider builds have one segment variant"
@@ -522,7 +568,7 @@ impl TransferBackend for OrbiteTransport {
         )]
         let peer = match &peer.inner {
             Segment::Orbite(peer) => peer,
-            #[cfg(any(feature = "mooncake", test))]
+            #[cfg(test)]
             _ => {
                 return Err(TransferError::new(
                     ErrorKind::InvalidRequest,
@@ -542,7 +588,7 @@ impl TransferBackend for OrbiteTransport {
         Ok(bytes)
     }
 
-    fn open_file(&self, path: &std::path::Path) -> Result<FileSegment, TransferError> {
+    pub fn open_file(&self, path: &std::path::Path) -> Result<FileSegment, TransferError> {
         if !self.files_enabled {
             return Err(TransferError::new(
                 ErrorKind::Unavailable,
@@ -560,7 +606,7 @@ impl TransferBackend for OrbiteTransport {
             Ok(info) => Ok(FileSegment {
                 owner_epoch: self.epoch.clone(),
                 length: info.length,
-                inner: FileSegmentInner::Orbite(inner),
+                inner,
             }),
             Err(error) => {
                 let _ = self.engine.close_file_segment(&inner, Duration::ZERO);
@@ -569,22 +615,14 @@ impl TransferBackend for OrbiteTransport {
         }
     }
 
-    fn close_file(&self, file: &FileSegment, deadline: Instant) -> Result<(), TransferError> {
+    pub fn close_file(&self, file: &FileSegment, deadline: Instant) -> Result<(), TransferError> {
         if file.owner_epoch != self.epoch {
             return Err(TransferError::new(
                 ErrorKind::InvalidRequest,
                 "foreign file segment",
             ));
         }
-        #[cfg(feature = "mooncake")]
-        let FileSegmentInner::Orbite(inner) = &file.inner else {
-            return Err(TransferError::new(
-                ErrorKind::InvalidRequest,
-                "foreign file provider",
-            ));
-        };
-        #[cfg(not(feature = "mooncake"))]
-        let FileSegmentInner::Orbite(inner) = &file.inner;
+        let inner = &file.inner;
         self.engine
             .close_file_segment(inner, deadline.saturating_duration_since(Instant::now()))
             .map_err(transfer_error)
@@ -594,7 +632,9 @@ impl TransferBackend for OrbiteTransport {
         clippy::mem_forget,
         reason = "file backing, registrations and extent leases survive unknown drain or cleanup"
     )]
-    unsafe fn transfer_file(
+    /// # Safety
+    /// The transfer retains the actual backing and immutable or exclusively held extents through physical drain; never replay a failed WRITE.
+    pub unsafe fn transfer_file(
         self: Arc<Self>,
         operation: crate::transfer_engine::TransferOp,
         file: &FileSegment,
@@ -610,15 +650,7 @@ impl TransferBackend for OrbiteTransport {
                 "foreign file segment",
             ));
         }
-        #[cfg(feature = "mooncake")]
-        let FileSegmentInner::Orbite(inner) = &file.inner else {
-            return Err(TransferError::new(
-                ErrorKind::InvalidRequest,
-                "foreign file provider",
-            ));
-        };
-        #[cfg(not(feature = "mooncake"))]
-        let FileSegmentInner::Orbite(inner) = &file.inner;
+        let inner = &file.inner;
         remaining(deadline)?;
         if cancellation.is_cancelled() {
             return Err(TransferError::new(
@@ -685,8 +717,7 @@ impl TransferBackend for OrbiteTransport {
             && let Some(registration) = registration.as_mut()
         {
             // SAFETY: every other result proves physical drain or rejection.
-            if let Err(error) = unsafe { TransferBackend::unregister(self.as_ref(), registration) }
-            {
+            if let Err(error) = unsafe { TransferEngine::unregister(self.as_ref(), registration) } {
                 result = Err(TransferError::new(
                     ErrorKind::Unquiesced,
                     format!("file registration cleanup failed: {error}"),
@@ -702,7 +733,7 @@ impl TransferBackend for OrbiteTransport {
         result
     }
 
-    fn shutdown(&self, deadline: Instant) -> Result<(), TransferError> {
+    pub fn shutdown(&self, deadline: Instant) -> Result<(), TransferError> {
         if self.drained.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -712,13 +743,18 @@ impl TransferBackend for OrbiteTransport {
         self.drained.store(true, Ordering::Release);
         Ok(())
     }
-    fn retire_peer(
+    pub fn retire_peer(
         &self,
         endpoint: &str,
         epoch: &str,
         timeout: Duration,
         _requesters_drained: bool,
     ) -> Result<(), TransferError> {
+        #[cfg(test)]
+        if let Some(control) = &self.control {
+            return control.retire_peer(endpoint, epoch, timeout, _requesters_drained);
+        }
+
         // A successful whole-engine close also drains these handles. Its
         // RequesterClosed fence alone, or a failed shutdown, supplies no receipt.
         if self.drained.load(Ordering::Acquire) {
@@ -731,9 +767,7 @@ impl TransferBackend for OrbiteTransport {
             .close_segment(endpoint, epoch, timeout)
             .map_err(transfer_error)
     }
-    // Transfer failure alone is not an authoritative membership departure.
-    fn invalidate_segment(&self, _endpoint: &str) {}
-    fn record_nic_load(&self) {
+    pub fn record_nic_load(&self) {
         #[cfg(feature = "orbite-rdma")]
         if let Ok(stats) = self.engine.nic_load_stats() {
             static METRICS: std::sync::OnceLock<crate::transfer_engine::backend::NicMetrics> =
@@ -805,7 +839,7 @@ fn transfer_error(error: Error) -> TransferError {
     transfer_error_ref(&error)
 }
 
-impl Drop for OrbiteTransport {
+impl Drop for TransferEngine {
     #[allow(
         clippy::mem_forget,
         reason = "a failed drain must retain the engine and its process admission until exit"

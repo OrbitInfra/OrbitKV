@@ -34,8 +34,6 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-      - name: Initialize native build dependency
-        run: git submodule update --init --recursive --depth 1 third-party/mooncake
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -104,8 +102,6 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-      - name: Initialize native build dependency
-        run: git submodule update --init --recursive --depth 1 third-party/mooncake
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5

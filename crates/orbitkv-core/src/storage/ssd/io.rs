@@ -19,7 +19,7 @@ use crate::cost::{
 use crate::memory::pool::PinnedAllocation;
 use crate::transfer_engine::{
     Cancellation, ErrorKind, FileExtent, FileIoElement, FileMemory, FileSegment, FileTransfer,
-    FileTransport, MAX_FILE_ELEMENTS, TransferBackend, TransferError, TransferOp, TransferOptions,
+    FileTransport, MAX_FILE_ELEMENTS, TransferEngine, TransferError, TransferOp, TransferOptions,
 };
 
 const MAX_OPERATIONS: usize = 32;
@@ -56,7 +56,9 @@ impl<T> Drop for DrainOwner<T> {
 }
 
 pub(crate) struct EngineFile {
-    pub(crate) backend: Arc<dyn TransferBackend>,
+    #[cfg(test)]
+    receipt_control: Option<Arc<tests::engine::ReceiptControl>>,
+    pub(crate) backend: Arc<TransferEngine>,
     segment: FileSegment,
     // /proc/self/fd binds the engine open to this exact inode, not a replaceable path.
     file: Arc<File>,
@@ -162,6 +164,10 @@ impl EngineFile {
         let mut result = match loans.as_ref() {
             Err(error) => Err(TransferError::new(error.kind, error.message.clone())),
             Ok(_) => catch_unwind(AssertUnwindSafe(|| {
+                #[cfg(test)]
+                if let Some(control) = &self.receipt_control {
+                    control.observe(options)?;
+                }
                 // SAFETY: actual backing, persistent loans, file and extent/admission leases outlive drain.
                 unsafe {
                     Arc::clone(&self.backend).transfer_file(
@@ -181,6 +187,10 @@ impl EngineFile {
                 ))
             }),
         };
+        #[cfg(test)]
+        if self.receipt_control.as_ref().is_some_and(|c| c.short) {
+            result = result.map(|bytes| bytes / 2);
+        }
         if matches!(&result, Err(error) if error.kind == ErrorKind::Unquiesced) {
             for owner in registrations {
                 owner.retain();
@@ -233,6 +243,10 @@ impl EngineFile {
             },
             result.as_ref().ok().map(|n| *n as u64),
         );
+        #[cfg(test)]
+        if self.receipt_control.as_ref().is_some_and(|c| c.short) {
+            result = result.map(|bytes| bytes / 2);
+        }
         if matches!(&result, Err(error) if error.kind == ErrorKind::Unquiesced) {
             crate::metrics::core_metrics()
                 .ssd_engine_retained_operations
@@ -276,7 +290,7 @@ pub(super) struct SsdIo {
 impl SsdIo {
     pub(super) fn new(
         files: &[Arc<File>],
-        transfer: Arc<dyn TransferBackend>,
+        transfer: Arc<TransferEngine>,
         transport: FileTransport,
     ) -> std::io::Result<Self> {
         let admission = Arc::new(Semaphore::new(MAX_OPERATIONS));
@@ -289,6 +303,8 @@ impl SsdIo {
                 )))
                 .map_err(std::io::Error::other)?;
             let handle = Arc::new(EngineFile {
+                #[cfg(test)]
+                receipt_control: None,
                 backend: Arc::clone(&transfer),
                 segment,
                 file: Arc::clone(file),

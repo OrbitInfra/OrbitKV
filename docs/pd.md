@@ -1,8 +1,13 @@
 # Prefill/decode transfer
 
+> OrbiTE is now the only transfer engine. GPU/RDMA/GDS and installed profiles
+> require fresh hardware qualification. Earlier measurements retain their original
+> revisions and backend (TENT where recorded); CPU/TCP and io_uring checks are CI
+> evidence, not installed GPU qualification.
+
 OrbitKV uses **official vLLM 0.31.0 and SGLang 0.5.22**. Engines own live
 P/D routing, allocation, transfer and release. OrbitKV independently caches
-completed state. Manager-to-Manager sharing continues to use Rust/TENT; live
+completed state. Manager-to-Manager sharing continues to use Rust/OrbiTE; live
 P/D does not require the same transport.
 
 Native P/D plus OrbitKV is a **qualification candidate**, not a generally
@@ -15,7 +20,7 @@ Ordinary cache serving does not require NIXL, a P/D router, or an engine patch.
 | P/D lifecycle and transfer | Released `NixlConnector` | Released disaggregation queues and selected native backend |
 | Router | `vllm-router==0.1.15` | `sglang-router==0.3.2` |
 | Historical cache | `OrbitKVConnector` via `MultiConnector` | `UnifiedRadixCache` + external `OrbitKVLinker` |
-| Shared cache between Managers | Rust/TENT | Rust/TENT |
+| Shared cache between Managers | Rust/OrbiTE | Rust/OrbiTE |
 
 The custom P/D connectors, handshake/proxy, partial-tail extension and fork-only
 TENT payload adapters are removed. Native P/D carries live prompt tails;
@@ -88,7 +93,7 @@ restart and pressure are separate test candidates, not default guarantees.
 
 Use the official engine and router with its native transfer dependency. The
 current candidate exercises `--disaggregation-transfer-backend mooncake` with
-the released `mooncake-transfer-engine` package, not OrbitKV's bundled TENT.
+the released `mooncake-transfer-engine` package, independently of OrbitKV's OrbiTE sharing.
 No transfer-engine class substitution, factory patch or fork callback is used.
 
 Add `--radix-cache-backend orbitkv`, `--enable-unified-cache-external-linker`

@@ -15,7 +15,7 @@ use super::{
 };
 use crate::planning::peer::{FetchPlan, FetchSegment};
 use crate::transfer_engine::{
-    Cancellation, CudaRegistration, ErrorKind, PeerTransferError, TransferBackend, TransferOp,
+    Cancellation, CudaRegistration, ErrorKind, PeerTransferError, TransferEngine, TransferOp,
     TransferOptions, TransferSlice,
 };
 use crate::{SlotMeta, block::StateKey, memory::numa::NumaNode};
@@ -78,7 +78,7 @@ impl PeerRestoreBlock {
     pub(crate) fn same_grant(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.grant, &other.grant)
     }
-    pub(crate) fn backend(&self) -> Arc<dyn TransferBackend> {
+    pub(crate) fn backend(&self) -> Arc<TransferEngine> {
         Arc::clone(&self.grant.peer.backend)
     }
 

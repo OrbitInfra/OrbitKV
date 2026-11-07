@@ -420,8 +420,8 @@ fn completion_observation_uses_the_authenticated_descriptor_session() {
         decode_page_bytes: 4096,
         handoff_queue_depth: 1,
         handoff_queue_parallelism: 16,
-        tent_inflight_bytes: 0,
-        tent_bandwidth_bytes_per_second: 0,
+        transfer_inflight_bytes: 0,
+        transfer_bandwidth_bytes_per_second: 0,
         admission: crate::CompletionAdmission::Admitted,
         outcome: crate::CompletionOutcome::Completed,
     };

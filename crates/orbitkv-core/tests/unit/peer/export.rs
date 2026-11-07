@@ -465,14 +465,15 @@ async fn export_rejects_invalid_evidence_before_reserving_resources() {
 #[tokio::test]
 #[ignore = "OrbiTE source registration hardware gate: requires a real CUDA pinned allocator"]
 async fn orbite_grant_registrations_share_backing_and_fence_old_completion_generations() {
-    use crate::peer::orbite::{OrbiteTransport, parse_endpoint};
+    use crate::peer::orbite::{TransferEngine, parse_endpoint};
     use orbite::{
-        EngineConfig, Permission, TransferEngine, TransferOp, TransferRequest, Transport,
+        EngineConfig, Permission, TransferEngine as NativeEngine, TransferOp, TransferRequest,
+        Transport,
     };
 
     let (mut exports, membership, inventory) = exports();
     let source = Arc::new(
-        OrbiteTransport::new(
+        TransferEngine::new(
             1 << 20,
             "127.0.0.1:0",
             Transport::Tcp,
@@ -519,7 +520,7 @@ async fn orbite_grant_registrations_share_backing_and_fence_old_completion_gener
             .await
             .unwrap(),
     );
-    let client = TransferEngine::new(EngineConfig::default()).unwrap();
+    let client = NativeEngine::new(EngineConfig::default()).unwrap();
     let endpoint = parse_endpoint(&source.endpoint).unwrap();
     let epoch = source.epoch.parse().unwrap();
     assert_eq!(

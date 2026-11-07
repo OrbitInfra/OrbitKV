@@ -1,14 +1,13 @@
 //! Transfer-engine contracts. Logical failure never establishes physical drain.
 
 pub(crate) mod backend;
-pub(crate) use backend::create_transfer_backend;
-pub use backend::{FileSegment, PeerSegment, Registration};
+pub(crate) use backend::create_transfer_engine;
+pub use backend::{FileSegment, PeerSegment, Registration, TransferEngine};
 mod cuda;
 pub use cuda::CudaRegistration;
 pub mod local;
 
 use std::fmt;
-use std::path::Path;
 use std::ptr::NonNull;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -76,8 +75,7 @@ impl TransferOptions {
     }
 }
 
-/// Requested native access. TENT retains its existing whole-pool registration;
-/// per-allocation authorization remains the responsibility of source grants.
+/// Requested native access, additionally constrained by authoritative source grants.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Permission {
     LocalOnly,
@@ -272,130 +270,6 @@ pub struct FileTransfer {
     pub(crate) _lease: Arc<dyn Send + Sync>,
 }
 
-/// Selected once per Manager. Source authority stays in OrbitKV's grant owner.
-pub trait TransferBackend: Send + Sync {
-    fn local_engine(&self) -> crate::PeerTransferBackend {
-        crate::PeerTransferBackend::Mooncake
-    }
-
-    fn bind_local(
-        self: Arc<Self>,
-        _stream: Arc<cudarc::driver::CudaStream>,
-        _mode: crate::transfer::TransferMode,
-        _device: u64,
-    ) -> Result<Box<dyn local::LocalCopy>, TransferError> {
-        Err(TransferError::new(
-            ErrorKind::Unavailable,
-            "selected engine has no local copy implementation",
-        ))
-    }
-    fn transfer_endpoint(&self) -> &str;
-    fn source_epoch(&self) -> &str;
-    fn accepts_endpoint(&self, endpoint: &str) -> bool;
-
-    fn open_file(&self, _path: &Path) -> Result<FileSegment, TransferError> {
-        Err(TransferError::new(
-            ErrorKind::Unavailable,
-            "selected backend does not expose file transports",
-        ))
-    }
-
-    fn close_file(&self, _file: &FileSegment, _deadline: Instant) -> Result<(), TransferError> {
-        Err(TransferError::new(
-            ErrorKind::Unavailable,
-            "selected backend does not expose file drain",
-        ))
-    }
-
-    /// # Safety
-    /// The supplied owner keeps actual backing and immutable/read-exclusive
-    /// extents. The backend owns any file registrations. `remote_address` is a
-    /// file byte offset. Unquiesced retains all owners; never replay a failed WRITE.
-    /// Every other result proves local drain, including a pre-admission rejection.
-    unsafe fn transfer_file(
-        self: Arc<Self>,
-        _operation: TransferOp,
-        _file: &FileSegment,
-        _transport: FileTransport,
-        _transfer: Arc<FileTransfer>,
-        _options: TransferOptions,
-        _cancellation: &Cancellation,
-    ) -> Result<usize, TransferError> {
-        Err(TransferError::new(
-            ErrorKind::Unavailable,
-            "selected backend does not expose file transfers",
-        ))
-    }
-
-    /// The caller transfers exclusive access to destination allocations, or
-    /// supplies immutable source allocations, through the last admitted operation.
-    fn register_pinned(
-        self: Arc<Self>,
-        allocations: &[Arc<PinnedAllocation>],
-        permission: Permission,
-    ) -> Result<Registration, TransferError>;
-
-    /// # Safety
-    /// `owner` must retain the allocation and CUDA context. Producers must be
-    /// complete and aliases coordinated until unregister and all transfers drain.
-    unsafe fn register_cuda(
-        self: Arc<Self>,
-        address: u64,
-        length: usize,
-        device: i32,
-        owner: Arc<dyn Send + Sync>,
-        permission: Permission,
-    ) -> Result<Registration, TransferError>;
-
-    /// # Safety
-    /// All operations using this registration must have physically drained.
-    /// On failure retain the handle; a deadline alone never permits unregister.
-    unsafe fn unregister(&self, registration: &mut Registration) -> Result<(), TransferError>;
-
-    fn open_peer(
-        &self,
-        endpoint: &str,
-        expected_epoch: &str,
-        deadline: Instant,
-    ) -> Result<PeerSegment, TransferError>;
-
-    /// # Safety
-    /// All slices must be registered, with exclusive READ destinations and
-    /// immutable WRITE sources. Retain actual local owners and remote grants
-    /// through return; Unquiesced requires retaining them until process exit.
-    /// Every other result proves local drain. WRITE failures are never replayed.
-    unsafe fn transfer(
-        &self,
-        operation: TransferOp,
-        peer: &PeerSegment,
-        slices: &[TransferSlice],
-        options: TransferOptions,
-        cancellation: &Cancellation,
-    ) -> Result<usize, TransferError>;
-
-    /// Irreversibly fence admission and drain both source and requester work.
-    /// An error requires retaining this backend and its registrations.
-    fn shutdown(&self, deadline: Instant) -> Result<(), TransferError>;
-    /// Retire a membership identity. Errors never supply a release receipt.
-    /// Repeated calls may wait again, but must never retry native destruction.
-    /// TENT's reversible cache close additionally requires all wrapper requests
-    /// to have drained, since a pending wrapper request could reopen its handle.
-    fn retire_peer(
-        &self,
-        _endpoint: &str,
-        _epoch: &str,
-        _timeout: Duration,
-        _requesters_drained: bool,
-    ) -> Result<(), TransferError> {
-        Err(TransferError::new(
-            ErrorKind::Unavailable,
-            "peer retirement unavailable",
-        ))
-    }
-    fn invalidate_segment(&self, endpoint: &str);
-    fn record_nic_load(&self);
-}
-
 pub(crate) struct PeerReadSlice {
     pub(crate) local: NonNull<u8>,
     pub(crate) remote_address: u64,
@@ -430,7 +304,7 @@ impl From<TransferError> for PeerTransferError {
     }
 }
 
-impl dyn TransferBackend {
+impl TransferEngine {
     #[allow(
         clippy::mem_forget,
         reason = "unquiesced work retains actual registrations and engine admission"

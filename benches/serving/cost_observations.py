@@ -179,8 +179,8 @@ def preflight(args) -> list[str]:
             failures.append(f"GPU unavailable: {(result.stdout + result.stderr).strip()}")
     except (OSError, subprocess.TimeoutExpired) as error:
         failures.append(f"GPU prerequisite failed: {error}")
-    # Cargo may restage Mooncake even without an active Manager. Refuse competing
-    # builds and serving runtimes; never kill a process owned by another task.
+    # Competing builds and serving runtimes contaminate the measured workload;
+    # never kill a process owned by another task.
     for path in Path("/proc").glob("[0-9]*/cmdline"):
         try:
             words = path.read_bytes().split(b"\0")

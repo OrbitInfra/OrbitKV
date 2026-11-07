@@ -66,7 +66,7 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   two-real-Manager installed byte/SSD gate separately from the official one-node
   handshake serving gate; neither qualifies physical multi-GPU/cross-host TP.
 - P/D uses official vLLM NIXL/MultiConnector and SGLang native disaggregation;
-  Manager shared-cache traffic still uses TENT. Do not reintroduce fork factories,
+  Manager shared-cache traffic still uses OrbiTE. Do not reintroduce fork factories,
   callbacks, custom connectors, handshake/proxy or partial-tail cache modes.
 - The candidate profile reads/writes cache on P and only saves on D. Native P/D
   owns incoming destinations; cache retains completed state until its own drain.
@@ -162,6 +162,6 @@ The accepted serial profile and its lifetime limits are recorded in S5.5;
 neither fixture success nor pair medians select a general backend default.
 
 For upstream delivery, separate baseline registration/configuration/tests/docs,
-generic lifecycle fixes and TENT transport integration into reviewable PRs.
+generic lifecycle fixes and OrbiTE transport integration into reviewable PRs.
 Use a clean engine checkout plus installed wheel as the acceptance environment.
 Report local qualification, upstream merge and released support separately.

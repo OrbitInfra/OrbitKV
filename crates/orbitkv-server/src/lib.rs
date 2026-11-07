@@ -216,12 +216,12 @@ pub struct Cli {
     #[arg(long, default_value_t = false)]
     pub blockwise_alloc: bool,
 
-    /// Transfer engine for peer payloads and SSD file I/O; OrbiTE requires its build feature.
-    #[arg(long, default_value = "mooncake")]
-    pub peer_transfer_backend: orbitkv_core::PeerTransferBackend,
+    /// OrbiTE transport hint; auto lets the engine policy select TCP or RDMA.
+    #[arg(long, default_value = "auto")]
+    pub transfer_transport: orbitkv_core::TransportHint,
 
     /// Explicit single RNIC for the experimental OrbiTE RDMA staging profile.
-    #[arg(long, value_parser = parse_nic_name, required_if_eq("peer_transfer_backend", "orbite-rdma"))]
+    #[arg(long, value_parser = parse_rdma_device, required_if_eq("transfer_transport", "rdma"))]
     pub orbite_rdma_device: Option<String>,
 
     /// RNIC port for OrbiTE RDMA; select from the actual device topology.
@@ -236,11 +236,6 @@ pub struct Cli {
     /// Requires an installed GDR-capable profile and MLX5_SCATTER_TO_CQE=0.
     #[arg(long, requires = "orbite_rdma_device")]
     pub orbite_rdma_gpu_direct: bool,
-
-    /// Optional Mooncake RDMA rail filter (e.g. --nics mlx5_0,mlx5_1).
-    /// Without it, Mooncake selects the available transport, including TCP.
-    #[arg(long, value_delimiter = ',', value_parser = parse_nic_name, num_args = 1..)]
-    pub nics: Option<Vec<String>>,
 
     /// etcd endpoints for membership and background block-location synchronization.
     #[arg(long, value_delimiter = ',', requires = "node_id")]
@@ -363,10 +358,10 @@ fn parse_hll_bucket_bits(s: &str) -> Result<u8, String> {
     Ok(v)
 }
 
-fn parse_nic_name(s: &str) -> Result<String, String> {
+fn parse_rdma_device(s: &str) -> Result<String, String> {
     let name = s.trim();
     if name.is_empty() {
-        return Err("--nics contains an empty NIC name".into());
+        return Err("--orbite-rdma-device must not be empty".into());
     }
     Ok(name.to_string())
 }
@@ -608,13 +603,13 @@ fn init_metrics(
 /// Main entry point for the Cache Manager.
 pub fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
-    cli.peer_transfer_backend.validate_compiled()?;
+    cli.transfer_transport.validate_compiled()?;
     if !cli.ssd_cache_path.is_empty() {
         orbitkv_core::SsdCacheConfig {
             backend: cli.ssd_backend,
             ..Default::default()
         }
-        .validate_transfer_engine(cli.peer_transfer_backend)?;
+        .validate_transfer_engine()?;
     }
     let query_control_address = cli.query_control_address()?;
     orbitkv_common::logging::init_stdout_colored(&cli.log_level);
@@ -705,9 +700,6 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     };
 
     let peer_control_enabled = !cli.etcd_endpoints.is_empty();
-    if cli.nics.as_ref().is_some_and(|nics| !nics.is_empty()) && !peer_control_enabled {
-        log::warn!("--nics has no effect without distributed cache configuration");
-    }
     let metadata_scope = Arc::new(if cli.metadata_empty_scope {
         orbitkv_state::InventoryScope::exact(Vec::new())?
     } else if cli.metadata_namespace.is_empty() {
@@ -758,8 +750,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         ssd_cache_config,
         codec: cli.storage_codec,
         codec_budget: cli.storage_codec_budget,
-        mooncake_nic_names: cli.nics.clone().unwrap_or_default(),
-        peer_transfer_backend: cli.peer_transfer_backend,
+        transfer_transport: cli.transfer_transport,
         orbite_rdma: cli
             .orbite_rdma_device
             .clone()

@@ -152,7 +152,7 @@ pub(crate) struct CoreMetrics {
     pub transfer_expired_sessions: UpDownCounter<i64>,
     pub transfer_lock_rejections: Counter<u64>,
 
-    // Mooncake remote fetch (client side)
+    // OrbiTE remote fetch (client side)
     pub transfer_completion_outstanding: UpDownCounter<i64>,
     pub transfer_completion_retries: Counter<u64>,
     pub transfer_completion_rejections: Counter<u64>,
@@ -174,7 +174,7 @@ fn ssd_throughput_boundaries() -> Vec<f64> {
     (1..=40).map(|i| i as f64 * 1.0e9).collect()
 }
 
-/// Histogram boundaries for Mooncake remote fetch (authorization + Mooncake READ).
+/// Histogram boundaries for OrbiTE remote fetch (authorization + OrbiTE READ).
 fn remote_fetch_duration_boundaries() -> Vec<f64> {
     vec![
         0.01, // 10ms
@@ -188,7 +188,7 @@ fn remote_fetch_duration_boundaries() -> Vec<f64> {
     ]
 }
 
-/// Histogram boundaries for the number of segments in one Mooncake fetch plan.
+/// Histogram boundaries for the number of segments in one OrbiTE fetch plan.
 fn remote_fetch_plan_segment_boundaries() -> Vec<f64> {
     vec![
         0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 16.0, 32.0, 64.0, 128.0,
@@ -656,7 +656,7 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .with_description("Source authorizations rejected by byte or session limits")
                 .build(),
 
-            // Mooncake remote fetch (client side)
+            // OrbiTE remote fetch (client side)
             transfer_completion_outstanding: meter.i64_up_down_counter("orbitkv_transfer_completion_outstanding")
                 .with_description("Reserved requester completion slots, including active authorizations and READs")
                 .build(),
@@ -668,12 +668,12 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .build(),
             remote_fetch_total: meter
                 .u64_counter("orbitkv_remote_fetch_total")
-                .with_description("Mooncake remote fetch attempts (status=ok|error)")
+                .with_description("OrbiTE remote fetch attempts (status=ok|error)")
                 .build(),
             remote_fetch_duration_seconds: meter
                 .f64_histogram("orbitkv_remote_fetch_duration")
                 .with_unit("s")
-                .with_description("End-to-end Mooncake fetch latency (authorization + READ)")
+                .with_description("End-to-end OrbiTE fetch latency (authorization + READ)")
                 .with_boundaries(remote_fetch_duration_boundaries())
                 .build(),
             remote_stage_duration_seconds: meter.f64_histogram("orbitkv_remote_stage_duration")
@@ -684,17 +684,17 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
             remote_fetch_bytes: meter
                 .u64_counter("orbitkv_remote_fetch_bytes")
                 .with_unit("bytes")
-                .with_description("Total bytes fetched via Mooncake from remote nodes")
+                .with_description("Total bytes fetched via OrbiTE from remote nodes")
                 .build(),
             remote_fetch_plan_segments: meter
                 .u64_histogram("orbitkv_remote_fetch_plan_segments")
-                .with_description("Number of segments attempted per Mooncake fetch plan, including stale-candidate retries")
+                .with_description("Number of segments attempted per OrbiTE fetch plan, including stale-candidate retries")
                 .with_boundaries(remote_fetch_plan_segment_boundaries())
                 .build(),
             remote_fetch_plan_completed_segments: meter
                 .u64_histogram("orbitkv_remote_fetch_plan_completed_segments")
                 .with_description(
-                    "Number of segments completed before a Mooncake fetch plan stopped",
+                    "Number of segments completed before a OrbiTE fetch plan stopped",
                 )
                 .with_boundaries(remote_fetch_plan_segment_boundaries())
                 .build(),

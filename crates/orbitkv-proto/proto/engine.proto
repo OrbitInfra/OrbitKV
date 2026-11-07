@@ -98,8 +98,8 @@ message CudaRegistrationReply {
   int32 manager_device_id = 5;
   bytes registration_generation = 6;
   repeated CudaPayloadArena arenas = 7;
-  // Manager-selected engine also governs client-local raw Restore copies.
-  string transfer_engine = 8;
+  reserved 8; // Lifecycle 13 uses OrbiTE exclusively.
+  reserved "transfer_engine";
 }
 
 message CudaPayloadArena {
@@ -134,11 +134,11 @@ message AttentionStorageLayout {
   uint32 layer_count = 4;
 }
 
-// Cross-node transfer: authorized Mooncake-visible ranges.
+// Cross-node transfer: authorized OrbiTE-visible ranges.
 message TransferSlotInfo {
-  uint64 k_ptr = 1;      // Mooncake target address for K segment
+  uint64 k_ptr = 1;      // OrbiTE target address for K segment
   uint64 k_size = 2;     // Size of the K segment in bytes (per-segment, not total slot size)
-  uint64 v_ptr = 3;      // Mooncake target address for V segment (0 if contiguous)
+  uint64 v_ptr = 3;      // OrbiTE target address for V segment (0 if contiguous)
   uint64 v_size = 4;     // Size of the V segment in bytes (0 if contiguous)
   bytes encoding = 6; // Versioned storage representation, empty for raw slots
   uint32 numa_node = 5;  // NUMA node where this slot's memory resides (for RDMA NIC affinity)
@@ -179,7 +179,7 @@ message QueryBlocksForTransferResponse {
   ResponseStatus status = 1;
   repeated TransferBlockInfo blocks = 2;
   uint32 lock_timeout_secs = 3;         // Source overdue threshold; expiry never releases pins
-  string transfer_endpoint = 4;        // Mooncake segment name (host:port)
+  string transfer_endpoint = 4;        // OrbiTE endpoint (orbite scheme and host:port)
   string native_source_epoch = 5;      // Captured from the registered source engine, not discovery
 }
 
@@ -197,7 +197,7 @@ service Engine {
   rpc OpenTransferWindow(OpenTransferWindowRequest) returns (OpenTransferWindowResponse);
   // Cross-node transfer: authorize and pin specific blocks (serving side)
   rpc QueryBlocksForTransfer(QueryBlocksForTransferRequest) returns (QueryBlocksForTransferResponse);
-  // Cross-node transfer: release block locks after Mooncake transfer completes
+  // Cross-node transfer: release block locks after OrbiTE transfer completes
   rpc ReleaseTransferLock(ReleaseTransferLockRequest) returns (ReleaseTransferLockResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
 }

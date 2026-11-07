@@ -83,6 +83,9 @@ int cuMemFree_v2(Address ptr) {
   std::free(reinterpret_cast<void *>(ptr)); ++counters[5]; return 0;
 }
 int cuMemsetD8_v2(Address ptr, unsigned char value, size_t size) { std::memset(reinterpret_cast<void *>(ptr), value, size); return 0; }
+int cuMemsetD8Async(Address ptr, unsigned char value, size_t size, Stream *stream) {
+  return enqueue(stream, [=] { std::memset(reinterpret_cast<void *>(ptr), value, size); });
+}
 int cuMemGetAddressRange_v2(Address *base, size_t *size, Address address) {
   std::lock_guard<std::mutex> lock(mutex);
   for (auto [start, length] : allocations) if (address >= start && address - start < length) { *base = start; *size = length; return 0; }

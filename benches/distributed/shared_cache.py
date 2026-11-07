@@ -79,7 +79,7 @@ def verify_restore(before: dict, after: dict, expected: str, actual: dict) -> di
     remote = changes.get("orbitkv_remote_fetch_bytes_total", 0)
     restored = changes.get("orbitkv_load_bytes_total", 0)
     if remote <= 0 or restored <= 0:
-        raise AssertionError(f"Expected both Mooncake READ and GPU restore bytes: {changes}")
+        raise AssertionError(f"Expected both OrbiTE READ and GPU restore bytes: {changes}")
     if changes.get("orbitkv_remote_stage_duration_seconds_count_release", 0) <= 0:
         raise AssertionError("Expected acknowledged transfer completion evidence")
     if actual["text"] != expected:
@@ -108,7 +108,7 @@ def verify_source_ssd(before: dict, after: dict) -> dict:
     read_bytes = changes.get("orbitkv_ssd_prefetch_bytes_total", 0)
     successes = changes.get("orbitkv_ssd_prefetch_success_total", 0)
     if read_bytes <= 0 or successes <= 0:
-        raise AssertionError(f"Expected source SSD materialization before Mooncake READ: {changes}")
+        raise AssertionError(f"Expected source SSD materialization before OrbiTE READ: {changes}")
     return {
         "source_ssd_read_bytes": int(read_bytes),
         "source_ssd_reads": int(successes),

@@ -204,7 +204,6 @@ impl OrbitKVEngine {
             tp_size,
             world_size,
             page_first,
-            self.storage.selected_backend,
             self.transfer_backend(),
         )
         .map_err(EngineError::InvalidArgument)?;
@@ -652,7 +651,7 @@ impl OrbitKVEngine {
     }
 
     /// Shared byte engine used when importing persistent GPU allocations.
-    pub fn transfer_backend(&self) -> Option<Arc<dyn crate::transfer_engine::TransferBackend>> {
+    pub fn transfer_backend(&self) -> Option<Arc<crate::transfer_engine::TransferEngine>> {
         self.storage.peer_transport().cloned()
     }
 

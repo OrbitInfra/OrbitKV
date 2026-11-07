@@ -8,8 +8,8 @@ use tokio::sync::Semaphore;
 
 const WAIT: Duration = Duration::from_secs(15);
 
-fn requester(capacity: usize) -> Arc<OrbiteTransport> {
-    let mut backend = OrbiteTransport::new(
+fn requester(capacity: usize) -> Arc<TransferEngine> {
+    let mut backend = TransferEngine::new(
         4096,
         "127.0.0.1:0",
         Transport::Tcp,
@@ -21,7 +21,7 @@ fn requester(capacity: usize) -> Arc<OrbiteTransport> {
     // A small native identity table makes leaked descriptor handles observable
     // in a short churn control. The real TCP and retirement owners are unchanged.
     backend.engine = Arc::new(
-        TransferEngine::new(EngineConfig {
+        NativeEngine::new(EngineConfig {
             max_peer_segments: capacity,
             max_failover_attempts: 0,
             enable_auto_failover_on_poll: false,

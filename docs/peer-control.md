@@ -1,4 +1,4 @@
-# Peer control and Mooncake ownership
+# Peer control and transfer ownership
 
 Block discovery and inventory synchronization now use the
 [local global index](distributed-cache.md#local-global-index-and-etcd-metadata).
@@ -10,15 +10,15 @@ part of OrbitKV runtime.
 | Operation | Implemented path |
 | --- | --- |
 | Block discovery | Complete local global index; no foreground network query |
-| Inventory publication | Background fenced, batched etcd metadata transactions |
-| Index synchronization | Fixed-revision etcd snapshot followed by Watch |
+| Inventory publication | Bounded Manager inventory streams |
+| Index synchronization | Covered inventory snapshots and deltas |
 | Membership/incarnations | Background etcd registration, lease renewal and Watch |
 | Source grants/completion | Bounded batched OrbitKV gRPC |
-| Remote payload | TENT READ under source grants |
-| P/D payload | TENT WRITE under engine handoff contracts |
+| Remote payload | OrbiTE READ under source grants |
+| P/D payload | Inference engine native transport |
 
 Admission, incarnation/generation fences, idempotent completion and retry
-ownership belong to OrbitKV. TENT owns registered-memory transfer and native
+ownership belong to OrbitKV. OrbiTE owns registered-memory transfer and native
 completion. SEND completion, receiver ACK and drained payload READ are distinct
 events. A metadata lease or dead requester cannot prove old READs have drained.
 
@@ -27,12 +27,13 @@ owns its source guard and destination buffers until native drain. A bounded
 completion owner retries release until acknowledged. Index replacement must
 preserve these implemented limits and ownership.
 
-SGLang retains engine bootstrap/rooms and routes data through the Rust TENT
-adapter. vLLM currently consumes TENT string notifications for P/D. Neither
-consumer needs the retired custom binary ABI. Later protocol changes belong in
-OrbitKV consumers, preserve page lifetimes and update all callers together.
+Live P/D uses each inference engine's native transport; OrbiTE handles Manager
+sharing. See [P/D composition](pd.md). The custom router is removed.
 
-## Why a native prototype existed
+## Historical TENT prototype
+
+The following record describes the removed TENT implementation at its original
+revisions. It does not qualify current OrbiTE byte movement.
 
 The previous plan chose TENT notifications as a general metadata message bus.
 That extra requirement exposed pinned API constraints: C strings/fixed receive
@@ -48,7 +49,7 @@ It never served OrbitKV Rust, P/D or production metadata requests.
 
 The selected local-index architecture does not need that bus. Synchronization
 and application protocols stay in OrbitKV, etcd uses its supported background
-API, and TENT remains the ordinary data plane. The experimental patch is removed
+API, and TENT was then the ordinary data plane. The experimental patch is removed
 from the application source tree and preserved outside it. No binary-ABI
 compatibility layer or alternate runtime is introduced.
 
@@ -59,13 +60,13 @@ trips. Any later transport change needs an end-to-end gain and belongs in OrbitK
 unless a general upstream defect requires a small independent fix.
 
 The two reproduced upstream defects below remain independent transport repairs.
-The [integration branch](../crates/orbitkv-mooncake-sys/README.md#native-source)
+The [integration branch](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/crates/orbitkv-mooncake-sys/README.md#native-source)
 carries consumed native fixes; OrbitKV cache policy remains in its Rust owners.
 
 ## Upstream audit, 2026-09-29
 
 At this audit, OrbitKV pinned Mooncake `719735896c86b56fabec6cf3e825fb2ea640597a`;
-the current [integration pin](../crates/orbitkv-mooncake-sys/README.md#native-source)
+the historical [integration pin](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/crates/orbitkv-mooncake-sys/README.md#native-source)
 carries its scoped native fixes. Separately,
 latest upstream `main` was checked at
 [`be2c57101de5be131729a8b7a8f0c14da61e634c`](https://github.com/kvcache-ai/Mooncake/commit/be2c57101de5be131729a8b7a8f0c14da61e634c).

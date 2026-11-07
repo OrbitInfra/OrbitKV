@@ -7,7 +7,7 @@
 /// without a dead RAM branch.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum AttributionSource {
-    /// Mooncake remote-fetch was selected for at least one remaining block.
+    /// OrbiTE remote-fetch was selected for at least one remaining block.
     Remote,
     /// SSD prefetch was selected for at least one remaining block.
     Ssd,

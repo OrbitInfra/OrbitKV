@@ -90,7 +90,7 @@ histograms retain their queue/admission/service/total meanings. Neither failed
 nor cancelled, timed-out or abandoned work trains successful estimates.
 Peer DRAM authorization uses `path="remote_authorization"`; peer SSD uses
 `path="remote_ssd_authorization"`, whose service interval also includes
-source-local io_uring staging. The following `remote_read` remains the Mooncake
+source-local io_uring staging. The following `remote_read` remains the OrbiTE
 TE payload interval for either source medium.
 `peer_dram_host_ready` and `peer_ssd_host_ready` are non-additive composite
 samples from authorization start through destination block reconstruction.
@@ -101,7 +101,7 @@ matching the peer HostReady shape. Equal-coverage, single-owner alternatives
 enter cross-medium shadow. They affect execution only under the separate
 three-flag experiment gate.
 
-`prefill_to_decode_handoff` is a decode-owned, enqueue-to-TENT-terminal
+`prefill_to_decode_handoff` is a decode-owned, enqueue-to-physical-drain
 observation for the registered destination GPU. It records raw logical and wire
 bytes plus target-layout fragment shape after successful completion; failed,
 cancelled and timed-out reports keep physical bytes unknown. The source
@@ -163,17 +163,18 @@ selection: one execution owner must first acquire both source and handoff
 authority for the alternatives under consideration.
 
 The completion report carries bounded resource values: admitted decode bytes,
-queue depth, queue parallelism, TENT inflight bytes and TENT bandwidth. They
+queue depth, queue parallelism, transfer inflight bytes and transfer bandwidth. They
 live in a 128-entry process-local freshness cache for at most two seconds and
 are not exported as labels. Decode-route comparison accounts for queued waves
 and RDMA rail pressure only when every candidate has fresh, shape-compatible
-evidence; TCP legitimately reports an empty TENT NIC rail.
+evidence; TCP legitimately reports an empty OrbiTE NIC rail.
 
-Raw GPU-copy keys retain separate logarithmic buckets for input descriptors and
-DMA-coalesced ranges. Actual execution samples and shadow candidates use the
-same shape from the validated copy list; the executor's merge iterator supplies
-the range count. Refining that key does not restart queue/admission timing.
-These fields are bounded estimator dimensions, not additional metric labels.
+Raw GPU-copy keys use the input descriptor and byte counts. OrbiTE owns
+coalescing and does not export the compiled DMA count, so `dma_ranges` is zero
+(unavailable) in current observations and timeline records. Historical TENT
+records retain their measured range counts. Refining a key does not restart
+queue/admission timing. These fields are bounded estimator dimensions, not
+additional metric labels.
 
 Shadow compares the existing load DMA/kernel pair, save DMA/kernel pair,
 complete io_uring/cuFile restore pair, and equal-coverage HostReady alternatives.
@@ -526,10 +527,10 @@ emitted once for each `query_prefetch` decision and uses exactly one label:
 Tier values:
 
 - `ram`: blocks already present in the resident RAM cache at the decision point
-- `remote`: blocks selected to be satisfied by Mooncake remote fetch
+- `remote`: blocks selected to be satisfied by OrbiTE remote fetch
 - `ssd`: blocks selected to be satisfied by SSD prefetch
 - `miss`: blocks no tier selected for that decision, including SSD prefetch
-  backpressure and residual blocks after Mooncake partial availability
+  backpressure and residual blocks after OrbiTE partial availability
 
 This metric intentionally records decisions, not completed service outcomes.
 For backing failure correlation, use:
@@ -541,8 +542,8 @@ For backing failure correlation, use:
   rejection before payload submission; `status="error"` counts other fetch failures.
 - `orbitkv_remote_fetch_plan_segments` includes attempted alternative-source
   segments; `orbitkv_remote_fetch_plan_completed_segments` counts completed ones.
-- `orbitkv_tent_nic_inflight_bytes` and `orbitkv_tent_nic_bandwidth_bytes_per_second`
-  sample TENT's live RDMA rail state after successful peer batches, labelled by
+- `orbitkv_orbite_nic_inflight_bytes` and `orbitkv_orbite_nic_bandwidth_bytes_per_second`
+  sample OrbiTE's live RDMA rail state after successful peer batches, labelled by
   NIC. They are resource-pressure evidence, not proof that the sampled batch
   used RDMA.
 - `orbitkv_ssd_prefetch_failures_total` for SSD prefetch failures

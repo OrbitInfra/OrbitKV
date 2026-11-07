@@ -266,7 +266,9 @@ class CacheManager(ManagedProcess):
                 coordinator.endpoint,
                 "--node-id",
                 label,
-                "--nics",
+                "--transfer-transport",
+                "rdma",
+                "--orbite-rdma-device",
                 nics,
             ]
         )
@@ -650,7 +652,7 @@ def test_pp4_p2p_matches_local_cache_load(
         # The producer computes the full prompt, while both consumers take the
         # external-prefix path and only recompute the tail. With PP this can
         # legitimately expose tiny numerical differences on close logits. The
-        # P2P invariant is stricter and narrower: Mooncake-loaded KV must produce
+        # P2P invariant is stricter and narrower: OrbiTE-loaded KV must produce
         # the same outputs as a same-server load from the same saved KV.
         _assert_outputs_match(local_outputs, remote_outputs, label="remote load")
 
@@ -697,7 +699,7 @@ def test_pp4_p2p_matches_local_cache_load(
                 labels={"status": "ok"},
             )
             > 0
-        ), f"remote consumer produced no successful Mooncake fetch; logs={log_dir}"
+        ), f"remote consumer produced no successful OrbiTE fetch; logs={log_dir}"
         assert (
             _metric_value_delta(
                 remote_orbitkv.metrics_port,
@@ -706,7 +708,7 @@ def test_pp4_p2p_matches_local_cache_load(
                 labels={"status": "error"},
             )
             == 0
-        ), f"remote consumer recorded Mooncake fetch errors; logs={log_dir}"
+        ), f"remote consumer recorded OrbiTE fetch errors; logs={log_dir}"
         assert (
             _metric_value_delta(
                 remote_orbitkv.metrics_port,

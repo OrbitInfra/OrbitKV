@@ -98,10 +98,10 @@ fn apply_decode_ready_pressure(
         let waves = waiting.div_ceil(resources.queue_parallelism);
         prediction.seconds *= 1.0 + f64::from(waves);
         if candidate.kind == CostObservationKind::PrefillToDecodeHandoff
-            && resources.tent_bandwidth_bytes_per_second > 0
+            && resources.transfer_bandwidth_bytes_per_second > 0
         {
-            prediction.seconds += resources.tent_inflight_bytes as f64
-                / resources.tent_bandwidth_bytes_per_second as f64;
+            prediction.seconds += resources.transfer_inflight_bytes as f64
+                / resources.transfer_bandwidth_bytes_per_second as f64;
         }
     }
     Ok(())

@@ -78,7 +78,6 @@ fn single_worker_registration_seals_topology() {
         1,
         1,
         false,
-        crate::PeerTransferBackend::Mooncake,
         None,
     )
     .unwrap();
@@ -142,16 +141,8 @@ fn single_worker_registration_seals_topology() {
 /// (layer-id) order. Commits device 0.
 #[test]
 fn page_first_collapses_slots_and_lays_out_page() {
-    let instance = InstanceContext::new(
-        "page-first".into(),
-        "page-ns".into(),
-        1,
-        1,
-        true,
-        crate::PeerTransferBackend::Mooncake,
-        None,
-    )
-    .unwrap();
+    let instance =
+        InstanceContext::new("page-first".into(), "page-ns".into(), 1, 1, true, None).unwrap();
 
     // segment_bytes=1024, single segment, no SSD padding on this path, so each
     // layer's padded_block_bytes == 1024.
@@ -263,16 +254,8 @@ fn page_first_layer_split_seals_per_shard_slots() {
 
     // tp_size stays 1 (MLA collapses TP to effective rank 0); the two workers
     // are distinguished by their disjoint layer sets, not by tp_rank.
-    let instance = InstanceContext::new(
-        "split-page".into(),
-        "split-ns".into(),
-        1,
-        2,
-        true,
-        crate::PeerTransferBackend::Mooncake,
-        None,
-    )
-    .unwrap();
+    let instance =
+        InstanceContext::new("split-page".into(), "split-ns".into(), 1, 2, true, None).unwrap();
     instance
         .register_new_gpu(gpu_registration_with_segment_bytes(
             0,
@@ -311,16 +294,8 @@ fn page_first_layer_split_seals_per_shard_slots() {
 /// rejected with a registration-progress error. Commits device 0.
 #[test]
 fn unsealed_instance_rejects_topology_access() {
-    let instance = InstanceContext::new(
-        "partial".into(),
-        "partial-ns".into(),
-        2,
-        2,
-        false,
-        crate::PeerTransferBackend::Mooncake,
-        None,
-    )
-    .unwrap();
+    let instance =
+        InstanceContext::new("partial".into(), "partial-ns".into(), 2, 2, false, None).unwrap();
     instance
         .register_new_gpu(gpu_registration(0, 0, &["layer_0"]))
         .expect("first of two workers");
@@ -341,16 +316,8 @@ fn unsealed_instance_rejects_topology_access() {
 /// sealed topology contract; reject it outright.
 #[test]
 fn registration_without_layers_is_rejected() {
-    let instance = InstanceContext::new(
-        "empty".into(),
-        "empty-ns".into(),
-        1,
-        1,
-        false,
-        crate::PeerTransferBackend::Mooncake,
-        None,
-    )
-    .unwrap();
+    let instance =
+        InstanceContext::new("empty".into(), "empty-ns".into(), 1, 1, false, None).unwrap();
     let err = instance
         .register_new_gpu(gpu_registration(0, 0, &[]))
         .expect_err("empty registration must fail");
@@ -377,16 +344,8 @@ fn seal_derives_layer_space_from_union_of_workers() {
         return;
     }
 
-    let instance = InstanceContext::new(
-        "pp-mtp".into(),
-        "pp-mtp-ns".into(),
-        1,
-        2,
-        false,
-        crate::PeerTransferBackend::Mooncake,
-        None,
-    )
-    .unwrap();
+    let instance =
+        InstanceContext::new("pp-mtp".into(), "pp-mtp-ns".into(), 1, 2, false, None).unwrap();
     instance
         .register_new_gpu(gpu_registration(0, 0, &["model.layers.0.self_attn.attn"]))
         .expect("stage 0 registers the main layer");
@@ -433,16 +392,8 @@ fn mla_replica_registration_seals() {
         return;
     }
 
-    let instance = InstanceContext::new(
-        "mla-replica".into(),
-        "mla-ns".into(),
-        1,
-        2,
-        false,
-        crate::PeerTransferBackend::Mooncake,
-        None,
-    )
-    .unwrap();
+    let instance =
+        InstanceContext::new("mla-replica".into(), "mla-ns".into(), 1, 2, false, None).unwrap();
     instance
         .register_new_gpu(gpu_registration(0, 0, MLA_DSA_LAYERS))
         .expect("register replica on device 0");
@@ -466,16 +417,8 @@ fn seal_rejects_replicas_across_pipeline_stages() {
         return;
     }
 
-    let instance = InstanceContext::new(
-        "pp-conflict".into(),
-        "pp-ns".into(),
-        1,
-        2,
-        false,
-        crate::PeerTransferBackend::Mooncake,
-        None,
-    )
-    .unwrap();
+    let instance =
+        InstanceContext::new("pp-conflict".into(), "pp-ns".into(), 1, 2, false, None).unwrap();
     let layers = &["model.layers.0.self_attn.attn"];
     instance
         .register_new_gpu(gpu_registration(0, 0, layers))
@@ -511,7 +454,6 @@ fn seal_rejects_missing_slot_owner() {
         2,
         2,
         false,
-        crate::PeerTransferBackend::Mooncake,
         None,
     )
     .unwrap();
@@ -541,16 +483,8 @@ fn seal_rejects_inconsistent_layer_geometry() {
         return;
     }
 
-    let instance = InstanceContext::new(
-        "geom".into(),
-        "geom-ns".into(),
-        1,
-        2,
-        false,
-        crate::PeerTransferBackend::Mooncake,
-        None,
-    )
-    .unwrap();
+    let instance =
+        InstanceContext::new("geom".into(), "geom-ns".into(), 1, 2, false, None).unwrap();
     instance
         .register_new_gpu(gpu_registration_with_segment_bytes(
             0,
@@ -580,16 +514,8 @@ fn seal_rejects_inconsistent_layer_geometry() {
 fn hybrid_topology_seals_per_group_slot_spaces() {
     // tp_size=1 keeps this single-device; the group-rank reset and per-group
     // totals are what distinguish groups (tp_rank math is unchanged).
-    let instance = InstanceContext::new(
-        "hybrid".into(),
-        "hybrid-ns".into(),
-        1,
-        1,
-        false,
-        crate::PeerTransferBackend::Mooncake,
-        None,
-    )
-    .unwrap();
+    let instance =
+        InstanceContext::new("hybrid".into(), "hybrid-ns".into(), 1, 1, false, None).unwrap();
     instance
         .register_new_gpu(gpu_registration_with_groups(
             0,
@@ -631,16 +557,8 @@ fn hybrid_topology_seals_per_group_slot_spaces() {
 /// backward-compat guard for current connectors. Commits device 0.
 #[test]
 fn default_groups_keep_global_slot_layout() {
-    let instance = InstanceContext::new(
-        "classic".into(),
-        "classic-ns".into(),
-        1,
-        1,
-        false,
-        crate::PeerTransferBackend::Mooncake,
-        None,
-    )
-    .unwrap();
+    let instance =
+        InstanceContext::new("classic".into(), "classic-ns".into(), 1, 1, false, None).unwrap();
     instance
         .register_new_gpu(gpu_registration(0, 0, &["layer_a", "layer_b", "layer_c"]))
         .expect("register classic gpu");
@@ -667,16 +585,8 @@ fn seal_rejects_inconsistent_layer_group_across_devices() {
         return;
     }
 
-    let instance = InstanceContext::new(
-        "grp-conflict".into(),
-        "grp-ns".into(),
-        1,
-        2,
-        false,
-        crate::PeerTransferBackend::Mooncake,
-        None,
-    )
-    .unwrap();
+    let instance =
+        InstanceContext::new("grp-conflict".into(), "grp-ns".into(), 1, 2, false, None).unwrap();
     instance
         .register_new_gpu(gpu_registration_with_groups(0, 0, &[("layer_0", 0)]))
         .expect("first worker");
@@ -692,16 +602,8 @@ fn seal_rejects_inconsistent_layer_group_across_devices() {
 /// Commits device 0.
 #[test]
 fn seal_rejects_sparse_group_ids() {
-    let instance = InstanceContext::new(
-        "sparse".into(),
-        "sparse-ns".into(),
-        1,
-        1,
-        false,
-        crate::PeerTransferBackend::Mooncake,
-        None,
-    )
-    .unwrap();
+    let instance =
+        InstanceContext::new("sparse".into(), "sparse-ns".into(), 1, 1, false, None).unwrap();
     let err = instance
         .register_new_gpu(gpu_registration_with_groups(
             0,
@@ -723,7 +625,6 @@ fn page_first_rejects_multiple_groups() {
         1,
         1,
         true,
-        crate::PeerTransferBackend::Mooncake,
         None,
     )
     .unwrap();
@@ -743,16 +644,9 @@ fn receiver_placement_is_sealed_per_group_without_changing_storage_identity() {
         let groups = if page_first { [0, 0, 0] } else { [0, 1, 0] };
         let mut namespace = None;
         for node in [NumaNode(0), NumaNode(1), NumaNode::UNKNOWN] {
-            let instance = InstanceContext::new(
-                "receiver".into(),
-                "model".into(),
-                1,
-                1,
-                page_first,
-                crate::PeerTransferBackend::Mooncake,
-                None,
-            )
-            .unwrap();
+            let instance =
+                InstanceContext::new("receiver".into(), "model".into(), 1, 1, page_first, None)
+                    .unwrap();
             let mut registration = gpu_registration_with_groups(
                 0,
                 0,
@@ -783,19 +677,5 @@ fn receiver_placement_is_sealed_per_group_without_changing_storage_identity() {
                     .is_err()
             );
         }
-    }
-}
-
-#[test]
-fn local_only_orbite_instance_requires_its_engine() {
-    for selected in [
-        crate::PeerTransferBackend::Orbite,
-        crate::PeerTransferBackend::OrbiteTcp,
-        crate::PeerTransferBackend::OrbiteRdma,
-    ] {
-        let error = InstanceContext::new("local".into(), "ns".into(), 1, 1, false, selected, None)
-            .err()
-            .expect("local-only instances cannot drop the selected engine");
-        assert!(error.contains("local-only OrbiTE"), "{error}");
     }
 }

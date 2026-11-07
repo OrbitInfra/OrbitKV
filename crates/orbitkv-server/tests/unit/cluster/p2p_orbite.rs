@@ -1,11 +1,11 @@
-//! P2P Mooncake remote fetch integration test.
+//! P2P OrbiTE remote fetch integration test.
 //!
 //! Verifies the end-to-end flow:
-//! Engine A saves blocks → etcd publishes locations → local index discovers them → Engine B fetches via Mooncake READ
+//! Engine A saves blocks → etcd publishes locations → local index discovers them → Engine B fetches via OrbiTE READ
 //! → data integrity verified.
 //!
-//! Run with: `cargo test -p orbitkv-server --lib cluster::tests::p2p_mooncake -- --ignored`
-//! Requires ETCD_BIN, CUDA, and a prebuilt Mooncake runtime.
+//! Run with: `cargo test -p orbitkv-server --lib cluster::tests::p2p_orbite -- --ignored`
+//! Requires ETCD_BIN, CUDA, and a prebuilt OrbiTE runtime.
 
 use std::ffi::c_void;
 use std::net::SocketAddr;
@@ -152,6 +152,7 @@ async fn restore_and_wait(
                 vec![tensor],
                 engine.payload_arenas().expect("export payload arenas"),
                 TransferMode::Direct,
+                Arc::new(()),
             )
             .expect("import source payload arenas");
             let result = loop {
@@ -412,22 +413,10 @@ async fn wait_for_index_ownership(
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-fn ib_device() -> String {
-    std::env::var("ORBITKV_IB_DEVICE").unwrap_or_else(|_| "mlx5_1".into())
-}
-
-fn mooncake_nics() -> Vec<String> {
-    if std::env::var_os("MC_FORCE_TCP").is_some() {
-        Vec::new()
-    } else {
-        vec![ib_device()]
-    }
-}
-
 // ── Test ────────────────────────────────────────────────────────────────────
 
 // Cross multiple discovery/authorization segments so the opt-in lookahead path
-// also exercises real source-budget pressure and Mooncake READ ownership.
+// also exercises real source-budget pressure and OrbiTE READ ownership.
 const NUM_BLOCKS: usize = orbitkv_state::DISCOVERY_MAX_KEYS * 2 + 4;
 const BLOCK_SIZE: usize = 1024;
 const TOTAL_SIZE: usize = NUM_BLOCKS * BLOCK_SIZE;
@@ -436,28 +425,21 @@ const LAYER: &str = "layer_0";
 const DEVICE_ID: i32 = 0;
 
 #[tokio::test]
-#[ignore = "requires CUDA and Mooncake; set MC_FORCE_TCP=1 for the same-host TCP gate"]
-async fn p2p_mooncake_remote_fetch_roundtrip() {
-    peer_remote_fetch_roundtrip(PeerTransferBackend::Mooncake).await;
-}
-
-#[cfg(feature = "orbite")]
-#[tokio::test]
 #[ignore = "OrbiTE peer hardware gate: requires CUDA and ETCD_BIN; actual Manager gRPC, inventory and TCP READ"]
 async fn p2p_orbite_remote_fetch_roundtrip() {
-    peer_remote_fetch_roundtrip(PeerTransferBackend::OrbiteTcp).await;
+    peer_remote_fetch_roundtrip(TransportHint::Tcp).await;
 }
 
 #[cfg(feature = "orbite-rdma")]
 #[tokio::test]
 #[ignore = "requires CUDA13, ETCD_BIN and explicit ORBITKV_TEST_ORBITE_RDMA_DEVICE/PORT/GID_INDEX; actual Manager GPU path"]
 async fn p2p_orbite_rdma_remote_fetch_roundtrip() {
-    peer_remote_fetch_roundtrip(PeerTransferBackend::OrbiteRdma).await;
+    peer_remote_fetch_roundtrip(TransportHint::Rdma).await;
 }
 
 #[cfg(feature = "orbite-rdma")]
-fn orbite_rdma_config(backend: PeerTransferBackend) -> Option<orbitkv_core::OrbiteRdmaConfig> {
-    (backend == PeerTransferBackend::OrbiteRdma).then(|| orbitkv_core::OrbiteRdmaConfig {
+fn orbite_rdma_config(backend: TransportHint) -> Option<orbitkv_core::OrbiteRdmaConfig> {
+    (backend == TransportHint::Rdma).then(|| orbitkv_core::OrbiteRdmaConfig {
         cuda_memory: match std::env::var("ORBITKV_TEST_ORBITE_GPU_DIRECT").as_deref() {
             Ok("1") => orbitkv_core::OrbiteRdmaCudaMemory::Direct,
             _ => orbitkv_core::OrbiteRdmaCudaMemory::Staged,
@@ -480,7 +462,7 @@ fn orbite_rdma_config(backend: PeerTransferBackend) -> Option<orbitkv_core::Orbi
     })
 }
 
-async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
+async fn peer_remote_fetch_roundtrip(backend: TransportHint) {
     orbitkv_common::logging::init_stdout_colored("debug");
     let _cuda_ctx = CudaContext::new(0).expect("CUDA init");
 
@@ -501,15 +483,10 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
         membership: Some(membership_a.clone()),
         global_index: Some(index_a),
         inventory: Some(inventory_a),
-        peer_transfer_backend: backend,
+        transfer_transport: backend,
         #[cfg(feature = "orbite-rdma")]
         orbite_rdma: orbite_rdma_config(backend),
-        enable_numa_affinity: backend == PeerTransferBackend::Mooncake,
-        mooncake_nic_names: if backend == PeerTransferBackend::Mooncake {
-            mooncake_nics()
-        } else {
-            Vec::new()
-        },
+        enable_numa_affinity: backend == TransportHint::Auto,
         transfer_budget_bytes: Some(TOTAL_SIZE),
         transfer_lock_timeout: Duration::ZERO,
         ..EngineConfig::default()
@@ -669,16 +646,15 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
         engine_a.transfer_endpoint().unwrap()
     );
     match backend {
-        PeerTransferBackend::Orbite => {
+        TransportHint::Auto => {
             assert!(granted.transfer_endpoint.starts_with("orbite://"));
         }
-        PeerTransferBackend::OrbiteTcp => {
+        TransportHint::Tcp => {
             assert!(granted.transfer_endpoint.starts_with("orbite+tcp://"));
         }
-        PeerTransferBackend::OrbiteRdma => {
+        TransportHint::Rdma => {
             assert!(granted.transfer_endpoint.starts_with("orbite+rdma://"));
         }
-        PeerTransferBackend::Mooncake => {}
     }
     assert_eq!(engine_a.expire_transfer_locks(), 1);
     assert_eq!(engine_a.expire_transfer_locks(), 0);
@@ -768,15 +744,10 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
         membership: Some(membership_b.clone()),
         global_index: Some(index_b),
         inventory: Some(inventory_b),
-        peer_transfer_backend: backend,
+        transfer_transport: backend,
         #[cfg(feature = "orbite-rdma")]
         orbite_rdma: orbite_rdma_config(backend),
-        enable_numa_affinity: backend == PeerTransferBackend::Mooncake,
-        mooncake_nic_names: if backend == PeerTransferBackend::Mooncake {
-            mooncake_nics()
-        } else {
-            Vec::new()
-        },
+        enable_numa_affinity: backend == TransportHint::Auto,
         ..EngineConfig::default()
     };
     let engine_b = Arc::new(
@@ -871,7 +842,7 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
     )
     .await;
 
-    // ── 9. Engine B observes the producer and fetches via Mooncake READ ──
+    // ── 9. Engine B observes the producer and fetches via OrbiTE READ ──
     let result = tokio::time::timeout(Duration::from_secs(30), waiting)
         .await
         .expect("remote fetch timeout")
@@ -932,7 +903,7 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
     gpu_b.zero();
 
     // ── 9b. Verify Engine B re-registered fetched blocks to global index ──
-    // Mooncake-fetched blocks are now resident on B, so B must advertise them so
+    // OrbiTE-fetched blocks are now resident on B, so B must advertise them so
     // other nodes can discover and fetch from B (not just from A).
     let restored_fence = capture_inventory_fence(&engine_b, &cluster_b).await;
     wait_for_fence(&stores, &restored_fence).await;
@@ -1110,10 +1081,7 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
     assert!(engine_b.list_instance_ids().unwrap().is_empty());
     assert!(engine_a.list_instance_ids().unwrap().is_empty());
     _observer.shutdown().await;
-    if matches!(
-        backend,
-        PeerTransferBackend::OrbiteTcp | PeerTransferBackend::OrbiteRdma
-    ) {
+    if matches!(backend, TransportHint::Tcp | TransportHint::Rdma) {
         let artifact_root = std::env::var_os("ORBITKV_METADATA_ARTIFACT_DIR")
             .expect("explicit external peer evidence directory");
         std::fs::write(
@@ -1128,7 +1096,7 @@ async fn peer_remote_fetch_roundtrip(backend: PeerTransferBackend) {
 }
 
 #[tokio::test]
-#[ignore = "requires CUDA, Mooncake and ETCD_BIN; live DRAM journal overflow and metadata loss"]
+#[ignore = "requires CUDA, OrbiTE and ETCD_BIN; live DRAM journal overflow and metadata loss"]
 async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata_loss() {
     orbitkv_common::logging::init_stdout_colored("debug");
     let _cuda_ctx = CudaContext::new(0).expect("CUDA init");
@@ -1190,7 +1158,7 @@ async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata
                 membership: Some(source_view.clone()),
                 global_index: Some(source_index),
                 inventory: Some(inventory.clone()),
-                mooncake_nic_names: Vec::new(),
+
                 ..EngineConfig::default()
             },
         )
@@ -1422,19 +1390,18 @@ async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata
 }
 
 #[tokio::test]
-#[ignore = "requires CUDA, io_uring, nvCOMP 5.3 and Mooncake; set MC_FORCE_TCP=1 for same-host TCP"]
+#[ignore = "requires CUDA, io_uring, nvCOMP 5.3 and OrbiTE; select the tcp transport hint for same-host TCP"]
 async fn encoded_peer_payloads_restore_the_same_gpu_image() {
-    encoded_peer_roundtrip(PeerTransferBackend::Mooncake).await;
+    encoded_peer_roundtrip(TransportHint::Auto).await;
 }
 
-#[cfg(feature = "orbite")]
 #[tokio::test]
 #[ignore = "requires installed CUDA and nvCOMP 5.3 plus ETCD_BIN; OrbiTE TCP GPU byte gate"]
 async fn orbite_encoded_peer_gpu_restore() {
-    encoded_peer_roundtrip(PeerTransferBackend::OrbiteTcp).await;
+    encoded_peer_roundtrip(TransportHint::Tcp).await;
 }
 
-async fn encoded_peer_roundtrip(backend: PeerTransferBackend) {
+async fn encoded_peer_roundtrip(backend: TransportHint) {
     use orbitkv_state::{AttentionRole, Scalar16, StorageFormat};
     let _cuda = CudaContext::new(0).unwrap();
     let coordinator = Etcd::start(1).await;
@@ -1464,13 +1431,13 @@ async fn encoded_peer_roundtrip(backend: PeerTransferBackend) {
                     16 << 20,
                     false,
                     EngineConfig {
-                        peer_transfer_backend: backend,
+                        transfer_transport: backend,
                         codec,
                         ssd_cache_config,
                         membership: Some(view),
                         global_index: Some(global_index),
                         inventory: Some(inventory),
-                        mooncake_nic_names: mooncake_nics(),
+
                         ..Default::default()
                     },
                 )

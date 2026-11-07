@@ -280,22 +280,54 @@ fn duplicate_credit_refusal_keeps_disposition_unknown() {
     assert_eq!(disposition, CudaCreditDisposition::Unknown);
 }
 
-#[test]
-fn tensor_owner_survives_registry_removal() {
+#[cfg(feature = "orbite")]
+#[tokio::test]
+#[ignore = "requires the explicit CPU CUDA-driver fixture and real OrbiTE registration"]
+async fn tensor_owner_survives_registry_removal() {
+    use cudarc::driver::{CudaContext, DevicePtr};
     use std::sync::Arc;
-    // CPU ownership control: a Python object stands in for the imported tensor.
-    // CUDA IPC itself remains an installed gate.
+    assert_eq!(
+        std::env::var("ORBITKV_REQUIRE_LOCAL_COPY_SHIM").as_deref(),
+        Ok("1")
+    );
+    let engine = orbitkv_core::OrbitKVEngine::new_with_config(
+        1 << 20,
+        false,
+        orbitkv_core::EngineConfig {
+            enable_numa_affinity: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let context = CudaContext::new(0).unwrap();
+    let stream = context.new_stream().unwrap();
+    let gpu = stream.alloc_zeros::<u8>(64).unwrap();
+    stream.synchronize().unwrap();
+    let address = gpu.device_ptr(&stream).0;
+    // A Python marker stands in for the exporter; the engine retains it together
+    // with actual driver-shim allocation/context backing, not a synthetic address.
     let owner = pyo3::Python::attach(|py| Arc::new(py.None()));
     let weak = Arc::downgrade(&owner);
+    // SAFETY: the owner tuple retains initialized allocation/context and exporter;
+    // this control submits no concurrent accesses and unregisters before final free.
+    let registration = unsafe {
+        CudaRegistration::new(
+            engine.transfer_backend(),
+            address,
+            64,
+            0,
+            Arc::new((owner.clone(), gpu)),
+        )
+    }
+    .unwrap();
     let metadata = TensorMetadata {
         dtype: "control".into(),
         shape: vec![1],
         strides: vec![1],
-        data_ptr: 4096,
-        size_bytes: 1,
+        data_ptr: address,
+        size_bytes: 64,
         device_id: 0,
-        // SAFETY: no-backend CPU fixture retains this marker without CUDA access.
-        owner: Some(unsafe { CudaRegistration::new(None, 4096, 1, 0, owner.clone()) }.unwrap()),
+        owner: Some(registration),
     };
     let retained = metadata.clone();
     let mut registry = CudaTensorRegistry::empty();

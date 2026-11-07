@@ -26,7 +26,7 @@ use crate::memory::AllocateFn;
 use crate::metrics::core_metrics;
 use crate::planning::peer::{FetchPlan, FetchSegment, PeerSource};
 use crate::storage::MaterializedBlocks;
-use crate::transfer_engine::{PeerReadSlice, PeerTransferError, TransferBackend, TransferOptions};
+use crate::transfer_engine::{PeerReadSlice, PeerTransferError, TransferEngine, TransferOptions};
 use orbitkv_catalog::GlobalIndex;
 
 /// Minimum usable transfer timeout. If the server's lock timeout minus the
@@ -50,7 +50,7 @@ pub(crate) struct PeerReader {
     global_index: Arc<GlobalIndex>,
     completions: Arc<TransferCompletions>,
     pub(super) membership: Arc<orbitkv_catalog::MembershipView>,
-    pub(super) transfer: Arc<dyn TransferBackend>,
+    pub(super) transfer: Arc<TransferEngine>,
     segments: Arc<PeerSegments>,
     allocate_fn: AllocateFn,
 }
@@ -282,8 +282,6 @@ impl SegmentFetcher for PeerReader {
             Err(e) => {
                 route_observation.finish(Outcome::Failed, None);
                 warn!("peer transfer from {remote_addr} failed: {e}");
-                self.transfer
-                    .invalidate_segment(&response.transfer_endpoint);
                 core_metrics()
                     .remote_fetch_total
                     .add(1, &[KeyValue::new("status", "error")]);
@@ -315,7 +313,7 @@ impl SegmentFetcher for PeerReader {
             query_elapsed.as_secs_f64() * 1000.0,
             prepared_wait.as_secs_f64() * 1000.0,
             transfer_timing.build_transfer_tasks.as_secs_f64() * 1000.0,
-            transfer_timing.mooncake_wait.as_secs_f64() * 1000.0,
+            transfer_timing.transfer_wait.as_secs_f64() * 1000.0,
             transfer_timing.rebuild.as_secs_f64() * 1000.0,
         );
         let m = core_metrics();
@@ -327,7 +325,7 @@ impl SegmentFetcher for PeerReader {
         for (stage, duration) in [
             ("prepared_wait", prepared_wait),
             ("allocation", transfer_timing.build_transfer_tasks),
-            ("read", transfer_timing.mooncake_wait),
+            ("read", transfer_timing.transfer_wait),
             ("rebuild", transfer_timing.rebuild),
         ] {
             m.remote_stage_duration_seconds.record(
@@ -342,7 +340,7 @@ impl SegmentFetcher for PeerReader {
 impl PeerReader {
     pub(crate) fn new(
         global_index: Arc<GlobalIndex>,
-        transfer: Arc<dyn TransferBackend>,
+        transfer: Arc<TransferEngine>,
         allocate_fn: AllocateFn,
         membership: Arc<orbitkv_catalog::MembershipView>,
     ) -> Self {
@@ -428,7 +426,7 @@ type StagedBlock = (Vec<u8>, Vec<StagedSlot>);
     reason = "the peer incarnation scopes cost evidence"
 )]
 async fn fetch_blocks_via_peer(
-    transfer: &Arc<dyn TransferBackend>,
+    transfer: &Arc<TransferEngine>,
     allocate_fn: &AllocateFn,
     namespace: &str,
     peer: Arc<PeerIdentity>,
@@ -595,7 +593,7 @@ async fn fetch_blocks_via_peer(
         .map_err(|error| format!("peer READ task failed: {error}"))?;
     transferred.map_err(|error| format!("peer READ failed: {error}"))?;
     let block_allocs = block_allocs.ok_or("peer READ buffers remain retained")?;
-    timing.mooncake_wait = wait_start.elapsed();
+    timing.transfer_wait = wait_start.elapsed();
 
     // Build SealedBlocks from allocated memory
     let rebuild_start = Instant::now();
@@ -827,7 +825,7 @@ struct SegmentAlloc {
 #[derive(Default)]
 struct TransferTiming {
     build_transfer_tasks: Duration,
-    mooncake_wait: Duration,
+    transfer_wait: Duration,
     rebuild: Duration,
     transfer_desc_count: usize,
     slot_count: usize,
@@ -835,7 +833,7 @@ struct TransferTiming {
 }
 
 /// Compute client-side transfer timeout from server's lock timeout.
-/// This is a submission budget, not proof of source lifetime: Mooncake drains
+/// This is a submission budget, not proof of source lifetime: OrbiTE drains
 /// already-submitted work even past the deadline, retaining source reservations.
 /// Orphan revocation and cross-host failure qualification remain open.
 pub(super) fn transfer_timeout_from_server(lock_timeout_secs: u32) -> Duration {

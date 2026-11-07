@@ -1,5 +1,11 @@
 # Shared-cache qualification
 
+> Historical qualification below applies only to its original revisions and
+> recorded backend, including TENT. OrbitKV now uses OrbiTE exclusively; all
+> current GPU/RDMA/GDS and installed profiles need fresh hardware qualification.
+> CPU/TCP and io_uring controls remain CI evidence.
+
+
 The stage021 three-host etcd process-only result is independently accepted for
 normal leader SIGTERM/rejoin, quorum stop/recovery and complete final keys.
 The leader stop performs graceful leadership transfer. No Manager or payload
@@ -15,7 +21,7 @@ older revisions.
 
 This gate covers independent replicas of the same model, engine and TP=1 storage
 layout. Every engine uses its host's Cache Manager. Rust owns candidate lookup,
-source validation, memory budgets and Mooncake transfers; Python only drives
+source validation, memory budgets and OrbiTE transfers; Python only drives
 serving requests and checks the exported results.
 
 The driver accepts already running replicas, so the same requests can run on one
@@ -161,9 +167,9 @@ with DRAM-only Managers for the sharing/restart baseline. Qualify peer SSD in a
 separate run: force source DRAM eviction and record SSD read/staging evidence.
 The cutover results above cover this ordinary two-host SSD route; mixed-load
 selection and cancellation still need separate qualification. A two-host TCP
-run sets `MC_FORCE_TCP=1` on both Managers. For RDMA, expose the devices and
-select the appropriate `--nics`; record the actual Mooncake transport and NIC
-counters with the result.
+run sets `--transfer-transport tcp` on both Managers. For RDMA, compile
+`orbite-rdma` and configure `--orbite-rdma-device` with an auto or rdma hint;
+record the actual OrbiTE transport and NIC counters with the result.
 
 The Manager's HTTP endpoint must be reachable by the qualification driver on a
 trusted test network. It includes administrative operations and is not a public
@@ -176,7 +182,7 @@ Use `benches.distributed.shared_cache_bytes` before model comparisons on differe
 architectures. It checks four split-K/V layers, source pages spaced by one gap,
 permuted destination pages and untouched sentinel bytes. After an 8 MiB remote
 Restore, the driver evicts the original source's DRAM and requires the received
-replica to serve the same bytes back. Both directions require 8 MiB of Mooncake
+replica to serve the same bytes back. Both directions require 8 MiB of OrbiTE
 READ and GPU Restore, source-release acknowledgements, matching SHA-256 digests
 and drained resource counters. This checks the full GPU-to-Manager-to-peer-to-GPU
 path; it does not claim direct GPU-to-GPU RDMA or model-output equivalence.
@@ -224,7 +230,7 @@ the benchmark HTTP dependencies, not an installed engine or CUDA runtime.
 The source must expose new bytes. `POST /cache/sync` waits for already submitted
 saves and returns an `inventory_fence`; the driver sends it to the consumer's
 bounded `/cache/metadata/await` endpoint with the exact scope digest. Each
-consumer request must increase both Mooncake READ and GPU
+consumer request must increase both OrbiTE READ and GPU
 restore bytes, match the cold source output, and drain query, source-transfer
 and I/O reservations, including requester completion records awaiting a source
 acknowledgement. A response without these counters does not pass as a
@@ -262,10 +268,10 @@ checks below. For each prompt:
    `orbitkv_transfer_reserved_bytes` and `orbitkv_transfer_lock_active` plus
    target query and `orbitkv_transfer_completion_outstanding` reservations to
    return to baseline. Repeat cancellation
-   while source I/O is queued and while Mooncake READ is active.
+   while source I/O is queued and while OrbiTE READ is active.
 
-Run first with `MC_FORCE_TCP=1`, then on two physical hosts with the intended
-RDMA rails and `--nics`. Record the actual Mooncake transport, NIC counters,
+Run first with `--transfer-transport tcp`, then on two physical hosts with
+`orbite-rdma` and `--orbite-rdma-device`. Record the actual OrbiTE transport, NIC counters,
 source SSD device/mount, byte amplification, authorization/staging/READ
 latencies and peak sender/receiver memory. A successful same-host or TCP run
 does not qualify RDMA, and a remote byte increase without a source SSD-read
@@ -285,17 +291,15 @@ evidence, the same
 output/byte/drain checks, and a matched fixed-route control. Do not carry the
 third flag into ordinary serving until both engines pass TCP and RDMA cells.
 
-For the later GPU-memory gate, register each granted region with the exact
-Mooncake `cuda:N` location and keep the engine page-generation owner beside the
-registration token until completion. Exercise explicit unregister, cancellation,
-engine-handle release and instance teardown. Do not treat successful host-memory
-RDMA or a configured `--nics` value as GPUDirect evidence; record GPU/NIC counters
-from the external H20 hosts.
+For the GPU-memory gate, retain each imported tensor registration and its
+page-generation owner until physical completion. OrbiTE chooses direct RDMA
+or its own staging. Exercise cancellation, registration release and instance
+teardown. A host-memory RDMA pass or configured RNIC does not qualify GPUDirect;
+record actual GPU/NIC route counters from the installed run.
 
-The artifact under test must contain `libtent_shared.so` and must not contain
-`libtransfer_engine.so`. Capture TENT startup logs showing the installed
-transports. A CUDA-enabled build alone is not evidence that a batch selected
-RDMA, NVLink or GPUDirect.
+The artifact must not contain TENT libraries. Record the OrbiTE git revision,
+installed artifact hashes, loaded native dependencies and chosen transports.
+A CUDA-enabled build alone is not evidence of RDMA or GPUDirect use.
 
 ## Restart and ownership gates
 
@@ -326,8 +330,7 @@ Service-leader exit zero alone cannot pass this check. Preserve SGLang's native
 child exit statuses and CUDA IPC warnings separately; healthy output and final
 GPU zero do not establish physical lifetime or fault reclamation.
 
-Build the Manager before starting these processes. Native builds restage
-Mooncake libraries. Raw logs belong in external artifact directories or CI
+Build the Manager before starting these processes. Raw logs belong in external artifact directories or CI
 artifacts; retain only the final summary and reproduction commands in a PR.
 
 Rust tests separately verify stale owner/residency rejection, source budget

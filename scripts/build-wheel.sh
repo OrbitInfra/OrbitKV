@@ -26,8 +26,8 @@ if [[ "${1:-}" == "--release" ]]; then
     shift
 fi
 
-# Complete wheels always include CUDA 13 and TENT; callers may add Cargo features.
-EXTRA_ARGS=(--features cuda-13,mooncake "$@")
+# Complete wheels always include CUDA 13 and OrbiTE; callers may add Cargo features.
+EXTRA_ARGS=(--features cuda-13,orbite "$@")
 
 echo "==> Building binaries ($PROFILE mode)..."
 cd "$PROJECT_ROOT"
@@ -39,20 +39,6 @@ for bin in orbitkv-cache-manager-py; do
     if [[ "$PROFILE" == "release" ]]; then
         strip --strip-unneeded "$PYTHON_DIR/orbitkv/$bin"
     fi
-done
-
-echo "==> Copying Mooncake runtime libraries..."
-rm -f "$PYTHON_DIR/orbitkv/libtransfer_engine.so"
-MOONCAKE_LINK_DIR="$PROJECT_ROOT/.orbitkv/mooncake/cuda/lib"
-if [[ ! -d "$MOONCAKE_LINK_DIR" ]]; then
-    echo "Mooncake native runtime directory not found: $MOONCAKE_LINK_DIR" >&2
-    exit 1
-fi
-for lib in libtent_shared.so libtent_metrics.so libmooncake_common.so libasio.so; do
-    cp "$MOONCAKE_LINK_DIR/$lib" "$PYTHON_DIR/orbitkv/$lib"
-done
-for bin in orbitkv-cache-manager-py; do
-    patchelf --set-rpath '$ORIGIN' "$PYTHON_DIR/orbitkv/$bin"
 done
 
 echo "==> Building Python wheel with maturin..."

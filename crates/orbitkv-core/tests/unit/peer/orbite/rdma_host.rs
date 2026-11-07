@@ -28,7 +28,7 @@ fn regions(payload: usize) -> Vec<(usize, usize, usize)> {
         .collect()
 }
 
-fn finish(transport: OrbiteTransport, memory: RegisteredMemory) {
+fn finish(transport: TransferEngine, memory: RegisteredMemory) {
     transport.engine.close_requester(TIMEOUT).unwrap();
     transport.engine.close_source(TIMEOUT).unwrap();
     transport.engine.unregister_memory(&memory).unwrap();
@@ -94,7 +94,7 @@ fn registered_host_rdma_peer() {
         .unwrap()
         .parse()
         .unwrap();
-    let transport = OrbiteTransport::new(
+    let transport = TransferEngine::new(
         (32 << 20) as u64,
         &env::var("ORBITKV_ORBITE_BIND").unwrap(),
         Transport::Rdma,

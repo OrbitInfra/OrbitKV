@@ -699,7 +699,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1639,7 +1639,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2063,7 +2063,7 @@ dependencies = [
 [[package]]
 name = "orbite"
 version = "0.1.0-alpha.1"
-source = "git+https://github.com/OrbitInfra/OrbiTE?rev=2e50af25007ca9681912ba5175109d09488a8f99#2e50af25007ca9681912ba5175109d09488a8f99"
+source = "git+https://github.com/OrbitInfra/OrbiTE?rev=1312e9b180ec9029535f8c2fb751d57c4da93b76#1312e9b180ec9029535f8c2fb751d57c4da93b76"
 dependencies = [
  "bindgen 0.71.1",
  "cc",
@@ -2074,7 +2074,6 @@ dependencies = [
  "libloading 0.8.9",
  "log",
  "mio",
- "regex-lite",
  "serde",
  "serde_json",
  "socket2",
@@ -2149,7 +2148,6 @@ dependencies = [
  "orbitkv-common",
  "orbitkv-proto",
  "orbitkv-state",
- "orbitkv-transfer",
  "parking_lot",
  "prometheus",
  "rand 0.10.3",
@@ -2162,14 +2160,6 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "uuid",
-]
-
-[[package]]
-name = "orbitkv-mooncake-sys"
-version = "0.1.0"
-dependencies = [
- "libc",
- "libloading 0.9.0",
 ]
 
 [[package]]
@@ -2196,7 +2186,6 @@ dependencies = [
  "orbitkv-proto",
  "orbitkv-server",
  "orbitkv-state",
- "orbitkv-transfer",
  "prost",
  "pyo3",
  "serde_json",
@@ -2254,18 +2243,6 @@ dependencies = [
  "sha2",
  "thiserror 2.0.18",
  "uuid",
-]
-
-[[package]]
-name = "orbitkv-transfer"
-version = "0.1.0"
-dependencies = [
- "libc",
- "log",
- "opentelemetry",
- "orbitkv-mooncake-sys",
- "serde_json",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2815,12 +2792,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "regex-lite"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
-
-[[package]]
 name = "regex-syntax"
 version = "0.8.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2915,7 +2886,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2972,7 +2943,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3396,7 +3367,7 @@ dependencies = [
  "getrandom 0.4.1",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

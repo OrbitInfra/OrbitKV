@@ -6,7 +6,7 @@ frames. `endpoint/pending.rs` owns in-flight query
 state; `cache/lifecycle.rs` serializes
 registration and cleanup. `wire.rs` converts shared protobuf registration
 messages into cache-layer inputs. The distributed listener serves only peer
-transfer control RPCs. Mooncake transfers KV bytes between nodes.
+transfer control RPCs. OrbiTE transfers KV bytes between nodes.
 
 Normal shutdown closes the process endpoint's Publish admission gate before it
 drains accepted continuations. Admission and close share one atomic state, so a

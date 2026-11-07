@@ -1,38 +1,10 @@
 use super::*;
 
-#[cfg(feature = "mooncake")]
-#[tokio::test]
-async fn mooncake_initialization_failure_is_returned_to_caller() {
-    let membership = test_membership();
-    let config = crate::EngineConfig {
-        mooncake_nic_names: vec!["definitely-not-a-real-nic".to_string()],
-        membership: Some(membership.clone()),
-        global_index: Some(std::sync::Arc::new(orbitkv_catalog::GlobalIndex::new(
-            membership,
-            1 << 20,
-            std::sync::Arc::new(orbitkv_state::InventoryScope::AllNamespaces),
-        ))),
-        inventory: Some(std::sync::Arc::new(crate::ResidencyInventory::new(
-            16 << 10,
-        ))),
-        ..crate::EngineConfig::default()
-    };
-
-    let err = match OrbitKVEngine::new_with_config(1 << 20, false, config) {
-        Ok(_) => panic!("engine startup must fail when Mooncake NIC init fails"),
-        Err(err) => err.to_string(),
-    };
-
-    assert!(err.contains("Failed to initialise Mooncake TENT"), "{err}");
-    assert!(err.contains("definitely-not-a-real-nic"), "{err}");
-}
-
-#[cfg(not(feature = "mooncake"))]
+#[cfg(not(feature = "orbite"))]
 #[tokio::test]
 async fn uncompiled_remote_transfer_config_is_rejected() {
     let membership = test_membership();
     let config = crate::EngineConfig {
-        mooncake_nic_names: vec!["mlx5_0".to_string()],
         membership: Some(membership.clone()),
         global_index: Some(std::sync::Arc::new(orbitkv_catalog::GlobalIndex::new(
             membership,
@@ -49,9 +21,10 @@ async fn uncompiled_remote_transfer_config_is_rejected() {
         .err()
         .unwrap()
         .to_string();
-    assert!(error.contains("mooncake build feature"), "{error}");
+    assert!(error.contains("orbite build feature"), "{error}");
 }
 
+#[cfg(not(feature = "orbite"))]
 fn test_membership() -> std::sync::Arc<orbitkv_catalog::MembershipView> {
     std::sync::Arc::new(orbitkv_catalog::MembershipView::new(
         orbitkv_state::CacheOwner {
