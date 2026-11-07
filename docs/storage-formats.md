@@ -1,5 +1,11 @@
 # KV precision and storage encoding
 
+> Historical qualification below applies only to its original revisions and
+> recorded backend, including TENT. OrbitKV now uses OrbiTE exclusively; all
+> current GPU/RDMA/GDS and installed profiles need fresh hardware qualification.
+> CPU/TCP and io_uring controls remain CI evidence.
+
+
 OrbitKV can encode KV pages on the GPU before offload, keep the encoded pages in
 DRAM and SSD, and transfer them unchanged between Managers. Restore uploads the
 encoded bytes and reconstructs the engine's original GPU layout. Rust owns codec
@@ -100,7 +106,7 @@ flowchart LR
     C --> G[Registered GPU staging]
     G --> S[SSD via cuFile]
     D --> U[SSD via io_uring]
-    D --> P[Peer via Mooncake]
+    D --> P[Peer via OrbiTE]
     U --> D
     S --> G
     G --> V[GPU CRC validation and decode]

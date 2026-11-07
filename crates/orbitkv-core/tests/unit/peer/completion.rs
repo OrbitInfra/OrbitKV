@@ -806,7 +806,7 @@ async fn connection_outage_reconciles_old_requester_without_releasing_new_runtim
 }
 
 /// Exercises the executor with real gRPC tickets and the same blocking READ
-/// ownership used by Mooncake, without requiring a native transport or GPU.
+/// ownership used by OrbiTE, without requiring a native transport or GPU.
 struct PipelineReader {
     budget: Arc<TransferCompletions>,
     source: Arc<Source>,

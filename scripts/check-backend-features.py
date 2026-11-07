@@ -10,14 +10,12 @@ ADAPTERS = {
     "crates/orbitkv-core/src/memory/pool/backend.rs",
     "crates/orbitkv-core/src/peer/mod.rs",  # Native adapter module declarations.
     "crates/orbitkv-core/src/peer/orbite.rs",
-    "crates/orbitkv-core/src/peer/transport.rs",
     "crates/orbitkv-core/src/transfer/local/backend.rs",
     "crates/orbitkv-core/src/transfer/local/orbite.rs",
     "crates/orbitkv-core/src/transfer_engine/backend.rs",
-    "python/src/lib.rs",  # Optional native Python module declaration/registration.
 }
 PREDICATE = re.compile(r"\bcfg(?:_attr)?!?\s*\(")
-BACKEND = re.compile(r'feature\s*=\s*"(?:mooncake|orbite[^\"]*|orbitte[^\"]*)"')
+BACKEND = re.compile(r'feature\s*=\s*"orbite[^\"]*"')
 
 
 def main() -> int:

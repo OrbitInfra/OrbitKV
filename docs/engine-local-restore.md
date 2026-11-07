@@ -40,7 +40,7 @@ qualification remain open. Correctness alone does not establish a serving speedu
    and keeps these objects alive.
 2. A successful GPU registration reply transfers the Manager's payload arena
    FDs and the selected byte engine over authenticated UDS with `SCM_RIGHTS`.
-   Lifecycle 12 requires matching artifacts. The engine independently maps
+   Lifecycle 13 requires matching artifacts. The engine independently maps
    each size-sealed memfd and registers that mapping with its CUDA primary
    context. Registration is per arena and GPU binding, not per restored block.
 3. `start_restore(..., ready_stream=...)` reserves native operation ownership
@@ -61,8 +61,7 @@ qualification remain open. Correctness alone does not establish a serving speedu
 5. The Manager installs the grant owner before publishing `Granted`. The native
    worker wins `Granted → Active`, copies the plan locally, validates source
    and destination ranges, and submits through the shared local-copy boundary.
-   OrbiTE owns its local DMA/kernel implementation; TENT keeps OrbitKV's existing
-   implementation. Both preserve contiguous/strided rows within physical
+   OrbiTE owns local DMA/kernel byte movement and preserves contiguous/strided rows within physical
    registration and GPU allocation bounds.
    Each source allocation retains its own generation, checked bounds and lease;
    no gaps or unlisted rows become accessible through coalescing.
@@ -352,7 +351,7 @@ HBM budgets and workload pressure before making a performance claim.
 SSD host materialization, codec staging/decode, and direct cuFile execution may
 later move through the grant contract. Each migration must move its real I/O,
 file extent, scratch, destination, and completion owners. Current Manager
-workers remain active consumers of those responsibilities. Remote TENT READ
+workers remain active consumers of those responsibilities. Remote OrbiTE READ
 first materializes and validates local residency; an unencoded resident result
 then uses the same local grant path. Remote source authorization and completion
 retain their existing independent export protocol.

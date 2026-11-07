@@ -1,6 +1,6 @@
 use super::*;
 use crate::memory::{numa::NumaNode, pool::PinnedAllocator};
-use crate::transfer_engine::{CudaRegistration, TransferBackend};
+use crate::transfer_engine::{CudaRegistration, TransferEngine};
 use cudarc::driver::{CudaContext, result};
 use std::num::NonZeroU64;
 
@@ -55,9 +55,9 @@ impl Shim {
     }
 }
 
-fn engine(bytes: usize) -> Arc<OrbiteTransport> {
+fn engine(bytes: usize) -> Arc<TransferEngine> {
     Arc::new(
-        OrbiteTransport::new(
+        TransferEngine::new(
             bytes as u64,
             "127.0.0.1:0",
             orbite::Transport::Tcp,
@@ -89,18 +89,17 @@ fn local_copy_shim_bytes_stream_binding_and_pin_owners() {
             }
         }
         let engine = engine(65536);
-        let backend: Arc<dyn TransferBackend> = engine.clone();
+        let backend: Arc<TransferEngine> = engine.clone();
         assert!(
             crate::transfer::worker::GpuWorkerPool::new(
                 0,
                 NumaNode::UNKNOWN,
                 mode,
                 None,
-                crate::PeerTransferBackend::Orbite,
                 Some(backend.clone())
             )
             .is_err(),
-            "a missing OrbiTE registration must not select TENT local copies"
+            "a missing OrbiTE registration must reject local copies"
         );
         // SAFETY: the actual device/context owner is retained in the registration.
         let registered = unsafe {
@@ -207,7 +206,7 @@ fn local_copy_shim_large_batch_and_partial_submission_drain() {
         address.write_bytes(0x5a, 65536);
     }
     let engine = engine(65536);
-    let backend: Arc<dyn TransferBackend> = engine.clone();
+    let backend: Arc<TransferEngine> = engine.clone();
     // SAFETY: retained actual device/context backing, with no concurrent accesses.
     let registered = unsafe {
         CudaRegistration::new(
@@ -270,16 +269,10 @@ fn local_copy_shim_large_batch_and_partial_submission_drain() {
 #[test]
 #[ignore = "requires the explicit CPU CUDA-driver fixture"]
 fn local_copy_shim_client_restore_layers_and_context() {
-    for selected in [
-        crate::PeerTransferBackend::Orbite,
-        crate::PeerTransferBackend::OrbiteTcp,
-        crate::PeerTransferBackend::OrbiteRdma,
-    ] {
-        client_restore_layers_and_context(selected);
-    }
+    client_restore_layers_and_context();
 }
 
-fn client_restore_layers_and_context(selected: crate::PeerTransferBackend) {
+fn client_restore_layers_and_context() {
     use crate::transfer::local::{LocalRestoreExecutor, LocalTensor, RawCopy, RawRestorePart};
     let shim = Shim::load();
     let context = CudaContext::new(0).unwrap();
@@ -311,12 +304,11 @@ fn client_restore_layers_and_context(selected: crate::PeerTransferBackend) {
     let prior = 0x9876_usize as cudarc::driver::sys::CUcontext;
     // SAFETY: the CPU fixture recognizes borrowed context identities without dereference.
     unsafe { result::ctx::set_current(prior) }.unwrap();
-    let mut executor = LocalRestoreExecutor::with_engine(
+    let mut executor = LocalRestoreExecutor::new(
         0,
         tensors,
         allocator.payload_arenas().unwrap(),
         TransferMode::Kernel,
-        selected,
         device.clone(),
     )
     .unwrap();
@@ -385,7 +377,7 @@ fn local_copy_shim_unknown_completion_retains_backing() {
     let host = allocator
         .allocate(NonZeroU64::new(4096).unwrap(), NumaNode::UNKNOWN)
         .unwrap();
-    let backend: Arc<dyn TransferBackend> = engine(4096);
+    let backend: Arc<TransferEngine> = engine(4096);
     // SAFETY: actual device allocation and context remain held through this child.
     let registered = unsafe {
         CudaRegistration::new(

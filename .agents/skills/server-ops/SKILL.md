@@ -61,45 +61,24 @@ Trace an incident through its owner:
    install it with the same scope via `/cache/metadata/await`. A received frame or
    source head is not that watermark.
 3. Check source grants and generation checks in `crates/orbitkv-core/src/peer/`,
-   then TENT READ/completion. Index freshness does not authorize an address.
+   then OrbiTE READ/completion. Index freshness does not authorize an address.
 4. Inspect query, source export, SSD staging and GPU admission budgets using
    `docs/metrics.md`. Lease expiry or a deadline cannot establish native drain.
 
-Default deployments use native TENT payloads and OrbitKV source-control RPCs.
-TENT v0.3.14 at `1198515d` requires all four runtime libraries, including
-`libtent_metrics.so` even with metrics disabled. Forced-TCP controls require `MC_TENT_CONF` unset before startup; a conflict now
-returns a configuration error instead of mutating process environment. Explicit
-NIC filters use the fork's thread-local whitelist. Generic C errors propagate
-negative native codes: -135 maps to `Unquiesced`, -134 to `Unavailable`, and -2
-to `ResourceExhausted`. The asynchronous terminal query gives logical evidence
-only. Source/file drain uses independent contracts; never release or replay on
-logical status alone. Both providers can be compiled together and selected by
-`--peer-transfer-backend`; an unavailable provider fails before CUDA initialization.
-The shared backend owns registration, peer/file transfer and shutdown. SSD always
-uses engine file segments. TENT owns a separate file engine with liburing support;
-its peer engine keeps file transports disabled. `--ssd-io-engine` is removed.
-`auto` storage uses engine CUDA staging/io_uring. `cufile` is native-only GDS:
-OrbiTE requires `orbite-gds`, and TENT requires a native build with cuFile SDK
-support. Uncertain work retains backing, extents and one of 32 operation permits.
-OrbiTE submits one vector per extent, including padding (64 MiB/1,024 elements).
-It reuses persistent tensor/codec input registrations and retains caller completion
-on unknown GPU drain. TENT consumes RANGE/PADDING through `tent_file_submitv`,
-with 4 MiB windows/64 MiB staging charged to its separate file engine; the
-OrbitKV scratch adapter is deleted. Its native GDS accepts padded GPU vectors,
-while OrbiTE rejects explicit GDS padding without fallback. `gds_enabled` prevents unconfigured cuFile
-loading. GPU/GDS remains unqualified. See `docs/transport.md#ssd-file-transfers`.
-OrbiTE `2e50af25` uses Unspec selection in `--peer-transfer-backend orbite`;
-`orbite-tcp` and `orbite-rdma` remain explicit hints. Read deadlines survive
-queues and grants; Demand is foreground/high, Prepare/Warmup is background/low,
-and SSD write-back is checkpoint/low. Lifecycle 12 requires matching clients
-and Managers, and all peers must upgrade for the new authorization budget. It keeps
-failover, HP-TCP, SHM and MNNVL disabled. Historical hardware results below do not
-qualify this new dependency revision. Membership removal or epoch/incarnation
-replacement fences scheduling before per-requester segment retirement. OrbiTE
-close timeouts keep grants/pins and retry only the wait; TENT handle close remains
-reversible after wrapper drain. A successful receipt drops cached descriptors;
-uncertain cleanup keeps its admission charge. See
-`docs/transport.md#peer-departure` and `docs/transport.md#runtime-transfer-backend`.
+OrbiTE is the only transfer engine, pinned by Cargo.lock. The default `orbite`
+feature enables TCP/CUDA/io_uring; `orbite-rdma` adds RDMA and `orbite-gds` adds
+optional cuFile. `--transfer-transport auto|tcp|rdma` is the only transport hint;
+auto uses engine policy. Missing features return Unavailable before CUDA setup.
+SSD always uses engine file segments and padded vectors. No legacy I/O or copy
+fallback exists. Explicit GDS rejects padding; compiling GDS does not load cuFile
+unless configured. Unknown drain retains backing, extents and admission.
+Read deadlines survive queues/grants. Demand maps to foreground/high,
+Prepare/Warmup to background/low and write-back to checkpoint/low. Lifecycle 13
+requires matching clients and Managers; no selected-engine field remains.
+Membership retirement fences scheduling first, then closes each requester's
+identity. Timeout/Unquiesced keeps grants, pins and capacity; retry only the wait.
+See `docs/transport.md` for budgets and CPU controls. All current GPU/RDMA/GDS
+and installed profiles await hardware re-qualification.
 Tensor import registers GPU storage once; aliases share its persistent owner.
 Restore batches layout ranges within 64 MiB/16,384-descriptor limits and reuses
 registrations, including its bounded codec input pool. Release must drain loans
@@ -112,20 +91,19 @@ completion; the worker is fenced and instance cleanup cannot claim drain.
 The `--orbite-rdma-gpu-direct` option selects strict engine GDR registration,
 requiring `MLX5_SCATTER_TO_CQE=0`; the default uses engine-owned staging. Both
 GPU profiles remain unqualified. See `docs/transport.md#peer-restore-into-gpu`.
-An experimental `orbite` build can explicitly select
-`--peer-transfer-backend orbite-tcp`; read `docs/transport.md` for its 64 MiB
+The default `orbite` build can explicitly select
+`--transfer-transport tcp`; read `docs/transport.md` for its 64 MiB
 READ/4,096-region limits, numeric advertised IP and no-RDMA-filter requirement.
 The requester accepts all OrbiTE endpoint schemes and keeps its own transport hint. Keep the
 source-grant epoch unchanged through metadata refresh and payload READ. Source
 registrations belong to the ticket generation; unquiesced work retains source
 tickets and destination buffers. The Manager uses gRPC completion, separately
 from the transfer notification mailbox. A source/H20 CUDA 12.2 pilot is not
-installed serving or CUDA 13 runtime support. Do not switch default deployments
-or infer RDMA/device-DMA qualification from the TCP candidate.
-An experimental `orbite-rdma` build separately selects `orbite-rdma` with an
+installed serving or CUDA 13 runtime support. Do not infer RDMA/device-DMA qualification from CPU/TCP controls.
+An experimental `orbite-rdma` build separately selects `--transfer-transport rdma` with an
 explicit single `--orbite-rdma-device`, port and GID index. Its
 `orbite+rdma://` namespace fixes the payload to RC verbs, with engine CUDA staging by default;
-there is no TCP/TENT payload fallback. Staging/endpoint budgets are independent
+there is no TCP payload fallback. Staging/endpoint budgets are independent
 of source ticket and process pool charges. Requester-local drain does not prove
 remote source termination: remote cleanup errors retain the actual source
 backing and native budgets even after a gRPC ticket release. Current OrbitKV
@@ -201,7 +179,7 @@ bytes, RSS, queue peaks, visibility, bootstrap/repair, and lookup/update lock
 wait/hold time. Empty filtered intervals must advance only source-proven coverage.
 
 For inference interference, measure the physical NIC/direction, PCIe/NUMA and
-engine collective traffic as well as TENT transfers. Manager query-byte budgets
+engine collective traffic as well as OrbiTE transfers. Manager query-byte budgets
 are not a node-wide network scheduler; engine-local P/D WRITE is a separate
 submitter. Receiver credit/pacing is planned in S6, not an existing runtime flag.
 Source authority, network credits and destination lifetime need separate drain

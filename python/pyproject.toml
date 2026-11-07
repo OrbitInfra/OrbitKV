@@ -66,10 +66,6 @@ strip = true
 # Runtime files staged by scripts/build-wheel.sh.
 include = [
     "orbitkv/orbitkv-cache-manager-py",
-    "orbitkv/libtent_shared.so",
-    "orbitkv/libtent_metrics.so",
-    "orbitkv/libmooncake_common.so",
-    "orbitkv/libasio.so",
 ]
 
 [project.scripts]

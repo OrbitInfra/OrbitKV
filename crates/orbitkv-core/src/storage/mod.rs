@@ -18,7 +18,7 @@ use crate::memory::numa::NumaNode;
 use crate::memory::pool::{PinnedAllocation, PinnedAllocator};
 use crate::metrics::core_metrics;
 use crate::peer::read::PeerReader;
-use crate::transfer_engine::{TransferBackend, create_transfer_backend};
+use crate::transfer_engine::{TransferEngine, create_transfer_engine};
 use orbitkv_catalog::GlobalIndex;
 
 use crate::query::read::ReadCoordinator;
@@ -45,8 +45,7 @@ pub(crate) struct Storage {
     pub(crate) reads: ReadCoordinator,
     pub(crate) writes: PublishQueue,
     pub(crate) ssd_store: Option<Arc<SsdStore>>,
-    pub(crate) selected_backend: crate::PeerTransferBackend,
-    peer_transport: Option<Arc<dyn TransferBackend>>,
+    peer_transport: Option<Arc<TransferEngine>>,
     blockwise_alloc: bool,
     pub(crate) global_index: Option<Arc<GlobalIndex>>,
     pub(crate) inventory: Option<Arc<inventory::ResidencyInventory>>,
@@ -74,10 +73,8 @@ impl Storage {
         let unit_hint = value_size_hint.and_then(|size| NonZeroU64::new(size as u64));
         let ssd_cache_config = config.ssd_cache_config;
         if let Some(ssd) = &ssd_cache_config {
-            ssd.validate_transfer_engine(config.peer_transfer_backend)?;
+            ssd.validate_transfer_engine()?;
         }
-        let engine_ssd = ssd_cache_config.is_some();
-        let mooncake_nic_names = config.mooncake_nic_names;
         let blockwise_alloc = config.blockwise_alloc || ssd_cache_config.is_some();
         let transfer_lock_timeout = config.transfer_lock_timeout;
         let transfer_budget = config.transfer_budget_bytes.unwrap_or(capacity_bytes / 2);
@@ -139,30 +136,19 @@ impl Storage {
 
         let global_index = config.global_index.clone();
 
-        // Mooncake must be created after the allocator so it can register the
-        // pinned pool. An empty rail filter lets Mooncake choose TCP fallback.
-        let peer_transport = if global_index.is_some()
-            || engine_ssd
-            || config.peer_transfer_backend != crate::PeerTransferBackend::Mooncake
-        {
-            let advertise = config
-                .membership
-                .as_ref()
-                .map(|membership| membership.owner().endpoint.as_str())
-                .unwrap_or("127.0.0.1:0");
-            let transfer = create_transfer_backend(
-                config.peer_transfer_backend,
-                &mooncake_nic_names,
-                allocator.clone(),
-                advertise,
-                engine_ssd.then_some(ssd_cache_config.as_ref()).flatten(),
-                config.orbite_rdma.clone(),
-            )
-            .map_err(|error| format!("Failed to initialise peer transfer engine: {error}"))?;
-            Some(transfer)
-        } else {
-            None
-        };
+        let advertise = config
+            .membership
+            .as_ref()
+            .map(|membership| membership.owner().endpoint.as_str())
+            .unwrap_or("127.0.0.1:0");
+        let peer_transport = create_transfer_engine(
+            config.transfer_transport,
+            allocator.clone(),
+            advertise,
+            ssd_cache_config.as_ref(),
+            config.orbite_rdma.clone(),
+        )
+        .map_err(|error| format!("Failed to initialise OrbiTE: {error}"))?;
 
         let is_numa = allocator.is_numa();
         let storage_ref = Arc::new(std::sync::OnceLock::<Weak<Self>>::new());
@@ -228,7 +214,6 @@ impl Storage {
             );
 
             Self {
-                selected_backend: config.peer_transfer_backend,
                 allocator,
                 codec: config.codec,
                 codec_budget: config.codec_budget,
@@ -454,7 +439,7 @@ impl Storage {
         (freed_blocks, freed_bytes, largest_free)
     }
 
-    pub(crate) fn peer_transport(&self) -> Option<&Arc<dyn TransferBackend>> {
+    pub(crate) fn peer_transport(&self) -> Option<&Arc<TransferEngine>> {
         self.peer_transport.as_ref()
     }
 

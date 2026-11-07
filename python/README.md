@@ -19,13 +19,12 @@ compatible with the selected toolkit's runtime-compiled kernels. Version 0.1.0
 is being prepared for release; build a complete wheel from the repository root:
 
 ```bash
-git submodule update --init --recursive third-party/mooncake
 ./scripts/build-wheel.sh --release
 python -m pip install /absolute/path/to/the-built-wheel.whl
 ```
 
 The wheel includes the
-extension, Manager and Mooncake libraries; the host supplies compatible Python,
+extension and Manager with OrbiTE linked in; the host supplies compatible Python,
 CUDA and RDMA libraries. The Manager also requires compatible PyTorch, which the
 base package does not install. See [release requirements](../docs/releases.md).
 
@@ -41,7 +40,7 @@ remain historical. Pre-capture and pending-admission hooks remain until released
 replacements are available.
 Follow the [engine quickstart](../docs/single-node.md) for complete commands and
 an external-hit check. Native P/D owns its transport; OrbitKV owns independent
-cache adapters and Manager peer-cache traffic through TENT.
+cache adapters and Manager peer-cache traffic through OrbiTE.
 
 ## Native registration and Restore contract
 
@@ -49,10 +48,10 @@ cache adapters and Manager peer-cache traffic through TENT.
 that retains actual tensor/exporter objects in registration order.
 Explicit registration exports storage IPC metadata in the native
 client; Python supplies retained tensors and layouts, without serialized pickle
-wrappers. Matching lifecycle-12 packages are required. Storage and view offsets,
+wrappers. Matching lifecycle-13 packages are required. Storage and view offsets,
 GPU UUID, dtype/layout, counter and readiness fields are validated before import.
-Scoped installed GPU/adapter and export-error ownership gates are independently
-accepted; see S3 in the [completion plan](../docs/completion-plan.md). Physical
+Earlier installed GPU/adapter and export-error ownership acceptances do not
+qualify the current OrbiTE data path; see S3 in the [completion plan](../docs/completion-plan.md). Physical
 fault termination and allocation/page-generation qualification remain open.
 
 Use `save(registration, saves)` for Publish. Queued engine callbacks capture that

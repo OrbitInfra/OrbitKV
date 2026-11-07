@@ -3,7 +3,7 @@
 Each Manager owns local DRAM/SSD and a covered index of peer replicas. Etcd holds
 protocol identity, persistent node epochs and leased membership. Bounded owner
 inventory streams carry snapshots/deltas; ordinary queries use the local index,
-then obtain an authoritative source grant before TENT transfers bytes.
+then obtain an authoritative source grant before OrbiTE transfers bytes.
 
 Start with [P2P deployment](p2p.md). Current support stays at four owners;
 scoped two-H20 dense RDMA serving is accepted, while full cache HA, physical
@@ -32,7 +32,7 @@ flowchart LR
   A <-.->|Inventory snapshots and deltas| B
   IA -->|Candidate discovery and grant request| B
   B -->|Authoritative source grant| A
-  DB -->|TENT READ into consumer DRAM| DA
+  DB -->|OrbiTE READ into consumer DRAM| DA
 ```
 
 The current format is `orbitkv/inventory-stream/v4`. Stop all Managers before
@@ -105,7 +105,7 @@ inside the declared scope and membership cut.
 
 Remote DRAM transfers use a source export held through completion. Remote SSD
 is read/staged by its source owner before export. The current Manager route is
-remote DRAM/SSD → TENT READ → consumer DRAM → destination GPU. A GPU-pointer
+remote DRAM/SSD → OrbiTE READ → destination GPU (or DRAM for cache-tier fills). A GPU-pointer
 RDMA component test does not imply that this route directly exports live engine
 HBM or bypasses consumer DRAM.
 

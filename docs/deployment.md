@@ -1,5 +1,10 @@
 # Deployment
 
+> OrbiTE is now the only transfer engine. GPU/RDMA/GDS and installed profiles
+> require fresh hardware qualification. Earlier measurements retain their original
+> revisions and backend (TENT where recorded); CPU/TCP and io_uring checks are CI
+> evidence, not installed GPU qualification.
+
 Run one independent Cache Manager per inference host. Engines on that host share
 its DRAM/SSD capacity while retaining their own HBM allocation and scheduling.
 Use [compatibility](compatibility.md) for the support matrix and the
@@ -25,7 +30,7 @@ flowchart LR
     M --> D[Pinned DRAM]
     M --> F[Optional SSD]
   end
-  M <-->|TENT shared-cache bytes| P[Peer Manager]
+  M <-->|OrbiTE shared-cache bytes| P[Peer Manager]
 ```
 
 Matching model/computation/layout identity is required for reuse. Sharing one
@@ -118,7 +123,7 @@ not by itself prove every child was reaped or all physical GPU/RDMA work drained
 Configure per-host Managers with matching cluster identity, unique node IDs and
 real etcd endpoints; follow [P2P deployment](p2p.md). etcd stores protocol identity
 and leased membership. Bounded scoped inventory streams feed local candidate
-indexes; authoritative source grants fence incarnation/generation before TENT
+indexes; authoritative source grants fence incarnation/generation before OrbiTE
 moves DRAM or source-side SSD-staged bytes. No per-key etcd lookup is required.
 
 Scoped two-H20 official-engine dense RDMA recovery and controlled restarts pass.
@@ -131,7 +136,7 @@ and the [S2 gates](completion-plan.md#s2--metadata-reliability-and-measured-capa
 
 Official vLLM uses native NIXL/MultiConnector. Official SGLang uses its native
 disaggregation backend/router. OrbitKV supplies independent cache adapters;
-Manager peer-cache traffic stays on TENT. Custom OrbitKV P/D connectors, handshake
+Manager peer-cache traffic uses OrbiTE. Custom OrbitKV P/D connectors, handshake
 proxy and fork-only factories remain retired.
 
 ### Experimental vLLM P/D with NIXL plus OrbitKV cache

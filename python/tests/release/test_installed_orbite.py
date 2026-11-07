@@ -30,7 +30,7 @@ pytestmark = [pytest.mark.release_smoke, pytest.mark.gpu]
 
 
 @pytest.mark.parametrize("copy_mode", ["direct", "kernel"])
-@pytest.mark.parametrize("provider", ["orbite-tcp", "orbite-rdma"])
+@pytest.mark.parametrize("provider", ["tcp", "rdma"])
 def test_installed_orbite_peer_restores_cuda_ipc_bytes(provider, copy_mode, tmp_path, monkeypatch):
     if os.environ.get("ORBITKV_TEST_INSTALLED_ORBITE") != "1":
         pytest.skip("select ORBITKV_TEST_INSTALLED_ORBITE=1 with leased runtime resources")
@@ -51,7 +51,7 @@ def test_installed_orbite_peer_restores_cuda_ipc_bytes(provider, copy_mode, tmp_
     assert os.environ.get("ORBITKV_TEST_STRICT_SHUTDOWN") == "1"
     assert os.environ.get("PYTHONNOUSERSITE") == "1"
     device = os.environ.get("ORBITKV_TEST_ORBITE_RDMA_DEVICE")
-    if provider == "orbite-rdma" and not device:
+    if provider == "rdma" and not device:
         pytest.skip("RDMA requires an explicitly selected and leased RNIC")
     monkeypatch.chdir(tmp_path)
     cluster = f"installed-orbite-{uuid.uuid4().hex}"
@@ -80,11 +80,11 @@ def test_installed_orbite_peer_restores_cuda_ipc_bytes(provider, copy_mode, tmp_
                 f"node-{index}",
                 "--cluster-name",
                 cluster,
-                "--peer-transfer-backend",
+                "--transfer-transport",
                 provider,
                 "--enable-prometheus",
             ]
-            if provider == "orbite-rdma":
+            if provider == "rdma":
                 args += [
                     "--orbite-rdma-device",
                     device,
@@ -213,13 +213,13 @@ def test_installed_orbite_peer_restores_cuda_ipc_bytes(provider, copy_mode, tmp_
                 if marker in line
             ]
             assert len(endpoints) == 1 and endpoints[0].startswith(
-                provider.replace("orbite-", "orbite+") + "://"
+                "orbite+" + provider + "://"
             )
             (tmp_path / str(index) / "peer-endpoint.json").write_text(
                 json.dumps({"provider": provider, "endpoint": endpoints[0]}) + "\n"
             )
             assert "libtent" not in maps and "libmooncake" not in maps
-            if provider == "orbite-rdma":
+            if provider == "rdma":
                 assert "libibverbs" in maps and "libmlx5" in maps
         (tmp_path / "client-runtime.json").write_text(
             json.dumps(

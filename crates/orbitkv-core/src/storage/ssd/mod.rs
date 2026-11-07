@@ -295,7 +295,7 @@ impl SsdStore {
         allocation_footprint_fn: AllocationFootprintFn,
         is_numa: bool,
         inventory: Option<Arc<crate::storage::inventory::ResidencyInventory>>,
-        transfer: Arc<dyn crate::transfer_engine::TransferBackend>,
+        transfer: Arc<crate::transfer_engine::TransferEngine>,
     ) -> std::io::Result<Arc<Self>> {
         use std::fs::OpenOptions;
 

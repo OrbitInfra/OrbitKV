@@ -1,18 +1,7 @@
 use super::*;
 
 fn empty_save_instance() -> Arc<InstanceContext> {
-    Arc::new(
-        InstanceContext::new(
-            "cpu-save".into(),
-            "cpu-save".into(),
-            1,
-            1,
-            false,
-            crate::PeerTransferBackend::Mooncake,
-            None,
-        )
-        .unwrap(),
-    )
+    Arc::new(InstanceContext::new("cpu-save".into(), "cpu-save".into(), 1, 1, false, None).unwrap())
 }
 
 #[test]
@@ -160,7 +149,6 @@ async fn shared_admission_saturation_falls_back_before_worker_submission() {
         let (load_tx, _load_rx) = mpsc::unbounded_channel();
         let (save_tx, mut save_rx) = mpsc::unbounded_channel();
         let pool = GpuWorkerPool {
-            selected_backend: crate::PeerTransferBackend::Mooncake,
             local_device: None,
             engine: None,
 
@@ -211,7 +199,6 @@ fn managed_restore_rejects_overlapping_targets_before_dispatch() {
     let (load_tx, mut load_rx) = mpsc::unbounded_channel();
     let (save_tx, _save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
-        selected_backend: crate::PeerTransferBackend::Mooncake,
         local_device: None,
         engine: None,
         device_id: 0,
@@ -276,7 +263,6 @@ fn restore_plan_must_target_the_worker_device() {
     let (load_tx, mut load_rx) = mpsc::unbounded_channel();
     let (save_tx, _save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
-        selected_backend: crate::PeerTransferBackend::Mooncake,
         local_device: None,
         engine: None,
         device_id: 0,
@@ -325,7 +311,6 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     let cufile_admission = Arc::new(Semaphore::new(1));
     let cufile_owner = Arc::clone(&cufile_admission).try_acquire_owned().unwrap();
     let pool = Arc::new(GpuWorkerPool {
-        selected_backend: crate::PeerTransferBackend::Mooncake,
         local_device: None,
         engine: None,
         device_id: 0,
@@ -499,7 +484,7 @@ fn failed_gpu_work_is_not_reclassified_by_consumer_loss() {
 }
 
 #[test]
-fn raw_copy_candidates_distinguish_dma_coalescing_and_direction() {
+fn raw_copy_candidates_use_layout_and_direction_without_guessing_engine_dma() {
     let mut host = [0u8; 16];
     let contiguous: Vec<_> = (0..4)
         .map(|index| CopyDesc {
@@ -535,14 +520,13 @@ fn raw_copy_candidates_distinguish_dma_coalescing_and_direction() {
             assert_eq!(
                 *key,
                 CostEstimateKey::new(path, ExecutionResource::Gpu(3), Representation::Raw, 16, 4)
-                    .with_dma_ranges(1)
             );
         }
-        for (copies, submissions) in [(&fragmented, 2), (&allocations, 4)] {
+        for copies in [&fragmented, &allocations] {
             let (keys, bytes) = raw_copy_keys(copies, 3, write, usize::MAX);
             assert_eq!(bytes, 16);
             for ((key, merged_key), path) in keys.iter().zip(merged_keys).zip(paths) {
-                assert_ne!(*key, merged_key);
+                assert_eq!(*key, merged_key);
                 assert_eq!(
                     *key,
                     CostEstimateKey::new(
@@ -552,7 +536,6 @@ fn raw_copy_candidates_distinguish_dma_coalescing_and_direction() {
                         16,
                         4
                     )
-                    .with_dma_ranges(submissions)
                 );
             }
         }
@@ -632,279 +615,6 @@ fn raw_source_ranges_are_checked_before_appending_descriptors() {
 }
 
 #[test]
-fn managed_restore_retains_sources_and_reservations_through_partial_submission_drain() {
-    use std::num::NonZeroU64;
-    use std::time::Duration;
-
-    use cudarc::driver::DevicePtr;
-
-    use crate::block::Segment;
-    use crate::memory::pool::PinnedAllocator;
-
-    struct Gate {
-        entered: std_mpsc::Sender<()>,
-        release: std_mpsc::Receiver<()>,
-    }
-    unsafe extern "C" fn hold_stream(data: *mut std::ffi::c_void) {
-        // SAFETY: successful launch transfers this Box to one callback.
-        let gate = unsafe { Box::from_raw(data.cast::<Gate>()) };
-        let _ = gate.entered.send(());
-        let _ = gate.release.recv_timeout(Duration::from_secs(5));
-    }
-    struct PartialBackend {
-        gate: Mutex<Option<Gate>>,
-        submitted: std_mpsc::Sender<()>,
-    }
-    impl crate::transfer::TentCopy for PartialBackend {
-        fn h2d(&self, copies: &[CopyDesc], stream: &Arc<CudaStream>) -> Result<(), String> {
-            let gate = Box::into_raw(Box::new(self.gate.lock().take().unwrap()));
-            // SAFETY: the callback owns the gate until it returns and does not call CUDA.
-            let launched = unsafe {
-                cudarc::driver::result::stream::launch_host_function(
-                    stream.cu_stream(),
-                    hold_stream,
-                    gate.cast(),
-                )
-            };
-            if let Err(error) = launched {
-                // SAFETY: a rejected launch did not take ownership of the callback.
-                unsafe { drop(Box::from_raw(gate)) };
-                return Err(error.to_string());
-            }
-            crate::transfer::MemcpyBackend::new(stream.context())?.h2d(copies, stream)?;
-            self.submitted.send(()).unwrap();
-            Err("injected failure after accepting a copy".into())
-        }
-        fn d2h(&self, _: &[CopyDesc], _: &Arc<CudaStream>) -> Result<(), String> {
-            unreachable!("restore test")
-        }
-        fn name(&self) -> &'static str {
-            "direct"
-        }
-    }
-
-    let context = CudaContext::new(0).unwrap();
-    let stream = context.new_stream().unwrap();
-    let target = stream.alloc_zeros::<u8>(32).unwrap();
-    let device = target.device_ptr(&stream).0;
-    stream.synchronize().unwrap();
-    let pool = PinnedAllocator::new_global(4096, 1, false, None).unwrap();
-    let allocation = pool
-        .allocate(NonZeroU64::new(32).unwrap(), NumaNode::UNKNOWN)
-        .unwrap();
-    // SAFETY: this test uniquely owns all 32 bytes before sealing them.
-    unsafe {
-        allocation.as_non_null().as_ptr().write_bytes(0x5a, 32);
-    };
-    let raw =
-        RawBlock::single_segment(Segment::new(allocation.as_non_null(), 32, allocation).unwrap());
-    let source = Arc::new(SealedBlock::from_slots(vec![(raw, NumaNode::UNKNOWN)]));
-    let weak = Arc::downgrade(&source);
-    let budget = crate::query::QueryBudget::new(32, 32).unwrap();
-    let crate::QueryAdmission::Admitted(reservation) =
-        budget.reserve("raw", "ns", 32, crate::QueryMode::Demand)
-    else {
-        panic!("budget available")
-    };
-    reservation.ready(32).unwrap();
-    reservation.restoring();
-    let (completion, result) = oneshot::channel();
-    let planned_source = crate::RestoreSource::Memory(Arc::clone(&source));
-    let plan = RestorePlan::new(0, [(0, &planned_source)]).unwrap();
-    drop(planned_source);
-    let task = LoadTask {
-        plan,
-        layers: vec![LayerTransferData {
-            layer_name: "raw".into(),
-            layout: KVCacheLayout::bind(
-                device,
-                32,
-                crate::transfer::layout::KVCacheGeometry::new(1, 32, 0, 1, None, 1).unwrap(),
-            )
-            .unwrap(),
-            blocks: vec![TransferBlock {
-                block_idx: 0,
-                block: TransferPayload::Cached {
-                    sealed: source,
-                    slot_id: 0,
-                    offset: 0,
-                },
-            }],
-        }],
-        completion,
-        reservations: vec![reservation],
-        peer_bytes: 0,
-        codec_budget: 0,
-        decode_ready_started: Instant::now(),
-        decode_ready_observation: Box::new(Observation::disabled()),
-        decode_admission: None,
-    };
-    let (entered_tx, entered_rx) = std_mpsc::channel();
-    let (release_tx, release_rx) = std_mpsc::channel();
-    let (submitted_tx, submitted_rx) = std_mpsc::channel();
-    let (sender, receiver) = mpsc::unbounded_channel();
-    sender
-        .send(WorkerCommand::Load(task, Observation::disabled()))
-        .unwrap();
-    drop(sender);
-    let worker = std::thread::spawn(move || {
-        let mut runtime = init_worker(
-            0,
-            TransferMode::Direct,
-            None,
-            crate::PeerTransferBackend::Mooncake,
-            None,
-        )
-        .unwrap();
-        runtime.backend = crate::transfer_engine::local::TentLocalCopy::control(
-            runtime.stream.clone(),
-            Box::new(PartialBackend {
-                gate: Mutex::new(Some(Gate {
-                    entered: entered_tx,
-                    release: release_rx,
-                })),
-                submitted: submitted_tx,
-            }),
-        );
-        worker_loop(0, receiver, runtime);
-    });
-    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-    submitted_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-    drop(result);
-    let retained = weak.upgrade().is_some();
-    let charged = matches!(
-        budget.reserve("raw", "ns", 1, crate::QueryMode::Demand),
-        crate::QueryAdmission::Busy
-    );
-    release_tx.send(()).unwrap();
-    worker.join().unwrap();
-    assert!(
-        retained,
-        "dropping the completion receiver must not release active raw sources"
-    );
-    assert!(
-        charged,
-        "submitted DMA must retain its query byte reservation"
-    );
-    assert!(weak.upgrade().is_none());
-    assert!(matches!(
-        budget.reserve("raw", "ns", 32, crate::QueryMode::Demand),
-        crate::QueryAdmission::Admitted(_)
-    ));
-    assert_eq!(stream.clone_dtoh(&target).unwrap(), vec![0x5a; 32]);
-}
-
-#[tokio::test]
-async fn submitted_save_reply_loss_is_not_a_completed_error() {
-    let (load_tx, _load_rx) = mpsc::unbounded_channel();
-    let (save_tx, mut save_rx) = mpsc::unbounded_channel();
-    let pool = GpuWorkerPool {
-        selected_backend: crate::PeerTransferBackend::Mooncake,
-        local_device: None,
-        engine: None,
-        device_id: i32::MAX - 31,
-        numa_node: NumaNode::UNKNOWN,
-        transfer_mode: TransferMode::Direct,
-        load_tx,
-        save_tx,
-        ssd_tx: Mutex::new(None),
-        ssd_host_tx: Mutex::new(None),
-        codec_write_tx: Mutex::new(None),
-        ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
-        decode_restore_admission: device_restore_admission(i32::MAX - 31),
-        cufile_worker_admission: Arc::new(Semaphore::new(1)),
-        cufile_worker_owner: Mutex::new(None),
-        closed: Mutex::new(false),
-        drained: OnceCell::new(),
-    };
-    let owner = Arc::new(vec![37; 4096]);
-    let observed_owner = Arc::downgrade(&owner);
-    let saving = async {
-        let _held = owner;
-        pool.batch_save(empty_save_instance(), vec![], vec![], vec![], None)
-            .await
-    };
-    tokio::pin!(saving);
-    assert!(futures::poll!(saving.as_mut()).is_pending());
-    let Some(WorkerCommand::Save(task, _)) = save_rx.recv().await else {
-        panic!("expected admitted SaveTask");
-    };
-    let admission = Arc::clone(&task.admission);
-    // Real queue/oneshot boundary; no allocation, CUDA executor or DMA is created.
-    drop(task.reply);
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(20), saving.as_mut())
-            .await
-            .is_err(),
-        "lost worker response fabricated completed error without physical drain"
-    );
-    assert!(
-        observed_owner.upgrade().is_some(),
-        "admitted caller owner was lost"
-    );
-    assert!(admission.retained.load(Ordering::Acquire));
-    assert!(!admission.completed.load(Ordering::Acquire));
-}
-
-#[tokio::test]
-async fn save_completion_receipt_releases_admission_after_queued_no_dma_work() {
-    let (load_tx, _load_rx) = mpsc::unbounded_channel();
-    let (save_tx, mut save_rx) = mpsc::unbounded_channel();
-    let pool = GpuWorkerPool {
-        selected_backend: crate::PeerTransferBackend::Mooncake,
-        local_device: None,
-        engine: None,
-        device_id: i32::MAX - 32,
-        numa_node: NumaNode::UNKNOWN,
-        transfer_mode: TransferMode::Direct,
-        load_tx,
-        save_tx,
-        ssd_tx: Mutex::new(None),
-        ssd_host_tx: Mutex::new(None),
-        codec_write_tx: Mutex::new(None),
-        ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
-        decode_restore_admission: device_restore_admission(i32::MAX - 32),
-        cufile_worker_admission: Arc::new(Semaphore::new(1)),
-        cufile_worker_owner: Mutex::new(None),
-        closed: Mutex::new(false),
-        drained: OnceCell::new(),
-    };
-    let instance = empty_save_instance();
-    let observed_instance = Arc::downgrade(&instance);
-    let mut saving = Box::pin(pool.batch_save(instance, Vec::new(), Vec::new(), Vec::new(), None));
-    assert!(futures::poll!(saving.as_mut()).is_pending());
-    let Some(WorkerCommand::Save(task, _)) = save_rx.recv().await else {
-        panic!("expected SaveTask");
-    };
-    let admission = Arc::clone(&task.admission);
-    assert!(!admission.completed.load(Ordering::Acquire));
-    drop(saving);
-    assert!(
-        observed_instance.upgrade().is_some(),
-        "SaveTask must hold registration after caller cancellation"
-    );
-    // Empty payload means this queue control submits no CUDA or SSD operation.
-    // Production calls complete only after the respective worker drain boundary.
-    task.admission.complete();
-    assert!(task.reply.send(Ok(task.layers)).is_err());
-    drop(task._instance);
-    assert!(observed_instance.upgrade().is_none());
-    assert!(admission.completed.load(Ordering::Acquire));
-    *pool.closed.lock() = true;
-    assert!(
-        pool.batch_save(
-            empty_save_instance(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            None
-        )
-        .await
-        .is_err()
-    );
-}
-
-#[test]
 fn save_queue_admission_is_bounded_in_a_fresh_process() {
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
@@ -927,7 +637,6 @@ async fn save_queue_admission_child() {
     let (load_tx, _load_rx) = mpsc::unbounded_channel();
     let (save_tx, mut save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
-        selected_backend: crate::PeerTransferBackend::Mooncake,
         local_device: None,
         engine: None,
         device_id: i32::MAX - 33,
@@ -984,16 +693,15 @@ async fn save_queue_admission_child() {
 
 #[test]
 fn missing_orbite_worker_engine_is_rejected_before_cuda_initialization() {
-    for selected in [
-        crate::PeerTransferBackend::Orbite,
-        crate::PeerTransferBackend::OrbiteTcp,
-        crate::PeerTransferBackend::OrbiteRdma,
-    ] {
-        let error = init_worker(i32::MAX, TransferMode::Direct, None, selected, None)
-            .err()
-            .expect("an OrbiTE worker needs its selected engine even without networking");
-        assert!(error.to_string().contains("local-only OrbiTE"), "{error}");
-    }
+    let error = init_worker(i32::MAX, TransferMode::Direct, None, None)
+        .err()
+        .expect("a local worker requires OrbiTE");
+    assert!(
+        error
+            .to_string()
+            .contains("OrbiTE local copy is unavailable"),
+        "{error}"
+    );
 }
 
 #[test]

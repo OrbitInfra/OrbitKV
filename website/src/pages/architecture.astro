@@ -5,7 +5,7 @@ import { layers, localUrl } from "../data/site";
 
 <SiteLayout
   title="Architecture — OrbitKV"
-  description="Engine-owned HBM, per-host Managers, inventory-fed indexes, leased etcd membership and Mooncake cache transfers."
+  description="Engine-owned HBM, per-host Managers, inventory-fed indexes, leased etcd membership and OrbiTE cache transfers."
   active="Architecture"
 >
   <div class="container interior">
@@ -29,7 +29,7 @@ import { layers, localUrl } from "../data/site";
           src={localUrl("/architecture.svg")}
           width="1280"
           height="850"
-          alt="Engine-owned HBM and raw DRAM Restore; Manager-owned Publish, SSD and codecs. Peer grants control TENT READs; inventory streams feed local indexes and etcd holds membership. Native engine backends own P/D."
+          alt="Engine-owned HBM and raw DRAM Restore; Manager-owned Publish, SSD and codecs. Peer grants control OrbiTE READs; inventory streams feed local indexes and etcd holds membership. Native engine backends own P/D."
         />
         <figcaption>
           Single-node recovery is validated. The multi-node path is
@@ -61,7 +61,7 @@ import { layers, localUrl } from "../data/site";
           <p>
             Managers discover compatible replicas in complete local global indexes,
             synchronized through bounded inventory streams. etcd maintains leased
-            membership; peer gRPC authorizes exact source replicas; TENT READ moves their bytes into the consumer Manager's
+            membership; peer gRPC authorizes exact source replicas; OrbiTE READ moves their bytes into the consumer Manager's
             host memory before GPU restore. Scoped dense RDMA serving passes; HA and
             broader topology remain separate gates.
           </p>

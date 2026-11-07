@@ -152,8 +152,7 @@ pub(crate) struct GpuWorkerPool {
     numa_node: NumaNode,
     pub(crate) transfer_mode: TransferMode,
     local_device: Option<Arc<crate::transfer_engine::CudaRegistration>>,
-    selected_backend: crate::PeerTransferBackend,
-    engine: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
+    engine: Option<Arc<crate::transfer_engine::TransferEngine>>,
     ssd_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     ssd_host_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     codec_write_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
@@ -412,8 +411,7 @@ impl GpuWorkerPool {
         numa_node: NumaNode,
         transfer_mode: TransferMode,
         local_device: Option<Arc<crate::transfer_engine::CudaRegistration>>,
-        selected_backend: crate::PeerTransferBackend,
-        engine: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
+        engine: Option<Arc<crate::transfer_engine::TransferEngine>>,
     ) -> Result<Self, EngineError> {
         Ok(Self {
             device_id,
@@ -425,7 +423,6 @@ impl GpuWorkerPool {
                 transfer_mode,
                 "load",
                 local_device.clone(),
-                selected_backend,
                 engine.clone(),
             )?,
             save_tx: spawn_worker(
@@ -434,11 +431,10 @@ impl GpuWorkerPool {
                 transfer_mode,
                 "save",
                 local_device.clone(),
-                selected_backend,
                 engine.clone(),
             )?,
             local_device,
-            selected_backend,
+
             engine,
             ssd_tx: Mutex::new(None),
             ssd_host_tx: Mutex::new(None),
@@ -477,7 +473,7 @@ impl GpuWorkerPool {
                     self.transfer_mode,
                     "encoded-writeback",
                     self.local_device.clone(),
-                    self.selected_backend,
+
                     self.engine.clone(),
                 ) {
                     Ok(worker) => *sender = Some(worker),
@@ -494,7 +490,7 @@ impl GpuWorkerPool {
         } else if matches!(&command, WorkerCommand::Load(task, _) if task.plan.ssd_path() == Some(crate::SsdReadPath::Uring)) {
             let mut sender = self.ssd_host_tx.lock();
             if sender.is_none() {
-                match spawn_worker(self.device_id, self.numa_node, self.transfer_mode, "ssd-host", self.local_device.clone(), self.selected_backend, self.engine.clone()) {
+                match spawn_worker(self.device_id, self.numa_node, self.transfer_mode, "ssd-host", self.local_device.clone(), self.engine.clone()) {
                     Ok(worker) => *sender = Some(worker),
                     Err(error) => {
                         reject(command);
@@ -506,7 +502,7 @@ impl GpuWorkerPool {
         } else if disk {
             let mut sender = self.ssd_tx.lock();
             if sender.is_none() {
-                match spawn_worker(self.device_id, self.numa_node, self.transfer_mode, "ssd", self.local_device.clone(), self.selected_backend, self.engine.clone()) {
+                match spawn_worker(self.device_id, self.numa_node, self.transfer_mode, "ssd", self.local_device.clone(), self.engine.clone()) {
                     Ok(worker) => *sender = Some(worker),
                     Err(error) => {
                         reject(command);
@@ -650,8 +646,8 @@ impl GpuWorkerPool {
                     decode_page_bytes: target_shape.bytes(),
                     queue_depth: decode_queue_depth,
                     queue_parallelism: 1,
-                    tent_inflight_bytes: 0,
-                    tent_bandwidth_bytes_per_second: 0,
+                    transfer_inflight_bytes: 0,
+                    transfer_bandwidth_bytes_per_second: 0,
                 },
                 std::time::Duration::ZERO,
             );
@@ -794,8 +790,7 @@ fn spawn_worker(
     mode: TransferMode,
     name: &str,
     local_device: Option<Arc<crate::transfer_engine::CudaRegistration>>,
-    selected_backend: crate::PeerTransferBackend,
-    engine: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
+    engine: Option<Arc<crate::transfer_engine::TransferEngine>>,
 ) -> Result<mpsc::UnboundedSender<WorkerCommand>, EngineError> {
     let (sender, receiver) = mpsc::unbounded_channel();
     let (ready_tx, ready_rx) = std_mpsc::channel();
@@ -808,7 +803,7 @@ fn spawn_worker(
             {
                 warn!("Failed to pin GPU worker: {error}");
             }
-            match init_worker(device_id, mode, local_device, selected_backend, engine) {
+            match init_worker(device_id, mode, local_device, engine) {
                 Ok(runtime) => {
                     let _ = ready_tx.send(Ok(()));
                     if storage {
@@ -830,7 +825,7 @@ fn spawn_worker(
 }
 
 struct WorkerRuntime {
-    engine: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
+    engine: Option<Arc<crate::transfer_engine::TransferEngine>>,
     stream: Arc<CudaStream>,
     backend: Box<dyn crate::transfer_engine::local::LocalCopy>,
     max_dma_pitch: usize,
@@ -864,11 +859,17 @@ fn init_worker(
     device_id: i32,
     transfer_mode: TransferMode,
     local_device: Option<Arc<crate::transfer_engine::CudaRegistration>>,
-    selected_backend: crate::PeerTransferBackend,
-    engine: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
+    engine: Option<Arc<crate::transfer_engine::TransferEngine>>,
 ) -> Result<WorkerRuntime, EngineError> {
-    crate::transfer_engine::local::validate_engine(selected_backend, engine.as_ref())
-        .map_err(|e| EngineError::CudaInit(e.to_string()))?;
+    if engine.is_none() {
+        return Err(EngineError::CudaInit(
+            crate::transfer_engine::TransferError::new(
+                crate::transfer_engine::ErrorKind::Unavailable,
+                "OrbiTE local copy is unavailable",
+            )
+            .to_string(),
+        ));
+    }
     let address = local_device.as_ref().map_or(0, |owner| owner.address);
     // Initialize CUDA context for this thread
     let ctx = CudaContext::new(device_id as usize)
@@ -883,14 +884,9 @@ fn init_worker(
     let max_dma_pitch = ctx
         .attribute(cudarc::driver::sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MAX_PITCH)
         .map_err(|e| EngineError::CudaInit(e.to_string()))? as usize;
-    let backend = crate::transfer_engine::local::bind(
-        selected_backend,
-        engine.clone(),
-        stream.clone(),
-        transfer_mode,
-        address,
-    )
-    .map_err(|e| EngineError::CudaInit(e.to_string()))?;
+    let backend =
+        crate::transfer_engine::local::bind(engine.clone(), stream.clone(), transfer_mode, address)
+            .map_err(|e| EngineError::CudaInit(e.to_string()))?;
 
     info!(
         "GPU worker initialized: device={} backend={}",
@@ -1224,7 +1220,7 @@ fn raw_copy_keys(
     let bytes = copies
         .iter()
         .fold(0u64, |bytes, copy| bytes.saturating_add(copy.size as u64));
-    let dma_ranges = crate::transfer::memcpy::dma_copies(copies, max_pitch).count();
+    let _ = max_pitch; // Coalescing belongs to OrbiTE; its compiled DMA count is not exported.
     let paths = if write {
         [
             CostObservationKind::GpuSaveDirect,
@@ -1244,7 +1240,6 @@ fn raw_copy_keys(
             bytes,
             copies.len(),
         )
-        .with_dma_ranges(dma_ranges)
     });
     (keys, bytes)
 }

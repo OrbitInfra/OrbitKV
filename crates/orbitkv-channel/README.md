@@ -4,7 +4,7 @@ Versioned request/response channel between inference processes and a Cache Manag
 on the same host. The control message is fixed at 64 bytes; KV payloads remain
 in registered CUDA IPC pages or Cache Manager storage. The channel does not
 select RAM, SSD, or a remote replica: the Cache Manager resolves each cache
-request and uses Mooncake when a remote fetch is available.
+request and uses OrbiTE when a remote fetch is available.
 
 The production server owns a thread-safe iceoryx2 service and currently serves
 `Ping`, `QueryBundle`, `CancelQuery`, `Publish`, `Restore`, `Release`,

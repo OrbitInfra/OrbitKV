@@ -7,11 +7,8 @@ members = [
   "crates/orbitkv-proto",
   "crates/orbitkv-server",
   "crates/orbitkv-catalog",
-  "crates/orbitkv-mooncake-sys",
-  "crates/orbitkv-transfer",
   "python",
 ]
-exclude = ["third-party/mooncake"]
 resolver = "2"
 
 [workspace.package]
@@ -31,8 +28,6 @@ orbitkv-state = { path = "crates/orbitkv-state" }
 orbitkv-channel = { path = "crates/orbitkv-channel" }
 orbitkv-common = { path = "crates/orbitkv-common" }
 orbitkv-core = { path = "crates/orbitkv-core", default-features = false }
-orbitkv-mooncake-sys = { path = "crates/orbitkv-mooncake-sys", default-features = false }
-orbitkv-transfer = { path = "crates/orbitkv-transfer", default-features = false }
 
 # Core dependencies
 # 0.19.7 floor: its regenerated bindings turn several sys enums into newtype

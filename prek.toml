@@ -27,8 +27,8 @@ repo = "local"
 hooks = [
   { id = "experiment-output", name = "tracked experiment output", language = "system", entry = "python3 scripts/check-experiment-output.py", pass_filenames = false, always_run = true },
   { id = "cargo-fmt", name = "cargo fmt", language = "system", entry = "cargo fmt --all -- --check", files = { glob = ["Cargo.toml", "**/Cargo.toml", "**/*.rs"] }, pass_filenames = false, require_serial = true },
-  { id = "cargo-clippy", name = "cargo clippy", language = "system", entry = "cargo clippy --workspace --all-targets --no-default-features --features cuda-13,mooncake -- -D warnings", files = { glob = ["Cargo.toml", "**/Cargo.toml", "**/*.rs"] }, pass_filenames = false, require_serial = true },
-  { id = "cargo-test-release", name = "cargo test --release", language = "system", entry = "cargo test --release --no-default-features --features cuda-13,mooncake", pass_filenames = false, always_run = true, require_serial = true, stages = ["pre-commit"] },
+  { id = "cargo-clippy", name = "cargo clippy", language = "system", entry = "cargo clippy --workspace --all-targets --no-default-features --features cuda-13,orbite -- -D warnings", files = { glob = ["Cargo.toml", "**/Cargo.toml", "**/*.rs"] }, pass_filenames = false, require_serial = true },
+  { id = "cargo-test-release", name = "cargo test --release", language = "system", entry = "cargo test --release --no-default-features --features cuda-13,orbite", pass_filenames = false, always_run = true, require_serial = true, stages = ["pre-commit"] },
 ]
 
 [[repos]]

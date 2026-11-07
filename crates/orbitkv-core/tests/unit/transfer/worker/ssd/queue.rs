@@ -251,10 +251,14 @@ fn canceled_decoder_preparation_is_not_an_io_failure() {
         phase: DecodePhase::Preparing,
     });
     let (decoder, requests, replies) = decoder_channels();
-    // No native registration is needed: cancellation happens before any file I/O.
-    // SAFETY: with no engine this registration is bookkeeping only; the
-    // fixture never submits or dereferences the synthetic address.
-    let input = unsafe { CudaRegistration::new(None, 1, 4096, 0, Arc::new(())) }.unwrap();
+    // Cancellation happens before native submission. The CUDA ownership fault
+    // seam supplies the prepared owner without inventing an engine-less registration.
+    let input = crate::peer::restore::tests::registered(
+        Arc::new(crate::peer::restore::tests::Control::default()),
+        1,
+        4096,
+        Arc::new(()),
+    );
     replies.send(DecodeReply::Prepared(Ok(input))).unwrap();
     poll_decode(&decoder, &mut active, &mut jobs);
     assert!(active.is_none());

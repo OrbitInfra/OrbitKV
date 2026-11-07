@@ -50,9 +50,9 @@ merge. Retired S2 campaign controllers/tests are reproduced from their
 ## Select a hardware gate
 
 Run from `python/` in the selected installed engine environment. Set
-`ORBITKV_CACHE_MANAGER_BINARY` to the matching frozen Manager and
-`ORBITKV_MOONCAKE_LIB_DIR` where required. Actual CUDA/IPC and model prerequisites
-are part of each gate, not provided by pytest collection.
+`ORBITKV_CACHE_MANAGER_BINARY` to the matching frozen OrbiTE Manager. Actual
+CUDA/IPC and model prerequisites are part of each gate, not provided by pytest
+collection.
 
 | Change | Gate |
 | --- | --- |
@@ -108,7 +108,7 @@ physical-fault reclamation.
 ## Release smoke
 
 Install the complete wheel outside the checkout, with the matching Python/CUDA
-runtime. Check native import, packaged Manager/TENT libraries and actual CUDA
+runtime. Check native import, packaged Manager, OrbiTE revision and actual CUDA
 before claiming an installed engine result:
 
 ```bash

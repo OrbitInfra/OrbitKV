@@ -36,14 +36,14 @@ pub struct CompletionResourceEvidence {
     pub decode_page_bytes: u64,
     pub queue_depth: u32,
     pub queue_parallelism: u32,
-    pub tent_inflight_bytes: u64,
-    pub tent_bandwidth_bytes_per_second: u64,
+    pub transfer_inflight_bytes: u64,
+    pub transfer_bandwidth_bytes_per_second: u64,
 }
 
 /// One measured physical completion interval reported by its execution owner.
 ///
-/// Request identifiers and state keys are intentionally absent. The TENT
-/// notification generation proves that the report came from a fenced transfer,
+/// Request identifiers and state keys are intentionally absent. The
+/// transfer generation identifies a fenced report,
 /// but it is freshness evidence rather than a cost-model dimension.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompletionObservation {

@@ -132,8 +132,8 @@ not by itself prove that a TP=4 representation can be restored by TP=8.
    bound failure-to-recompute behavior. Then qualify same-host TP per replica.
 3. Qualify P/D and cache reuse together: a P-side cache hit must still reach D;
    completed D-side blocks should be available to a later request on another
-   P. Start from the existing vLLM Mooncake adapter and separately integrate
-   SGLang's handoff lifecycle. A basic P/D proxy is sufficient for this gate.
+   P. Use the released native vLLM/SGLang P/D transports independently of
+   OrbitKV's OrbiTE shared cache.
 4. Replace sharded Catalog discovery with complete local global indexes,
    historically backed by etcd block metadata and revisioned snapshot/Watch;
    the S2.8 candidate replaces block traffic with owner inventory streams. Qualify quorum
@@ -142,5 +142,5 @@ not by itself prove that a TP=4 representation can be restored by TP=8.
 
 Transport completion and page-lifetime safety are requirements at every stage.
 Directory hints never authorize memory reuse. Keep engine-to-Manager UDS/iceoryx2,
-peer control gRPC, and Mooncake TE payload transfer. Full recovery semantics
+peer control gRPC, and OrbiTE payload transfer. Full recovery semantics
 remain tracked in [state identity](state-identity.md).

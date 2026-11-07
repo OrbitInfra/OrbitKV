@@ -544,6 +544,7 @@ async fn real_query_control_replays_claims_and_fences_replaced_registrations() {
                         ],
                         engine.payload_arenas().unwrap(),
                         TransferMode::Direct,
+                        Arc::new(()),
                     )
                     .unwrap();
                     loop {

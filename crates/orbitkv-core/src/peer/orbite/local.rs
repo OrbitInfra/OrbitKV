@@ -7,7 +7,7 @@ use orbite::cuda::local_copy::{
     CopyDirection, LocalCopyBackend, LocalCopyConfig, LocalCopyDesc, LocalCopyEngine,
 };
 
-use super::{OrbiteTransport, RegistrationSet, transfer_error};
+use super::{RegistrationSet, TransferEngine, transfer_error};
 use crate::transfer::{CopyDesc, TransferMode};
 use crate::transfer_engine::local::{LocalCompletion, LocalCopy, LocalHost};
 use crate::transfer_engine::{ErrorKind, TransferError};
@@ -16,13 +16,13 @@ const DESCRIPTORS: usize = 1024;
 const BYTES: usize = 256 << 20;
 
 pub(super) struct Copies {
-    transport: Arc<OrbiteTransport>,
+    transport: Arc<TransferEngine>,
     mode: TransferMode,
     bound: LocalCopyEngine,
 }
 impl Copies {
     pub(super) fn new(
-        transport: Arc<OrbiteTransport>,
+        transport: Arc<TransferEngine>,
         stream: Arc<CudaStream>,
         mode: TransferMode,
         device: u64,

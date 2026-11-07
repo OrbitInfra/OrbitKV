@@ -190,19 +190,6 @@ impl LifecycleService {
         }
         Ok(removed)
     }
-    pub(crate) fn transfer_engine(&self) -> &'static str {
-        match self
-            .engine
-            .transfer_backend()
-            .map(|engine| engine.local_engine())
-            .unwrap_or_default()
-        {
-            orbitkv_core::PeerTransferBackend::Mooncake => "mooncake",
-            orbitkv_core::PeerTransferBackend::Orbite => "orbite",
-            orbitkv_core::PeerTransferBackend::OrbiteTcp => "orbite-tcp",
-            orbitkv_core::PeerTransferBackend::OrbiteRdma => "orbite-rdma",
-        }
-    }
     pub(crate) fn payload_arenas(&self) -> Result<Vec<orbitkv_core::PayloadArena>, ControlError> {
         self.engine.payload_arenas().map_err(Self::map_engine_error)
     }

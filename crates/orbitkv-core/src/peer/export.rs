@@ -56,7 +56,7 @@ pub struct PeerExports {
     membership: Option<Arc<orbitkv_catalog::MembershipView>>,
     endpoint: Option<String>,
     locks: TransferLockManager,
-    transport: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
+    transport: Option<Arc<crate::transfer_engine::TransferEngine>>,
 }
 
 impl PeerExports {
@@ -65,7 +65,7 @@ impl PeerExports {
         ssd: Option<Arc<crate::storage::ssd::SsdStore>>,
         membership: Option<Arc<orbitkv_catalog::MembershipView>>,
         endpoint: Option<String>,
-        transport: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
+        transport: Option<Arc<crate::transfer_engine::TransferEngine>>,
         timeout: Duration,
         budget_bytes: u64,
     ) -> Self {

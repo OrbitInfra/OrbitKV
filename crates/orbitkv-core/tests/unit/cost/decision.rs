@@ -188,7 +188,7 @@ fn decode_ready_routes_compare_only_for_the_same_target_and_shape() {
 }
 
 #[test]
-fn decode_ready_decision_uses_fresh_queue_and_tent_pressure() {
+fn decode_ready_decision_uses_fresh_queue_and_transfer_pressure() {
     let direct = CostEstimateKey::new(
         CostObservationKind::CacheRestore,
         ExecutionResource::CacheRestore {
@@ -220,8 +220,8 @@ fn decode_ready_decision_uses_fresh_queue_and_tent_pressure() {
             decode_page_bytes: 4096,
             queue_depth: 1,
             queue_parallelism: 1,
-            tent_inflight_bytes: 0,
-            tent_bandwidth_bytes_per_second: 0,
+            transfer_inflight_bytes: 0,
+            transfer_bandwidth_bytes_per_second: 0,
         },
         Duration::ZERO,
     );
@@ -231,8 +231,8 @@ fn decode_ready_decision_uses_fresh_queue_and_tent_pressure() {
             decode_page_bytes: 4096,
             queue_depth: 17,
             queue_parallelism: 16,
-            tent_inflight_bytes: 1000,
-            tent_bandwidth_bytes_per_second: 10_000,
+            transfer_inflight_bytes: 1000,
+            transfer_bandwidth_bytes_per_second: 10_000,
         },
         Duration::ZERO,
     );

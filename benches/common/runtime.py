@@ -28,11 +28,11 @@ _PR_SET_CHILD_SUBREAPER = 36
 
 
 def free_port() -> int:
-    """Keep delayed listeners outside outgoing TCP and TENT auto-port ranges."""
+    """Keep delayed listeners outside outgoing TCP and OrbiTE listener-port ranges."""
     low, high = map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
     for _ in range(128):
         port = 1024 + secrets.randbelow(65536 - 1024)
-        # TENT chooses its RPC port independently before HTTP startup.
+        # OrbiTE chooses its data port independently before HTTP startup.
         if low <= port <= high or 15000 <= port < 17000:
             continue
         with socket.socket() as sock:

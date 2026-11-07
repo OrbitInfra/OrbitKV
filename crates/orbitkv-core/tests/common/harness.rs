@@ -339,13 +339,12 @@ impl TestEnvBuilder {
 
         let tensors = layer_infos
             .iter()
-            .enumerate()
-            .map(|(index, layer)| {
+            .map(|layer| {
                 LocalTensor::new(
                     layer.name.clone(),
                     layer.gpu_ptr,
                     layer.total_size,
-                    index,
+                    layer.gpu_ptr as usize,
                     layer.num_blocks,
                     layer.block_size,
                     layer.kv_stride,
@@ -360,6 +359,12 @@ impl TestEnvBuilder {
             tensors,
             engine.payload_arenas().expect("export payload arenas"),
             self.transfer_mode,
+            Arc::new(
+                layers
+                    .iter()
+                    .map(|layer| layer.data.gpu.clone())
+                    .collect::<Vec<_>>(),
+            ),
         )
         .expect("import payload arenas");
         TestEnv {

@@ -12,7 +12,7 @@ The [completion plan](completion-plan.md) turns the
 proposal into reviewable changes. [Manager decisions below the engine](#cache-manager-decisions-below-the-engine)
 define the primary planning boundary; [Dynamo reuse](#reuse-dynamo-for-request-routing)
 is a later integration for worker selection.
-The design covers local tiers and Mooncake TE peer transfers with shared cost
+The design covers local tiers and OrbiTE peer transfers with shared cost
 observations, resource accounting and recovery checks. Implement local decisions
 first; qualify distributed modes separately. Worker routing remains a later
 milestone and is not required for transfer planning.
@@ -31,7 +31,7 @@ flowchart TB
     M <--> C["Complete local global index: replica evidence"]
     M <-->|"Preparation, authorization and credits"| P["Peer Cache Manager"]
     M --> L["Local CUDA / io_uring / cuFile execution"]
-    M --> T["Mooncake TE: peer payload movement"]
+    M --> T["OrbiTE: peer payload movement"]
     T <--> P
 ```
 
@@ -83,7 +83,7 @@ This ownership differs from the audited [KVCR design](https://github.com/ai-dyna
 which places cross-node inventory in the router and gives KVCR request-scoped
 source hints. Borrow its claims and completion rules without adopting that
 inventory dependency. NIXL estimates, if available, supply transfer costs;
-neither NIXL nor Mooncake TE is the authority for OrbitKV state compatibility
+neither NIXL nor OrbiTE is the authority for OrbitKV state compatibility
 or cluster-wide cache placement. Optional Dynamo routing can later consume
 Manager summaries, while Managers retain discovery and physical decisions.
 
@@ -343,14 +343,14 @@ merging existing namespaces or dropping their compatibility checks.
 
 Route construction uses a small set of implemented templates. io_uring and
 cuFile are independent routes over one SSD store and one source generation.
-Mooncake connects registered memory endpoints; it does not turn an SSD extent
+OrbiTE connects registered memory endpoints; it does not turn an SSD extent
 into remotely readable memory. A peer SSD route must ask the source Manager to
 pin that extent and admit its read and staging resources before publishing a
 transfer-ready memory window. Charge source preparation and both endpoints;
 the requester must not allocate or schedule the peer's internal resources.
 Peer HBM routes require the engine-grant contract above before enumeration.
 
-GPUDirect RDMA is a Mooncake TE transport capability for registered GPU memory,
+GPUDirect RDMA is a OrbiTE transport capability for registered GPU memory,
 not a residence or another remote backend. A route must retain both memory
 endpoints and validated transport capability: host-to-host RDMA, host/GPU RDMA
 and GPU-to-GPU RDMA have different prerequisites and resource costs. NIC selection,
@@ -403,11 +403,11 @@ the [next measurement increment](completion-plan.md#s4--finish-communication-exe
 Completion resource evidence is separately bounded and freshness-checked. A
 direct restore has a per-device 128-operation admission owner retained through
 terminal completion. P/D observations carry exact admitted decode bytes,
-handoff queue depth and parallelism, and the TENT rail inflight-byte/bandwidth
+handoff queue depth and parallelism, and the engine rail inflight-byte/bandwidth
 snapshot captured at admission. These values never become metric labels or
 stable estimate-key dimensions. Fresh evidence expires after two seconds;
 decode-route comparison adjusts estimates by queued execution waves and, when
-an RDMA rail is present, current TENT inflight bytes divided by observed rail
+an RDMA rail is present, current engine inflight bytes divided by observed rail
 bandwidth. Missing or shape-incompatible resource evidence preserves the
 deterministic default.
 
@@ -523,7 +523,7 @@ residency sequence, accounts pinned allocations and drains completion after
 fencing. `peer/transport.rs` holds the registered pinned pool until unregister.
 Server owns etcd membership Watch, bounded Manager inventory sessions and the
 inbound source gRPC adapter; outbound source-requester clients remain with their
-Core peer workflows. The Mooncake crate remains the byte-transfer boundary,
+Core peer workflows. The OrbiTE adapter remains the byte-transfer boundary,
 including NIC and transport selection.
 
 These ownership changes preserve default source priority and the opt-in cost
@@ -546,7 +546,7 @@ The refactor sequence is:
    lifecycle, source invalidation, deadline/cancellation and matched overhead
    before allowing a measured route to change execution.
 5. Source-side SSD preparation and fixed-priority requester execution now use
-   the same ticket owner and Mooncake TENT path. Add engine-authorized HBM replicas
+   the same ticket owner and OrbiTE path. Add engine-authorized HBM replicas
    only when their protocols and deployment gates are ready. Cross-representation
    discovery requires its own identity migration; none is implied by endpoint normalization.
 
@@ -589,7 +589,7 @@ flowchart LR
     G <-->|DMA| D
     D <-->|io_uring| S[Local SSD]
     G <-->|cuFile| S
-    P[Peer registered DRAM] -->|Mooncake TE| D
+    P[Peer registered DRAM] -->|OrbiTE| D
     PS[Peer SSD] -->|Source io_uring staging| P
 ```
 
@@ -670,7 +670,7 @@ cache tiers. Several residences may contain the same compatible state.
 | Peer HBM → TE → local DRAM or GPU memory | General cache sourcing planned; source engine must grant a lifetime lease. GPU-to-GPU vLLM P/D is an existing experimental handoff, not general peer-HBM reuse |
 | Peer SSD → owner DRAM → TE → local DRAM or GPU memory | Source io_uring staging, two-phase source credits and explicit requester planning implemented; two-host qualification remains open |
 | Peer SSD → owner GPU staging via cuFile → TE → local GPU memory | Later candidate only on qualified source GDS and GPU RDMA paths; charge source GPU space and interference |
-| Mounted remote storage → cuFile → local GPU staging | Separate future storage deployment; not an implicit Mooncake peer-memory path |
+| Mounted remote storage → cuFile → local GPU staging | Separate future storage deployment; not an implicit OrbiTE peer-memory path |
 
 Native GPU RDMA requires registered GPU allocations and a supported device,
 driver and network topology. TCP support alone does not make a GPU-direct route
@@ -890,7 +890,7 @@ deployment-mode switch. Current evidence is listed in [deployment](deployment.md
 | TP inside a replica | Select a rank-common legal boundary and minimize time until all required shards are ready | Slowest required shard and collective dependencies affect admission; a local rank hit cannot authorize global readiness |
 | PP, optionally with TP/DP/P/D | Prepare each stage's owned state ahead of its consumer and limit pipeline stalls | Stage dependencies and restart boundaries remain explicit; storage support alone does not establish PP integration |
 
-Remote byte movement uses Mooncake TE through `orbitkv-transfer`. OrbitKV owns
+Remote byte movement uses OrbiTE through the concrete transfer engine. OrbitKV owns
 state compatibility, replica discovery, source capabilities, budgets and the
 restore plan; do not duplicate TE's transport implementation or infer RDMA from
 a successful transfer. Current shared-cache recovery stages peer bytes in local
@@ -1012,10 +1012,9 @@ format, required-range and staging decisions with the Manager; leave backend
 transport mechanics with NIXL or TE. Compare direct TE with NIXL plus the same
 TE backend separately from comparisons that also change the backend to UCX.
 
-Before building a broader transfer interface, evaluate NIXL with Mooncake in
-an isolated prototype. Qualify native integration, pinned TE compatibility,
-registration lifetime, cancellation/completion, codec staging and overhead.
-Keep the current direct TE path until that comparison justifies a change.
+The earlier NIXL/Mooncake prototype proposal is superseded by the 2026-11-07
+OrbiTE-only decision. The API comparison above remains reference material,
+not an execution queue or another backend plan.
 Backend estimates can seed individual transfer costs; OrbitKV must still
 account for owner preparation, queues, decode, required ranges and the actual
 consumer fence. Missing estimates remain unknown, not zero-cost routes.

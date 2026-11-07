@@ -272,7 +272,7 @@ OrbitKV's engine releases or workload.
 | [LMCache v0.5.5 prefetch controller](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/distributed/storage_controllers/prefetch_controller.py) | Request lookup transfers completed write reservations into reader locks; WARM finishes writes without retaining reader locks. | Keep demand-owned preparation distinct from optional warming. Reuse existing query/lease ownership when preparing an actual consumer's prefix. |
 | [SGLang v0.5.20 HiCache](https://github.com/sgl-project/sglang/blob/94602c9c2b7cbdb8efd5c52802dac6a1c180089e/python/sglang/srt/mem_cache/hiradix_cache.py) | Minimum prefetch size, rate limiting, and `best_effort`, `timeout`, `wait_complete` termination; completed results are clamped to a usable prefix. | Define when the engine stops waiting, and expose only a completed legal recovery boundary. Validate rank agreement separately. |
 | [FlexKV replacement policies](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/docs/eviction_policy/README_en.md) and [transfer scheduler](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/flexkv/transfer/scheduler.py) | LRU/LFU/SLRU and per-tier reclamation are separate from dependency-driven transfer graphs. | Compare retention policies independently from read admission; preserve completion dependencies across SSD, DRAM and GPU. |
-| [Dynamo v1.4.2 KVBM offload](https://github.com/ai-dynamo/dynamo/blob/2ecbdfdf192c69c02c6d21e931d20d3b4a0bb64a/lib/kvbm-engine/docs/offload.md) and [onboarding](https://github.com/ai-dynamo/dynamo/blob/2ecbdfdf192c69c02c6d21e931d20d3b4a0bb64a/lib/kvbm-engine/docs/onboarding.md) | Offload filters precede batching; transfer commitment retains ownership. Session holders protect blocks from eviction until released. | Separate write admission from read prefetch and replacement; preserve transfer lifetimes. Keep Mooncake TE for bytes and request routing as a separate integration. |
+| [Dynamo v1.4.2 KVBM offload](https://github.com/ai-dynamo/dynamo/blob/2ecbdfdf192c69c02c6d21e931d20d3b4a0bb64a/lib/kvbm-engine/docs/offload.md) and [onboarding](https://github.com/ai-dynamo/dynamo/blob/2ecbdfdf192c69c02c6d21e931d20d3b4a0bb64a/lib/kvbm-engine/docs/onboarding.md) | Offload filters precede batching; transfer commitment retains ownership. Session holders protect blocks from eviction until released. | Separate write admission from read prefetch and replacement; preserve transfer lifetimes. Keep OrbiTE for cache bytes and request routing as a separate integration. |
 
 LMCache's [warm-prefetch entry point](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/multiprocess/warm_prefetch.py)
 explicitly leaves prepared pages unpinned. Thus, "pin every warmup" is not the
@@ -293,7 +293,7 @@ Two useful references have a different maturity status:
 - [Mooncake RFC #3504](https://github.com/kvcache-ai/Mooncake/issues/3504)
   proposes cached membership and peer route authorities outside the metadata
   hot path. It informs the distributed catalog plan, not a ready-made SSD
-  prefetch policy. OrbitKV's etcd membership and Mooncake TE direction remains.
+  prefetch policy. OrbitKV keeps etcd membership and uses OrbiTE for byte movement.
 
 Implement and measure in this order:
 

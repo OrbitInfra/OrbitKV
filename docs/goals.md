@@ -13,7 +13,7 @@ query budgets and transfer completion. Raw DRAM Restore executes in the engine;
 Publish and SSD/codec work execute in the Manager.
 
 Optional peer caching uses Manager inventory streams for local discovery and
-Mooncake TENT for data transfer. Native P/D uses the engines' own transports with
+OrbiTE for data transfer. Native P/D uses the engines' own transports with
 independent cache adapters. Check [compatibility and support](compatibility.md)
 before selecting a model, topology or feature.
 

@@ -118,10 +118,6 @@ def repair(source: Path, output: Path) -> Path:
                 ).read_bytes()
         if grafted:
             raise ValueError(f"Missing dependency provenance for {sorted(grafted)}")
-        project = Path(__file__).resolve().parent.parent
-        notices["native/Mooncake-LICENSE-APACHE"] = (
-            project / "third-party/mooncake/LICENSE-APACHE"
-        ).read_bytes()
         metadata = archive.read(metadata_path).decode()
         headers, separator, body = metadata.partition("\n\n")
         if not separator:

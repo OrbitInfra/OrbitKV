@@ -11,7 +11,7 @@ fn cpu_auto_backend_reads_and_writes_fragmented_bytes_and_drains() {
 
     let make = || {
         Arc::new(
-            OrbiteTransport::new(
+            TransferEngine::new(
                 4096,
                 "127.0.0.1:0",
                 Transport::Unspec,
@@ -37,7 +37,7 @@ fn cpu_auto_backend_reads_and_writes_fragmented_bytes_and_drains() {
         .engine
         .register_memory(vec![0xcc; size].into_boxed_slice(), Permission::LocalOnly)
         .unwrap();
-    let backend: &dyn TransferBackend = requester.as_ref();
+    let backend: &TransferEngine = requester.as_ref();
     let peer = backend
         .open_peer(
             &source.endpoint,
@@ -165,10 +165,10 @@ fn cpu_auto_backend_reads_and_writes_fragmented_bytes_and_drains() {
 
 #[test]
 fn peer_protocol_and_granted_epoch_are_preserved_across_source_restart() {
-    let source = TransferEngine::new(EngineConfig::default()).unwrap();
+    let source = NativeEngine::new(EngineConfig::default()).unwrap();
     let endpoint = source.endpoint();
     let granted_epoch = source.source_epoch().to_string();
-    let requester = OrbiteTransport::new(
+    let requester = TransferEngine::new(
         4096,
         "127.0.0.1:0",
         Transport::Tcp,
@@ -188,7 +188,7 @@ fn peer_protocol_and_granted_epoch_are_preserved_across_source_restart() {
         .unwrap();
     source.close_source(Duration::from_secs(2)).unwrap();
     drop(source);
-    let replacement = TransferEngine::new(EngineConfig {
+    let replacement = NativeEngine::new(EngineConfig {
         bind_addr: endpoint,
         ..EngineConfig::default()
     })
@@ -207,7 +207,7 @@ fn peer_protocol_and_granted_epoch_are_preserved_across_source_restart() {
 
 #[test]
 fn transfer_rejects_descriptor_and_byte_budgets_before_payload_io() {
-    let requester = OrbiteTransport::new(
+    let requester = TransferEngine::new(
         4096,
         "127.0.0.1:0",
         Transport::Tcp,
@@ -216,7 +216,7 @@ fn transfer_rejects_descriptor_and_byte_budgets_before_payload_io() {
         None,
     )
     .unwrap();
-    let source = TransferEngine::new(EngineConfig::default()).unwrap();
+    let source = NativeEngine::new(EngineConfig::default()).unwrap();
     let endpoint = format!("{}{}", prefix(Transport::Tcp), source.endpoint());
     let peer = requester
         .open_peer(
@@ -269,7 +269,7 @@ fn transfer_rejects_descriptor_and_byte_budgets_before_payload_io() {
 #[test]
 fn rdma_selection_requires_its_build_feature() {
     assert!(matches!(
-        OrbiteTransport::new(4096, "127.0.0.1:0", Transport::Rdma, None),
+        TransferEngine::new(4096, "127.0.0.1:0", Transport::Rdma, None),
         Err(reason) if reason.contains("orbite-rdma build feature")
     ));
 }
@@ -277,11 +277,11 @@ fn rdma_selection_requires_its_build_feature() {
 #[cfg(feature = "orbite-rdma")]
 #[test]
 fn unavailable_rdma_never_copies_through_tcp() {
-    let source = TransferEngine::new(EngineConfig::default()).unwrap();
+    let source = NativeEngine::new(EngineConfig::default()).unwrap();
     let source_memory = source
         .register_memory(vec![0x42; 64].into_boxed_slice(), Permission::RemoteRead)
         .unwrap();
-    let requester = OrbiteTransport::new(
+    let requester = TransferEngine::new(
         4096,
         "127.0.0.1:0",
         Transport::Rdma,
@@ -348,9 +348,9 @@ fn unavailable_rdma_never_copies_through_tcp() {
 #[cfg(feature = "orbite-rdma")]
 #[test]
 fn rdma_configuration_and_payload_namespaces_are_explicit() {
-    assert!(OrbiteTransport::new(4096, "127.0.0.1:0", Transport::Rdma, None, None).is_err());
+    assert!(TransferEngine::new(4096, "127.0.0.1:0", Transport::Rdma, None, None).is_err());
     assert!(
-        OrbiteTransport::new(
+        TransferEngine::new(
             4096,
             "127.0.0.1:0",
             Transport::Tcp,
@@ -359,10 +359,10 @@ fn rdma_configuration_and_payload_namespaces_are_explicit() {
         )
         .is_err()
     );
-    let source = TransferEngine::new(EngineConfig::default()).unwrap();
+    let source = NativeEngine::new(EngineConfig::default()).unwrap();
     let endpoint = source.endpoint();
-    let requester: Arc<dyn TransferBackend> = Arc::new(
-        OrbiteTransport::new(
+    let requester: Arc<TransferEngine> = Arc::new(
+        TransferEngine::new(
             4096,
             "127.0.0.1:0",
             Transport::Rdma,
@@ -380,7 +380,7 @@ fn rdma_configuration_and_payload_namespaces_are_explicit() {
         .unwrap();
     source.close_source(Duration::from_secs(2)).unwrap();
     drop(source);
-    let replacement = TransferEngine::new(EngineConfig {
+    let replacement = NativeEngine::new(EngineConfig {
         bind_addr: endpoint,
         ..EngineConfig::default()
     })
@@ -397,7 +397,7 @@ mod rdma_host;
 
 // Hardware consumers share the same trait submission as production peer READs.
 #[cfg(feature = "orbite-rdma")]
-impl OrbiteTransport {
+impl TransferEngine {
     fn read_registered(
         &self,
         endpoint: &str,
@@ -438,7 +438,7 @@ fn compiled_gds_stays_unloaded_without_configuration() {
             ..Default::default()
         }),
     ] {
-        let engine = OrbiteTransport::new(
+        let engine = TransferEngine::new(
             4096,
             "127.0.0.1:0",
             Transport::Tcp,
@@ -461,7 +461,7 @@ fn compiled_gds_stays_unloaded_without_configuration() {
 #[test]
 fn kv_options_drive_unspec_policy_on_real_tcp() {
     use crate::transfer_engine::{TransferIntent, TransferOptions};
-    let source = TransferEngine::new(EngineConfig::default()).unwrap();
+    let source = NativeEngine::new(EngineConfig::default()).unwrap();
     let remote = source
         .register_memory(
             Vec::from(*b"intent!!").into_boxed_slice(),
@@ -501,7 +501,7 @@ fn kv_options_drive_unspec_policy_on_real_tcp() {
         transports: vec![Transport::Rdma],
         ..Default::default()
     });
-    let requester = TransferEngine::new(EngineConfig {
+    let requester = NativeEngine::new(EngineConfig {
         selector: Some(orbite::TransportSelectorConfig {
             policy,
             ..Default::default()
@@ -567,26 +567,4 @@ fn kv_options_drive_unspec_policy_on_real_tcp() {
     );
     requester.unregister_memory(&local).unwrap();
     source.unregister_memory(&remote).unwrap();
-}
-
-#[test]
-fn tent_selection_rejects_an_orbite_local_engine() {
-    let engine: Arc<dyn TransferBackend> = Arc::new(
-        OrbiteTransport::new(
-            4096,
-            "127.0.0.1:0",
-            Transport::Unspec,
-            None,
-            #[cfg(feature = "orbite-rdma")]
-            None,
-        )
-        .unwrap(),
-    );
-    assert_eq!(engine.local_engine(), crate::PeerTransferBackend::Orbite);
-    let error = crate::transfer_engine::local::validate_engine(
-        crate::PeerTransferBackend::Mooncake,
-        Some(&engine),
-    )
-    .unwrap_err();
-    assert_eq!(error.kind, ErrorKind::Unavailable);
 }

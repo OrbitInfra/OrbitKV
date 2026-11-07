@@ -4,26 +4,22 @@ use std::time::Duration;
 use crate::SsdCacheConfig;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum PeerTransferBackend {
+pub enum TransportHint {
     #[default]
-    Mooncake,
-    Orbite,
-    OrbiteTcp,
-    OrbiteRdma,
+    Auto,
+    Tcp,
+    Rdma,
 }
 
-impl std::str::FromStr for PeerTransferBackend {
+impl std::str::FromStr for TransportHint {
     type Err = String;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "mooncake" => Ok(Self::Mooncake),
-            "orbite" => Ok(Self::Orbite),
-            "orbite-tcp" => Ok(Self::OrbiteTcp),
-            "orbite-rdma" => Ok(Self::OrbiteRdma),
-            _ => Err(
-                "peer transfer backend must be mooncake, orbite, orbite-tcp or orbite-rdma".into(),
-            ),
+            "auto" => Ok(Self::Auto),
+            "tcp" => Ok(Self::Tcp),
+            "rdma" => Ok(Self::Rdma),
+            _ => Err("transfer transport must be auto, tcp or rdma".into()),
         }
     }
 }
@@ -47,11 +43,8 @@ pub struct EngineConfig {
     pub codec: crate::StorageCodec,
     /// GPU scratch per transfer worker.
     pub codec_budget: usize,
-    /// Optional Mooncake RDMA rail filter. Empty means that Mooncake selects
-    /// the available transport, including TCP fallback.
-    pub mooncake_nic_names: Vec<String>,
-    /// Explicit peer payload provider. OrbiTE profiles are experimental.
-    pub peer_transfer_backend: PeerTransferBackend,
+    /// Optional operator hint; OrbiTE chooses the transport by default.
+    pub transfer_transport: TransportHint,
     /// Explicit single-rail staging configuration, consumed only by OrbiTE RDMA.
     pub orbite_rdma: Option<crate::OrbiteRdmaConfig>,
     /// Enable NUMA-aware memory allocation.
@@ -83,8 +76,7 @@ impl Default for EngineConfig {
             ssd_cache_config: None,
             codec: crate::StorageCodec::None,
             codec_budget: 64 * 1024 * 1024,
-            mooncake_nic_names: Vec::new(),
-            peer_transfer_backend: PeerTransferBackend::default(),
+            transfer_transport: TransportHint::default(),
             orbite_rdma: None,
             enable_numa_affinity: true,
             blockwise_alloc: false,

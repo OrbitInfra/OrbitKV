@@ -14,7 +14,7 @@ stage, then independently review its consumed path, gates and evidence.
 | Process channel and native client lifetime | `crates/orbitkv-channel/` |
 | Manager protocol, membership and inventory streams | `crates/orbitkv-server/` |
 | Local index and member admission | `crates/orbitkv-catalog/` |
-| TENT wrapper and native build | `crates/orbitkv-transfer/`, `crates/orbitkv-mooncake-sys/` |
+| OrbiTE transfer ownership | `crates/orbitkv-core/src/peer/orbite.rs`, `transfer_engine/` |
 | PyO3 and engine callbacks | `python/src/`, `python/orbitkv/` |
 
 Python owns engine callbacks, layouts and GPU handoff. Shared state machines,
@@ -24,14 +24,13 @@ repository skill before changing a binding, engine adapter or Manager path.
 ## Build and validate
 
 ```bash
-git submodule update --init --recursive third-party/mooncake
 cargo fmt --all -- --check
 cargo test -p orbitkv-state -p orbitkv-catalog
 ```
 
 For native CUDA builds, follow [runtime requirements](single-node.md) and use
 the CUDA feature matching the host. Run Cargo/native builds sequentially in one
-checkout: they restage Mooncake libraries that running processes may have mapped.
+checkout to keep build and runtime evidence tied to one artifact.
 
 Use the [Python gate matrix](https://github.com/OrbitInfra/OrbitKV/blob/main/python/tests/README.md)
 to choose units, integration, E2E, stress or installed-artifact checks. Default
@@ -42,7 +41,7 @@ Local hooks use `prek run` on a topic branch.
 Workspace Clippy requires a `// SAFETY:` note for each unsafe block and impl,
 including test fixtures. State the actual lifetime, aliasing, alignment or FFI
 invariant at the call site; if it does not hold, fix the owner before documenting
-it. The strict feature gates cover no-backend, TENT, OrbiTE and combined builds.
+it. The strict feature gates cover no-backend, OrbiTE TCP, and OrbiTE RDMA/GDS builds.
 
 
 PRs limited to Markdown, website and Python benchmark/test files run the relevant

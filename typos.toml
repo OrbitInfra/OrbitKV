@@ -17,5 +17,3 @@ consts = "consts"
 arange = "arange"
 # POSIX msghdr field: ancillary data length.
 msg_controllen = "msg_controllen"
-# Pinned TENT C ABI notification variable retained in patch context.
-notifi = "notifi"

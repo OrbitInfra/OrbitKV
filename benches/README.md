@@ -10,7 +10,7 @@ correctness gates live in `python/tests/`; tests here protect benchmark validity
 | --- | --- | --- |
 | [serving/](serving/README.md) | Official engine/backend comparisons, pressure and concurrency | `benches.serving.single_node`, `shared_manager_pressure`, `native_model_readiness` |
 | [transfer/](transfer/README.md) | Local DMA/kernel copies, shapes and observation cost | `benches.transfer.communication`, `kernel_pairs`, `copy_observation` |
-| [distributed/](distributed/README.md) | Remote cache recovery, TENT and RDMA | `benches.distributed.shared_cache_serving`, `rdma_profile`, `tent_trace` |
+| [distributed/](distributed/README.md) | Remote cache recovery and historical TENT trace analysis | `benches.distributed.shared_cache_serving`, `tent_trace` |
 | [cluster/](cluster/README.md) | Reusable metadata churn and visibility | `benches.cluster.metadata` |
 | [storage/](storage/README.md) | SSD paths, GDS prerequisites and storage codecs | `benches.storage.gds`, `storage/native/cpu_codec.rs` |
 | [common/](common/README.md) | Process ownership, launch, workloads, metrics and reports | Imported by the benchmark families |

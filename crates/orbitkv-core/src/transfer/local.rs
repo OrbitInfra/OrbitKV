@@ -375,43 +375,17 @@ impl Drop for CallerContext {
 }
 
 impl LocalRestoreExecutor {
-    /// Attach to the same primary context as the exporting framework tensors.
-    /// `device` is the process-local CUDA ordinal, not Manager's physical ID.
+    /// Bind OrbiTE on the framework primary context and retain tensor exporters.
     pub fn new(
         device: usize,
         tensors: Vec<LocalTensor>,
         arenas: Vec<PayloadArena>,
         mode: TransferMode,
-    ) -> Result<Self, String> {
-        Self::build(device, tensors, arenas, mode, None)
-    }
-
-    /// Bind the Manager-selected engine and retain the actual tensor exporters.
-    pub fn with_engine(
-        device: usize,
-        tensors: Vec<LocalTensor>,
-        arenas: Vec<PayloadArena>,
-        mode: TransferMode,
-        engine: crate::PeerTransferBackend,
         owner: Arc<dyn Send + Sync>,
     ) -> Result<Self, String> {
-        Self::build(device, tensors, arenas, mode, Some((engine, owner)))
-    }
-
-    fn build(
-        device: usize,
-        tensors: Vec<LocalTensor>,
-        arenas: Vec<PayloadArena>,
-        mode: TransferMode,
-        engine: Option<(crate::PeerTransferBackend, Arc<dyn Send + Sync>)>,
-    ) -> Result<Self, String> {
-        if let Some((selected, _)) = &engine
-            && *selected != crate::PeerTransferBackend::Mooncake
-        {
-            crate::PeerTransferBackend::Orbite
-                .validate_compiled()
-                .map_err(|e| e.to_string())?;
-        }
+        crate::TransportHint::Auto
+            .validate_compiled()
+            .map_err(|e| e.to_string())?;
         let _caller_context = CallerContext::capture()?;
         let context = CudaContext::new(device).map_err(|e| e.to_string())?;
         let mut bindings = HashMap::new();
@@ -455,7 +429,7 @@ impl LocalRestoreExecutor {
             .new_event(Some(sys::CUevent_flags::CU_EVENT_BLOCKING_SYNC))
             .map_err(|e| e.to_string())?;
         let (backend, hosts, registrations) =
-            backend::bind(engine, &bindings, &imported, stream.clone(), mode)?;
+            backend::bind(owner, &bindings, &imported, stream.clone(), mode)?;
         let limit = orbitkv_common::timeline::diagnostic_event_limit();
         let trace = (limit > 0).then(|| {
             LocalCopyTrace::new(

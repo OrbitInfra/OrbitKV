@@ -30,10 +30,6 @@ def check_wheel(path: Path, version: str | None = None) -> None:
         "orbitkv/sglang/config.py",
         "orbitkv/sglang/layout.py",
         "orbitkv/orbitkv-cache-manager-py",
-        "orbitkv/libtent_shared.so",
-        "orbitkv/libtent_metrics.so",
-        "orbitkv/libmooncake_common.so",
-        "orbitkv/libasio.so",
     }
     with ZipFile(path) as wheel:
         files = set(wheel.namelist())
@@ -41,6 +37,10 @@ def check_wheel(path: Path, version: str | None = None) -> None:
         if missing:
             raise ValueError(f"missing wheel files: {', '.join(sorted(missing))}")
         removed_files = {
+            "orbitkv/libtent_shared.so",
+            "orbitkv/libtent_metrics.so",
+            "orbitkv/libmooncake_common.so",
+            "orbitkv/libasio.so",
             "orbitkv/vllm/transport.py",
             "orbitkv/vllm/runtime.py",
             "orbitkv/sglang/pd.py",
@@ -185,7 +185,7 @@ def check_install(path: Path, require_orbite_rdma: bool = False) -> None:
                     "installed Manager is missing the OrbiTE RDMA build feature"
                 )
             missing_device = subprocess.run(
-                [str(command), "--peer-transfer-backend", "orbite-rdma"],
+                [str(command), "--transfer-transport", "rdma"],
                 check=False,
                 capture_output=True,
                 text=True,

@@ -1,5 +1,11 @@
 # vLLM and SGLang integration
 
+> Historical qualification below applies only to its original revisions and
+> recorded backend, including TENT. OrbitKV now uses OrbiTE exclusively; all
+> current GPU/RDMA/GDS and installed profiles need fresh hardware qualification.
+> CPU/TCP and io_uring controls remain CI evidence.
+
+
 OrbitKV integrates external cache recovery with engine-owned GPU pages and
 request lifecycles. Start with the [single-node quickstart](single-node.md).
 Source/package pins are official **vLLM 0.31.0** and **SGLang 0.5.22**. The
@@ -69,7 +75,7 @@ for current-release acceptance; earlier 0.5.21 results retain their original sco
 | Raw DRAM restore | Native executor in the engine process, with Manager-retained sources |
 | Publish and SSD/codec execution | Manager physical workers |
 | P/D bootstrap, request lifecycle and payload | Official engine native P/D; vLLM NIXL and SGLang native backend, separately qualified with the cache |
-| Shared-cache memory movement | TENT between Managers; independent of live P/D transport |
+| Shared-cache memory movement | OrbiTE between Managers; independent of live P/D transport |
 
 The Publish activity candidate is consumed by vLLM's transfer-result poll and
 SGLang's completed-offload count for bounded diagnostics. It observes native
@@ -169,7 +175,7 @@ Use release source, not an unversioned example, when comparing integrations:
 | --- | --- | --- |
 | [vLLM 0.30.0 LMCache MP entry](https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_mp_connector.py) and [LMCache 0.5.5 implementation](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/integration/vllm/lmcache_mp_connector.py) | Engine connector delegates external-cache behavior to a separately installed package | Keep a small official entry and one maintained adapter; storage and cache scheduling remain in Rust. |
 | [SGLang 0.5.20 LMCRadixCache](https://github.com/sgl-project/sglang/blob/94602c9c2b7cbdb8efd5c52802dac6a1c180089e/python/sglang/srt/mem_cache/storage/lmcache/lmc_radix_cache.py) and [LMCache 0.5.5 example](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/examples/sgl_integration/README.md) | Prefix lookup, load-back, finished-request storage and eviction integrate with native lifecycles; MP connects to a separate daemon | Preserve SGLang tree ownership through the existing UnifiedRadixCache external linker. Do not copy a second Radix tree or LMCache's ZMQ transport into OrbitKV. |
-| [LMCache 0.5.5 MP P/D recipe](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/docs/source/mp/disaggregated_prefill.rst) | Native NIXL handoff and cache reuse compose through MultiConnector, with separate P and D cache servers | Reuse native NIXL for live P/D; retain TENT for Manager shared-cache transfers. Verify recipe prerequisites against the selected release. Shared P/D Manager use needs its own contention gate. |
+| [LMCache 0.5.5 MP P/D recipe](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/docs/source/mp/disaggregated_prefill.rst) | Native NIXL handoff and cache reuse compose through MultiConnector, with separate P and D cache servers | Reuse native NIXL for live P/D; use OrbiTE for Manager shared-cache transfers. Verify recipe prerequisites against the selected release. Shared P/D Manager use needs its own contention gate. |
 
 Later SGLang main changes toward LMCacheUnifiedRadixCache are not the 0.5.20
 release contract. API similarity and upstream support matrices do not qualify
@@ -278,7 +284,7 @@ rings remain rejected until they have complete recovery contracts.
 ## P/D and cache composition
 
 Manager shared-cache recovery uses local metadata discovery, an authoritative
-source grant and TENT READ before GPU restoration. Live P/D uses each official
+source grant and OrbiTE READ into the restore destination. Live P/D uses each official
 engine's native transport and lifecycle. vLLM uses NIXL plus MultiConnector;
 SGLang uses native disaggregation with the independent external linker.
 

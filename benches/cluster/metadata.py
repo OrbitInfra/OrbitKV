@@ -157,8 +157,6 @@ def run(tmp_path: Path, profile: str):
         "etcd": os.environ["ETCD_BIN"],
         "extension": native.__file__,
     }
-    if library_dir := os.environ.get("ORBITKV_MOONCAKE_LIB_DIR"):
-        artifact_paths["tent"] = str(Path(library_dir) / "libtent_shared.so")
     manifest = {}
     for name, value in artifact_paths.items():
         path = Path(value).resolve()
@@ -167,7 +165,7 @@ def run(tmp_path: Path, profile: str):
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         }
     (tmp_path / "artifacts.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    os.environ["MC_FORCE_TCP"] = "1"
+
     pages, block_bytes, cycles, low_traffic_samples = 8, 4096, 200, 10
     payload_bytes = pages * block_bytes
     cluster = f"s28-{profile}-{uuid.uuid4().hex[:12]}"

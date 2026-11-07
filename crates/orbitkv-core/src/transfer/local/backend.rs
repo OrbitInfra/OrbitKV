@@ -1,4 +1,4 @@
-//! Client-side provider dispatch, imported registrations and native tensor metadata.
+//! Optional OrbiTE binding for client mappings and retained tensor owners.
 use super::*;
 #[cfg(feature = "orbite")]
 #[path = "orbite.rs"]
@@ -11,40 +11,19 @@ type Binding = (
 );
 
 pub(super) fn bind(
-    engine: Option<(crate::PeerTransferBackend, Arc<dyn Send + Sync>)>,
+    owner: Arc<dyn Send + Sync>,
     bindings: &HashMap<String, LocalTensor>,
     imported: &HashMap<u64, Arc<ImportedArena>>,
     stream: Arc<CudaStream>,
     mode: TransferMode,
 ) -> Result<Binding, String> {
-    match engine {
-        Some((
-            crate::PeerTransferBackend::Orbite
-            | crate::PeerTransferBackend::OrbiteTcp
-            | crate::PeerTransferBackend::OrbiteRdma,
-            owner,
-        )) => {
-            #[cfg(feature = "orbite")]
-            {
-                orbite::bind(bindings, imported, stream.clone(), mode, owner)
-            }
-            #[cfg(not(feature = "orbite"))]
-            {
-                let _ = (owner, bindings, imported);
-                Err("Manager selected orbite, but this client was built without it".into())
-            }
-        }
-        None | Some((crate::PeerTransferBackend::Mooncake, _)) => Ok((
-            crate::transfer_engine::local::bind(
-                crate::PeerTransferBackend::Mooncake,
-                None,
-                stream.clone(),
-                mode,
-                0,
-            )
-            .map_err(|e| e.to_string())?,
-            Vec::new(),
-            Vec::new(),
-        )),
+    #[cfg(feature = "orbite")]
+    {
+        orbite::bind(bindings, imported, stream, mode, owner)
+    }
+    #[cfg(not(feature = "orbite"))]
+    {
+        let _ = (owner, bindings, imported, stream, mode);
+        Err("OrbiTE local copy requires the orbite build feature".into())
     }
 }

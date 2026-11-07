@@ -5,8 +5,8 @@ fn resources(queue_depth: u32) -> CompletionResourceEvidence {
         decode_page_bytes: 4096,
         queue_depth,
         queue_parallelism: 1,
-        tent_inflight_bytes: 0,
-        tent_bandwidth_bytes_per_second: 0,
+        transfer_inflight_bytes: 0,
+        transfer_bandwidth_bytes_per_second: 0,
     }
 }
 

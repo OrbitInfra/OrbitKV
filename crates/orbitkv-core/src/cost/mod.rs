@@ -261,13 +261,6 @@ impl CostEstimateKey {
             && self.with_observation_kind_and_resource(other.kind, other.resource) == other
     }
 
-    pub(crate) fn with_dma_ranges(self, ranges: usize) -> Self {
-        Self {
-            dma_ranges: bucket(ranges as u64),
-            ..self
-        }
-    }
-
     pub(crate) fn with_observation_kind(self, kind: CostObservationKind) -> Self {
         Self {
             completion: kind.completion_target(self.resource),

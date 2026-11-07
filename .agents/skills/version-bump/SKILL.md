@@ -19,7 +19,7 @@ different operations. Existing session authorization still applies.
    `docs/completion-plan.md`; an engine target becomes supported only after its
    upgrade gate passes. Keep license and bundled upstream provenance with artifacts.
 3. Build the candidate with `scripts/build-wheel.sh` or the manual Release
-   workflow. Check the complete installed package, Manager and loaded TENT paths,
+   workflow. Check the complete installed package, Manager and loaded CUDA/RDMA paths,
    then execute the relevant installed-engine and two-host gates.
 4. Keep artifacts and qualification results outside Git. Supply their version,
    source commit, hashes, reproduction commands and known limits for review.

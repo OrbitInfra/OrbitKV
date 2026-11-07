@@ -75,11 +75,11 @@ def _torch():
 
 
 def find_available_port() -> int:
-    """Find a listener port outside outgoing TCP and TENT auto-port ranges."""
+    """Find a listener port outside outgoing TCP and OrbiTE listener-port ranges."""
     low, high = map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
     for _ in range(128):
         port = 1024 + secrets.randbelow(65536 - 1024)
-        # Pinned TENT CoroRpcAgent starts before the engine HTTP listener and
+        # OrbiTE listener starts before the engine HTTP listener and
         # independently chooses an RPC port in [15000, 17000).
         if low <= port <= high or 15000 <= port < 17000:
             continue
@@ -583,7 +583,6 @@ class CacheManagerProcess:
                         "PYTHONSAFEPATH",
                         "LD_LIBRARY_PATH",
                         "CUDA_VISIBLE_DEVICES",
-                        "MC_FORCE_TCP",
                         "ORBITKV_CHANNEL_CONFIG",
                     )
                     if key in env

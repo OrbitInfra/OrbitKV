@@ -45,7 +45,7 @@ export const layers = [
     name: "orbitkv-transfer",
     role: "Move the bytes.",
     detail:
-      "Pinned Mooncake TENT with registered-region ownership and terminal batch drain for shared-cache transfers between Managers.",
+      "Pinned OrbiTE with registered-region ownership and terminal batch drain for shared-cache transfers between Managers.",
     path: "crates/orbitkv-transfer/README.md",
   },
   {

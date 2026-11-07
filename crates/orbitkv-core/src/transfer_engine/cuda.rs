@@ -7,7 +7,7 @@ use std::{
     },
 };
 
-use super::{ErrorKind, Permission, Registration, TransferBackend, TransferError};
+use super::{ErrorKind, Permission, Registration, TransferEngine, TransferError};
 use parking_lot::RwLock;
 
 /// Persistent native registration and the actual CUDA allocation/context owner.
@@ -16,7 +16,7 @@ pub struct CudaRegistration {
     pub(crate) address: u64,
     pub(crate) length: usize,
     pub(crate) device: i32,
-    native: RwLock<Option<(Arc<dyn TransferBackend>, Registration)>>,
+    native: RwLock<Option<(Arc<TransferEngine>, Registration)>>,
     owner: Option<Arc<dyn Send + Sync>>,
     uncertain: AtomicBool,
 }
@@ -38,7 +38,7 @@ impl CudaRegistration {
         reason = "uncertain registration retains backing and its budget"
     )]
     pub unsafe fn new(
-        backend: Option<Arc<dyn TransferBackend>>,
+        backend: Option<Arc<TransferEngine>>,
         address: u64,
         length: usize,
         device: i32,
@@ -51,7 +51,13 @@ impl CudaRegistration {
                 "invalid CUDA allocation",
             ));
         }
-        let native = if let Some(backend) = backend {
+        let backend = backend.ok_or_else(|| {
+            super::TransferError::new(
+                super::ErrorKind::Unavailable,
+                "OrbiTE CUDA registration is unavailable",
+            )
+        })?;
+        let native = {
             let result = catch_unwind(AssertUnwindSafe(|| {
                 // SAFETY: actual backing is retained outside this unwind boundary.
                 unsafe {
@@ -72,8 +78,6 @@ impl CudaRegistration {
                     return Err(unquiesced());
                 }
             }
-        } else {
-            None
         };
         Ok(Arc::new(Self {
             address,
@@ -93,7 +97,7 @@ impl CudaRegistration {
     }
     pub(crate) fn loan(
         &self,
-        backend: &Arc<dyn TransferBackend>,
+        backend: &Arc<TransferEngine>,
     ) -> Result<impl Drop + '_, TransferError> {
         let native = self.native.read();
         if self.uncertain.load(Ordering::Acquire) {

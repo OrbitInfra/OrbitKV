@@ -14,15 +14,11 @@ write results outside the checkout. [Benchmark navigation](../README.md).
 | `benches.transfer.native_trace_calibration` | Native trace calibration and offline analysis |
 | `benches.transfer.cuda_submission` | Host submission and device execution diagnosis |
 
-Use `python -m <entry-point> --help` for current input/output options. Native
-CUDA/C++ fixtures stay under `native/`; production code stays in its Rust owner
-and separate `.cu` file. The native copy benchmark is:
-
-```bash
-cargo bench -p orbitkv-core --bench native_kernel_copy \
-  --no-default-features --features cuda-13,mooncake -- \
-  --output /var/tmp/orbitkv-bench/native-copy-001.jsonl --samples 30
-```
+Use `python -m <entry-point> --help` for input/output options. The analysis
+helpers preserve historical measurements. TENT's copy microbenchmarks and their
+layout compiler were removed with its implementation; reproduce old results
+from the [original source](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/benches/transfer/native/). New byte-engine
+microbenchmarks belong in OrbiTE. OrbitKV keeps end-to-end KV/serving controls.
 
 For serving comparisons, first verify actual pool layout, complete payload and
 sentinels using `sglang_kv_oracle`; then use `kernel_pairs` with independently

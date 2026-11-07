@@ -1,5 +1,10 @@
 # Compatibility and support
 
+> OrbiTE is now the only transfer engine. GPU/RDMA/GDS and installed profiles
+> require fresh hardware qualification. Earlier measurements retain their original
+> revisions and backend (TENT where recorded); CPU/TCP and io_uring checks are CI
+> evidence, not installed GPU qualification.
+
 Use this page to choose an engine, model and deployment profile. **Implemented**
 means code exists; **qualified** means independent review accepted the stated
 frozen workload. Acceptance does not extend to other models, topologies or faults.
@@ -49,7 +54,7 @@ retain their measured 0.5.21 versions until their own gates are repeated.
 
 Use [deployment recipes](deployment.md), [shared-cache evidence](shared-cache-qualification.md)
 and [P/D boundaries](pd.md) for each profile's exact configuration. Manager shared-cache
-traffic uses TENT; real-time P/D uses the engine's native backend.
+traffic uses OrbiTE; real-time P/D uses the engine's native backend.
 
 ## Model and identity limits
 

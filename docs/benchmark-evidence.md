@@ -1,5 +1,11 @@
 # Benchmark evidence and artifact storage
 
+> Historical qualification below applies only to its original revisions and
+> recorded backend, including TENT. OrbitKV now uses OrbiTE exclusively; all
+> current GPU/RDMA/GDS and installed profiles need fresh hardware qualification.
+> CPU/TCP and io_uring controls remain CI evidence.
+
+
 Keep benchmark programs, reusable workloads, reproduction scripts and small
 input fixtures in the repository. Raw responses, JSON/CSV measurements, manifests,
 logs, traces, generated plots and per-run reports belong in an explicitly chosen

@@ -30,13 +30,13 @@ pub(in crate::storage::ssd) fn queued_io() -> SsdIo {
     }
 }
 
-mod engine {
+pub(super) mod engine {
     use super::*;
     use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
     use crate::memory::numa::NumaNode;
     use crate::storage::Storage;
     use crate::storage::ssd::{SsdBackend, SsdCacheConfig};
-    use crate::transfer_engine::{Permission, Registration, TransferSlice};
+    use crate::transfer_engine::TransferSlice;
     use std::num::{NonZeroU64, NonZeroUsize};
     use std::os::unix::fs::FileExt;
 
@@ -117,32 +117,17 @@ mod engine {
         assert!(direct, "engine must retain its own O_DIRECT fd on ext4");
     }
 
-    fn selected_backend() -> crate::PeerTransferBackend {
-        match std::env::var("ORBITKV_SSD_TEST_ENGINE").as_deref() {
-            Ok("tent") => crate::PeerTransferBackend::Mooncake,
-            Ok("orbite") => crate::PeerTransferBackend::OrbiteTcp,
-            _ => panic!("select the tested engine with ORBITKV_SSD_TEST_ENGINE=tent|orbite"),
-        }
-    }
-
     fn storage(path: PathBuf, capacity: u64, shards: usize) -> Arc<Storage> {
         assert_eq!(
             std::env::var("ORBITKV_REQUIRE_ENGINE_SSD").as_deref(),
             Ok("1"),
             "run this real-file gate explicitly with ORBITKV_REQUIRE_ENGINE_SSD=1 and the CPU host-registration fixture"
         );
-        if selected_backend() == crate::PeerTransferBackend::Mooncake {
-            assert_eq!(
-                std::env::var("MC_FORCE_TCP").as_deref(),
-                Ok("1"),
-                "the CPU/TCP source-drain control requires MC_FORCE_TCP=1 even on runners with RDMA devices"
-            );
-        }
         Storage::new_with_config(
             16 << 20,
             false,
             crate::EngineConfig {
-                peer_transfer_backend: selected_backend(),
+                transfer_transport: crate::TransportHint::Tcp,
                 ssd_cache_config: Some(SsdCacheConfig {
                     cache_paths: vec![path],
                     capacity_bytes: capacity,
@@ -335,19 +320,9 @@ mod engine {
         // SAFETY: the engine drain completed and destination owns 2048 initialized
         // bytes; no native or host writer remains while the oracle borrows them.
         let bytes = unsafe { std::slice::from_raw_parts(destination.as_non_null().as_ptr(), 2048) };
-        if selected_backend() == crate::PeerTransferBackend::Mooncake {
-            assert_eq!(error.kind, ErrorKind::Backend);
-            assert_eq!(&bytes[..512], &[0x47; 512]);
-            assert!(error.message.contains("512 bytes"), "{error}");
-            // submitv scatters only the completed prefix, including on O_DIRECT.
-            assert_eq!(&bytes[512..], &[0xa5; 1536]);
-        } else {
-            assert_eq!(error.kind, ErrorKind::InvalidRequest);
-            assert_eq!(bytes, &[0xa5; 2048]);
-        }
-        // EOF falls inside padding, then inside a data range. The TENT vector
-        // receipt counts the file prefix (including padding); only that prefix
-        // may be scattered. OrbiTE rejects the shortened file at preflight.
+        assert_eq!(error.kind, ErrorKind::InvalidRequest);
+        assert_eq!(bytes, &[0xa5; 2048]);
+        // EOF inside padding or data must be rejected before the destination is touched.
         for range_bytes in [128, 512] {
             // SAFETY: the previous READ physically drained before reinitialization.
             unsafe { std::ptr::write_bytes(destination.as_non_null().as_ptr(), 0xa5, 2048) };
@@ -381,18 +356,10 @@ mod engine {
             // SAFETY: the failed request has an independent physical drain receipt.
             let bytes =
                 unsafe { std::slice::from_raw_parts(destination.as_non_null().as_ptr(), 2048) };
-            let copied = if selected_backend() == crate::PeerTransferBackend::Mooncake {
-                assert_eq!(error.kind, ErrorKind::Backend);
-                assert!(error.message.contains("512 bytes"), "{error}");
-                range_bytes.min(256)
-            } else {
-                assert_eq!(error.kind, ErrorKind::InvalidRequest);
-                0
-            };
-            assert!(bytes[..copied].iter().all(|&b| b == 0x47));
+            assert_eq!(error.kind, ErrorKind::InvalidRequest);
             assert!(
-                bytes[copied..].iter().all(|&b| b == 0xa5),
-                "short READ overwrote its suffix"
+                bytes.iter().all(|&b| b == 0xa5),
+                "short READ touched destination"
             );
         }
         assert_eq!(file.admission.available_permits(), MAX_OPERATIONS);
@@ -482,7 +449,7 @@ mod engine {
             "path replacement must not redirect file I/O"
         );
         assert_eq!(file.admission.available_permits(), MAX_OPERATIONS);
-        if selected_backend() == crate::PeerTransferBackend::Mooncake {
+        if crate::TransportHint::Tcp == crate::TransportHint::Auto {
             file.backend
                 .shutdown(Instant::now() + Duration::from_secs(1))
                 .unwrap();
@@ -499,15 +466,15 @@ mod engine {
         let storage = storage(dir.path().join("vectors.bin"), total as u64, 1);
         let store = storage.ssd_store.as_ref().unwrap();
         let real = store.io.engine_file(0).unwrap();
-        let backend = Arc::new(Fault {
-            real: Arc::clone(&real.backend),
+        let backend = Arc::new(ReceiptControl {
             kind: None,
             short: false,
             calls: AtomicUsize::new(0),
             options: std::sync::Mutex::new(Vec::new()),
         });
         let file = Arc::new(EngineFile {
-            backend: backend.clone(),
+            backend: real.backend.clone(),
+            receipt_control: Some(backend.clone()),
             segment: real.segment.clone(),
             file: Arc::clone(&real.file),
             admission: Arc::new(Semaphore::new(1)),
@@ -654,103 +621,25 @@ mod engine {
         assert!(disk.iter().all(|&b| b == 0));
     }
 
-    struct Fault {
-        real: Arc<dyn TransferBackend>,
+    // Real CPU I/O cannot force a missing physical receipt or a lying short receipt.
+    // This seam changes only the receipt; engine creation, file ownership and bytes stay real.
+    pub(crate) struct ReceiptControl {
         kind: Option<ErrorKind>,
-        short: bool,
+        pub(crate) short: bool,
         calls: std::sync::atomic::AtomicUsize,
         options: std::sync::Mutex<Vec<TransferOptions>>,
     }
-
-    impl TransferBackend for Fault {
-        fn transfer_endpoint(&self) -> &str {
-            self.real.transfer_endpoint()
-        }
-        fn source_epoch(&self) -> &str {
-            self.real.source_epoch()
-        }
-        fn accepts_endpoint(&self, endpoint: &str) -> bool {
-            self.real.accepts_endpoint(endpoint)
-        }
-        fn register_pinned(
-            self: Arc<Self>,
-            allocations: &[Arc<PinnedAllocation>],
-            permission: Permission,
-        ) -> Result<Registration, TransferError> {
-            Arc::clone(&self.real).register_pinned(allocations, permission)
-        }
-        unsafe fn register_cuda(
-            self: Arc<Self>,
-            _: u64,
-            _: usize,
-            _: i32,
-            _: Arc<dyn Send + Sync>,
-            _: Permission,
-        ) -> Result<Registration, TransferError> {
-            Err(TransferError::new(
-                ErrorKind::Unavailable,
-                "CPU-only fault control",
-            ))
-        }
-        unsafe fn unregister(&self, registration: &mut Registration) -> Result<(), TransferError> {
-            // SAFETY: the caller established drain, and this delegates the actual registration.
-            unsafe { self.real.unregister(registration) }
-        }
-        fn open_peer(
-            &self,
-            _: &str,
-            _: &str,
-            _: Instant,
-        ) -> Result<crate::transfer_engine::PeerSegment, TransferError> {
-            Err(TransferError::new(
-                ErrorKind::Unavailable,
-                "file-only fault control",
-            ))
-        }
-        unsafe fn transfer(
-            &self,
-            _: TransferOp,
-            _: &crate::transfer_engine::PeerSegment,
-            _: &[TransferSlice],
-            _: crate::transfer_engine::TransferOptions,
-            _: &Cancellation,
-        ) -> Result<usize, TransferError> {
-            Err(TransferError::new(
-                ErrorKind::Unavailable,
-                "file-only fault control",
-            ))
-        }
-        fn shutdown(&self, deadline: Instant) -> Result<(), TransferError> {
-            self.real.shutdown(deadline)
-        }
-        fn invalidate_segment(&self, _: &str) {}
-        fn record_nic_load(&self) {}
-        fn close_file(&self, file: &FileSegment, deadline: Instant) -> Result<(), TransferError> {
-            self.real.close_file(file, deadline)
-        }
-        unsafe fn transfer_file(
-            self: Arc<Self>,
-            operation: TransferOp,
-            file: &FileSegment,
-            transport: FileTransport,
-            transfer: Arc<FileTransfer>,
-            options: crate::transfer_engine::TransferOptions,
-            cancel: &Cancellation,
-        ) -> Result<usize, TransferError> {
+    impl ReceiptControl {
+        pub(crate) fn observe(&self, options: TransferOptions) -> Result<(), TransferError> {
             self.options.lock().unwrap().push(options);
             self.calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            match (self.short, self.kind) {
-                (false, Some(kind)) => Err(TransferError::new(kind, "injected transfer receipt")),
-                _ => {
-                    // SAFETY: this forwards the unchanged, registered descriptors and owners.
-                    unsafe {
-                        Arc::clone(&self.real)
-                            .transfer_file(operation, file, transport, transfer, options, cancel)
-                    }
-                    .map(|bytes| if self.short { bytes / 2 } else { bytes })
-                }
+            if !self.short
+                && let Some(kind) = self.kind
+            {
+                return Err(TransferError::new(kind, "injected transfer receipt"));
             }
+            Ok(())
         }
     }
 
@@ -767,15 +656,15 @@ mod engine {
             let storage = storage(dir.path().join("cache.bin"), 512, 1);
             let store = storage.ssd_store.as_ref().unwrap();
             let real = store.io.engine_file(0).unwrap();
-            let backend = Arc::new(Fault {
-                real: Arc::clone(&real.backend),
+            let backend = Arc::new(ReceiptControl {
                 kind: Some(kind),
                 short,
                 calls: AtomicUsize::new(0),
                 options: std::sync::Mutex::new(Vec::new()),
             });
             let file = Arc::new(EngineFile {
-                backend: backend.clone(),
+                backend: real.backend.clone(),
+                receipt_control: Some(backend.clone()),
                 segment: real.segment.clone(),
                 file: Arc::clone(&real.file),
                 admission: Arc::new(Semaphore::new(1)),

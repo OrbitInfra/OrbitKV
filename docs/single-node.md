@@ -11,13 +11,12 @@ Version 0.1.0 is not yet published. Build the complete wheel from the repository
 root; this example selects Python 3.11 and CUDA 13:
 
 ```bash
-git submodule update --init --recursive third-party/mooncake
 ./scripts/build-wheel.sh --release
 ```
 
 CUDA 13 is the default and only release runtime. Select the newly built wheel
 in `target/wheels` explicitly and use its absolute path in the installation commands
-below. A complete wheel includes the Manager, extension and Mooncake libraries;
+below. A complete wheel includes the Manager and extension with OrbiTE linked in;
 `maturin build` alone does not stage all of them. The Manager also needs compatible
 PyTorch/CUDA 13 and an NVIDIA R580 or newer driver; see [runtime requirements](releases.md#packages).
 It does not load
@@ -146,4 +145,4 @@ namespaces and container deployment need additional qualification; see
 
 For multiple engines, optional SSD and peers, use [deployment recipes](deployment.md).
 Real-time P/D uses official NIXL/MultiConnector or SGLang disaggregation;
-Manager peer-cache bytes use TENT. See [P/D composition](pd.md) before combining them.
+Manager peer-cache bytes use OrbiTE. See [P/D composition](pd.md) before combining them.

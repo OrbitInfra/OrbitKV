@@ -1,6 +1,6 @@
-//! Client mappings and exporter owners for the Manager-selected local engine.
+//! Client mappings and exporter owners for OrbiTE local copies.
 use super::*;
-use crate::transfer_engine::{CudaRegistration, TransferBackend};
+use crate::transfer_engine::{CudaRegistration, TransferEngine};
 use ::orbite::{HostMemory, Transport, cuda::local_copy::PinnedHostRegistration};
 
 type Binding = (
@@ -23,7 +23,7 @@ pub(super) fn bind(
     })?;
     // This process has its own addresses and registration authority. Peer
     // transport is unused; no RDMA devices or storage SDKs are configured here.
-    let engine: Arc<dyn TransferBackend> = Arc::new(crate::peer::orbite::OrbiteTransport::new(
+    let engine: Arc<TransferEngine> = Arc::new(crate::peer::orbite::TransferEngine::new(
         pool_bytes,
         "127.0.0.1:0",
         Transport::Tcp,

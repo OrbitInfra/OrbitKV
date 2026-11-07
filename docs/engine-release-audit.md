@@ -1,5 +1,11 @@
 # Released engine interface audit
 
+> Historical qualification below applies only to its original revisions and
+> recorded backend, including TENT. OrbitKV now uses OrbiTE exclusively; all
+> current GPU/RDMA/GDS and installed profiles need fresh hardware qualification.
+> CPU/TCP and io_uring controls remain CI evidence.
+
+
 The selected source/package pins are official **vLLM 0.31.0**
 (`db9527a46873454610df6dbedf79a36d6bf1a7f6`) and **SGLang 0.5.22**
 (`baa9befa381511cd4d56f83980951e5a45fffc6d`). The SGLang migration passes

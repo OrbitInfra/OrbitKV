@@ -66,16 +66,9 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   latter reads original held counter descriptors and distinguishes current-path
   identity, missing paths and read errors. Neither API authorizes repayment or
   physical reuse; preserve the original failure and quarantine on uncertainty.
-- Experimental TENT bindings live in `python/src/mooncake.rs`. Owned
-  `register_memory` accepts writable contiguous bytearray memoryviews and retains
-  actual `PyBuffer` exports before native entry, including failed attempts.
-  `close` releases them only after whole-source drain and complete unregister;
-  a failed owner stays charged and GC must not retry explicit cleanup errors.
-  The current receipt supports only CPU-native TCP; CUDA-native close remains
-  unsupported. `register_memory_borrowed` leaves real CPU/GPU backing with its
-  caller through every failure and engine GC. Region/byte/retained-owner counts
-  are diagnostics, never device completion. Run the installed owner CPU controls
-  with their matching native fixture; keep GPU/RDMA qualification separate.
+- Client byte movement uses OrbiTE local_copy. Lifecycle 13 removes the selected
+  engine field; clients and Managers upgrade together. Retain exporter owners,
+  registrations and completions until physical drain, with no fallback engine.
 
 Use the gate table in `AGENTS.md`: default Python tests must remain source-only;
 native lifecycle changes need process integration, and consumed adapter changes
@@ -84,13 +77,12 @@ changing benchmark helpers. Put runtime outputs outside the checkout.
 
 Use `scripts/build-wheel.sh` for a complete installed artifact; `maturin develop`
 is a development build. See `docs/releases.md` for the CUDA 13 runtime, bundled native
-dependencies and installed-package checks. Freeze native artifacts before GPU
-tests: Cargo can restage shared libraries used by live Managers. Preserve explicit
+dependencies and installed-package checks. Freeze native artifacts before GPU tests. Preserve explicit
 CUDA library precedence, and keep the interpreter's standard library before the
 selected package/dependency roots in console and embedded-Python search paths.
-Optional complete-wheel builds may add `--features orbite` or
-`--features orbite-rdma`; both retain the default CUDA 13/TENT build and require
-explicit Manager provider selection. See `python/tests/release/test_installed_orbite.py`
+Complete wheels enable CUDA 13 and OrbiTE. Add `--features orbite-rdma` for RDMA;
+auto/tcp/rdma are transport hints, not engine families. See
+`python/tests/release/test_installed_orbite.py`
 for the separate installed IPC/peer-byte gate; its DRAM restore uses the local
 client H2D owner and does not establish Manager IPC Restore or GDR.
 

@@ -56,7 +56,7 @@ and SGLang `0.5.22`; see S5.1 for the 0.31.0 qualification scope and historical
 public lifecycle integration and broader deployment qualification remain open.
 
 - Single-node KV cache offloading between GPU and host memory
-- Cross-node KV cache sharing via Mooncake Transfer Engine (RDMA/TCP)
+- Cross-node KV cache sharing via OrbiTE (RDMA/TCP)
 - Prefix cache reuse for repeated requests
 - Python bindings and connectors for inference frameworks
 - Framework-neutral state identity and recovery contracts
@@ -73,10 +73,8 @@ orbitkv/
 │   ├── orbitkv-proto/            # Protobuf and gRPC definitions
 │   ├── orbitkv-server/           # Cache Manager orchestration and protocol adapters
 │   ├── orbitkv-catalog/          # Complete local global index
-│   ├── orbitkv-mooncake-sys/     # Pinned native build and dynamic C ABI
-│   └── orbitkv-transfer/         # Mooncake transfer wrapper
 ├── python/                       # PyO3 package and framework adapters
-├── third-party/                  # Pinned Mooncake, vLLM, and SGLang sources
+├── third-party/                  # Pinned vLLM and SGLang sources
 ├── examples/                     # Runnable usage examples
 ├── benches/                       # Benchmark code, workloads and reproduction
 ├── docs/                         # Architecture and completion plan
@@ -102,7 +100,6 @@ orbitkv/
 | Local global index | `crates/orbitkv-catalog/` |
 | etcd member registration, renewal and Watch | `crates/orbitkv-server/src/cluster/` |
 | Cached membership and remote admission | `crates/orbitkv-catalog/src/membership.rs` |
-| Mooncake remote transfer path | `crates/orbitkv-transfer/` |
 | PyO3 bindings | `python/src/` |
 | Python package and helpers | `python/orbitkv/` |
 | vLLM connector | `python/orbitkv/vllm/` |
@@ -133,7 +130,6 @@ orbitkv/
 - `crates/orbitkv-server/src/wire.rs`: protobuf-to-cache registration conversion
 - `crates/orbitkv-server/src/http_server.rs`: HTTP health and metrics
 - `crates/orbitkv-catalog/src/`: local global-index implementation
-- `crates/orbitkv-transfer/src/`: transfer engine implementation
 - `python/src/lib.rs`, `python/src/client.rs`: PyO3 module and cache client bindings
 - `python/orbitkv/vllm/scheduler.py`: vLLM scheduler-side connector
 - `python/orbitkv/vllm/worker.py`: vLLM worker-side connector
@@ -149,9 +145,8 @@ orbitkv/
 The selected engine baselines are the pinned `third-party/vllm` v0.31.0 and
 `third-party/sglang` v0.5.22 tags. Keep Python optional dependency pins and
 the source submodules aligned when updating a release. Native builds and wheel
-CI only initialize `third-party/mooncake`, pinned to an accepted commit on
-`OrbitInfra/Mooncake`'s `orbitkv-integration-v0.3.14` branch. Builds consume that commit
-directly without patch application or moving-branch resolution. Initialize engine submodules for
+CI consume the OrbiTE Rust dependency from Cargo.lock; no native transfer-engine
+submodule is needed. Initialize engine submodules for
 source inspection or release upgrades. The selected baselines are vLLM
 0.31.0 and SGLang 0.5.22; S5.1 separates the new SGLang installed qualification
 from historical 0.5.21 results. SGLang requires Python 3.11+ and its released
@@ -165,7 +160,7 @@ The official vLLM cache profile requires `VLLM_USE_V2_MODEL_RUNNER=0` and one
 attention cache group; V2/recurrent serving is rejected pending safe released
 lifecycle contracts. P/D uses official native NIXL/MultiConnector or SGLang
 native disaggregation, with independent cache adapters. Do not reintroduce
-fork-only factories/callbacks. Manager shared-cache traffic stays on TENT.
+fork-only factories/callbacks. Manager shared-cache traffic uses OrbiTE.
 
 ### Rust
 
@@ -175,12 +170,10 @@ cargo build --release
 cargo test
 ```
 
-CUDA 13 and Mooncake are the default features. Use a CUDA 13 toolkit for native
+CUDA 13 and OrbiTE are the default features. Use a CUDA 13 toolkit for native
 builds; CUDA 12 is unsupported. The single Python distribution is `orbitkv-llm`.
 
-Run Cargo builds/checks/Clippy and Mooncake runtime tests sequentially in one
-checkout. Native builds restage `.orbitkv/mooncake` shared libraries; overwriting
-them while a source-built Manager or test has them mapped can crash that process.
+Run Cargo builds/checks/Clippy and runtime tests sequentially in one checkout.
 
 ### Python Bindings
 

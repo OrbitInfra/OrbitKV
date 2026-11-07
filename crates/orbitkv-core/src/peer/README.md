@@ -13,7 +13,7 @@ DramStore insert/evict (one residency lock)
   -> assigned Manager catalog, via cached Node ID -> endpoint/incarnation
 
 Query -> DRAM/SSD -> candidate index -> missing shard lookups
-      -> contiguous source spans -> source authorization -> Mooncake READ
+      -> contiguous source spans -> source authorization -> OrbiTE READ
 ```
 
 No inventory index or journal is allocated in standalone mode. Distributed
@@ -33,7 +33,7 @@ complete. Source pinning checks exact insertion sequences under the residency
 lock, independently of catalog hints. Invalid membership disables remote work
 while local cache operations continue.
 
-The blocking Mooncake READ owns destination memory and its release guard through
+The blocking OrbiTE READ owns destination memory and its release guard through
 caller cancellation. Source allocations remain budgeted after timeout and release
 replies have bounded retries. Orphan revocation and cross-host failure qualification
 remain unresolved. See [deployment and failure boundaries](../../../../docs/p2p.md).
@@ -41,6 +41,6 @@ remain unresolved. See [deployment and failure boundaries](../../../../docs/p2p.
 `export.rs` owns source admission and held allocations. `read.rs` and
 `completion.rs` own requester reads and terminal release;
 `segment.rs` owns bounded requester-specific handles and membership retirement; `transport.rs` holds
-both the Mooncake registration and pinned pool. The inbound gRPC adapter lives
+both the OrbiTE registration and pinned pool. The inbound gRPC adapter lives
 in `orbitkv-server/src/peer.rs`. No remote SSD or engine HBM export is implied
 by this module layout.

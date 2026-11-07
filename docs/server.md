@@ -54,7 +54,7 @@ orbitkv-cache-manager
 For normal deployment, set the cache path and the intended capacity; leave
 backend selection to the Manager. `--ssd-backend` is an override for diagnosis
 and controlled tests. Every SSD read/write uses the selected transfer engine.
-TENT uses a separate file engine; OrbiTE uses its file segments. cuFile is an
+OrbiTE owns its file segments. cuFile is an
 optional engine dependency, not a service to deploy. See [deployment examples](deployment.md#configure-capacity-then-connect-engines).
 
 - `--ssd-cache-path`: Enable SSD cache by providing cache file path (optional)
@@ -63,12 +63,10 @@ optional engine dependency, not a service to deploy. See [deployment examples](d
 - `--ssd-write-policy`: `all` writes newly saved pages; `reuse` admits foreground-returned pages or repeated publications within a bounded history (default: `all`). Selective admission can require recomputation on the first reuse after DRAM eviction.
 - `--ssd-backend`: `uring` uses pinned DRAM; `auto` (default) additionally uses
   layout vectors with engine-owned CUDA staging/io_uring; `cufile` requires
-  native-only GDS. OrbiTE needs `orbite-gds`; TENT needs a native CUDA build
-  with cuFile SDK support. Missing build support fails initialization; OrbiTE
+  native-only GDS with `orbite-gds`. Missing build support fails initialization; OrbiTE
   discovers the configured GDS driver lazily at submission. The old
   `--ssd-io-engine` option is removed. Complete GPU state groups use two in-flight
-  file receipts per instance/device. TENT alone keeps bounded alignment scratch
-  until its file API supports padding and unaligned ranges.
+  file receipts per instance/device. OrbiTE owns alignment and vector staging.
   Native GDS must be [qualified separately](gds.md).
   Fragmented/multi-writer saves and speculative preparation retain io_uring.
   GPU-direct writes hold Publish pages until storage completion.
@@ -87,7 +85,7 @@ optional engine dependency, not a service to deploy. See [deployment examples](d
 - `--ssd-prefetch-queue-depth`: SSD prefetch queue depth, max pending prefetch batches (default: `2`)
 - `--ssd-write-inflight`: SSD write inflight, max concurrent block writes (default: `2`)
 - `--ssd-prefetch-inflight`: SSD prefetch inflight, max concurrent block reads (default: `16`)
-- Each store admits at most 32 active/queued/retained file operations, 64 MiB and 1,024 vector elements including padding per operation. Engine I/O has a 30-second deadline; expiry never releases undrained owners. There are at most 256 shards (128 for TENT GDS) and queue/inflight depths are 1–1,024.
+- Each store admits at most 32 active/queued/retained file operations, 64 MiB and 1,024 vector elements including padding per operation. Engine I/O has a 30-second deadline; expiry never releases undrained owners. There are at most 256 shards and queue/inflight depths are 1–1,024.
 - Full SSD prefetch queues wait for capacity while retaining the query's byte reservation.
   Concurrent queries for an identical prefix and storage identity can share a read.
 
@@ -131,7 +129,6 @@ See [request preparation](request-preparation.md) for limits and control runs.
 
 ### Cross-Node (Multi-Node Setup)
 
-- `--nics`: Optional Mooncake RDMA rail allow-list (e.g., `--nics mlx5_0,mlx5_1` or `--nics mlx5_0 mlx5_1`). Omit it to let Mooncake select the available transport, including TCP fallback.
 - `--etcd-endpoints`: comma-separated HTTP etcd endpoints; enables distributed cache. Requires `--node-id`. Etcd stores protocol identity, epochs and leased members, not block locations.
 - `--peer-advertise-addr`: optional concrete peer address stored in membership when a proxy/fault gate fronts the actual `--addr` listener.
 - `--index-budget`: logical accounting for this Manager's complete global index; defaults to 256 MiB. This is not a process RSS cap.
@@ -187,30 +184,16 @@ deletes retired block/publisher keys in the same transaction. Rollback likewise
 requires all new Managers stopped and restarts the frozen old binary with fresh
 incarnations; it does not restore live leases or old cursors.
 
-## Experimental peer payload selection
+## Transfer transport
 
-`--peer-transfer-backend` accepts `mooncake` (default), `orbite` (automatic transport), `orbite-tcp` or
-`orbite-rdma`. `mooncake` names the TENT implementation. These are runtime
-choices: `cargo build -p orbitkv-server --features orbite-rdma` includes both
-providers. An unavailable selection fails before CUDA initialization. The TCP mode
-requires an `orbite` build, a concrete numeric advertised IP and no `--nics`
-filter. See the [OrbiTE TCP profile](transport.md#experimental-orbite-peer-tcp-profile)
-for its limits and explicit gates. This source candidate does not change the
-installed serving support matrix.
-
-The `orbite` mode submits Unspec requests to the engine selector. TCP is enabled;
-`--orbite-rdma-device` additionally enables RDMA when compiled. The transport-specific
-modes are strict operator hints.
-
-The `orbite-rdma` feature adds `--orbite-rdma-device` (required for that mode),
-`--orbite-rdma-port` and `--orbite-rdma-gid-index`. It selects the single-rail
-host-staging profile without a TCP/native payload fallback; `--nics` remains
-Mooncake-specific. Read the [RDMA profile](transport.md#experimental-orbite-peer-rdma-profile)
-for separate staging budgets and host versus CUDA 13 Manager qualification.
-The current OrbiTE pin is `2e50af25007ca9681912ba5175109d09488a8f99`;
-historical hardware results below the [transport contract](transport.md#runtime-transfer-backend)
-do not qualify this revision. SSD can use [engine file segments](transport.md#ssd-file-transfers); OrbiTE local CUDA copies use its local-copy engine, while TENT keeps the
-OrbitKV copy implementations behind the backend boundary.
+OrbiTE is the only engine. `--transfer-transport` accepts `auto` (default),
+`tcp` or `rdma`. Automatic requests use engine policy over configured providers.
+The default `orbite` build enables TCP; `orbite-rdma` adds RDMA. Missing features
+fail before CUDA initialization. There is no engine-family selector or fallback.
+RDMA requires `--orbite-rdma-device`; port and GID index are explicit options.
+See [transfer contracts](transport.md#transfer-engine) for budgets and the
+current pin. All GPU/RDMA/GDS and installed profiles remain unqualified until
+hardware runs. Local GPU copies and SSD I/O also use OrbiTE.
 
 Peer GPU restores use the selected engine directly; Prepare/Warmup continues to
 fill the DRAM cache tier. For OrbiTE RDMA, `--orbite-rdma-gpu-direct` selects
