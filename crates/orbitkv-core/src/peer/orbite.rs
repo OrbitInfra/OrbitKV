@@ -12,11 +12,14 @@ use orbite::{
 };
 
 use crate::memory::pool::PinnedAllocation;
+use crate::transfer_engine::backend::{
+    FileSegmentInner, MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, REGISTERED_POOLS,
+    RegistrationInner, Segment,
+};
 use crate::transfer_engine::{
-    Cancellation, ErrorKind, FileIoElement, FileMemory, FileSegment, FileSegmentInner,
-    FileTransfer, FileTransport, MAX_REGISTERED_BYTES, MAX_REGISTERED_POOLS, PeerSegment,
-    REGISTERED_POOLS, Registration, RegistrationInner, Segment, TransferBackend, TransferError,
-    TransferOptions, TransferSlice, remaining, validate_slices,
+    Cancellation, ErrorKind, FileIoElement, FileMemory, FileSegment, FileTransfer, FileTransport,
+    PeerSegment, Registration, TransferBackend, TransferError, TransferOptions, TransferSlice,
+    remaining, validate_slices,
 };
 
 fn request_options(request: TransferRequest, options: TransferOptions) -> TransferRequest {
@@ -733,14 +736,18 @@ impl TransferBackend for OrbiteTransport {
     fn record_nic_load(&self) {
         #[cfg(feature = "orbite-rdma")]
         if let Ok(stats) = self.engine.nic_load_stats() {
-            let metrics = crate::metrics::core_metrics();
+            static METRICS: std::sync::OnceLock<crate::transfer_engine::backend::NicMetrics> =
+                std::sync::OnceLock::new();
+            let metrics = METRICS.get_or_init(|| {
+                crate::transfer_engine::backend::NicMetrics::new("orbite", "OrbiTE")
+            });
             for stat in stats {
                 let attributes = [opentelemetry::KeyValue::new("nic", stat.device_name)];
                 metrics
-                    .orbite_nic_inflight_bytes
+                    .inflight
                     .record(stat.inflight_bytes as u64, &attributes);
                 metrics
-                    .orbite_nic_bandwidth_bytes_per_second
+                    .bandwidth
                     .record(stat.ewma_bandwidth_bps, &attributes);
             }
         }

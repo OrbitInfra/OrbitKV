@@ -326,7 +326,6 @@ fn query_control_requires_loopback_before_runtime_initialization() {
     }
 }
 
-#[cfg(feature = "orbite-rdma")]
 #[test]
 fn orbite_rdma_cli_requires_explicit_device_and_valid_port() {
     let base = [
@@ -411,7 +410,7 @@ fn orbite_auto_is_opt_in_and_explicit_transport_hints_remain_available() {
         ("orbite-rdma", PeerTransferBackend::OrbiteRdma),
     ] {
         let mut args = vec!["orbitkv-cache-manager", "--peer-transfer-backend", value];
-        if value == "orbite-rdma" && cfg!(feature = "orbite-rdma") {
+        if value == "orbite-rdma" {
             args.extend(["--orbite-rdma-device", "mlx5_0"]);
         }
         assert_eq!(

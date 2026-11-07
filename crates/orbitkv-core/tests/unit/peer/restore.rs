@@ -1,8 +1,7 @@
 use super::*;
 use crate::memory::pool::PinnedAllocation;
-use crate::transfer_engine::{
-    PeerSegment, Permission, Registration, RegistrationInner, Segment, TransferError,
-};
+use crate::transfer_engine::backend::{RegistrationInner, Segment};
+use crate::transfer_engine::{PeerSegment, Permission, Registration, TransferError};
 use std::sync::{
     Mutex,
     atomic::{AtomicUsize, Ordering},
@@ -69,7 +68,8 @@ impl TransferBackend for Control {
             inner: RegistrationInner::Control(owner),
         })
     }
-    unsafe fn unregister(&self, _: &mut Registration) -> Result<(), TransferError> {
+    unsafe fn unregister(&self, registration: &mut Registration) -> Result<(), TransferError> {
+        assert!(matches!(&registration.inner, RegistrationInner::Control(_)));
         self.cleanups.fetch_add(1, Ordering::SeqCst);
         if matches!(*self.failure.lock().unwrap(), Some(Failure::CleanupPanic)) {
             panic!("cleanup panicked");
@@ -100,11 +100,13 @@ impl TransferBackend for Control {
     unsafe fn transfer(
         &self,
         op: TransferOp,
-        _: &PeerSegment,
+        segment: &PeerSegment,
         slices: &[TransferSlice],
         options: crate::transfer_engine::TransferOptions,
         _: &Cancellation,
     ) -> Result<usize, TransferError> {
+        assert_eq!(segment.owner_epoch, "epoch");
+        assert!(matches!(segment.inner, Segment::Control));
         assert_eq!(op, TransferOp::Read);
         assert_eq!(
             options.intent,

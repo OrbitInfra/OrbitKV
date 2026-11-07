@@ -147,7 +147,6 @@ fn resource_domains_and_peer_incarnations_never_share_samples() {
         );
     }
 
-    #[cfg(feature = "mooncake")]
     {
         use crate::cost::resource_id;
         let owner = orbitkv_state::CacheOwner {
@@ -194,7 +193,6 @@ fn caller_to_drain_estimates_cannot_select_preparation_or_service_routes() {
     assert!(estimates.predict(manager, now).is_none());
     assert!(!local.comparable(key(9)));
     assert!(!local.comparable(manager));
-    #[cfg(feature = "mooncake")]
     {
         assert!(!local.route_comparable(manager));
         assert!(!manager.route_comparable(local));

@@ -30,7 +30,6 @@ pub(in crate::storage::ssd) fn queued_io() -> SsdIo {
     }
 }
 
-#[cfg(any(feature = "mooncake", feature = "orbite"))]
 mod engine {
     use super::*;
     use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
@@ -161,7 +160,7 @@ mod engine {
             .allocate(NonZeroU64::new(bytes as u64).unwrap(), None)
             .unwrap();
         // SAFETY: this fresh allocation has no other reader or writer.
-        unsafe { std::ptr::write_bytes(allocation.mapped_ptr().host().as_ptr(), value, bytes) };
+        unsafe { std::ptr::write_bytes(allocation.as_non_null().as_ptr(), value, bytes) };
         allocation
     }
 
@@ -169,7 +168,7 @@ mod engine {
         let mut slots = Vec::new();
         for value in [value, value + 1] {
             let a = allocation(storage, 512, value);
-            let mut raw = RawBlock::single_segment(Segment::new(a.mapped_ptr().host(), 512, a));
+            let mut raw = RawBlock::single_segment(Segment::new(a.as_non_null(), 512, a));
             if encoded {
                 raw.encoding = Some(vec![crate::codec::EncodedSegment {
                     version: 1,
@@ -267,7 +266,7 @@ mod engine {
         let file = store.io.engine_file(0).unwrap();
         let source = allocation(&storage, 512, 0x47);
         let slice = TransferSlice {
-            local: source.mapped_ptr().host(),
+            local: source.as_non_null(),
             remote_address: 0,
             length: 512,
         };
@@ -321,7 +320,7 @@ mod engine {
         store._files[0].set_len(512).unwrap();
         let destination = allocation(&storage, 2048, 0xa5);
         let read = TransferSlice {
-            local: destination.mapped_ptr().host(),
+            local: destination.as_non_null(),
             remote_address: 0,
             length: 1024,
         };
@@ -331,8 +330,7 @@ mod engine {
             .unwrap()
             .unwrap_err();
         // The native file owner pins its admitted length; OrbiTE refreshes it.
-        let bytes =
-            unsafe { std::slice::from_raw_parts(destination.mapped_ptr().host().as_ptr(), 2048) };
+        let bytes = unsafe { std::slice::from_raw_parts(destination.as_non_null().as_ptr(), 2048) };
         if selected_backend() == crate::PeerTransferBackend::Mooncake {
             assert_eq!(error.kind, ErrorKind::Backend);
             assert_eq!(&bytes[..512], &[0x47; 512]);
@@ -405,7 +403,7 @@ mod engine {
         let file = store.io.engine_file(0).unwrap();
         let source = allocation(&storage, 512, 0x69);
         let slices = [TransferSlice {
-            local: source.mapped_ptr().host(),
+            local: source.as_non_null(),
             remote_address: 0,
             length: 512,
         }];
@@ -506,11 +504,7 @@ mod engine {
         });
         let file = Arc::new(EngineFile {
             backend: backend.clone(),
-            segment: FileSegment {
-                owner_epoch: real.segment.owner_epoch.clone(),
-                length: real.segment.length,
-                inner: real.segment.inner.clone(),
-            },
+            segment: real.segment.clone(),
             file: Arc::clone(&real.file),
             admission: Arc::new(Semaphore::new(1)),
             runtime: tokio::runtime::Handle::current(),
@@ -778,11 +772,7 @@ mod engine {
             });
             let file = Arc::new(EngineFile {
                 backend: backend.clone(),
-                segment: FileSegment {
-                    owner_epoch: real.segment.owner_epoch.clone(),
-                    length: real.segment.length,
-                    inner: real.segment.inner.clone(),
-                },
+                segment: real.segment.clone(),
                 file: Arc::clone(&real.file),
                 admission: Arc::new(Semaphore::new(1)),
                 runtime: tokio::runtime::Handle::current(),
@@ -818,7 +808,7 @@ mod engine {
             let source = allocation(&storage, 512, 0x52);
             let source_weak = Arc::downgrade(&source);
             let slices = vec![TransferSlice {
-                local: source.mapped_ptr().host(),
+                local: source.as_non_null(),
                 remote_address: 0,
                 length: 512,
             }];

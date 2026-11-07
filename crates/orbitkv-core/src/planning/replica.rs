@@ -1,7 +1,6 @@
 use std::sync::Weak;
 
 use orbitkv_state::ReplicaMedium;
-#[cfg(any(feature = "mooncake", feature = "orbite"))]
 use orbitkv_state::{DISCOVERY_MAX_REPLICAS_PER_MEDIUM, DiscoveryCoverage, ReplicaLocation};
 use smallvec::SmallVec;
 
@@ -11,7 +10,6 @@ use crate::storage::ssd::SsdReadCandidate;
 enum Evidence {
     Memory(Weak<SealedBlock>),
     Extent(SsdReadCandidate),
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     Peer(ReplicaLocation),
 }
 
@@ -34,7 +32,6 @@ impl ReplicaCandidate {
         match &self.evidence {
             Evidence::Memory(block) => block.strong_count() > 0,
             Evidence::Extent(_) => true,
-            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             Evidence::Peer(_) => true,
         }
     }
@@ -47,14 +44,9 @@ impl ReplicaCandidate {
     }
 
     fn is_peer(&self) -> bool {
-        match self.evidence {
-            #[cfg(any(feature = "mooncake", feature = "orbite"))]
-            Evidence::Peer(_) => true,
-            _ => false,
-        }
+        matches!(self.evidence, Evidence::Peer(_))
     }
 
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     fn peer(&self, medium: ReplicaMedium) -> Option<&ReplicaLocation> {
         match &self.evidence {
             Evidence::Peer(location) if self.medium == medium => Some(location),
@@ -67,7 +59,6 @@ impl ReplicaCandidate {
 pub(crate) struct ReplicaSet {
     pub(crate) key: StateKey,
     replicas: SmallVec<[ReplicaCandidate; 2]>,
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     remote_coverage: Option<DiscoveryCoverage>,
 }
 
@@ -76,7 +67,6 @@ impl ReplicaSet {
         Self {
             key,
             replicas: SmallVec::new(),
-            #[cfg(any(feature = "mooncake", feature = "orbite"))]
             remote_coverage: None,
         }
     }
@@ -100,7 +90,6 @@ impl ReplicaSet {
 
     /// Retain only peer media with an implemented source authorization path.
     /// Unknown and HBM evidence never becomes executable from TE availability.
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub(crate) fn set_peers(&mut self, replicas: Vec<ReplicaLocation>) {
         self.replicas.retain(|replica| !replica.is_peer());
         for location in replicas.into_iter().filter(|location| {
@@ -122,7 +111,6 @@ impl ReplicaSet {
         }
     }
 
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub(crate) fn set_remote(
         &mut self,
         coverage: DiscoveryCoverage,
@@ -132,19 +120,16 @@ impl ReplicaSet {
         self.set_peers(replicas);
     }
 
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub(crate) fn remote_coverage(&self) -> Option<DiscoveryCoverage> {
         self.remote_coverage
     }
 
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub(crate) fn peer(&self, medium: ReplicaMedium) -> impl Iterator<Item = &ReplicaLocation> {
         self.replicas
             .iter()
             .filter_map(move |candidate| candidate.peer(medium))
     }
 
-    #[cfg(any(feature = "mooncake", feature = "orbite"))]
     pub(crate) fn reject_peer(&mut self, owner: &orbitkv_state::CacheOwner) {
         self.replicas.retain(|replica| match &replica.evidence {
             Evidence::Peer(peer) => &peer.owner != owner,

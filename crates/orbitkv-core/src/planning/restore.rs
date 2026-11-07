@@ -83,7 +83,6 @@ impl RestorePlan {
                         .ok_or("restore source fragment count overflow")?;
                     source_domains.push((0u8, 0u64));
                 }
-                #[cfg(any(feature = "mooncake", feature = "orbite"))]
                 RestoreSource::Peer(block) => {
                     source_domains.push((2u8, block.source_id()));
                     plan.source_bytes = plan

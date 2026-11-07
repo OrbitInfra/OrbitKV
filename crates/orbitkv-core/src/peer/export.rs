@@ -56,7 +56,6 @@ pub struct PeerExports {
     membership: Option<Arc<orbitkv_catalog::MembershipView>>,
     endpoint: Option<String>,
     locks: TransferLockManager,
-    #[cfg(feature = "orbite")]
     transport: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
 }
 
@@ -66,9 +65,7 @@ impl PeerExports {
         ssd: Option<Arc<crate::storage::ssd::SsdStore>>,
         membership: Option<Arc<orbitkv_catalog::MembershipView>>,
         endpoint: Option<String>,
-        #[cfg(feature = "orbite")] transport: Option<
-            Arc<dyn crate::transfer_engine::TransferBackend>,
-        >,
+        transport: Option<Arc<dyn crate::transfer_engine::TransferBackend>>,
         timeout: Duration,
         budget_bytes: u64,
     ) -> Self {
@@ -78,7 +75,6 @@ impl PeerExports {
             membership,
             endpoint,
             locks: TransferLockManager::new(timeout, budget_bytes),
-            #[cfg(feature = "orbite")]
             transport,
         }
     }
@@ -133,7 +129,6 @@ impl PeerExports {
             .map_err(|reason| PeerError::InvalidRequest(reason.into()))?;
         if let Some(blocks) = self.dram.pin_residencies(records) {
             self.locks.lock_blocks(ticket, blocks.clone())?;
-            #[cfg(feature = "orbite")]
             self.register_source(ticket, &blocks)?;
             return Ok(blocks);
         }
@@ -159,12 +154,10 @@ impl PeerExports {
             let _ = self.locks.release(ticket);
             return Err(PeerError::StaleReplica);
         }
-        #[cfg(feature = "orbite")]
         self.register_source(ticket, &blocks)?;
         Ok(blocks)
     }
 
-    #[cfg(feature = "orbite")]
     fn register_source(
         &self,
         ticket: TransferTicket,
@@ -228,7 +221,6 @@ struct TransferSession {
     created_at: Instant,
     reserved_bytes: u64,
     expired: bool,
-    #[cfg(feature = "orbite")]
     registration: Option<crate::transfer_engine::Registration>,
 }
 
@@ -432,7 +424,6 @@ impl TransferLockManager {
             created_at: Instant::now(),
             reserved_bytes: bytes,
             expired: false,
-            #[cfg(feature = "orbite")]
             registration: None,
         });
         inner.active += 1;

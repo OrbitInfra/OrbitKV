@@ -317,8 +317,7 @@ fn bindings(trace: &mut LocalCopyTrace, copies: &[CopyDesc]) {
         address: 0x10000,
         bytes: 65536,
         allocation: 7,
-        #[cfg(feature = "orbite")]
-        allocation_end: 0x20000,
+        _allocation_end: 0x20000,
     };
     for copy in copies {
         let raw = RawCopy {

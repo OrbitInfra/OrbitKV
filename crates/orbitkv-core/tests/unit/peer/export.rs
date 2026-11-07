@@ -301,7 +301,6 @@ fn exports() -> (
             None,
             Some(membership.clone()),
             Some("127.0.0.1:12345".into()),
-            #[cfg(feature = "orbite")]
             None,
             Duration::ZERO,
             1 << 20,

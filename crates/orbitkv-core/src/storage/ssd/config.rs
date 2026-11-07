@@ -38,30 +38,6 @@ pub enum SsdBackend {
     Cufile,
 }
 
-impl SsdCacheConfig {
-    pub fn validate_transfer_engine(
-        &self,
-        backend: crate::PeerTransferBackend,
-    ) -> Result<(), String> {
-        backend.validate_compiled()?;
-        if self.backend == SsdBackend::Cufile {
-            if backend == crate::PeerTransferBackend::Mooncake {
-                if !cfg!(feature = "cuda-13") {
-                    return Err("TENT GDS requires a CUDA-enabled native runtime".into());
-                }
-                if self.cache_paths.len().saturating_mul(self.shards.get()) > 128 {
-                    return Err(
-                        "TENT GDS allows at most 128 shards (256 IOURING/GDS file handles)".into(),
-                    );
-                }
-            } else if !cfg!(feature = "orbite-gds") {
-                return Err("OrbiTE cuFile requires the orbite-gds build feature".into());
-            }
-        }
-        Ok(())
-    }
-}
-
 /// Independent read routes over the same immutable SSD extent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SsdReadPath {

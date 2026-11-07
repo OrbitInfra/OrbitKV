@@ -1,7 +1,18 @@
 use super::*;
 
 fn empty_save_instance() -> Arc<InstanceContext> {
-    Arc::new(InstanceContext::new("cpu-save".into(), "cpu-save".into(), 1, 1, false, None).unwrap())
+    Arc::new(
+        InstanceContext::new(
+            "cpu-save".into(),
+            "cpu-save".into(),
+            1,
+            1,
+            false,
+            crate::PeerTransferBackend::Mooncake,
+            None,
+        )
+        .unwrap(),
+    )
 }
 
 #[test]
@@ -149,6 +160,7 @@ async fn shared_admission_saturation_falls_back_before_worker_submission() {
         let (load_tx, _load_rx) = mpsc::unbounded_channel();
         let (save_tx, mut save_rx) = mpsc::unbounded_channel();
         let pool = GpuWorkerPool {
+            selected_backend: crate::PeerTransferBackend::Mooncake,
             local_device: None,
             engine: None,
 
@@ -199,6 +211,7 @@ fn managed_restore_rejects_overlapping_targets_before_dispatch() {
     let (load_tx, mut load_rx) = mpsc::unbounded_channel();
     let (save_tx, _save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
+        selected_backend: crate::PeerTransferBackend::Mooncake,
         local_device: None,
         engine: None,
         device_id: 0,
@@ -263,6 +276,7 @@ fn restore_plan_must_target_the_worker_device() {
     let (load_tx, mut load_rx) = mpsc::unbounded_channel();
     let (save_tx, _save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
+        selected_backend: crate::PeerTransferBackend::Mooncake,
         local_device: None,
         engine: None,
         device_id: 0,
@@ -311,6 +325,7 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     let cufile_admission = Arc::new(Semaphore::new(1));
     let cufile_owner = Arc::clone(&cufile_admission).try_acquire_owned().unwrap();
     let pool = Arc::new(GpuWorkerPool {
+        selected_backend: crate::PeerTransferBackend::Mooncake,
         local_device: None,
         engine: None,
         device_id: 0,
@@ -678,7 +693,9 @@ fn managed_restore_retains_sources_and_reservations_through_partial_submission_d
         .allocate(NonZeroU64::new(32).unwrap(), NumaNode::UNKNOWN)
         .unwrap();
     // SAFETY: this test uniquely owns all 32 bytes before sealing them.
-    unsafe { allocation.as_non_null().as_ptr().write_bytes(0x5a, 32) };
+    unsafe {
+        allocation.as_non_null().as_ptr().write_bytes(0x5a, 32);
+    };
     let raw = RawBlock::single_segment(Segment::new(allocation.as_non_null(), 32, allocation));
     let source = Arc::new(SealedBlock::from_slots(vec![(raw, NumaNode::UNKNOWN)]));
     let weak = Arc::downgrade(&source);
@@ -730,7 +747,14 @@ fn managed_restore_retains_sources_and_reservations_through_partial_submission_d
         .unwrap();
     drop(sender);
     let worker = std::thread::spawn(move || {
-        let mut runtime = init_worker(0, TransferMode::Direct, None, None).unwrap();
+        let mut runtime = init_worker(
+            0,
+            TransferMode::Direct,
+            None,
+            crate::PeerTransferBackend::Mooncake,
+            None,
+        )
+        .unwrap();
         runtime.backend = crate::transfer_engine::local::TentLocalCopy::control(
             runtime.stream.clone(),
             Box::new(PartialBackend {
@@ -774,6 +798,7 @@ async fn submitted_save_reply_loss_is_not_a_completed_error() {
     let (load_tx, _load_rx) = mpsc::unbounded_channel();
     let (save_tx, mut save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
+        selected_backend: crate::PeerTransferBackend::Mooncake,
         local_device: None,
         engine: None,
         device_id: i32::MAX - 31,
@@ -825,6 +850,7 @@ async fn save_completion_receipt_releases_admission_after_queued_no_dma_work() {
     let (load_tx, _load_rx) = mpsc::unbounded_channel();
     let (save_tx, mut save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
+        selected_backend: crate::PeerTransferBackend::Mooncake,
         local_device: None,
         engine: None,
         device_id: i32::MAX - 32,
@@ -900,6 +926,7 @@ async fn save_queue_admission_child() {
     let (load_tx, _load_rx) = mpsc::unbounded_channel();
     let (save_tx, mut save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
+        selected_backend: crate::PeerTransferBackend::Mooncake,
         local_device: None,
         engine: None,
         device_id: i32::MAX - 33,
@@ -952,4 +979,18 @@ async fn save_queue_admission_child() {
             .is_err()
     );
     println!("save_queue_saturation=1024 receipt_repaid=true lost_owner_charged=true no_DMA=true");
+}
+
+#[test]
+fn missing_orbite_worker_engine_is_rejected_before_cuda_initialization() {
+    for selected in [
+        crate::PeerTransferBackend::Orbite,
+        crate::PeerTransferBackend::OrbiteTcp,
+        crate::PeerTransferBackend::OrbiteRdma,
+    ] {
+        let error = init_worker(i32::MAX, TransferMode::Direct, None, selected, None)
+            .err()
+            .expect("an OrbiTE worker needs its selected engine even without networking");
+        assert!(error.to_string().contains("local-only OrbiTE"), "{error}");
+    }
 }

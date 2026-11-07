@@ -217,23 +217,19 @@ pub struct Cli {
     pub peer_transfer_backend: orbitkv_core::PeerTransferBackend,
 
     /// Explicit single RNIC for the experimental OrbiTE RDMA staging profile.
-    #[cfg(feature = "orbite-rdma")]
     #[arg(long, value_parser = parse_nic_name, required_if_eq("peer_transfer_backend", "orbite-rdma"))]
     pub orbite_rdma_device: Option<String>,
 
     /// RNIC port for OrbiTE RDMA; select from the actual device topology.
-    #[cfg(feature = "orbite-rdma")]
     #[arg(long, default_value_t = 1, requires = "orbite_rdma_device", value_parser = clap::value_parser!(u8).range(1..))]
     pub orbite_rdma_port: u8,
 
     /// Routable GID index for OrbiTE RDMA; no automatic GID selection.
-    #[cfg(feature = "orbite-rdma")]
     #[arg(long, default_value_t = 0, requires = "orbite_rdma_device")]
     pub orbite_rdma_gid_index: u8,
 
     /// Use OrbiTE GPU Direct RDMA instead of engine-owned CUDA staging.
     /// Requires an installed GDR-capable profile and MLX5_SCATTER_TO_CQE=0.
-    #[cfg(feature = "orbite-rdma")]
     #[arg(long, requires = "orbite_rdma_device")]
     pub orbite_rdma_gpu_direct: bool,
 
@@ -760,7 +756,6 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         codec_budget: cli.storage_codec_budget,
         mooncake_nic_names: cli.nics.clone().unwrap_or_default(),
         peer_transfer_backend: cli.peer_transfer_backend,
-        #[cfg(feature = "orbite-rdma")]
         orbite_rdma: cli
             .orbite_rdma_device
             .clone()

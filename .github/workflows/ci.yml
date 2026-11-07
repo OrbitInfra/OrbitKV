@@ -102,6 +102,8 @@ jobs:
           PY
       - name: Reject tracked experiment output
         run: python3 scripts/check-experiment-output.py
+      - name: Confine native backend feature gates
+        run: python3 scripts/check-backend-features.py
       - name: Check Rust and Python package versions stay in sync
         run: python3 scripts/check-versions.py --engines
 
@@ -179,6 +181,7 @@ jobs:
         run: scripts/configure-rustc-wrapper.sh
       - name: Run rust clippy check
         run: |
+          cargo clippy --locked -p orbitkv-core -p orbitkv-server -p orbitkv-py --all-targets --no-default-features --features cuda-13 -- -D warnings
           cargo clippy --workspace --exclude orbitkv-py --all-targets -- -D warnings
           cargo clippy -p orbitkv-server --all-targets --features test-hooks -- -D warnings
           cargo clippy -p orbitkv-core --all-targets --features orbite -- -D warnings
@@ -291,6 +294,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/orbitkv-cpu-host-control"
           c++ -std=c++20 -shared -fPIC -DORBITKV_CPU_HOST_CONTROL -x c++ crates/orbitkv-core/tests/native/source_owner_host_shim.cu -o "$RUNNER_TEMP/orbitkv-cpu-host-control/libcudart.so"
           # The shim exercises host ownership only; it is not CUDA evidence.
+          for filter in peer:: query:: planning:: cost:: metrics:: transfer_engine::tests local_only_orbite missing_orbite_worker_engine no_backend_storage; do
+            LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --no-default-features --features cuda-13 --lib "$filter" -- --test-threads=1
+          done
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib peer::
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --lib peer::
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --features orbite --lib peer::
@@ -316,6 +322,7 @@ jobs:
           export ORBITKV_REQUIRE_LOCAL_COPY_SHIM=1
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib peer::orbite::local::tests -- --ignored --test-threads=1
           cargo test --locked -p orbitkv-core --features orbite --lib peer::orbite::local::tests -- --ignored --test-threads=1
+          cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,test-hooks --lib -- --test-threads=1
           cargo test --locked -p orbitkv-server --features orbite,test-hooks --lib -- --test-threads=1
         env:
           CUDA_PATH: /usr/local/cuda

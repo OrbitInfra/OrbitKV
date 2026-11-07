@@ -629,6 +629,20 @@ the terminal query and six file functions through a separate TENT file engine.
 
 ## Runtime transfer backend
 
+Peer authorization, query planning, transfer ownership, storage and metrics compile
+in every build. Backend feature gates are confined to native adapters and their
+module/build glue; `scripts/check-backend-features.py` checks that boundary.
+A local-only TENT configuration may omit the peer engine. Configuring networking,
+SSD or OrbiTE without its compiled provider returns `Unavailable` before backend
+initialization. RDMA CLI/config fields are available in every build; using them
+still requires the `orbite-rdma` feature. No-backend CI checks strict Clippy, shared
+ownership controls and that local storage loads no native transfer library.
+
+The selected backend travels with instance and worker creation. A missing or
+mismatched OrbiTE engine fails before CUDA setup, including local-only mode;
+only a TENT selection may bind the built-in local-copy implementation without a
+peer engine. This refactor changes no wire or lifecycle version.
+
 `orbitkv-core::transfer_engine::TransferBackend` is the consumed peer, file and local transfer
 boundary: retained pinned/CUDA registrations, explicit unregister, epoch-bound
 peer open, READ/WRITE batches with an absolute deadline and cancellation, typed
@@ -1080,7 +1094,7 @@ hardware gate explicitly on an isolated GPU with a compatible CUDA runtime:
 
 ```sh
 cargo test --locked -p orbitkv-core --features orbite --lib \
-  memory::pool::orbite_tests -- --ignored --test-threads=1
+  memory::pool::backend::orbite_tests -- --ignored --test-threads=1
 ```
 
 The two tests use the production `PinnedAllocator` (memfd, CUDA host registration

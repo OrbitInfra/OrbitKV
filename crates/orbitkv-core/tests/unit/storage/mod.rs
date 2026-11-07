@@ -11,6 +11,14 @@ fn unavailable_rdma_backend_is_rejected_before_pinned_allocation() {
         panic!("an unavailable RDMA backend must be rejected");
     };
     assert!(error.contains("orbite-rdma build feature"), "{error}");
+    let configured = EngineConfig {
+        orbite_rdma: Some(crate::OrbiteRdmaConfig::new("not-loaded")),
+        ..EngineConfig::default()
+    };
+    assert_eq!(
+        configured.validate_backend().unwrap_err().kind,
+        crate::transfer_engine::ErrorKind::Unavailable
+    );
 }
 
 fn make_engine() -> Arc<Storage> {
@@ -173,4 +181,64 @@ fn invalid_ssd_setup_returns_an_error_without_panicking() {
         result.is_err(),
         "SSD initialization errors must reach the caller"
     );
+}
+
+#[cfg(not(any(feature = "mooncake", feature = "orbite")))]
+#[tokio::test]
+async fn no_backend_storage_stays_local_and_loads_no_native_engine() {
+    use crate::transfer_engine::ErrorKind;
+    let storage = make_engine();
+    assert!(storage.peer_transport().is_none());
+    assert!(storage.transfer_endpoint().is_none());
+    assert!(storage.transfer_source_epoch().is_none());
+    assert_eq!(
+        storage
+            .exports
+            .open(uuid::Uuid::new_v4(), uuid::Uuid::new_v4()),
+        Err(crate::PeerError::Unavailable)
+    );
+    for selected in [
+        crate::PeerTransferBackend::Mooncake,
+        crate::PeerTransferBackend::Orbite,
+        crate::PeerTransferBackend::OrbiteTcp,
+        crate::PeerTransferBackend::OrbiteRdma,
+    ] {
+        let error = crate::transfer_engine::create_transfer_backend(
+            selected,
+            &[],
+            storage.allocator.clone(),
+            "127.0.0.1:0",
+            None,
+            None,
+        )
+        .err()
+        .expect("no network provider was compiled");
+        assert_eq!(error.kind, ErrorKind::Unavailable);
+        if selected != crate::PeerTransferBackend::Mooncake {
+            let error = crate::transfer::local::LocalRestoreExecutor::with_engine(
+                usize::MAX,
+                Vec::new(),
+                Vec::new(),
+                crate::TransferMode::Direct,
+                selected,
+                Arc::new(()),
+            )
+            .err()
+            .expect("uncompiled client provider is rejected before CUDA setup");
+            assert!(error.contains("orbite build feature"), "{error}");
+        }
+    }
+    let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+    for library in [
+        "libtent",
+        "libmooncake",
+        "liborbite",
+        "libibverbs",
+        "libcufile",
+    ] {
+        assert!(
+            !maps.contains(library),
+            "unexpected native engine dependency: {library}"
+        );
+    }
 }

@@ -28,24 +28,6 @@ impl std::str::FromStr for PeerTransferBackend {
     }
 }
 
-impl PeerTransferBackend {
-    /// Reject unavailable providers before CUDA or pinned-pool initialization.
-    pub fn validate_compiled(self) -> Result<(), String> {
-        let (compiled, feature) = match self {
-            Self::Mooncake => (cfg!(feature = "mooncake"), "mooncake"),
-            Self::Orbite | Self::OrbiteTcp => (cfg!(feature = "orbite"), "orbite"),
-            Self::OrbiteRdma => (cfg!(feature = "orbite-rdma"), "orbite-rdma"),
-        };
-        if compiled {
-            Ok(())
-        } else {
-            Err(format!(
-                "selected peer transfer backend requires the {feature} build feature"
-            ))
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct EngineConfig {
     /// Query-owned bytes across preparation, ready leases, and GPU loads.
@@ -71,7 +53,6 @@ pub struct EngineConfig {
     /// Explicit peer payload provider. OrbiTE profiles are experimental.
     pub peer_transfer_backend: PeerTransferBackend,
     /// Explicit single-rail staging configuration, consumed only by OrbiTE RDMA.
-    #[cfg(feature = "orbite-rdma")]
     pub orbite_rdma: Option<crate::OrbiteRdmaConfig>,
     /// Enable NUMA-aware memory allocation.
     pub enable_numa_affinity: bool,
@@ -104,7 +85,6 @@ impl Default for EngineConfig {
             codec_budget: 64 * 1024 * 1024,
             mooncake_nic_names: Vec::new(),
             peer_transfer_backend: PeerTransferBackend::default(),
-            #[cfg(feature = "orbite-rdma")]
             orbite_rdma: None,
             enable_numa_affinity: true,
             blockwise_alloc: false,

@@ -239,8 +239,7 @@ fn load(path: &str) -> Vec<InputPart> {
                                 address: number(geometry, "registered_device_start"),
                                 bytes: number(geometry, "registered_device_bytes") as usize,
                                 allocation: number(geometry, "device_allocation") as usize,
-                                #[cfg(feature = "orbite")]
-                                allocation_end: number(geometry, "registered_device_start")
+                                _allocation_end: number(geometry, "registered_device_start")
                                     + number(geometry, "registered_device_bytes"),
                             },
                             arena_bytes: number(geometry, "arena_bytes") as usize,

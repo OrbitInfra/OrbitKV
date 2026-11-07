@@ -46,3 +46,17 @@ fn kv_intents_preserve_deadlines_and_assign_priority() {
     );
     assert_eq!(save.deadline, deadline);
 }
+
+#[test]
+fn local_only_orbite_cannot_choose_the_tent_copy_implementation() {
+    use crate::PeerTransferBackend::{Mooncake, Orbite, OrbiteRdma, OrbiteTcp};
+    let tent: Arc<dyn TransferBackend> = Arc::new(crate::peer::restore::tests::Control::default());
+    for selected in [Orbite, OrbiteTcp, OrbiteRdma] {
+        for engine in [None, Some(&tent)] {
+            let error = local::validate_engine(selected, engine).unwrap_err();
+            assert_eq!(error.kind, ErrorKind::Unavailable);
+        }
+    }
+    local::validate_engine(Mooncake, None).unwrap();
+    local::validate_engine(Mooncake, Some(&tent)).unwrap();
+}
