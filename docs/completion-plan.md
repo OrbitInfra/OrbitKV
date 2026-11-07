@@ -1,9 +1,9 @@
 # OrbitKV completion plan
 
-**Current focus: C4 documentation slimming, awaiting independent review.**
-The OrbiTE-only implementation was accepted in [PR #326](https://github.com/OrbitInfra/OrbitKV/pull/326),
-merge `1f30895a`. After C4 review, the maintainer will supply the hybrid-attention
-design/experiment-plan task; no implementation of that design starts here.
+**Current focus: hybrid-attention design and experiment-plan review only.**
+Cleanup C1–C4 is accepted through [PR #327](https://github.com/OrbitInfra/OrbitKV/pull/327),
+merge `37722fec`. The [proposed hybrid cache work](hybrid-cache-design.md) is a
+future S7 stage; implementation and hardware experiments have not started.
 
 **Maintainer decision, 2026-11-07:** OrbiTE is the sole transfer engine before
 hardware re-qualification. The TENT implementation and engine-family/default
@@ -43,9 +43,9 @@ The first release profile is dense TP=1/PP=1 on vLLM 0.31.0 and SGLang 0.5.22,
 with DRAM, io_uring SSD and the already accepted scoped peer profiles, all
 re-qualified on the current path before publication.
 
-1. **Current review:** finish C4 concise guides with unchanged qualification
-   claims. Product-surface predecessors are [#289](https://github.com/OrbitInfra/OrbitKV/pull/289)
-   and [#295](https://github.com/OrbitInfra/OrbitKV/pull/295).
+1. **Current review:** agree on the [hybrid cache design and experiment plan](hybrid-cache-design.md),
+   including released-engine blockers, matched baselines and kill criteria.
+   This authorizes no runtime support or qualification claim.
 2. **Reliable consumed path:** finish required ownership contracts and qualify
    bytes, cold/partial/full hits, cancellation, bounds and normal shutdown.
    Retaining unknown work is not eventual fault reclamation.
@@ -312,6 +312,16 @@ window/sink and recurrent/hybrid models. Demonstrate measured state reduction.
 Recovery validation alone is not this compiler; unknown auxiliary state remains
 unsupported.
 
+### Future stage: hybrid cache experiments
+
+The [design and experiment plan](hybrid-cache-design.md) proposes Full + SWA
+retention/transfer experiments on SGLang first, then recurrent checkpoints and
+ordering after a complete released engine contract exists. Sparse indexer-driven
+loading remains later work. All experiments are **unexecuted**; current model
+guards, ownership/drain rules and qualification verdicts remain unchanged.
+Review the design before authorizing implementation, and apply its measured
+gain/kill gates without treating existing minimal-range recovery as new work.
+
 ## S8 — Product organization, final artifacts and release
 
 **Partial.** Follow [LMCache's documentation organization](https://docs.lmcache.ai/)
@@ -326,7 +336,7 @@ for user navigation while retaining OrbitKV's Rust owners and website identity.
   on Linux x86_64/aarch64; final candidate qualification and publication remain open.
 - [x] Remove TENT native packaging and the fork submodule in #326; historical
   provenance remains at immutable source links.
-- [ ] C4 concise user/contract guides implemented for independent review; evidence
+- [x] C4 concise user/contract guides accepted in #327 (`37722fec`); evidence
   pages and frozen verdicts are preserved, with no runtime or claim change.
 - [ ] Build final Manager/engine images and wheels, preserve licenses/provenance,
   and qualify clean installed artifacts on claimed hosts and profiles.
