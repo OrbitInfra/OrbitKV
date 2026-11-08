@@ -1,13 +1,15 @@
 # OrbitKV completion plan
 
-**Current focus: [design v2](design-v2.md), a design-only proposal awaiting review.**
+**Current focus: the [design-v2 simulator](../benches/storage/state_cache/README.md), awaiting review.**
 OrbiTE beta.1 source adaptation is merged in
 [PR #330](https://github.com/OrbitInfra/OrbitKV/pull/330), `d54da80e`;
 internal Rust crates are unpublishable following
 [PR #331](https://github.com/OrbitInfra/OrbitKV/pull/331), `87991239`.
 The 2026-11-08 maintainer direction is a state compiler, versioned agent state
-trees and attention-guided paging. A trace-driven simulator follows in a separate
-PR after design review; implementation and hardware experiments have not started.
+trees and attention-guided paging. The design was reviewed in
+[PR #332](https://github.com/OrbitInfra/OrbitKV/pull/332), `93d67424`.
+The bounded Python simulator exercises synthetic traces and ownership controls;
+production policy and hardware experiments have not started.
 
 **Presentation decision, 2026-11-07:** use [LMCache](https://github.com/LMCache/LMCache)
 and [its docs](https://docs.lmcache.ai/) as content/navigation references, and
@@ -53,10 +55,11 @@ The first release profile is dense TP=1/PP=1 on vLLM 0.31.0 and SGLang 0.5.22,
 with DRAM, io_uring SSD and the already accepted scoped peer profiles, all
 re-qualified on the current path before publication.
 
-1. **Current review:** [design v2](design-v2.md), including verified model schemas,
+1. **Design reviewed:** [design v2](design-v2.md), including pinned config schemas,
    upstream contracts, lifetime invariants and falsifiable experiment gates.
-2. **Next PR, after review:** a bounded trace-driven simulator. No production
-   policy or hardware claim; use the design's schema, workload and ablation plan.
+2. **Current review:** the [bounded trace-driven simulator](../benches/storage/state_cache/README.md).
+   Synthetic inputs, capped ownership/queues, matched controls and ablations only;
+   simulation results are not hardware evidence or production policy.
 3. **Reliable consumed path:** finish required ownership contracts and qualify
    bytes, cold/partial/full hits, cancellation, bounds and normal shutdown.
    Retaining unknown work is not eventual fault reclamation.
@@ -330,8 +333,10 @@ proposes the next S6/S7 direction: engine-derived component/dependency IR,
 cost-based materialization and recomputation, agent forks/JIT restore, and sparse
 paging through upstream vLLM contracts. The safety foundation preserves existing
 owners, grants, epochs and physical-drain receipts; OrbiTE remains the only byte
-path. All experiments are **unexecuted** and current model guards remain in force.
-Review the design first, then the hardware-free simulator, before production work.
+path. The hardware-free simulator is implemented for review, with its methodology
+and external-artifact reproduction under `benches/storage/state_cache/`. All
+hardware experiments remain **unexecuted** and current model guards remain in
+force. Review simulator controls and kill-gate conclusions before production work.
 
 The [hybrid-cache proposal](hybrid-cache-design.md), reviewed in
 [PR #328](https://github.com/OrbitInfra/OrbitKV/pull/328), stays unchanged as
