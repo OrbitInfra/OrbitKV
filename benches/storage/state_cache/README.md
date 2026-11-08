@@ -127,8 +127,8 @@ any engine's native cache. No product performance comparison is implied.
 | `shared_lru` | Window-aware LRU plus shared prefix/fork roots; stronger COW control |
 | `p1` | Marginal-benefit/byte greedy closure retention; costed load/replay/recompute |
 | `p2` | Shared versions plus JIT from the last 32 completed tool durations |
-| `p3` | Exact supplied sparse selections plus last-set overlap prediction |
-| `all` | All three mechanisms |
+| `p3` | Serialized sparse demand paging with a null last-set predictor |
+| `all` | P1 + P2 + serialized sparse demand paging |
 | `oracle` | `all` with future return/selection knowledge; separate lookahead control |
 
 Planner values use past accesses only. Eviction cannot remove a dependency from
@@ -140,8 +140,11 @@ search unbounded future eviction/replay schedules.
 Set `policies` to names or records such as
 `{"base":"all","name":"no_jit","jit":false}`. Independently disable
 `minimal`, `dag`, `recompute`, `sharing`, `jit`, or `prefetch`; keep `sparse` true
-to ablate prediction while retaining demand paging. Last-set prediction often
-adds nothing beyond already-resident pages: that is a result, not hidden gain.
+to ablate prediction while retaining demand paging. In `consume()`, the last-set
+prediction is the selection just observed at this step's `selection` event.
+Those pages are already resident and leased in HBM, so the speculative `ensure`
+cannot move bytes. Agreement with the no-prefetch ablation is guaranteed by
+construction, not evidence for or against P3.
 Sweep any scalar `Workload`, `Sizes`, `Costs` field, or `hbm_bytes`, `dram_bytes`,
 `ssd_bytes`. Vary relative component bytes, checkpoint spacing, fan-out, route
 costs, overlap and `prediction_scale` in separate bounded campaigns. Freeze seeds
@@ -183,5 +186,29 @@ compatible approximation above. It cannot promote a direction: additionally
 require the design's capacity gain, two frozen holdout families, repeated seeds
 and adjacent budgets, including the stronger shared/window-aware controls. P2
 needs capacity and latency evidence, not just fewer fork bytes. The oracle is
-excluded from online winners. Failure under these assumptions stops that modeled
-direction; neither a pass nor a failure qualifies or disproves hardware behavior.
+excluded from online winners. Apply kill criteria only to mechanisms actually
+modeled; neither a pass nor a failure qualifies or disproves hardware behavior.
+
+### Interpretation of the submitted runs
+
+The [PR #333 runs](https://github.com/OrbitInfra/OrbitKV/pull/333) at `8594d5b8`
+are **simulation only, not hardware evidence**; the handoff records external
+artifacts and uncalibrated assumptions.
+
+**P2:** every policy, including the baselines, saves HBM-only state and frees HBM
+at `tool_start`, subject to pins and physical drain. Freeing HBM during tool waits
+is therefore common baseline behavior. P2's possible gains are version sharing
+and JIT timing; `shared_lru` already includes version sharing, so comparison with
+it isolates JIT timing. Equal tested capacity at 12/12 budget/seed/family points
+per config means JIT earned no capacity gain over that control. It does not test
+the benefit of freeing HBM during tool waits. Some JIT TTFT gains occur, but the
+required capacity gain does not; the P2 configuration does not earn promotion.
+
+**P3 is untested in its main mechanisms.** There is no cross-layer pipeline, and
+the online predictor cannot name newly selected, nonresident pages. These runs
+test serialized per-step demand paging. `p3` moves zero speculative bytes in all
+72 Qwen/DeepSeek rows; `all` and `no_prefetch` have identical speculative bytes
+throughout the ablation and sensitivity campaigns, all from JIT. The null
+last-set predictor cannot support a P3 kill verdict. The Qwen lookahead oracle's
+p95 TPOT of 0.25–0.76× the online combined policy is measured headroom using
+**unavailable future knowledge**, not an online gain.

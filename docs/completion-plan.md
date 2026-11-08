@@ -9,7 +9,10 @@ The 2026-11-08 maintainer direction is a state compiler, versioned agent state
 trees and attention-guided paging. The design was reviewed in
 [PR #332](https://github.com/OrbitInfra/OrbitKV/pull/332), `93d67424`.
 The bounded Python simulator exercises synthetic traces and ownership controls;
-production policy and hardware experiments have not started.
+P3's cross-layer pipeline and prediction of newly selected pages remain untested.
+Production policy and hardware experiments have not started. See the simulator's
+[interpretation](../benches/storage/state_cache/README.md#interpretation-of-the-submitted-runs)
+for the modeled scope of the P2 and P3 findings.
 
 **Presentation decision, 2026-11-07:** use [LMCache](https://github.com/LMCache/LMCache)
 and [its docs](https://docs.lmcache.ai/) as content/navigation references, and
@@ -336,7 +339,7 @@ owners, grants, epochs and physical-drain receipts; OrbiTE remains the only byte
 path. The hardware-free simulator is implemented for review, with its methodology
 and external-artifact reproduction under `benches/storage/state_cache/`. All
 hardware experiments remain **unexecuted** and current model guards remain in
-force. Review simulator controls and kill-gate conclusions before production work.
+force. Review simulator controls and the scope of its findings before production work.
 
 The [hybrid-cache proposal](hybrid-cache-design.md), reviewed in
 [PR #328](https://github.com/OrbitInfra/OrbitKV/pull/328), stays unchanged as

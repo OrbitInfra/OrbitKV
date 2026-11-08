@@ -110,6 +110,7 @@ class Simulation:
         self.ledger = Ledger(dict(capacities), limits)
         self.metrics, self.history = Metrics(), History(limits.branches)
         self.queue, self.serial, self.now, self.processed = [], 0, 0, 0
+        self.request_serial = 0
         self.link_free, self.compute_free = 0, 0
         self.branches, self.boundaries, self.tools, self.requests = {}, {}, {}, {}
         self.hits, self.pending, self.computing, self.prefetched = {}, {}, {}, {}
@@ -349,7 +350,8 @@ class Simulation:
         self.metrics.component_hits += sum(self.ledger.complete((k,)) for k in keys)
         self.hits[b.key] = self.hits.get(b.key, 0) + 1
         request = Request(branch, b, selection, arrived)
-        rid = self.serial + 1
+        self.request_serial += 1
+        rid = self.request_serial
         self.requests[rid] = request
         roots = self.roots(b)
         if self.policy.sparse:
