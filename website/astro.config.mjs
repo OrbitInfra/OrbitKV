@@ -18,7 +18,7 @@ export default defineConfig({
     shikiConfig: { theme: "github-light", langAlias: { promql: "text" } },
   },
   redirects: {
-    "/evidence/": `${base}/integration/`,
+    "/evidence/": `${base}/docs/performance/`,
     ...Object.fromEntries(
       ["client-performance", "communication-performance", "single-node-performance",
         "concurrent-performance", "sustained-performance", "recovery-performance"]

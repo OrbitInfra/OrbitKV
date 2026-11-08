@@ -6,7 +6,7 @@ import { localUrl } from "../data/site";
 <SiteLayout
   title="Integration — OrbitKV"
   description="vLLM and SGLang external-cache integration, P/D boundaries, and current validation."
-  active="Integration"
+  active="Docs"
 >
   <div class="container interior">
     <header class="page-hero">
@@ -21,12 +21,17 @@ import { localUrl } from "../data/site";
         pages with a node-local Cache Manager for reuse in pinned DRAM and
         optional SSD.
       </p>
+      <p>
+        OrbiTE is the only transfer engine. <a href={localUrl("/docs/compatibility/")}>All current GPU, RDMA, GDS and installed profiles are unqualified</a>.
+        CPU/TCP and io_uring controls are CI evidence; historical TENT results
+        do not qualify the current path.
+      </p>
     </header>
     <section class="detail-section">
       <h2>vLLM</h2>
       <p class="reading-copy">
         Enable <code>OrbitKVConnector</code> to save computed prefixes and restore
-        reusable blocks into vLLM-owned GPU memory. The pinned release is 0.31.0. Use the
+        reusable blocks into vLLM-owned GPU memory. The <a href={localUrl("/docs/compatibility/#official-engine-releases")}>pinned release is 0.31.0</a>. Use the
         V1 model runner and one attention cache group; V2, multi-group and recurrent
         external recovery are rejected pending safe released lifecycle contracts.
         Physical multi-rank and cross-host TP remain unqualified. Start with one rank and verify a restore after engine restart.
@@ -39,12 +44,11 @@ import { localUrl } from "../data/site";
       <h2>SGLang</h2>
       <p class="reading-copy">
         Enable the OrbitKV RadixCache backend and external linker on SGLang
-        0.5.22 with public load completion. Start with the Qwen3-8B dense
-        DRAM/io_uring profile in the support matrix. Broader 0.5.21 profiles, complete hybrid recovery
+        <a href={localUrl("/docs/compatibility/#official-engine-releases")}>0.5.22 with public load completion</a>. Start with the <a href={localUrl("/docs/models/")}>Qwen3-8B dense recipe</a>.
+        Historical profiles, complete hybrid recovery
         and the remaining private lifecycle Hooks retain separate gates.
         SGLang owns GPU pages; OrbitKV prepares external state and returns a validated restore.
-        DRAM and SSD recovery have single-rank GPU gates. Multi-rank serving
-        requires further qualification.
+        DRAM/SSD and multi-rank serving all require current hardware qualification.
       </p>
       <a class="text-link" href={localUrl("/docs/single-node/#sglang")}>
         SGLang install and deployment <span aria-hidden="true">↗</span>
@@ -55,7 +59,7 @@ import { localUrl } from "../data/site";
       <a class="text-link" href={localUrl("/docs/ssd-performance/")}>
         SSD measurements and qualification <span aria-hidden="true">↗</span>
       </a>
-      <a class="text-link" href={localUrl("/docs/concurrent-performance/")}>
+      <a class="text-link" href={localUrl("/docs/performance/#sglang-concurrent-admission")}>
         Concurrent budgets and output controls <span aria-hidden="true">↗</span>
       </a>
     </section>
@@ -97,13 +101,11 @@ import { localUrl } from "../data/site";
     <section class="detail-section">
       <h2>Tune and deploy</h2>
       <p class="reading-copy">
-        Begin with ordinary demand and size DRAM/SSD for your working set.
-        Historical request-preparation measurements contain three matched Qwen3-8B
-        controls per engine: vLLM improved modestly, while SGLang gained throughput
-        with worse P95 latency. Preparation stays disabled by default. Those results
-        and scoped two-H20 RDMA recovery acceptance predate the OrbiTE-only path;
-        they do not qualify it. Current GPU/RDMA/GDS and installed profiles,
-        native P/D faults and distributed HA retain their hardware gates.
+        Begin with ordinary demand and size DRAM/SSD for your working set.{" "}
+        <a href={localUrl("/docs/request-preparation/")}>Historical TENT preparation measurements</a>{" "}
+        retain their latency regressions and original scope; preparation stays
+        disabled by default. They do not qualify OrbiTE. Current hardware,
+        native P/D faults and distributed HA retain their separate gates.
       </p>
       <a class="text-link" href={localUrl("/docs/completion-plan/")}>
         Read the implementation gates <span aria-hidden="true">↗</span>

@@ -21,7 +21,7 @@ sequenceDiagram
     M->>M: Try bounded warmup admission
     M->>B: Shared backing read
     B-->>M: Pages ready in DRAM
-    M->>M: Release warmup reservation; keep pages evictable
+    M->>M: Release warmup reservation, keep pages evictable
     E->>M: Query current demand at scheduling time
     M-->>E: Revalidated prefix and restore lease
     E->>M: Restore into engine-owned GPU pages

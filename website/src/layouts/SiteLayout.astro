@@ -10,7 +10,7 @@ interface Props {
 
 const {
   title = "OrbitKV — KV cache for vLLM and SGLang",
-  description = "KV cache for vLLM and SGLang across pinned DRAM, SSD and unqualified OrbiTE remote transfers. One Cache Manager per host.",
+  description = "External KV cache for vLLM and SGLang, with OrbiTE byte movement. GPU, RDMA, GDS and installed profiles await hardware qualification.",
   active = "",
 } = Astro.props;
 const canonical = new URL(

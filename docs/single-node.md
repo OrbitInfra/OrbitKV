@@ -7,13 +7,32 @@ and [model qualification](models.md) before enabling a new layout or topology.
 These are current configuration recipes; OrbiTE GPU/installed paths require
 hardware re-qualification before any support or performance claim.
 
+## Prerequisites
+
+- A Linux host with an NVIDIA GPU, a compatible CUDA 13 toolkit/driver and enough
+  GPU memory for the model. Follow the [build/runtime requirements](releases.md#packages);
+  install Rust, uv and the native build prerequisites listed there before building.
+- Python 3.11 with shared `libpython`, used for both engine environments below.
+- An immutable local dense model compatible with the [selected release](compatibility.md#official-engine-releases),
+  such as the [Qwen3-8B recipe](models.md). These profiles remain **unqualified on OrbiTE**.
+- Client and Manager on the same host and UID, with shared socket/process visibility.
+  The example Manager uses `--pool-size 8gb`; adjust it to your host-memory budget.
+
+Use the repository root as your working directory. Replace the model path and,
+after building, the wheel path below. Set these in each terminal used by the recipe:
+
+```bash
+export ORBITKV_MODEL=/absolute/path/to/immutable-model
+export ORBITKV_WHEEL=/absolute/path/to/the-built-wheel.whl
+```
+
 ## Install and start the common manager
 
 Version 0.1.0 is not yet published. Build the complete wheel from the repository
 root; this example selects Python 3.11 and CUDA 13:
 
 ```bash
-./scripts/build-wheel.sh --release
+PYO3_PYTHON=python3.11 ./scripts/build-wheel.sh --release
 ```
 
 CUDA 13 is the default and only release runtime. Select the newly built wheel
@@ -52,19 +71,30 @@ startup; it is not durable across Manager restarts. See [GPU storage](gds.md).
 
 ## vLLM
 
-Create an environment with the selected official release and your complete wheel:
+**Prerequisites:** complete the common setup above; this recipe uses the pinned
+vLLM 0.31.0 V1 release with one attention group. Use a separate terminal for the
+Manager and keep it running during engine restarts.
+
+### Install and run vLLM
 
 ```bash
 uv venv .venv/vllm-release --python 3.11
 uv pip install --python .venv/vllm-release/bin/python 'vllm==0.31.0' --torch-backend=cu130
-uv pip install --python .venv/vllm-release/bin/python /absolute/path/to/the-built-wheel.whl
+uv pip install --python .venv/vllm-release/bin/python "$ORBITKV_WHEEL"
 ```
 
-Start the Manager with `.venv/vllm-release/bin/orbitkv-cache-manager`.
-In another terminal, start the dense V1 eager profile:
+Start the Manager in its own terminal:
 
 ```bash
-VLLM_USE_V2_MODEL_RUNNER=0 .venv/vllm-release/bin/vllm serve /path/to/immutable-model \
+.venv/vllm-release/bin/orbitkv-cache-manager \
+  --addr 127.0.0.1:50055 --http-addr 127.0.0.1:9091 --pool-size 8gb
+```
+
+In another terminal with `ORBITKV_MODEL` set, start the dense V1 eager profile:
+
+```bash
+VLLM_USE_V2_MODEL_RUNNER=0 .venv/vllm-release/bin/vllm serve "$ORBITKV_MODEL" \
+  --host 127.0.0.1 --port 8000 \
   --enforce-eager --enable-prefix-caching \
   --kv-transfer-config '{
     "kv_connector": "OrbitKVConnector",
@@ -80,27 +110,55 @@ full blocks. For another Manager port, set `orbitkv.port` in
 `kv_connector_extra_config` or `ORBITKV_PORT`; use `orbitkv.bootstrap_socket` for
 an explicit socket. See [adapter configuration](adapters.md).
 
+### Verify a vLLM hit
+
+Wait for the engine to be ready, then send a deterministic multi-block prompt:
+
+```bash
+python3 - <<'PY' | curl --fail http://127.0.0.1:8000/v1/completions \
+  -H 'Content-Type: application/json' -d @-
+import json
+import os
+print(json.dumps({"model": os.environ["ORBITKV_MODEL"],
+                  "prompt": "A cache retains a repeated document. " * 128 + "Summarize it.",
+                  "max_tokens": 8, "temperature": 0}))
+PY
+```
+
+Follow the [save → engine restart → repeat check](#check-behavior-and-capacity)
+below using this exact request. **Next:** read [adapter contracts](adapters.md)
+before enabling other request modes, or add SSD with the Manager recipe above.
+
 ## SGLang
 
-Use Python 3.11+ for SGLang 0.5.22. Start with the Qwen3-8B dense
-DRAM/io_uring configuration in [compatibility](compatibility.md). Broader historical
-0.5.21 profiles retain their recorded versions.
+**Prerequisites:** complete the common setup above and use Python 3.11+ for
+SGLang 0.5.22. Start with the dense DRAM/io_uring configuration in
+[compatibility](compatibility.md); the released external linker supports Full/SWA,
+and recurrent startup is rejected. Historical results do not qualify this recipe.
 
-Use a separate official release environment:
+### Install and run SGLang
+
+Use a separate environment, with no other engine occupying the GPU:
 
 ```bash
 uv venv .venv/sglang-release --python 3.11
 uv pip install --python .venv/sglang-release/bin/python 'sglang==0.5.22' --torch-backend=cu130
-uv pip install --python .venv/sglang-release/bin/python /absolute/path/to/the-built-wheel.whl
+uv pip install --python .venv/sglang-release/bin/python "$ORBITKV_WHEEL"
 ```
 
-If no Manager is running, start one from this environment. Enable the linker with
-an explicit eager starting profile:
+If no Manager is running, start one from this environment in its own terminal:
+
+```bash
+.venv/sglang-release/bin/orbitkv-cache-manager \
+  --addr 127.0.0.1:50055 --http-addr 127.0.0.1:9091 --pool-size 8gb
+```
+
+In another terminal with `ORBITKV_MODEL` set, enable the eager linker profile:
 
 ```bash
 ORBITKV_SGLANG_ENDPOINT=unix:///tmp/orbitkv-50055.sock \
   .venv/sglang-release/bin/sglang serve \
-  --model-path /path/to/immutable-model --page-size 64 \
+  --model-path "$ORBITKV_MODEL" --page-size 64 --host 127.0.0.1 --port 30000 \
   --cuda-graph-backend-decode disabled --cuda-graph-backend-prefill disabled \
   --enable-unified-cache-external-linker --radix-cache-backend orbitkv
 ```
@@ -109,6 +167,23 @@ Both linker flags are required. SGLang owns the radix tree and GPU slots; OrbitK
 restores page-aligned state into those slots. Pending reads wait within their
 budget, then recompute on expiry. Full hybrid recovery requires separate model
 and lifecycle gates; native model output alone does not qualify external recovery.
+
+### Verify a SGLang hit
+
+Wait for the engine to be ready, then send the same deterministic prompt:
+
+```bash
+python3 - <<'PY' | curl --fail http://127.0.0.1:30000/generate \
+  -H 'Content-Type: application/json' -d @-
+import json
+print(json.dumps({"text": "A cache retains a repeated document. " * 128 + "Summarize it.",
+                  "sampling_params": {"max_new_tokens": 8, "temperature": 0}}))
+PY
+```
+
+Use the [save → engine restart → repeat check](#check-behavior-and-capacity)
+below. **Next:** consult [model limits](models.md) and [adapter contracts](adapters.md)
+before trying other layouts; configure capacity through the [Manager](server.md).
 
 Both adapters bind model artifacts, computation and layout to cache identity.
 Use immutable local artifacts or a full Hub revision. An explicitly verified
@@ -119,15 +194,28 @@ See [state identity](state-identity.md).
 
 ## Check behavior and capacity
 
+Use a fresh Manager and no other traffic for this control. Check health and note
+the starting [save/load counters](metrics.md#available-metrics):
+
 ```bash
 curl --fail http://127.0.0.1:9091/health
-curl --fail http://127.0.0.1:9091/metrics
+curl --fail http://127.0.0.1:9091/metrics | grep -E '^orbitkv_(save|load)_bytes_total'
 ```
 
-Keep the Manager alive, restart the engine, then repeat a multi-block prompt.
-Check that `orbitkv_save_bytes_total` rose before the restart and
-`orbitkv_load_bytes_total` rose on recovery. Compare output with a cold-control
-namespace. A same-process repeated prompt may hit only the engine's HBM.
+1. Send the request from your engine recipe. Wait for `orbitkv_save_bytes_total`
+   to increase, then wait for submitted saves with the command below.
+2. Stop only the engine normally, keep the Manager running, and restart the
+   exact same engine command with the same model, wheel and settings.
+3. Repeat the exact request. Require `orbitkv_load_bytes_total` to increase and
+   compare the greedy output with the first, cold request. Otherwise this check
+   has not established external reuse; inspect [metrics](metrics.md) and logs.
+
+```bash
+curl --fail -X POST http://127.0.0.1:9091/cache/sync
+```
+
+A repeated request without engine restart may hit only native HBM. These steps
+check one normal path; they do not qualify faults, arbitrary models or hardware.
 
 An accepted host save guarantees its submitted GPU reads completed, not that
 best-effort asynchronous SSD publication created a replica. Pages remain held

@@ -1,87 +1,97 @@
 export const docGroups = [
   {
     title: "Getting started",
-    description: "Install, select a supported profile, and verify an external hit.",
+    description: "Build a wheel, connect an engine, and verify an external hit.",
     items: [
       { slug: "goals", title: "Overview" },
-      { slug: "features", title: "Features" },
-      { slug: "single-node", title: "Installation & quickstart" },
-      { slug: "compatibility", title: "Compatibility & support" },
+      { slug: "features", title: "Key features" },
+      { slug: "single-node", title: "Installation & quickstarts" },
     ],
   },
   {
-    title: "Models & deployment",
-    description: "Choose a model, connect an engine, and share cache capacity.",
+    title: "Supported engines and models",
+    description: "Check release pins, implemented layouts and qualification limits.",
     items: [
-      { slug: "models", title: "Model recipes" },
-      { slug: "deployment", title: "Deployment recipes" },
-      { slug: "p2p", title: "Cross-host shared cache" },
-      { slug: "pd", title: "Native P/D composition" },
-      { slug: "storage-formats", title: "Storage formats & compression" },
-      { slug: "cache-policies", title: "Retention & SSD admission" },
+      { slug: "compatibility", title: "Engine support matrix" },
+      { slug: "models", title: "Model recipes & limits" },
     ],
   },
   {
-    title: "Operations",
-    description: "Configure capacity, inspect metrics, and diagnose failures.",
+    title: "Configuration",
+    description: "Configure the Manager and engine adapters; keep preparation opt-in.",
     items: [
       { slug: "server", title: "Manager configuration" },
-      { slug: "metrics", title: "Metrics & observability" },
+      { slug: "adapters", title: "Engine adapters: configuration & contracts" },
+      { slug: "request-preparation", title: "Request preparation" },
+      { slug: "queued-warming", title: "Queued-request warming" },
     ],
   },
   {
-    title: "Architecture",
-    description: "Understand identity, ownership, and storage paths.",
+    title: "Storage tiers",
+    description: "Choose DRAM retention, SSD file transfers and storage formats.",
     items: [
-      { slug: "architecture", title: "System architecture" },
-      { slug: "transport", title: "Process & network transport" },
-      { slug: "state-identity", title: "State identity" },
+      { slug: "cache-policies", title: "DRAM retention & SSD admission" },
+      { slug: "gds", title: "SSD / io_uring & GDS" },
+      { slug: "storage-formats", title: "Formats & compression" },
+    ],
+  },
+  {
+    title: "Distributed KV cache",
+    description: "Share compatible replicas through OrbiTE and authoritative grants.",
+    items: [
+      { slug: "p2p", title: "P2P deployment" },
+      { slug: "peer-control", title: "Peer control & source grants" },
+      { slug: "distributed-cache", title: "Distributed global index" },
+      { slug: "distributed-design", title: "Inventory & recovery design" },
+    ],
+  },
+  {
+    title: "Disaggregated prefill",
+    description: "Compose cache reuse with the inference engine's native P/D transport.",
+    items: [{ slug: "pd", title: "Prefill/decode composition" }],
+  },
+  {
+    title: "Production",
+    description: "Plan deployment and operations; these guides do not imply qualification.",
+    items: [
+      { slug: "deployment", title: "Deployment requirements & recipes" },
+      { slug: "metrics", title: "Metrics & observability" },
+      { slug: "fault-qualification", title: "Fault behavior & qualification" },
+      { slug: "shared-cache-qualification", title: "Shared-cache qualification" },
+      { slug: "releases", title: "Release artifacts & installation gates" },
     ],
   },
   {
     title: "Benchmarks",
-    description: "Read scoped results and reproduce matched measurements.",
+    description: "Read historical results with their limits and reproduce matched measurements.",
     items: [
-      { slug: "performance", title: "Performance overview" },
+      { slug: "performance", title: "Performance & historical results" },
       { slug: "benchmark-evidence", title: "Methodology & evidence" },
-      { slug: "kernel-optimization", title: "CUDA kernel work" },
+      { slug: "kernel-optimization", title: "CUDA kernel measurements" },
       { slug: "ssd-performance", title: "SSD recovery methodology" },
+      { slug: "distributed-comparison", title: "Distributed cache comparisons" },
     ],
   },
   {
-    title: "Development",
-    description: "Contribute against the single execution queue.",
+    title: "Developer guide",
+    description: "Follow ownership and state contracts, then the single execution queue. Adapter contracts are under Configuration.",
     items: [
-      { slug: "contributing", title: "Contributor guide" },
-      { slug: "completion-plan", title: "Completion plan" },
-      { slug: "adapters", title: "Engine adapter contracts" },
+      { slug: "architecture", title: "System architecture" },
+      { slug: "transport", title: "Transport & completion" },
+      { slug: "engine-local-restore", title: "Engine-local restore" },
+      { slug: "state-identity", title: "State identity" },
+      { slug: "state-planning", title: "Demand & transfer planning" },
       { slug: "engine-release-audit", title: "Released interface audit" },
-      { slug: "releases", title: "Package releases" },
+      { slug: "vllm-request-state-machine", title: "vLLM request lifecycle" },
+      { slug: "hybrid-recovery", title: "Hybrid recovery contracts" },
+      { slug: "hybrid-cache-design", title: "Hybrid cache design (unexecuted)" },
+      { slug: "contributing", title: "Contributing" },
+      { slug: "completion-plan", title: "Completion plan" },
     ],
   },
 ];
 
-// Keep stable reference routes and search entries outside the primary sidebar.
-const referencePages = [
-  { slug: "hybrid-recovery", title: "Hybrid recovery contracts", group: "Reference" },
-  { slug: "hybrid-cache-design", title: "Hybrid cache design (proposed)", group: "Reference" },
-  { slug: "gds", title: "GPU storage & GDS limits", group: "Reference" },
-  { slug: "fault-qualification", title: "Fault qualification", group: "Reference" },
-  { slug: "engine-local-restore", title: "Engine-local restore ownership", group: "Reference" },
-  { slug: "state-planning", title: "Demand & transfer planning", group: "Reference" },
-  { slug: "queued-warming", title: "Queued-request warming", group: "Reference" },
-  { slug: "request-preparation", title: "Consumer-owned preparation", group: "Reference" },
-  { slug: "vllm-request-state-machine", title: "vLLM request lifecycle", group: "Reference" },
-  { slug: "peer-control", title: "Peer control boundary", group: "Reference" },
-  { slug: "shared-cache-qualification", title: "Shared-cache qualification", group: "Reference" },
-  { slug: "distributed-cache", title: "Distributed global index", group: "Reference" },
-  { slug: "distributed-design", title: "Inventory and recovery design", group: "Reference" },
-  { slug: "distributed-comparison", title: "LMCache, FlexKV & Mooncake comparison", group: "Reference" },
-];
-
-export const docPages = [
-  ...docGroups.flatMap((group) =>
-    group.items.map((item) => ({ ...item, group: group.title })),
-  ),
-  ...referencePages,
-];
+// Every canonical document has one group; sidebar, index and search share this map.
+export const docPages = docGroups.flatMap((group) =>
+  group.items.map((item) => ({ ...item, group: group.title })),
+);

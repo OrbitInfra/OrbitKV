@@ -32,10 +32,10 @@ import { layers, localUrl } from "../data/site";
           alt="Engine-owned HBM and raw DRAM Restore; Manager-owned Publish, SSD and codecs. Peer grants control OrbiTE READs; inventory streams feed local indexes and etcd holds membership. Native engine backends own P/D."
         />
         <figcaption>
-          Single-node recovery is validated. The multi-node path is
-          experimental; each Manager maintains explicitly covered local inventory views. A shared API
-          does not imply interchangeable KV layouts. Declared page demand is
-          implemented; general lifetime and physical planning remain future work.
+          Implemented ownership paths, not a qualification claim. OrbiTE owns
+          local, peer and file byte movement; each Manager owns its cache and
+          explicitly covered inventory views. A shared API does not make KV
+          layouts interchangeable. <a href={localUrl("/docs/compatibility/")}>All current GPU/RDMA/GDS and installed profiles are unqualified.</a>
         </figcaption>
       </figure>
       <div class="layer-grid">
@@ -48,11 +48,10 @@ import { layers, localUrl } from "../data/site";
             and execute raw DRAM restores through imported payload arenas.
             Manager workers retain Publish, SSD and encoded restores.
             Standalone deployment needs neither etcd nor peer gRPC. Configure
-            the SSD path and capacity; automatic selection tries native cuFile
-            and falls back to io_uring without engine-side backend settings.
-            Rust submits cuFile reads and writes through two bounded GPU slots,
-            allowing demand reads to progress alongside writeback. Native GDS
-            performance and multi-engine container qualification remain separate.
+            the SSD path and capacity. OrbiTE consumes file layout vectors and
+            owns io_uring staging or explicitly configured GDS. OrbitKV retains
+            the index, extents and leases; no native SSD I/O fallback remains.
+            See <a href={localUrl("/docs/gds/")}>file transport limits</a>.
           </p>
         </article>
         <article class="layer">
@@ -61,9 +60,10 @@ import { layers, localUrl } from "../data/site";
           <p>
             Managers discover compatible replicas in complete local global indexes,
             synchronized through bounded inventory streams. etcd maintains leased
-            membership; peer gRPC authorizes exact source replicas; OrbiTE READ moves their bytes into the consumer Manager's
-            host memory before GPU restore. Scoped dense RDMA serving passes; HA and
-            broader topology remain separate gates.
+            membership; peer gRPC authorizes exact source replicas. OrbiTE READ
+            targets GPU memory for restore and DRAM for cache fills. The engine
+            owns staging. <a href={localUrl("/docs/shared-cache-qualification/")}>Historical TENT peer results</a>{" "}
+            do not qualify OrbiTE; current hardware and HA gates remain open.
           </p>
         </article>
         <article class="layer">
@@ -123,9 +123,10 @@ import { layers, localUrl } from "../data/site";
         Shared page requirements remove duplicate adapter arithmetic. They do
         not predict future tokens, analyze arbitrary model graphs or authorize
         reclamation. Automatic hybrid warming remains disabled. Synthetic GPU-byte
-        gates validate declared layouts; complete released hybrid model recovery
-        and its latency benefit remain unqualified. Ordinary recovery and request preparation have separate
-        Qwen3-8B performance reports.
+        controls alone do not qualify complete released hybrid recovery or its
+        latency benefit. <a href={localUrl("/docs/performance/")}>Historical TENT performance</a>{" "}
+        remains tied to its original revisions. Current OrbiTE hardware paths
+        require fresh qualification.
       </p>
       <a class="text-link" href={localUrl("/docs/architecture/")}>
         Read the architecture and ownership contracts →
@@ -143,21 +144,18 @@ import { layers, localUrl } from "../data/site";
       </div>
     </section>
     <section class="detail-section">
-      <h2>What comes next</h2>
+      <h2>Contracts and future work</h2>
       <p class="reading-copy">
         Rust records bounded, opt-in route costs. Experimental selectors cover
         matching peer owners and equal-coverage host routes; a unified optimizer
-        across cache restoration and P/D handoff remains planned. Bounded raw-plan
-        partitioning and per-layer CUDA dependencies pass single-GPU gates,
-        including graph replay. Manager codec/SSD overlap and earlier publication
-        across fragmented parts remain execution work.
+        across cache restoration and P/D handoff remains planned. The completion
+        plan records implementation status and qualification; a design or CPU
+        control does not authorize a broader serving profile.
       </p>
       <p class="reading-copy">
-        Bounded native P/D model controls do not close transfer-fault gates.
-        Cross-host P/D and independent failure domains still need qualification.
-        Single-node preparation and stopping controls are implemented and stay
-        opt-in after the first repeated measurements. Global-index scale, metadata churn and cross-host failure behavior
-        require qualification before production claims.
+        Native P/D fault behavior, independent failure domains and current
+        OrbiTE hardware profiles remain unqualified. Preparation stays opt-in.
+        The hybrid-attention design is an unexecuted experiment plan.
         General lifetime analysis, cross-engine byte conversion and
         KV-aware routing remain future work.
       </p>

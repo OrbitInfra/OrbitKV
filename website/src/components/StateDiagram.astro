@@ -1,5 +1,8 @@
+---
+import { localUrl } from "../data/site";
+---
 <figure class="state-diagram">
-  <div class="diagram-label">Current single-node path</div>
+  <div class="diagram-label">Implemented ownership boundaries</div>
   <div class="model-sheet">
     <span class="diagram-label">Serving runtime</span>
     <strong>vLLM or SGLang</strong>
@@ -55,8 +58,15 @@
     <path d="M95 0V20H305V0M200 20V42m-5-6 5 5 5-5" />
   </svg>
   <div class="runtime-sheet">
-    <strong>CACHE MANAGER.</strong>
-    <span class="diagram-label">Pinned DRAM · SSD</span>
+    <strong>ORBITKV</strong>
+    <span class="diagram-label">Manager + native client<br />Identity · placement · leases</span>
   </div>
-  <figcaption>Remote cache fetch via OrbiTE is experimental.</figcaption>
+  <div class="runtime-sheet transfer-sheet">
+    <strong>OrbiTE</strong>
+    <span class="diagram-label">Local copies · SSD · peers</span>
+  </div>
+  <figcaption>
+    OrbiTE moves bytes; OrbitKV owns cache semantics.{" "}
+    <a href={localUrl("/docs/compatibility/")}>GPU/RDMA/GDS and installed profiles are unqualified.</a>
+  </figcaption>
 </figure>
