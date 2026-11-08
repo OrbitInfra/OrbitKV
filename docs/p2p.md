@@ -74,7 +74,7 @@ sequenceDiagram
     participant A as Source Manager
     participant E as etcd quorum
     participant B as Requester Manager
-    A->>A: Seal DRAM or commit SSD; update inventory
+    A->>A: Seal DRAM or commit SSD, then update inventory
     A-->>E: Leased membership only
     E-->>B: Member identity / endpoint
     A-->>B: Bounded inventory snapshot / delta

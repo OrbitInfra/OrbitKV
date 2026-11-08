@@ -470,6 +470,35 @@
     font-size: 0.6rem;
     color: var(--muted);
   }
+  .transfer-sheet {
+    margin-top: 0.5rem;
+    border-color: var(--accent);
+    background: var(--surface);
+  }
+  .evidence-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border-top: 1px solid var(--line);
+  }
+  .evidence-strip a {
+    display: grid;
+    align-content: start;
+    gap: 0.45rem;
+    padding: 1.5rem 1.25rem;
+    border-left: 1px solid var(--line);
+    text-decoration: none;
+  }
+  .evidence-strip a:first-child {
+    padding-left: 0;
+    border-left: 0;
+  }
+  .evidence-strip .eyebrow {
+    margin: 0;
+  }
+  .evidence-strip a > span:last-child {
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
   .state-diagram figcaption {
     margin-top: 1.25rem;
     color: var(--muted);
@@ -577,6 +606,14 @@
   }
   .code-panel pre {
     padding: 1.5rem 1.25rem;
+  }
+  .code-notes {
+    padding: 1rem 1.25rem;
+    border-top: 1px solid var(--line);
+    font-size: 0.8rem;
+  }
+  .code-notes p + p {
+    margin-top: 0.75rem;
   }
   .definition-list > div {
     display: grid;
@@ -752,6 +789,15 @@
     .layer-grid {
       grid-template-columns: 1fr;
     }
+    .evidence-strip {
+      grid-template-columns: 1fr;
+    }
+    .evidence-strip a,
+    .evidence-strip a:first-child {
+      padding: 1.1rem 0;
+      border-left: 0;
+      border-bottom: 1px solid var(--line);
+    }
     .layer,
     .layer:first-child,
     .layer:last-child {
@@ -815,6 +861,9 @@
     }
   }
   @media (max-width: 25rem) {
+    .hero h1 {
+      font-size: clamp(2.6rem, 12vw, 3.5rem);
+    }
     .hero-actions {
       gap: 0.9rem;
     }

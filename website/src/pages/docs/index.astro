@@ -48,15 +48,15 @@ import { localUrl, sourceUrl } from "../../data/site";
   <div class="doc-callout">
     <strong>Current scope</strong>
     <p>
-      The pinned official engines are vLLM 0.31.0 and SGLang 0.5.22.
-      Start with dense single-rank recovery. OrbiTE is the only transfer engine;
-      current GPU/RDMA/GDS and installed profiles need hardware re-qualification.
-      Earlier engine and backend results retain their original scope.{" "}
-      <a href={localUrl("/docs/compatibility/")}>Check compatibility and support.</a>
+      The <a href={localUrl("/docs/compatibility/#official-engine-releases")}>pinned releases are vLLM 0.31.0 and SGLang 0.5.22</a>.
+      OrbiTE is the only transfer engine. GPU, RDMA, GDS and installed profiles
+      are <strong>unqualified</strong>; CPU/TCP and io_uring controls are CI evidence.{" "}
+      <a href={localUrl("/docs/performance/")}>Historical TENT measurements</a> retain
+      their original scope and do not qualify OrbiTE.
     </p>
   </div>
   {docGroups.map((group) => (
-    <section>
+    <section id={group.title.toLowerCase().replace(/[^a-z]+/g, "-")}>
       <h2>{group.title}</h2>
       <p>{group.description}</p>
       <ul>

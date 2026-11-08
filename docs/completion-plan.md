@@ -1,9 +1,15 @@
 # OrbitKV completion plan
 
-**Current focus: hybrid-attention design and experiment-plan review only.**
-Cleanup C1–C4 is accepted through [PR #327](https://github.com/OrbitInfra/OrbitKV/pull/327),
-merge `37722fec`. The [proposed hybrid cache work](hybrid-cache-design.md) is a
-future S7 stage; implementation and hardware experiments have not started.
+**Current focus: README, documentation and website alignment, awaiting review.**
+Cleanup C1–C4 and the [hybrid design](hybrid-cache-design.md) are accepted through
+[PR #328](https://github.com/OrbitInfra/OrbitKV/pull/328), merge `5dc65a17`.
+Hybrid implementation and hardware experiments have not started.
+
+**Presentation decision, 2026-11-07:** use [LMCache](https://github.com/LMCache/LMCache)
+and [its docs](https://docs.lmcache.ai/) as content/navigation references, and
+[kern](https://kern-baa.pages.dev/) ([website source](https://github.com/pegainfer-project/kern/tree/master/website))
+as a layout-pattern reference. Keep OrbitKV's palette, banner and identity;
+copy no text, images, logos or code, and imply no affiliation.
 
 **Maintainer decision, 2026-11-07:** OrbiTE is the sole transfer engine before
 hardware re-qualification. The TENT implementation and engine-family/default
@@ -43,9 +49,9 @@ The first release profile is dense TP=1/PP=1 on vLLM 0.31.0 and SGLang 0.5.22,
 with DRAM, io_uring SSD and the already accepted scoped peer profiles, all
 re-qualified on the current path before publication.
 
-1. **Current review:** agree on the [hybrid cache design and experiment plan](hybrid-cache-design.md),
-   including released-engine blockers, matched baselines and kill criteria.
-   This authorizes no runtime support or qualification claim.
+1. **Current review:** align README order, documentation groups and website
+   presentation with the references above. Preserve historical verdicts and
+   label every current hardware/installed profile unqualified.
 2. **Reliable consumed path:** finish required ownership contracts and qualify
    bytes, cold/partial/full hits, cancellation, bounds and normal shutdown.
    Retaining unknown work is not eventual fault reclamation.
@@ -319,8 +325,9 @@ retention/transfer experiments on SGLang first, then recurrent checkpoints and
 ordering after a complete released engine contract exists. Sparse indexer-driven
 loading remains later work. All experiments are **unexecuted**; current model
 guards, ownership/drain rules and qualification verdicts remain unchanged.
-Review the design before authorizing implementation, and apply its measured
-gain/kill gates without treating existing minimal-range recovery as new work.
+The design is accepted in #328; implementation still needs separate authorization.
+Apply its measured gain/kill gates without treating existing minimal-range
+recovery as new work.
 
 ## S8 — Product organization, final artifacts and release
 

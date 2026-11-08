@@ -9,7 +9,7 @@ export const navigation = [
   { label: "Overview", href: "/" },
   { label: "Docs", href: "/docs/" },
   { label: "Architecture", href: "/architecture/" },
-  { label: "Integration", href: "/integration/" },
+  { label: "Evidence", href: "/docs/performance/" },
 ];
 
 export const layers = [
@@ -17,7 +17,7 @@ export const layers = [
     name: "orbitkv-state",
     role: "Name the state.",
     detail:
-      "Versioned model/storage keys and compiled rules for demanded page ranges and leased-evidence validation, consumed by engine adapters within their qualified model profiles.",
+      "Versioned model/storage keys and compiled rules for demanded page ranges and leased-evidence validation, within the supported adapter contracts.",
     path: "crates/orbitkv-state/src/lib.rs",
   },
   {
@@ -31,7 +31,7 @@ export const layers = [
     name: "orbitkv-core",
     role: "Own the blocks.",
     detail:
-      "KV blocks, leases, tiers, batched GPU codecs with reusable workspace, CPU SIMD, and encoded cuFile storage.",
+      "KV blocks, leases, placement, extents and bounded GPU codec compute. OrbiTE owns byte movement between GPU, DRAM, SSD and peers.",
     path: "crates/orbitkv-core/src/lib.rs",
   },
   {
@@ -42,11 +42,11 @@ export const layers = [
     path: "crates/orbitkv-catalog/src/lib.rs",
   },
   {
-    name: "orbitkv-transfer",
+    name: "OrbiTE",
     role: "Move the bytes.",
     detail:
-      "Pinned OrbiTE with registered-region ownership and terminal batch drain for shared-cache transfers between Managers.",
-    path: "crates/orbitkv-transfer/README.md",
+      "Local stream-ordered copies, peer READs and file vectors, with retained registrations and physical completion receipts.",
+    path: "crates/orbitkv-core/src/transfer_engine.rs",
   },
   {
     name: "Cache Manager",
