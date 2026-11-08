@@ -1,9 +1,13 @@
 # OrbitKV completion plan
 
-**Current focus: OrbiTE 0.1.0-beta.1 source pin and API adaptation, awaiting review.**
-Presentation alignment is merged in [PR #329](https://github.com/OrbitInfra/OrbitKV/pull/329),
-commit `34794f4d`. The [hybrid design](hybrid-cache-design.md) is published;
-implementation and hardware experiments have not started.
+**Current focus: [design v2](design-v2.md), a design-only proposal awaiting review.**
+OrbiTE beta.1 source adaptation is merged in
+[PR #330](https://github.com/OrbitInfra/OrbitKV/pull/330), `d54da80e`;
+internal Rust crates are unpublishable following
+[PR #331](https://github.com/OrbitInfra/OrbitKV/pull/331), `87991239`.
+The 2026-11-08 maintainer direction is a state compiler, versioned agent state
+trees and attention-guided paging. A trace-driven simulator follows in a separate
+PR after design review; implementation and hardware experiments have not started.
 
 **Presentation decision, 2026-11-07:** use [LMCache](https://github.com/LMCache/LMCache)
 and [its docs](https://docs.lmcache.ai/) as content/navigation references, and
@@ -49,15 +53,16 @@ The first release profile is dense TP=1/PP=1 on vLLM 0.31.0 and SGLang 0.5.22,
 with DRAM, io_uring SSD and the already accepted scoped peer profiles, all
 re-qualified on the current path before publication.
 
-1. **Current review:** pin OrbiTE beta.1 source at `f0556448`, consume its public
-   non-exhaustive API and preserve grants, bounded admission and physical-drain
-   receipts. This dependency upgrade does not qualify hardware or installed profiles.
-2. **Reliable consumed path:** finish required ownership contracts and qualify
+1. **Current review:** [design v2](design-v2.md), including verified model schemas,
+   upstream contracts, lifetime invariants and falsifiable experiment gates.
+2. **Next PR, after review:** a bounded trace-driven simulator. No production
+   policy or hardware claim; use the design's schema, workload and ablation plan.
+3. **Reliable consumed path:** finish required ownership contracts and qualify
    bytes, cold/partial/full hits, cancellation, bounds and normal shutdown.
    Retaining unknown work is not eventual fault reclamation.
-3. **Measured serving benefit:** compare native caching, OrbitKV and applicable
+4. **Measured serving benefit:** compare native caching, OrbitKV and applicable
    LMCache/HiCache profiles with equal inputs/budgets and regression controls.
-4. **Installed release:** follow S8's artifact and publication gates. Additional
+5. **Installed release:** follow S8's artifact and publication gates. Additional
    hybrid, P/D-fault and rank profiles need their own scope and evidence.
 
 Independent healthy-path performance/package work may proceed while a distinct
@@ -318,16 +323,20 @@ window/sink and recurrent/hybrid models. Demonstrate measured state reduction.
 Recovery validation alone is not this compiler; unknown auxiliary state remains
 unsupported.
 
-### Future stage: hybrid cache experiments
+### Future stage: design v2
 
-The [design and experiment plan](hybrid-cache-design.md) proposes Full + SWA
-retention/transfer experiments on SGLang first, then recurrent checkpoints and
-ordering after a complete released engine contract exists. Sparse indexer-driven
-loading remains later work. All experiments are **unexecuted**; current model
-guards, ownership/drain rules and qualification verdicts remain unchanged.
-The design is accepted in #328; implementation still needs separate authorization.
-Apply its measured gain/kill gates without treating existing minimal-range
-recovery as new work.
+[State compiler, versioned state trees and attention-guided paging](design-v2.md)
+proposes the next S6/S7 direction: engine-derived component/dependency IR,
+cost-based materialization and recomputation, agent forks/JIT restore, and sparse
+paging through upstream vLLM contracts. The safety foundation preserves existing
+owners, grants, epochs and physical-drain receipts; OrbiTE remains the only byte
+path. All experiments are **unexecuted** and current model guards remain in force.
+Review the design first, then the hardware-free simulator, before production work.
+
+The [hybrid-cache proposal](hybrid-cache-design.md), reviewed in
+[PR #328](https://github.com/OrbitInfra/OrbitKV/pull/328), stays unchanged as
+historical design context. Design v2 supersedes its experiment sequence; it does
+not upgrade any qualification or claim existing minimal-range recovery as new.
 
 ## S8 — Product organization, final artifacts and release
 

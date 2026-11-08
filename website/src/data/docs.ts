@@ -85,6 +85,7 @@ export const docGroups = [
       { slug: "vllm-request-state-machine", title: "vLLM request lifecycle" },
       { slug: "hybrid-recovery", title: "Hybrid recovery contracts" },
       { slug: "hybrid-cache-design", title: "Hybrid cache design (unexecuted)" },
+      { slug: "design-v2", title: "Design v2: state compiler & agent cache (proposal)" },
       { slug: "contributing", title: "Contributing" },
       { slug: "completion-plan", title: "Completion plan" },
     ],
