@@ -11,6 +11,9 @@ how to validate a candidate without uploading it to PyPI.
 
 ## Packages
 
+The `orbitkv-llm` PyPI wheel is OrbitKV's only distribution. All Rust crates,
+including the Python extension crate, are internal and are not published.
+
 | Distribution | Runtime | Release targets |
 | --- | --- | --- |
 | `orbitkv-llm` | CUDA 13 | Linux x86_64 and aarch64, CPython 3.10–3.14 |
