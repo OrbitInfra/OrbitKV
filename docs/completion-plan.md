@@ -1,9 +1,9 @@
 # OrbitKV completion plan
 
-**Current focus: README, documentation and website alignment, awaiting review.**
-Cleanup C1–C4 and the [hybrid design](hybrid-cache-design.md) are accepted through
-[PR #328](https://github.com/OrbitInfra/OrbitKV/pull/328), merge `5dc65a17`.
-Hybrid implementation and hardware experiments have not started.
+**Current focus: OrbiTE 0.1.0-beta.1 source pin and API adaptation, awaiting review.**
+Presentation alignment is merged in [PR #329](https://github.com/OrbitInfra/OrbitKV/pull/329),
+commit `34794f4d`. The [hybrid design](hybrid-cache-design.md) is published;
+implementation and hardware experiments have not started.
 
 **Presentation decision, 2026-11-07:** use [LMCache](https://github.com/LMCache/LMCache)
 and [its docs](https://docs.lmcache.ai/) as content/navigation references, and
@@ -49,9 +49,9 @@ The first release profile is dense TP=1/PP=1 on vLLM 0.31.0 and SGLang 0.5.22,
 with DRAM, io_uring SSD and the already accepted scoped peer profiles, all
 re-qualified on the current path before publication.
 
-1. **Current review:** align README order, documentation groups and website
-   presentation with the references above. Preserve historical verdicts and
-   label every current hardware/installed profile unqualified.
+1. **Current review:** pin OrbiTE beta.1 source at `f0556448`, consume its public
+   non-exhaustive API and preserve grants, bounded admission and physical-drain
+   receipts. This dependency upgrade does not qualify hardware or installed profiles.
 2. **Reliable consumed path:** finish required ownership contracts and qualify
    bytes, cold/partial/full hits, cancellation, bounds and normal shutdown.
    Retaining unknown work is not eventual fault reclamation.

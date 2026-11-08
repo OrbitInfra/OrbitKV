@@ -751,19 +751,17 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         codec: cli.storage_codec,
         codec_budget: cli.storage_codec_budget,
         transfer_transport: cli.transfer_transport,
-        orbite_rdma: cli
-            .orbite_rdma_device
-            .clone()
-            .map(|device| orbitkv_core::OrbiteRdmaConfig {
-                cuda_memory: if cli.orbite_rdma_gpu_direct {
-                    orbitkv_core::OrbiteRdmaCudaMemory::Direct
-                } else {
-                    orbitkv_core::OrbiteRdmaCudaMemory::Staged
-                },
-                port: Some(cli.orbite_rdma_port),
-                gid_index: Some(cli.orbite_rdma_gid_index),
-                ..orbitkv_core::OrbiteRdmaConfig::new(device)
-            }),
+        orbite_rdma: cli.orbite_rdma_device.clone().map(|device| {
+            let mut config = orbitkv_core::OrbiteRdmaConfig::new(device);
+            config.cuda_memory = if cli.orbite_rdma_gpu_direct {
+                orbitkv_core::OrbiteRdmaCudaMemory::Direct
+            } else {
+                orbitkv_core::OrbiteRdmaCudaMemory::Staged
+            };
+            config.port = Some(cli.orbite_rdma_port);
+            config.gid_index = Some(cli.orbite_rdma_gid_index);
+            config
+        }),
         enable_numa_affinity: !cli.disable_numa_affinity,
         blockwise_alloc: cli.blockwise_alloc,
         transfer_lock_timeout: Duration::from_secs(cli.transfer_lock_timeout_secs),

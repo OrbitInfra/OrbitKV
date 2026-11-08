@@ -32,16 +32,14 @@ impl Copies {
             .engine
             .resolve_local_address(device, 1)
             .map_err(transfer_error)?;
-        let config = LocalCopyConfig {
-            backend: match mode {
-                TransferMode::Direct => LocalCopyBackend::Dma,
-                TransferMode::Kernel => LocalCopyBackend::Kernel,
-            },
-            max_descriptors: DESCRIPTORS,
-            max_inflight: 8,
-            max_bytes: BYTES,
-            ..Default::default()
+        let mut config = LocalCopyConfig::default();
+        config.backend = match mode {
+            TransferMode::Direct => LocalCopyBackend::Dma,
+            TransferMode::Kernel => LocalCopyBackend::Kernel,
         };
+        config.max_descriptors = DESCRIPTORS;
+        config.max_inflight = 8;
+        config.max_bytes = BYTES;
         // SAFETY: registered tensor retains its exact context. OrbiTE retains the
         // caller stream and anchor through every completion and failed cleanup.
         let bound = unsafe {

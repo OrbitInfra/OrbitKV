@@ -47,7 +47,7 @@ dashmap.workspace = true
 smallvec.workspace = true
 orbitkv-proto = { path = "../orbitkv-proto" }
 mea.workspace = true
-orbite = { git = "https://github.com/OrbitInfra/OrbiTE", rev = "1312e9b180ec9029535f8c2fb751d57c4da93b76", default-features = false, optional = true }
+orbite = { git = "https://github.com/OrbitInfra/OrbiTE", rev = "f05564482a40f4cd19589345e260d35417eff700", default-features = false, optional = true }
 
 [dev-dependencies]
 rustix.workspace = true

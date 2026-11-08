@@ -188,11 +188,9 @@ fn peer_protocol_and_granted_epoch_are_preserved_across_source_restart() {
         .unwrap();
     source.close_source(Duration::from_secs(2)).unwrap();
     drop(source);
-    let replacement = NativeEngine::new(EngineConfig {
-        bind_addr: endpoint,
-        ..EngineConfig::default()
-    })
-    .unwrap();
+    let mut config = EngineConfig::default();
+    config.bind_addr = endpoint;
+    let replacement = NativeEngine::new(config).unwrap();
     let fresh_epoch = replacement.source_epoch().to_string();
     assert_ne!(granted_epoch, fresh_epoch);
     assert!(matches!(
@@ -380,11 +378,9 @@ fn rdma_configuration_and_payload_namespaces_are_explicit() {
         .unwrap();
     source.close_source(Duration::from_secs(2)).unwrap();
     drop(source);
-    let replacement = NativeEngine::new(EngineConfig {
-        bind_addr: endpoint,
-        ..EngineConfig::default()
-    })
-    .unwrap();
+    let mut config = EngineConfig::default();
+    config.bind_addr = endpoint;
+    let replacement = NativeEngine::new(config).unwrap();
     assert!(
         matches!(requester.open_peer(&named, &old_epoch, Instant::now() + Duration::from_secs(2)), Err(error) if error.kind == ErrorKind::EpochMismatch)
     );
@@ -487,28 +483,25 @@ fn kv_options_drive_unspec_policy_on_real_tcp() {
     ];
     let mut policy = cases
         .iter()
-        .map(|(_, intent, priority)| orbite::SelectionPolicy {
-            name: format!("{intent:?}"),
-            intent_type: Some(*intent),
-            priority: Some(*priority),
-            transports: vec![Transport::Tcp],
-            ..Default::default()
+        .map(|(_, intent, priority)| {
+            let mut policy = orbite::SelectionPolicy::default();
+            policy.name = format!("{intent:?}");
+            policy.intent_type = Some(*intent);
+            policy.priority = Some(*priority);
+            policy.transports = vec![Transport::Tcp];
+            policy
         })
         .collect::<Vec<_>>();
     // A dropped or wrong scheduling field selects an unavailable route.
-    policy.push(orbite::SelectionPolicy {
-        name: "reject-unmapped".into(),
-        transports: vec![Transport::Rdma],
-        ..Default::default()
-    });
-    let requester = NativeEngine::new(EngineConfig {
-        selector: Some(orbite::TransportSelectorConfig {
-            policy,
-            ..Default::default()
-        }),
-        ..Default::default()
-    })
-    .unwrap();
+    let mut reject = orbite::SelectionPolicy::default();
+    reject.name = "reject-unmapped".into();
+    reject.transports = vec![Transport::Rdma];
+    policy.push(reject);
+    let mut selector = orbite::TransportSelectorConfig::default();
+    selector.policy = policy;
+    let mut config = EngineConfig::default();
+    config.selector = Some(selector);
+    let requester = NativeEngine::new(config).unwrap();
     let peer = requester
         .open_segment(
             source.endpoint(),

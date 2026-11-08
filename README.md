@@ -131,7 +131,7 @@ measurements retain their original revisions and do not establish current suppor
 ## Updates
 
 - **2026-11-07:** [OrbiTE becomes the sole transfer engine](https://github.com/OrbitInfra/OrbitKV/pull/326); hardware re-qualification remains open.
-- **2026-11-07:** [Hybrid cache design accepted](https://github.com/OrbitInfra/OrbitKV/pull/328); experiments are [unexecuted](docs/hybrid-cache-design.md).
+- **2026-11-07:** [Hybrid cache design published](https://github.com/OrbitInfra/OrbitKV/pull/328); experiments are [unexecuted](docs/hybrid-cache-design.md).
 
 ## Contributing
 

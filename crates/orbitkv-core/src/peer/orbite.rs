@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use orbite::{
-    EngineConfig, Error, Permission, RegisteredMemory, TransferEngine as NativeEngine, TransferOp,
-    TransferRequest, Transport,
+    BatchState, EngineConfig, Error, Permission, RegisteredMemory, TransferEngine as NativeEngine,
+    TransferOp, TransferRequest, Transport,
 };
 
 use crate::memory::pool::PinnedAllocation;
@@ -144,58 +144,54 @@ impl TransferEngine {
         if host.is_unspecified() {
             return Err("OrbiTE requires a concrete advertised IP".into());
         }
-        let mut policy = vec![orbite::SelectionPolicy {
-            transports: Vec::new(),
-            ..Default::default()
-        }];
+        let mut policy = vec![orbite::SelectionPolicy::default()];
         if storage.is_some() {
-            policy.push(orbite::SelectionPolicy {
-                name: "ssd".into(),
-                segment_type: orbite::SegmentType::File,
-                transports: vec![Transport::IoUring, Transport::Gds],
-                ..Default::default()
-            });
+            let mut file_policy = orbite::SelectionPolicy::default();
+            file_policy.name = "ssd".into();
+            file_policy.segment_type = orbite::SegmentType::File;
+            file_policy.transports = vec![Transport::IoUring, Transport::Gds];
+            policy.push(file_policy);
         }
         if storage.is_some_and(|s| s.backend == crate::SsdBackend::Cufile)
             && !cfg!(feature = "orbite-gds")
         {
             return Err("OrbiTE cuFile requires the orbite-gds build feature".into());
         }
-        let config = EngineConfig {
-            #[cfg(feature = "orbite-rdma")]
-            rdma,
-            bind_addr: SocketAddr::new(host, 0),
-            max_registered_regions: 4096,
-            max_registered_bytes: usize::try_from(pool_bytes)
-                .map_err(|_| "pool exceeds addressable bytes")?
-                .checked_add(2 << 30) // Persistent GPU registrations share this headroom.
-                .ok_or("registration budget overflow")?,
-            max_batch_requests: MAX_BATCH_REQUESTS,
-            max_inflight_batches: 32,
-            max_inflight_bytes: MAX_BATCH_BYTES,
-            max_transfer_bytes: MAX_BATCH_BYTES,
-            max_allocated_batches: 32,
-            max_allocated_requests: 32 * MAX_BATCH_REQUESTS,
-            max_file_segments: if storage.is_some() { 256 } else { 0 },
-            #[cfg(feature = "orbite-gds")]
-            gds_require_native: true,
-            #[cfg(feature = "orbite-gds")]
-            gds_enabled: storage.is_some_and(|s| s.backend == crate::SsdBackend::Cufile),
-            max_failover_attempts: 0,
-            enable_auto_failover_on_poll: false,
-            tcp: payload != Transport::Rdma,
-            selector: Some(orbite::TransportSelectorConfig {
-                policy,
-                ..Default::default()
-            }),
-            // Auto selection uses only enabled providers; extra transports stay opt-in.
-            hp_tcp: Default::default(),
-            shm: Default::default(),
-            nvlink: false,
-            mnnvl: None,
-            remote_staging: false,
-            ..EngineConfig::default()
-        };
+        let mut selector = orbite::TransportSelectorConfig::default();
+        selector.policy = policy;
+        let mut config = EngineConfig::default();
+        #[cfg(feature = "orbite-rdma")]
+        {
+            config.rdma = rdma;
+        }
+        config.bind_addr = SocketAddr::new(host, 0);
+        config.max_registered_regions = 4096;
+        config.max_registered_bytes = usize::try_from(pool_bytes)
+            .map_err(|_| "pool exceeds addressable bytes")?
+            .checked_add(2 << 30) // Persistent GPU registrations share this headroom.
+            .ok_or("registration budget overflow")?;
+        config.max_batch_requests = MAX_BATCH_REQUESTS;
+        config.max_inflight_batches = 32;
+        config.max_inflight_bytes = MAX_BATCH_BYTES;
+        config.max_transfer_bytes = MAX_BATCH_BYTES;
+        config.max_allocated_batches = 32;
+        config.max_allocated_requests = 32 * MAX_BATCH_REQUESTS;
+        config.max_file_segments = if storage.is_some() { 256 } else { 0 };
+        #[cfg(feature = "orbite-gds")]
+        {
+            config.gds_require_native = true;
+            config.gds_enabled = storage.is_some_and(|s| s.backend == crate::SsdBackend::Cufile);
+        }
+        config.max_failover_attempts = 0;
+        config.enable_auto_failover_on_poll = false;
+        config.tcp = payload != Transport::Rdma;
+        config.selector = Some(selector);
+        // Auto selection uses only enabled providers; extra transports stay opt-in.
+        config.hp_tcp = Default::default();
+        config.shm = Default::default();
+        config.nvlink = false;
+        config.mnnvl = None;
+        config.remote_staging = false;
         let engine = Arc::new(NativeEngine::new(config).map_err(|error| error.to_string())?);
         let epoch = engine.source_epoch().to_string();
         let endpoint = format!("{}{}", prefix(payload), engine.endpoint());
@@ -289,7 +285,17 @@ impl TransferEngine {
             let status = batch
                 .status()
                 .map_err(|e| TransferError::new(ErrorKind::Unquiesced, e.to_string()))?;
-            if status.is_terminal() {
+            let terminal = match status.state {
+                BatchState::Open | BatchState::Pending => false,
+                BatchState::Completed | BatchState::Failed | BatchState::Cancelled => true,
+                _ => {
+                    return Err(TransferError::new(
+                        ErrorKind::Unquiesced,
+                        "unknown OrbiTE batch state is not a drain receipt",
+                    ));
+                }
+            };
+            if terminal {
                 if !status.locally_drained {
                     return Err(TransferError::new(
                         ErrorKind::Unquiesced,
@@ -309,7 +315,7 @@ impl TransferEngine {
                     .iter()
                     .find_map(|report| report.failure.as_ref())
                     .map(|failure| {
-                        if failure.remote_effect == orbite::RemoteEffect::Unknown {
+                        if failure.remote_effect != orbite::RemoteEffect::None {
                             TransferError::new(
                                 ErrorKind::Unquiesced,
                                 "OrbiTE remote WRITE effect is unknown",
@@ -328,6 +334,12 @@ impl TransferEngine {
                     return Err(TransferError::new(
                         ErrorKind::Cancelled,
                         "transfer cancelled after drain",
+                    ));
+                }
+                if status.state != BatchState::Completed {
+                    return Err(TransferError::new(
+                        ErrorKind::Backend,
+                        "OrbiTE batch did not complete successfully",
                     ));
                 }
                 if bytes != total {
@@ -831,7 +843,21 @@ fn transfer_error_ref(error: &Error) -> TransferError {
         | Error::RegionNotFound
         | Error::RegistrationConflict
         | Error::Protocol(_) => ErrorKind::InvalidRequest,
-        _ => ErrorKind::Backend,
+        Error::InvalidConfig(_)
+        | Error::Config { .. }
+        | Error::InvalidQosConfig(_)
+        | Error::InvalidSelectorConfig(_)
+        | Error::TransportPolicy { .. }
+        | Error::BatchClosed
+        | Error::BatchOpen
+        | Error::InvalidTask
+        | Error::Backend { .. }
+        | Error::FileSegmentClosed
+        | Error::ForeignQosPolicy
+        | Error::Internal(_)
+        | Error::Io(_) => ErrorKind::Backend,
+        // A future native failure may carry uncertain cleanup semantics.
+        _ => ErrorKind::Unquiesced,
     };
     TransferError::new(kind, error.to_string())
 }
