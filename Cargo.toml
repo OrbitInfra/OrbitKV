@@ -12,6 +12,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
+publish = false
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
