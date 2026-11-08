@@ -177,11 +177,14 @@ predates engine-local raw Restore. It does not qualify the current OrbiTE path.
 
 ## Transfer engine
 
-The default build enables CUDA 13 and `orbite`, pinned to
-[`1312e9b1`](https://github.com/OrbitInfra/OrbiTE/commit/1312e9b180ec9029535f8c2fb751d57c4da93b76).
+The default build enables CUDA 13 and `orbite` 0.1.0-beta.1 source, pinned to
+[`f0556448`](https://github.com/OrbitInfra/OrbiTE/commit/f05564482a40f4cd19589345e260d35417eff700).
 OrbitKV consumes its Rust API and shares `cudarc` 0.19.8. The concrete
 `TransferEngine` owns registrations, epoch-bound peer handles, file segments and
 stream bindings; registration permissions do not replace source grants.
+OrbitKV builds a bounded typed `EngineConfig` from Manager settings; it does not
+forward legacy `MC_*` configuration or read `ORBITE_CONF`. Unknown native batch
+states or errors are `Unquiesced`, never success or permission to release owners.
 
 | Setting | Effect |
 | --- | --- |

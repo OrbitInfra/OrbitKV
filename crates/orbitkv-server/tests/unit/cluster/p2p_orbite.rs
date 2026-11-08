@@ -439,26 +439,27 @@ async fn p2p_orbite_rdma_remote_fetch_roundtrip() {
 
 #[cfg(feature = "orbite-rdma")]
 fn orbite_rdma_config(backend: TransportHint) -> Option<orbitkv_core::OrbiteRdmaConfig> {
-    (backend == TransportHint::Rdma).then(|| orbitkv_core::OrbiteRdmaConfig {
-        cuda_memory: match std::env::var("ORBITKV_TEST_ORBITE_GPU_DIRECT").as_deref() {
+    (backend == TransportHint::Rdma).then(|| {
+        let mut config = orbitkv_core::OrbiteRdmaConfig::new(
+            std::env::var("ORBITKV_TEST_ORBITE_RDMA_DEVICE").unwrap(),
+        );
+        config.cuda_memory = match std::env::var("ORBITKV_TEST_ORBITE_GPU_DIRECT").as_deref() {
             Ok("1") => orbitkv_core::OrbiteRdmaCudaMemory::Direct,
             _ => orbitkv_core::OrbiteRdmaCudaMemory::Staged,
-        },
-        port: Some(
+        };
+        config.port = Some(
             std::env::var("ORBITKV_TEST_ORBITE_RDMA_PORT")
                 .unwrap()
                 .parse()
                 .unwrap(),
-        ),
-        gid_index: Some(
+        );
+        config.gid_index = Some(
             std::env::var("ORBITKV_TEST_ORBITE_RDMA_GID_INDEX")
                 .unwrap()
                 .parse()
                 .unwrap(),
-        ),
-        ..orbitkv_core::OrbiteRdmaConfig::new(
-            std::env::var("ORBITKV_TEST_ORBITE_RDMA_DEVICE").unwrap(),
-        )
+        );
+        config
     })
 }
 

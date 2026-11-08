@@ -94,16 +94,15 @@ fn registered_host_rdma_peer() {
         .unwrap()
         .parse()
         .unwrap();
+    let mut rdma = crate::OrbiteRdmaConfig::new(device);
+    rdma.port = Some(port);
+    rdma.gid_index = Some(gid_index);
     let transport = TransferEngine::new(
         (32 << 20) as u64,
         &env::var("ORBITKV_ORBITE_BIND").unwrap(),
         Transport::Rdma,
         None,
-        Some(crate::OrbiteRdmaConfig {
-            port: Some(port),
-            gid_index: Some(gid_index),
-            ..crate::OrbiteRdmaConfig::new(device)
-        }),
+        Some(rdma),
     )
     .unwrap();
     let mut source_bytes = vec![0xa5; payload + 2 * GUARD];
@@ -228,10 +227,7 @@ fn registered_host_rdma_peer() {
         .engine
         .send_notification(
             &peer,
-            &orbite::Notification {
-                name: "host_read_done".into(),
-                message: seed.to_string(),
-            },
+            &orbite::Notification::new("host_read_done", seed.to_string()),
             TIMEOUT,
         )
         .unwrap();

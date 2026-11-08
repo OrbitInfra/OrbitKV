@@ -20,15 +20,11 @@ fn requester(capacity: usize) -> Arc<TransferEngine> {
     .unwrap();
     // A small native identity table makes leaked descriptor handles observable
     // in a short churn control. The real TCP and retirement owners are unchanged.
-    backend.engine = Arc::new(
-        NativeEngine::new(EngineConfig {
-            max_peer_segments: capacity,
-            max_failover_attempts: 0,
-            enable_auto_failover_on_poll: false,
-            ..Default::default()
-        })
-        .unwrap(),
-    );
+    let mut config = EngineConfig::default();
+    config.max_peer_segments = capacity;
+    config.max_failover_attempts = 0;
+    config.enable_auto_failover_on_poll = false;
+    backend.engine = Arc::new(NativeEngine::new(config).unwrap());
     backend.endpoint = format!("orbite+tcp://{}", backend.engine.endpoint());
     backend.epoch = backend.engine.source_epoch().to_string();
     Arc::new(backend)
