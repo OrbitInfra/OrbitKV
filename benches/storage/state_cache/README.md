@@ -72,7 +72,10 @@ and per-token cost are also hypothetical inputs, not released engine contracts.
 `Workload` supplies deterministic seeds, sessions, turns, fork fan-out, prefix
 sharing, append lengths and checkpoint spacing. Chat halves tool delays; document
 QA doubles them; tool chains keep the configured scale. These are synthetic
-shapes, not fitted real-world distributions. Log-normal delays use the configured
+shapes, not fitted real-world distributions. Chat/tools append to prior turns;
+document QA shares a fixed document prefix within session pairs and creates a
+fresh `append_pages` question suffix each turn. It never replays a prior question's
+checkpoint. Log-normal delays use the configured
 median scale and log-space sigma, capped at four times the scale before family/adversarial
 multipliers. Adversarial cases cycle through immediate, eight-times-late,
 never-return (expiry), cancel, and ordinary returns. Turns are separated by 128
@@ -100,6 +103,8 @@ quality preservation or an installed engine's compute scheduling. A sparse cold
 miss may pay full recompute again when a later selected page was not materialized.
 HBM capacity means cache bytes after weights and runtime workspace, not device
 capacity. Sparse pages aggregate layer groups; no layer pipeline is assumed.
+Decode steps read the supplied boundary; KV growth appears at the next producer
+boundary. Active inference workspace and output quality are outside this model.
 
 Readiness and drain are separate receipts. Source grants are modeled by epoch-
 checked, pinned source references; paged requests lease their complete backing

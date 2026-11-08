@@ -411,3 +411,25 @@ def test_indexer_result_cannot_affect_eviction_before_it_is_ready():
         with pytest.raises(SafetyError, match="release before drain"):
             sim.ledger.evict("cp", "hbm")
     assert snapshots[0] == snapshots[1] == ({"cp"}, set())
+
+
+def test_document_questions_share_prefixes_but_never_reuse_question_state():
+    trace = generate(
+        SCHEMA,
+        SIZES,
+        Workload(
+            family="document",
+            sessions=1,
+            turns=2,
+            forks=0,
+            pages=4,
+            append_pages=1,
+            adversarial=False,
+        ),
+    )
+    boundaries = [e.data["boundary"] for e in trace.events if e.kind == "publish"]
+    a, b = boundaries
+    assert a.tokens == b.tokens == 5 * SIZES.page_tokens
+    assert set(a.roots) & set(b.roots)
+    assert len(set(a.roots) - set(b.roots)) == 2  # Fresh question KV and recurrent checkpoint.
+    assert not b.alternatives  # Question replacement is not prefix extension.

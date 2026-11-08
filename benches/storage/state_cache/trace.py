@@ -165,7 +165,7 @@ def generate(schema: Schema, sizes: Sizes, w=None, limits=None) -> Trace:
         previous = None
         previous_turn = 0
         for turn in range(w.turns):
-            count = w.pages + turn * w.append_pages
+            count = w.pages + (w.append_pages if w.family == "document" else turn * w.append_pages)
             at = turn * w.tool_mean_us * 128 + session * 100
             branch = f"s{session}"
             roots, history, sparse, new = [], [], [], []
@@ -178,6 +178,12 @@ def generate(schema: Schema, sizes: Sizes, w=None, limits=None) -> Trace:
                 for page in positions:
                     shared = page < int(w.pages * w.prefix_fraction) and c.rule != "checkpoint"
                     owner = "prefix" if shared else branch
+                    if w.family == "document":
+                        # Independent questions share a document, not the previous
+                        # question's suffix or recurrent checkpoint.
+                        owner = f"doc{session // 2}" if shared else branch
+                        if page >= w.pages or c.rule == "checkpoint":
+                            owner = f"{branch}:q{turn}"
                     key = f"{owner}:c{ci}:p{page}"
                     layers = len(c.layers)
                     entry = sizes.index_entry_bytes if c.kind == "indexer" else sizes.entry_bytes
@@ -217,7 +223,7 @@ def generate(schema: Schema, sizes: Sizes, w=None, limits=None) -> Trace:
                         * sizes.replay_us_per_token,
                     ),
                 )
-                if previous
+                if previous and w.family != "document"
                 else (),
                 tuple(history),
             )
