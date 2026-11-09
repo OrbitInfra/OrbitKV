@@ -31,7 +31,7 @@ capacity do not affect the stored representation. Workers and the scheduler
 session must agree on identity and topology for a given instance.
 
 `orbitkv-state::StateKey { namespace, hash }` is now the index type used by
-DRAM, SSD and the remote directory. The namespace is the complete storage
+DRAM, SSD and the peer inventory index. The namespace is the complete storage
 identity; the hash is a versioned, length-framed native chained prefix hash and
 cache group, including group zero. Query and Publish derive the same key from
 the registered instance. Hashing model files and storage layouts stays out of
@@ -61,44 +61,13 @@ same deployment. It never replaces the model fingerprint. Both engines use
 these same environment variables; inference processes still connect to their
 Cache Manager over UDS/iceoryx2 regardless of the tier holding the bytes.
 
-## Target contract
+## Page reuse and unsupported state
 
-1. **Name the computation.** Each adapter supplies a versioned model identity
-   from immutable weight revision/content, tokenizer and multimodal processor,
-   active adapters/LoRA or other request-specific parameters, and the cache
-   implementation variant. A deployment operator may supply a stable digest
-   when hashing large weight files at startup is impractical. The adapter must
-   fail closed if a required identity cannot be established.
-2. **Name the bytes.** Serialize a versioned, domain-separated `StateKey`
-   containing the computation identity, framework prefix/content digest,
-   `[start, end)` token range, component and cache group, and the full
-   `StateFormat`: dtype/quantization, block size, layout and strides, head
-   shape, parallel rank/shape, and implementation compatibility. Use the same
-   key in Query, Publish, DRAM/SSD indexes, and remote directory records.
-   Re-keying the cache before 1.0 can invalidate old entries rather than
-   carrying a compatibility path. Equal model names alone never authorize
-   cross-framework byte reuse.
-3. **Prove recovery.** A validator checks that a `StateBundle` covers every
-   requested token without gaps or overlap, all components agree on model and
-   format, and the model's recovery rule requires exactly those components at
-   that boundary. Dense attention KV, MLA, sliding-window attention, recurrent
-   checkpoints, DSA, draft, and auxiliary state need explicit capability
-   definitions. A partial hit can only shorten prefill to a boundary the
-   validator proves restorable; otherwise the engine recomputes.
-4. **Fence page reuse.** The adapter sends a registration/session epoch and a
-   generation-qualified page reference for every GPU source and destination.
-   The manager validates these before copy and holds the relevant leases until
-   CUDA completion. A stale page ID must never address a newly reused GPU slot.
-5. **Expose capability, not guesses.** vLLM maps cache groups and HMA boundary
-   state to the shared bundle contract. SGLang maps RadixAttention page and
-   lifecycle events to that contract without maintaining a second radix tree.
-   Unsupported components remain rejected rather than treated as attention KV.
-
-The first integration should use the existing vLLM and SGLang native hash
-algorithms within a versioned domain, then test whether a common token/content
-digest can safely support cross-framework sharing. A matching text prompt is
-insufficient evidence: byte-level compatibility needs an explicit format and
-implementation check or a conversion path.
+Registration/session epochs do not identify every reuse of a GPU slot. The
+selected engine handoffs lack allocator-issued page generations, and Publish
+still uses raw engine block IDs. Closing this gap requires consumed engine
+contracts and actual reuse/fault tests; a local counter cannot prove safety.
+Unknown auxiliary state and cross-engine byte conversion remain unsupported.
 
 ## Order and acceptance gates
 

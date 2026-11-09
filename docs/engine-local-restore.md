@@ -47,7 +47,7 @@ still backed by DRAM; kernel descriptors are not an HBM payload image. Kernel
 copies use SM resources shared with inference, so component speed does not
 establish serving benefit. OrbitKV contains no payload copy kernel or fallback.
 See [local-copy bounds](transport.md#local-gpudram-copies) and
-[historical kernel evidence](kernel-optimization.md).
+[historical kernel evidence](transport.md#local-gpudram-copies).
 
 ## Resource ownership
 
@@ -185,52 +185,10 @@ is submitted, limiting overlap for fragmented plans. Packed cross-layer bindings
 share an event. Once a forward consumes a dependency, a final copy failure is an
 execution failure; pages already read cannot be transparently recomputed.
 
-## Remaining execution work
-
-Manager workers still own SSD/codec source leases, decode compute and completion;
-OrbiTE moves their bytes. Demand peer Restore goes directly to GPU, while
-Prepare/Warmup fills DRAM. See [peer Restore](transport.md#peer-restore-into-gpu).
-Changes to early consumption, page generations and fault reclamation require the
-[completion plan's gates](completion-plan.md); this page adds no delivery queue.
-
-## Layer readiness qualification, 2026-09-29
-
-The H20 source build passes 410 source-only Python tests, 297 Rust core tests
-(18 hardware-specific cases ignored), 60 channel tests (one ignored), and strict
-workspace Clippy. The native GPU/adapter suite passes 47 tests, including CUDA
-event timestamps that demonstrate the first consumer runs before the final H2D
-copy completes, repeated external-event graph replay, exact destination bytes,
-and retained ownership after submission/enqueue/drain errors. The test-hooks
-process-fault suite passes 10 selected cases; serving uses the normal build.
-
-Serving gates use vLLM 0.29.0 and SGLang 0.5.20 with Qwen3-8B and
-Qwen3.5-0.8B. vLLM passes forced `FULL` replay for the dense model (six passed,
-one hybrid-only skip), native graph defaults for the hybrid model on DRAM and
-SSD (seven passed each), and a `MultiConnector` with a no-op child followed by
-OrbitKV (seven passed). SGLang passes DRAM and SSD restart recovery for each
-model with the final consumer-ordered buffer copies (two passed per model).
-The no-op composition tests metadata routing and recurrent initialization; it
-is not a P/D transfer qualification.
-
-Raw logs and the source/binary manifest are under
-`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/layered-restore-20260929/`. Reproduction switches are in
-[the Python test guide](../python/tests/README.md). These gates establish
-correctness and native copy/compute overlap. The separate
-[30-cohort serving matrix](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/communication-performance.md#repeated-serving-comparison-after-layer-readiness)
-passes exact output controls. It shows a vLLM improvement for the full scheduling
-and copy increment; SGLang throughput does not improve over the old implementation.
-
 ## Qualification gates
 
-The recorded first-slice gates passed for lost ACK/wake behavior, local
-partial-enqueue drain, tensor retention after Python references are dropped,
-nondefault-stream readiness, Manager death after claim/first enqueue, and
-source quarantine after engine death following claim. CUDA context preservation
-also passed. Exact artifact identities and scoped suite counts are in
-[fault qualification](fault-qualification.md#engine-local-raw-restore-gates).
-
-The broader gate matrix remains the qualification contract; a passed selected
-case does not qualify every failure point or deployment in its row:
+These are requirements for the current OrbiTE path, which remains unqualified
+on GPU and installed profiles. A selected fixture cannot qualify a whole deployment.
 
 | Gate | Required evidence |
 | --- | --- |
@@ -241,20 +199,13 @@ case does not qualify every failure point or deployment in its row:
 | Process death | Engine death before/after claim and during copies; Manager death during a locally owned copy; only actual drain evidence releases active source credits |
 | Layout | Contiguous, split K/V, MLA, fused/page-first placement, storage groups, TP slot selection, and destination overlap rejection |
 | Lifecycle | Dropped handles/timeouts, repeated registration rejection, unregister/close drain, and fresh-session isolation |
-| Serving | vLLM 0.29.0 and SGLang 0.5.20 correctness, restart reuse, hybrid errors, and every advertised eager/graph mode |
+| Serving | Pinned vLLM and SGLang correctness, restart reuse, hybrid errors, and every advertised eager/graph mode |
 | Extended environments | Multiple GPUs, huge-page imports, NUMA policies, and supported container/deployment configurations |
 
-Use deterministic hooks to identify claim, accepted-copy, and drain states.
-The passed after-enqueue Manager-death case does not prove that hardware was
-still copying at the precise SIGKILL instant. The engine-death case proves
-quarantine after claim, not death during a proven in-flight copy. Serialization
-tests and normal exporter teardown cannot fill those gaps. Single-GPU dense
-Qwen3-8B DRAM serving and restart reuse now pass in both pinned engines;
-the later layer-readiness gate above adds dense/hybrid DRAM/SSD and graph evidence.
-Multiple GPUs, huge-page imports and sustained allocator pressure remain outside
-those qualifications.
-Record further results against exact binaries and configuration before
-broadening those claims.
+Use deterministic hooks to distinguish claim, accepted work and actual drain.
+Manager death after enqueue does not prove hardware was active at the instant
+of SIGKILL; engine death after claim tests quarantine, not physical revocation.
+See [fault controls](fault-qualification.md) for the current tests.
 
 Measure preparation, queue delay, native submission, GPU drain, connector
 observation, first engine use, and source-retirement lag separately. Compare

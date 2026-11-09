@@ -26,6 +26,16 @@ export default defineConfig({
     ),
     "/docs/pd-mooncake-push/": `${base}/docs/pd/`,
     "/docs/rust-quality/": `${base}/docs/contributing/`,
+    "/docs/distributed-comparison/": `${base}/docs/completion-plan/`,
+    "/docs/distributed-design/": `${base}/docs/distributed-cache/`,
+    "/docs/engine-release-audit/": `${base}/docs/adapters/`,
+    "/docs/kernel-optimization/": `${base}/docs/transport/`,
+    "/docs/ssd-performance/": `${base}/docs/gds/`,
+    "/docs/state-planning/": `${base}/docs/architecture/`,
+    "/docs/queued-warming/": `${base}/docs/request-preparation/`,
+    "/docs/shared-cache-qualification/": `${base}/docs/fault-qualification/`,
+    "/docs/benchmark-evidence/": `${base}/docs/performance/`,
+    "/docs/peer-control/": `${base}/docs/distributed-cache/`,
   },
   vite: {
     define: {

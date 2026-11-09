@@ -1,6 +1,6 @@
 # Retention and SSD write admission
 
-For artifact locations and verification limits, see [benchmark evidence](benchmark-evidence.md).
+For artifact locations and verification limits, see [benchmark evidence](performance.md#evidence-and-instrumentation).
 The [pre-migration report](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/cache-policies.md) retains full tables and historical run details.
 
 OrbitKV provides two optional Rust policies for workloads larger than GPU and
@@ -94,103 +94,11 @@ protected bytes against the configured cap.
 
 The [metrics reference](metrics.md) includes protected bytes, promotions,
 demotions and SSD admission skips. The [benchmark guide](../benches/README.md)
-describes the serving harness; the [SSD capacity comparison](ssd-performance.md)
+describes the serving harness; the [SSD capacity comparison](gds.md)
 provides the preceding allocation and queue controls.
 
-## Measured capacity pressure (2026-09-23)
 
-The [final aggregates and reproduction instructions](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/benches/results/20260923-cache-policies/README.md)
-use one H20, BF16 Qwen3-8B, TP=1, vLLM 0.29.0 and SGLang 0.5.20. A 27 GiB
-prefix working set competes for 9 GiB GPU KV and 4 GiB Manager DRAM; SSD is
-64 GiB, query admission is 3 GiB and concurrency is eight. Warming and consumer
-preparation are off, with the same tracing and 8K prefill limit in every arm.
+## Validation
 
-Each short window contains the same 192 requests, including 142 reuse choices
-and 50 cold requests. There are three repetitions per configuration, with the
-middle repetition's order reversed. Values below are means of per-window
-measurements; brackets show their min/max, not confidence intervals.
-
-[Full historical measurement table](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/cache-policies.md)
-
-Protection alone changes throughput by +1.3% in vLLM and +0.3% in SGLang;
-there is no consistent paired tail-latency improvement. Committed SSD writes
-fall about 36% and 44%, while read traffic rises slightly. This is not proof
-of better write admission: queued weak sources can expire before the writer
-acquires them, and that loss is not counted by the admission-skip counter.
-
-Selective admission reduces short-window throughput by about 30% in both
-engines. Its initial missing SSD replicas lead to recomputation on first
-reuse. Combining it with protection performs worse here and produces more
-partial-prefix hits. Page protection does not reserve an entire restorable
-prefix or bundle; compiled recovery still validates the actual available state.
-
-A longer 768-request comparison tests continued cold traffic and SSD turnover.
-These are single windows per arm, not repeated evidence for changing defaults:
-
-| Engine | Policy | Output token/s | P95 TTFT (ms) | SSD writes (GiB/window) |
-| --- | --- | ---: | ---: | ---: |
-| vLLM | 0 / all | 50.94 | 3098 | 231.31 |
-| vLLM | 0 / reuse | 59.00 | 2769 | 27.00 |
-| SGLang | 0 / all | 47.63 | 4073 | 205.41 |
-| SGLang | 0 / reuse | 54.15 | 3857 | 27.00 |
-
-In this extended vLLM pair, selective admission improves throughput by 15.8%
-and P95 by 10.6%. Across successive 192-request segments, chosen reuse requests
-with no cache hit number `1, 32, 22, 26` under `all`, versus `31, 1, 0, 0` under
-`reuse`. That is consistent with an initial population cost followed by less
-SSD churn. It does not establish the best policy for a different reuse
-distribution, device, duration or memory budget.
-
-The extended SGLang pair improves throughput by 13.7% and P95 by 5.3%.
-Window write traffic falls 88.3% in vLLM and 86.9% in SGLang. SGLang still
-reports 1,510 dropped write-queue blocks under `all` and 107 under `reuse`;
-these are best-effort replica losses, not failed inference requests. Neither
-extended pair reports an allocation or SSD read failure, and both drain their
-query, copy and SSD work. Repeat with order reversal and production traces
-before recommending selective admission for a deployment.
-
-Reference-prefix preparation is outside latency timing. It writes about 27 GiB
-before `all` windows and none before `reuse` windows; the retained CSV includes
-both starting and ending write counters. The storage mount is overlay with
-verified direct I/O, so these numbers do not qualify physical NVMe bandwidth.
-Concurrent serving output differences are retained separately from exact-byte
-and deterministic-output correctness gates.
-
-All 24 short windows finish without allocation or SSD read failures, within
-the query and protection budgets, and with query/copy/SSD work drained. SGLang
-still drops some full write-queue batches; the CSV counts dropped blocks
-separately from intentional admission skips. Defaults stay `0 / all`.
-Use `reuse` as a measured write-traffic tradeoff, not a universal acceleration
-switch. Next steps are engine HBM-use and prepared-consumption evidence,
-restorable-prefix/bundle retention, and bounded writer staging. Cost-based
-decisions require those signals and measured restore/recompute costs.
-
-Qualification also passes 14 Rust SSD round trips, 12 adapter GPU checks and
-12 deterministic fault cases. With protection enabled, the Qwen3-8B vLLM
-output gate passes six checks (one hybrid-only check is inapplicable), and
-SGLang passes both DRAM and SSD output/restart checks with selective writes.
-See the [correctness gate commands](../python/tests/README.md) and
-[fault contracts](fault-qualification.md). These are TP=1 qualifications.
-
-## Reference designs and scope
-
-The probationary/protected split follows the established segmented-LRU idea
-described in [FlexKV's replacement policies at `738ddc14`](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/docs/eviction_policy/README_en.md).
-OrbitKV bounds its protected segment by bytes and preserves existing transfer
-leases and replica classes.
-
-[SGLang v0.5.20's HiCache controller](https://github.com/sgl-project/sglang/blob/94602c9c2b7cbdb8efd5c52802dac6a1c180089e/python/sglang/srt/managers/cache_controller.py)
-separates write-through, selective write-through and write-back. OrbitKV applies
-selective admission to its DRAM-to-SSD path; the tiers and ownership contract
-are different. This is not an implementation of HiCache's entire policy stack.
-
-[LMCache v0.5.5's prefetch controller](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/distributed/storage_controllers/prefetch_controller.py)
-distinguishes demand-held results from unowned warming. OrbitKV keeps that
-distinction in its existing query/lease lifecycle and does not count warming
-as demand for these policies.
-
-These are reuse heuristics, not model execution prediction. Compiled recovery
-requirements still determine which pages, windows and checkpoints are legal
-to restore. Cost-based restore-versus-recompute decisions, execution-time
-forecasting and finer copy/compute overlap remain separate work in the
-[completion plan](completion-plan.md).
+Defaults remain unchanged. Protected retention and selective SSD admission need matched
+workloads; they are not automatic performance wins. The [historical capacity controls](https://github.com/OrbitInfra/OrbitKV/blob/4a36b11c680b9e82f05a663da5cb38c0dc694a9b/docs/cache-policies.md#measured-capacity-pressure-2026-09-23) retain original results and limits. Current OrbiTE hardware use is unqualified.

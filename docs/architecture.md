@@ -26,7 +26,7 @@ Standalone operation needs neither etcd nor a peer gRPC listener.
 In distributed mode etcd maintains protocol identity and leased members. Bounded
 scoped owner inventory streams install local candidate views with explicit coverage.
 Queries use those views rather than per-key etcd RPCs. Grants revalidate source
-incarnation, representation and allocation generation. See [distributed design](distributed-design.md).
+incarnation, representation and allocation generation. See [distributed design](distributed-cache.md).
 
 ![Local recovery, peer OrbiTE READ and native P/D ownership](../website/public/architecture.svg)
 
@@ -59,9 +59,7 @@ These are separate facts. Cancellation, timeout, lease expiry or a control ACK
 cannot substitute for physical CUDA/RDMA/SSD termination.
 
 A **recovery requirement** declares pages/windows/checkpoints needed at a legal
-boundary. A **source plan** acquires concrete replica evidence and leases. The
-future general physical planner must consume the same ownership decision, rather
-than add an observation-only parallel policy.
+boundary. A **source plan** acquires concrete replica evidence and leases. Plans must acquire the matching ownership before execution.
 
 ## Core module ownership
 
@@ -78,19 +76,7 @@ than add an observation-only parallel policy.
 
 Keep allocation, lease and physical-drain proof with these existing owners.
 Detailed contracts live in [transport](transport.md), [engine-local Restore](engine-local-restore.md),
-[peer control](peer-control.md), [GPU storage](gds.md) and [storage formats](storage-formats.md).
-
-## Upstream designs and OrbitKV owners
-
-[LMCache](https://github.com/LMCache/LMCache) guides user documentation and released
-engine entry points. [FlexKV's integration](adapters.md#lmcache-and-flexkv-reference)
-provides a transfer reference. OrbiTE supplies Manager data transfer;
-its RPC or metadata format does not own OrbitKV's cache semantics.
-
-The [Mooncake RFC #3504](https://github.com/kvcache-ai/Mooncake/issues/3504) is a
-proposal reference, not implementation equivalence or OrbitKV qualification.
-See [the integration comparison](adapters.md#lmcache-and-flexkv-reference) and
-[distributed comparison](distributed-comparison.md) for pinned mechanisms/limits.
+[peer control](distributed-cache.md#application-and-transport-boundary), [GPU storage](gds.md) and [storage formats](storage-formats.md).
 
 ## Layering
 
@@ -105,9 +91,8 @@ flowchart TD
   S --> T[OrbiTE peer bytes]
 ```
 
-The current layers execute recovery validation and bounded concrete routes.
-A general semantic retention compiler and unified route optimizer remain future
-work; no diagram arrow claims those policies are complete.
+The current layers validate declared recovery requirements and execute bounded
+local, file and peer routes. Planned product work lives only in the completion plan.
 
 ### `orbitkv-state`
 
@@ -167,18 +152,6 @@ so native incoming pages have one writer. Manager-to-Manager cache bytes continu
 through OrbiTE regardless of the engine's live P/D transport. Partial submission,
 late ACK, cancellation and page reuse require the [native P/D fault gates](pd.md).
 
-### Future: Radix lifecycle bridge for routing
-
-A public consumed lifecycle callback may expose invalidation/eviction events to
-planning. Until that interface exists, remaining private safety hooks are explicit
-release dependencies; deleting them does not complete the migration.
-
-### Future: generation-safe page references
-
-Engine-authored page generations must be consumed in registration, grants,
-destination use and reuse decisions. Semantic non-use alone cannot release pages
-still referenced by CUDA, storage or RDMA. The [completion plan](completion-plan.md) tracks this prerequisite.
-
 ## Safety invariant
 
 A source allocation and destination remain owned until all accepted physical
@@ -202,26 +175,33 @@ permanent requester loss and allocation reuse require explicit termination evide
 Loss of coverage or retired membership blocks stale remote authorization while
 local recovery can continue. Historical scoped two-host RDMA serving does not
 qualify independent fault domains, cache HA or safe crash reclamation. See
-[P2P deployment](p2p.md), [shared-cache gates](shared-cache-qualification.md) and
-[metadata qualification](completion-plan.md#s2--metadata-reliability-and-measured-capacity).
+[P2P deployment](p2p.md), [shared-cache gates](fault-qualification.md#shared-cache-gates) and
+[metadata qualification](completion-plan.md#milestones).
 
-## Planning direction
+## Planning and cost observations
 
-Bounded cost observations, raw-copy/SSD shadow estimates and guarded matching
-peer selection are implemented. A unified consumed planner remains open. It must
-compare equal recovery coverage and completion targets, acquire real leases,
-credits and destinations, include complete cost once and replan safely on stale
-evidence. Unknown cost is not zero; submitted payload failure is not permission
-for blind cross-medium retry.
+`planning/` selects compatible candidates and completion targets; `cost/` keeps
+bounded observations. Neither changes cache identity, grants or physical drain.
+Unknown cost is not zero. Submitted payload failure never permits blind replay
+through a different medium. A route acquires actual source leases, byte credits
+and destinations before execution.
 
-Receiver admission/fairness must account for physical NIC/device budgets and
-engine-owned native P/D traffic as well as Manager cache READs. Routing requests
-is separate from choosing a recovery route. General read-set/retention IR,
-checkpoint placement and semantic reclaim remain future work. See [planning contracts](state-planning.md).
+The observer holds at most 512 entries, requires four successful samples and
+expires after five idle minutes. Keys include resource/incarnation, representation,
+size/fragment class and destination shape. Contention drops an update rather than
+blocking execution. Failures and cancelled/timed-out work do not train successes.
+Physical bytes are counted once by their owner; parent restore totals overlap
+copy/file/codec legs and must not be summed. `nic_load_stats` supplies OrbiTE RDMA
+load; missing route timing remains unknown.
 
-## Ownership boundary by milestone
+`ORBITKV_COST_OBSERVATIONS=1` enables observation/shadow estimates;
+`ORBITKV_COST_SELECTION=1` additionally enables guarded equal-coverage same-medium
+peer selection. `ORBITKV_CROSS_MEDIUM_SELECTION=1` is experimental and requires
+fresh compatible HostReady evidence. All are off by default. Shadow comparisons
+require matching work/resources and a margin exceeding the estimates' errors;
+they are not a statistical guarantee. The separate 128-entry resource cache
+expires after two seconds. A prediction cannot create a lease or drain receipt.
 
-The [completion plan](completion-plan.md) records status, dependencies and review.
-The [immutable architecture snapshot](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/architecture.md)
-retains earlier comparisons and design history. Current OrbiTE hardware and
-installed profiles require re-qualification.
+See [metrics](metrics.md#bounded-cost-observations) for clocks and counters and
+[performance](performance.md#qualification-limits) for failed observer guards.
+The [completion plan](completion-plan.md) owns product work and qualification.

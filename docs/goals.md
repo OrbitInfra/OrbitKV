@@ -26,12 +26,12 @@ not analyze arbitrary model graphs or predict future tokens. A shared API does
 not make different engines' KV bytes interchangeable. Source and destination
 holds remain owned through transfer completion.
 
-## Experimental and planned work
+## Current limits
 
 Shared-cache HA, complete hybrid external recovery, public SGLang lifecycle
 integration and broader parallelism retain separate gates. Native GDS and
-physical transfer lifetime remain unqualified. General joint retention/placement
-planning is future work; limited observations and guarded choices already exist.
+physical transfer lifetime remain unqualified. Persistent SSD restart, router lookup and shared storage are missing. The plan
+prioritizes a complete node and cluster before release and upstream acceptance.
 
 The [architecture](architecture.md) explains contracts, [performance](performance.md)
 separates measurements from support claims, and the [completion plan](completion-plan.md)

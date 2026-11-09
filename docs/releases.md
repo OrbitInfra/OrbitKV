@@ -27,7 +27,7 @@ SGLang requires Python 3.11+; core OrbitKV retains Python 3.10+. The selected
 Use separate engine environments. Build-matrix coverage does not establish
 that every engine/GPU combination works on every Python version; serving
 qualification uses Python 3.11 on H20 and A100, with each result tied to its
-engine release. See [S5.1](completion-plan.md#s51--release-and-interface-audit).
+engine release. See [engine baseline](completion-plan.md#milestones).
 
 The wheel contains the PyO3 extension, Manager executable with OrbiTE linked in,
 engine plugins, type stubs, Apache-2.0 license and third-party attribution in
@@ -84,7 +84,7 @@ Use `--transfer-transport auto|tcp|rdma` to select an operator hint.
 These build options do not create a second Python distribution. The installed
 CLI smoke checks compiled RDMA arguments before any GPU access. Earlier
 independent H20 byte/lifetime reruns covered the historical CPython 3.11 single-runtime
-profile in [transport](transport.md#installed-client-and-manager-profile), with
+profile in [transport](https://github.com/OrbitInfra/OrbitKV/blob/4a36b11c680b9e82f05a663da5cb38c0dc694a9b/docs/transport.md#installed-client-and-manager-profile), with
 explicit Torch CUDA 13.0.96 selection. That result does not qualify the current
 OrbiTE path. Its private unversioned runtime alias is
 needed because the Rust loader tries `libcudart.so` before Torch's `.so.13`.
@@ -155,86 +155,9 @@ PyPI distribution. Manual workflow runs only build candidates; they do not
 exercise PyPI authorization. Once publication succeeds, install with
 `pip install orbitkv-llm==0.1.0` in the compatible runtime environment.
 
-## Layer-readiness candidate qualification, 2026-09-29
+## Release scope
 
-The following historical candidates used the earlier two-distribution matrix.
-Their filenames and hashes remain evidence for those builds, not qualification
-of the current single-distribution release candidate.
-
-[Release candidate run 36513923017](https://github.com/OrbitInfra/OrbitKV/actions/runs/36513923017)
-at `de451189` passes all 15 wheel targets and combined artifact validation. Its
-[PR CI run](https://github.com/OrbitInfra/OrbitKV/actions/runs/36513885825)
-passes all 13 checks. The manual workflow does not publish a package.
-
-The downloaded CPython 3.11/CUDA 13/x86_64 artifact is
-`orbitkv_llm_cu13-0.1.0-cp311-cp311-manylinux_2_35_x86_64.whl`, SHA256
-`908b176e86e3c1af599f3a4e1ca84a5ffb97643b15f58e771f200d7d54ecf2c3`.
-It passes the wheel checker and both installed-package H20 restart gates:
-vLLM 0.29.0 and SGLang 0.5.20 each save and restore 90 MiB, reproduce their
-initial output and release all query reservations. The historical tests use isolated Python imports, remove external TENT library
-directories and verify the bundled runtime paths; see the [original record](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/docs/releases.md#layer-readiness-candidate-qualification-2026-09-29).
-
-Logs, installed paths, native library identities and the wheel manifest are in
-`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/layered-restore-20260929/ci-wheel/`. This qualifies the new
-installed single-node artifact. The two-host evidence below belongs to the
-previous candidate; it has not been rerun with this SHA256. No PyPI release or
-RDMA qualification is claimed.
-
-## CUDA 13 candidate qualification, 2026-09-28
-
-[Release run 36423388612](https://github.com/OrbitInfra/OrbitKV/actions/runs/36423388612)
-at commit `06e04fc3` passes all 15 build targets and the combined artifact
-validation. Python 3.10–3.14, x86_64 CUDA 12/13 and aarch64 CUDA 13 artifacts
-are available from that run. Its publish job is skipped because this was a
-manual candidate build. The matching
-[PR CI run](https://github.com/OrbitInfra/OrbitKV/actions/runs/36423395059)
-also passes all 13 checks. Build coverage is separate from the GPU qualification
-below.
-
-The CPython 3.11 x86_64 candidate built with the `d936b1fa` packaging changes is
-`orbitkv_llm_cu13-0.1.0-cp311-cp311-manylinux_2_35_x86_64.whl`, SHA256
-`eef36f8406ae854a9ea1567da5ac09adba5a3d6f17077cca99d7be6fdd3ff163`.
-The higher platform floor comes from the whole native dependency set; the old
-extension-only audit had incorrectly labeled this artifact `manylinux_2_34`.
-
-Both dedicated engine environments install this wheel non-editably. The H20
-Qwen3-8B release smoke passes for vLLM 0.29.0 and SGLang 0.5.20: each restarts
-the engine, restores 90 MiB to GPU, matches its initial output, and drains query
-reservations. The historical test removes external TENT library paths and verifies the
-three bundled primary libraries; see the [original record](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/docs/releases.md#cuda-13-candidate-qualification-2026-09-28).
-
-The same SHA256 is installed on the remote A100. The installed Manager console
-scripts and native clients pass 8 MiB of exact GPU recovery in each direction
-over IPv6 TCP, including re-serving the received replica after original-source
-eviction. Every payload/gap hash matches and checked ownership counters drain.
-Raw evidence, package paths and the wheel hash are under
-`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/partitioned-restore-20260928/` in `wheel-vllm/`,
-`wheel-sglang/`, `installed-wheel-byte-roundtrip/` and `wheel.sha256`.
-
-The independently downloaded CUDA 13/CPython 3.11 x86_64 artifact from Release
-run `36423388612` uses the same filename; its SHA256 is
-`abcdc83ab995c1c371eba574721b6cca3bc8e5fe11e53423d0661196254e2d72`.
-Both engines also pass the installed-package restart gate with this CI-built
-wheel: each saves and restores 90 MiB with exact outputs and no query reservation
-left behind. Installing that identical CI artifact on the A100 passes the same
-8 MiB GPU-byte round trip, received-replica re-serving and acknowledged release
-gate. Package paths, hashes and results are recorded in `ci-wheel/` under the
-artifact directory above. The initial etcd launch rejected by the environment's
-HTTP proxy is retained separately; the accepted run uses direct IPv6 traffic.
-
-These runtime results cover CUDA 13/CPython 3.11 x86_64 artifacts; they do not
-qualify GPU execution on all matrix targets, RDMA, heterogeneous P/D output
-equality or publication to PyPI.
-
-## Scope of 0.1.0
-
-The [release plan](completion-plan.md#s8--product-organization-final-artifacts-and-release)
-is authoritative: no publication before current-path GPU re-qualification,
-OrbiTE 0.1.0 first, installed dense and scoped-peer reruns, then 0.1.0rc1,
-clean installed qualification and 0.1.0. Before release replace the OrbiTE git
-pin with `orbite = "0.1"`. Publishing remains the maintainer's action.
-
-CI builds and historical TENT/OrbiTE runs are not current hardware acceptance.
-Request preparation and read cutoffs remain opt-in; their
-[recorded tradeoffs](request-preparation.md#measured-results) are unchanged.
-Broader hybrid, rank, HA and P/D fault claims need separate qualification.
+`orbitkv-llm` remains unpublished. Follow [M4](completion-plan.md#m4--release-and-upstream)
+for official engine targets, upstream contributions and installed qualification.
+Current OrbiTE GPU/RDMA/GDS and installed paths are unqualified; historical TENT
+candidate checks do not carry over. Publication is the maintainer's action.

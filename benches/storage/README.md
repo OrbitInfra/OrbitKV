@@ -2,12 +2,6 @@
 
 Run commands from the repository root. [Benchmark navigation](../README.md).
 
-## Hardware-free state-cache simulator
-
-[Design-v2 simulator](state_cache/README.md) derives pinned config schemas and
-runs bounded synthetic event traces, ownership controls and policy ablations.
-Its outputs are simulation only, not GPU or installed-engine evidence.
-
 ## CPU codec benchmark
 
 `cpu_codec.rs` measures the production CPU E4M3FN encode/decode paths for BF16

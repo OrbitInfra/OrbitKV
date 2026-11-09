@@ -58,7 +58,7 @@ commits. Keep the PR focused on the final behavior and relevant validation.
 Update affected technical documentation under `docs/`; the website renders it
 directly. Preserve website components and visual identity. When shortening a
 historical report, verify its archive and keep immutable evidence/reproduction
-links. Generated experiment output belongs outside Git; see [evidence policy](benchmark-evidence.md).
+links. Generated experiment output belongs outside Git; see [evidence policy](performance.md#evidence-and-instrumentation).
 
 Record the commit, changed contract, tests, external evidence and remaining
 limits. Distinguish implemented, independently accepted and released. An upstream

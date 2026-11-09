@@ -85,7 +85,7 @@ not be released by a test timeout.
 
 The vLLM helper uses the official shutdown grace period; SGLang cleanup checks
 its process group. Current scoped healthy results do not erase previous native
-SIGKILL/IPC warnings or establish fault reclamation. [S3](../../docs/completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
+SIGKILL/IPC warnings or establish fault reclamation. [lifetime requirements](../../docs/completion-plan.md#milestones)
 and [compatibility](../../docs/compatibility.md) retain the actual limits.
 
 `support/runtime_checks.py` owns the process/runtime checks shared by Manager,
@@ -101,7 +101,7 @@ Completed registration-campaign controllers, their validator-only tests and CPU
 process-trace fixtures are retired from the maintained tree. Exact historical
 reproduction uses the
 [frozen controller and tests](https://github.com/OrbitInfra/OrbitKV/tree/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/python/tests)
-and the original external artifacts referenced by [S3](../../docs/completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership).
+and the original external artifacts referenced by [lifetime requirements](../../docs/completion-plan.md#milestones).
 Normal-path acceptance does not qualify cancellation, page reuse/generations or
 physical-fault reclamation.
 
@@ -190,7 +190,7 @@ native output-only controls or historical fork experiments as current recovery.
 
 Raw results, logs, traces, manifests and per-run reports belong outside the
 checkout. Freeze consumed artifacts, retain failed runs and report uncertainty
-before claiming performance. Use [benchmark methodology](../../docs/benchmark-evidence.md)
+before claiming performance. Use [benchmark methodology](../../docs/performance.md#evidence-and-instrumentation)
 and the existing gate's workload instead of adding another verification layer.
 
 The [pre-cleanup gate reference](https://github.com/OrbitInfra/OrbitKV/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/python/tests/README.md)

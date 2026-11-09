@@ -12,7 +12,7 @@ correctness gates live in `python/tests/`; tests here protect benchmark validity
 | [transfer/](transfer/README.md) | Local DMA/kernel copies, shapes and observation cost | `benches.transfer.communication`, `kernel_pairs`, `copy_observation` |
 | [distributed/](distributed/README.md) | Remote cache recovery and historical TENT trace analysis | `benches.distributed.shared_cache_serving`, `tent_trace` |
 | [cluster/](cluster/README.md) | Reusable metadata churn and visibility | `benches.cluster.metadata` |
-| [storage/](storage/README.md) | SSD paths, codecs and hardware-free state-cache simulation | `benches.storage.gds`, `benches.storage.state_cache`, `storage/native/cpu_codec.rs` |
+| [storage/](storage/README.md) | SSD paths and codecs | `benches.storage.gds`, `storage/native/cpu_codec.rs` |
 | [common/](common/README.md) | Process ownership, launch, workloads, metrics and reports | Imported by the benchmark families |
 
 CUDA/C++ and Rust fixtures live in their family's `native/` directory. CPU harness

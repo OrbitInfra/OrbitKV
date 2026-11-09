@@ -163,18 +163,6 @@ rank and GPU UUID keys, drains queues, then releases imported mappings. The
 client separately drains local operations; session closure cannot release an
 active grant. `peer_alive()` observes the original pidfd and never reconnects.
 
-## Measured process-channel baseline
-
-The [original two-process measurements](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/communication-performance.md)
-and [baseline table](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/transport.md#measured-process-channel-baseline)
-retain the H20 64-byte RTT comparison. They predate bootstrap v2 and are neither
-current-revision nor end-to-end serving measurements.
-
-## Earlier local validation
-
-The [vLLM 0.29.0 / SGLang 0.5.20 local correctness record](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/transport.md#earlier-local-validation)
-predates engine-local raw Restore. It does not qualify the current OrbiTE path.
-
 ## Transfer engine
 
 The default build enables CUDA 13 and `orbite` 0.1.0-beta.1 source, pinned to
@@ -255,7 +243,7 @@ CPU/TCP priorities are advisory; the API has no per-priority dispatch statistics
 Tests establish mapping, policy consumption and bytes, not priority ordering.
 OrbiTE `nic_load_stats` supplies RDMA load metrics. KV-path codec/SSD/Restore
 observations remain separate; replacing pure transfer-leg timing needs an engine
-API. See [cost observation boundaries](state-planning.md#p41-observation-contract).
+API. See [cost observation boundaries](architecture.md#planning-and-cost-observations).
 
 ### Peer departure
 
@@ -343,105 +331,6 @@ They do not qualify GPU operation. Installed direct/kernel reproduction uses
 `tests/release/test_installed_orbite.py` with `ORBITKV_TEST_INSTALLED_ORBITE=1`
 and `ORBITKV_TEST_STRICT_SHUTDOWN=1`; see [release gates](releases.md).
 
-## Historical OrbiTE allocation bridge
-
-The [original bridge contract and allocator pilots](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/transport.md#historical-orbite-allocation-bridge)
-retain their exact source/runtime scope. Canonical allocation views still own
-the slot and shared physical pin, not merely the pool mapping; a weak cache
-avoids cycles. Their access lock cannot synchronize unrelated streams/processes.
-
-## Experimental OrbiTE peer TCP profile
-
-Use a numeric advertised IP and `--transfer-transport tcp`, or `auto` for policy.
-Grant epochs, persistent source owners and gRPC completion remain authoritative.
-[PR #304's historical H20/CUDA 12.2 source pilot](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/transport.md#experimental-orbite-peer-tcp-profile)
-at `5a50d092` does not qualify installed serving, CUDA 13 or the current path.
-CUDA 12 is unsupported. Current CPU/TCP controls are in CI.
-
-## Experimental OrbiTE peer RDMA profile
-
-```sh
-CC=gcc CXX=g++ cargo build --locked -p orbitkv-server --no-default-features \
-  --features cuda-13,orbite-rdma
-```
-
-Select `--transfer-transport rdma --orbite-rdma-device mlx5_0
---orbite-rdma-port 1 --orbite-rdma-gid-index 3` with actual RNIC/route values.
-CI uses Ubuntu 24.04, Clang/libclang 18 for verbs bindings. `orbite+rdma://`
-requests RC-verbs payloads; TCP bootstrap/DONE/ACK is not a TCP payload fallback.
-Default engine staging is bounded to 64 endpoints / 64 MiB per engine, separate
-from source tickets and OrbitKV pools. Strict GDR is a separate profile.
-
-Requester-local drain does not prove remote source termination. Remote cleanup
-errors retain the source's backing and native charges even after a gRPC release.
-Timeout and watchdog action never establish native drain.
-
-The [historical host and embedded Manager profiles](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/transport.md#experimental-orbite-peer-rdma-profile)
-at `660f893d` preserve two-host host-byte and A-node CUDA 13.1 evidence, commands,
-loader identities and limits. They do not qualify current installed/GDR/fault
-paths. A compatible user-mode driver can support CUDA 13 on selected R535
-hardware; freeze actual mapped libraries and test each contract rather than
-inferring CUDA IPC or GDR from a compute probe.
-
-### Installed client and Manager profile
-
-**Historical evidence at the revisions below. It does not qualify the current OrbiTE path.**
-
-[PR #307](https://github.com/OrbitInfra/OrbitKV/pull/307), source `eb1cc90f`, adds
-complete optional wheels and a maintained two-Manager installed gate. Independent
-H20 reruns pass both TCP and same-RNIC RDMA using the complete CPython 3.11 wheel
-`36b491e1a0daa97d`, built from identical package inputs at `487beb85`. This
-profile uses kernel driver 535.161.08, compatibility driver 590.48.01, Torch
-2.13.0+cu130 and one explicitly selected CUDA 13.0.96 runtime. The compiler is
-CUDA 13.1; that does not make the loaded runtime CUDA 13.1.
-
-Each provider registers two clients through cross-process CUDA IPC, publishes
-source GPU pages, awaits the inventory fence and fetches through the selected
-OrbiTE payload provider. It restores 16,384 GPU bytes and checks every untouched
-page, exact Save/remote/H2D byte counters and source completion. Four original
-held IPC slots per case change from one to zero before normal Manager exit.
-All client/Manager runtime files match the frozen inputs, RDMA maps real
-verbs/mlx5, and neither provider maps TENT. The client, Managers, supervisors
-and outer waiters exit normally, canonical leases are released and GPU memory
-returns to zero. The private etcd fixture is killed and reaped; graceful-etcd
-shutdown is outside this acceptance. Producer-exit warnings reject the
-qualification.
-
-Runtime selection is an explicit deployment input. Frozen `cudarc` 0.19.8 tries
-`libcudart.so` before `libcudart.so.13`. Torch supplies the latter; a system
-unversioned library can therefore load a second runtime even with Torch's
-versioned file preloaded. This profile freezes a private directory containing a
-standard unversioned alias to the actual Torch runtime and places it first:
-
-```sh
-mkdir -m 700 /absolute/private/runtime
-ln -s /absolute/torch-site/nvidia/cu13/lib/libcudart.so.13 \
-  /absolute/private/runtime/libcudart.so
-export LD_LIBRARY_PATH=/absolute/private/runtime:/usr/local/cuda-13.1/compat${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
-export LD_PRELOAD=/absolute/torch-site/nvidia/cu13/lib/libcudart.so.13
-```
-
-Freeze that directory, alias identity and target before launching. The gate
-requires exactly the selected CUDART file in every client/Manager mapping; its
-version observer uses `RTLD_NOLOAD` and checks that observation preserves the
-mapping set. Full loader-order CPU controls preserve the mixed-runtime negative
-cases. Failed startup, duplicate-evidence and mixed-runtime attempts remain
-archived with their verdicts. Raw runs, immutable wheel/source/loader manifests
-and independent review are outside the checkout at
-`/root/orbitte-artifacts/installed-rdma-20261022/`, indexed from PR #307.
-
-DRAM Restore uses the client's local H2D executor; CUDA IPC is exercised by
-registration and Publish. This scoped gate does not qualify Manager IPC Restore,
-inference serving, physical cross-host Manager/GPU, RNIC faults, GDR, multirail
-or broader hardware profiles. A uniform installed CUDA 13.1 runtime remains open;
-the separately accepted CUDA 13.1 embedded/source profile above is unchanged.
-
-## Historical TENT implementation
-
-The removed backend's [contracts and native provenance](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/docs/transport.md#what-orbitkv-reuses)
-and [registration failure controls](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/docs/transport.md#native-registration-error-control)
-remain historical evidence. No Mooncake fork or OrbiTE C ABI is loaded.
-
 ## Remote operation choice
 
 Demand restore uses OrbiTE READ into GPU pages; DRAM-tier fills keep host
@@ -451,15 +340,9 @@ bundle-aware publication are not current guarantees. Adapters validate complete
 [recovery requirements](hybrid-recovery.md); wire metadata alone does not prove
 model-state completeness.
 
-### Historical TCP copy error controls
+## Remaining qualification
 
-The [TENT copy-error record](https://github.com/OrbitInfra/OrbitKV/blob/c7fd6144592b64c487bf58a27e547a6f44ab8c26/docs/transport.md#tcp-copy-error-propagation-candidate)
-keeps its original fork revision, CPU scope and unqualified hardware limits.
-
-## Remaining work
-
-Use the [completion plan](completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
-for hardware, installed, generation and fault gates. These contracts authorize
-no broader deployment claim. Peer metadata remains gRPC; a custom metadata bus
-is outside the delivery plan. Confirmed upstream defects receive issues and
-focused fixes rather than a competing transport implementation.
+Current GPU/RDMA/GDS and installed profiles are unqualified. Timeout, partial
+submission, permanent peer loss and page reuse require physical fault controls;
+CPU/TCP, io_uring and CUDA-shim passes do not supply hardware evidence. Follow
+[fault qualification](fault-qualification.md) and the [completion plan](completion-plan.md).

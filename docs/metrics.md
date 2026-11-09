@@ -30,7 +30,7 @@ against 1,024 pools / 1 TiB. These counters do not authorize reclamation.
 
 ### Bounded cost observations
 
-Read [cost boundaries](state-planning.md#p41-observation-contract) before combining
+Read [cost boundaries](architecture.md#planning-and-cost-observations) before combining
 samples. Fixed path/outcome/stage labels exclude device, peer, request and state
 identities. Internal resource keys retain those distinctions without metric
 cardinality growth.
@@ -87,7 +87,7 @@ invalidates diagnostic linkage. Normal shutdown drains accepted work and storage
 before flushing the writer. `publish_manager_response_publish` is before response
 visibility; its client interval includes publication/wakeup. Save response means
 copy/encode complete and insertion queued, not SSD durability. Full diagnostic
-and overhead guards remain [frozen here](distributed-design.md#s210a-same-host-isolation-diagnostic-contract).
+and overhead guards remain [frozen here](https://github.com/OrbitInfra/OrbitKV/blob/4a36b11c680b9e82f05a663da5cb38c0dc694a9b/docs/distributed-design.md#s210a-same-host-isolation-diagnostic-contract).
 
 ### Storage encoding
 
@@ -125,7 +125,7 @@ Peaks survive release/unregister and reset only with a new budget. Atomics avoid
 scrape locking and per-instance labels. Prepared claims move phases without
 releasing total ownership; warming has no ready lease. A hit is not GPU use.
 Warmup footprints are not individual layer-copy bytes; compare owned preparation
-and unowned warming in separate runs. See [accounting](queued-warming.md#measuring-whether-preparation-was-useful)
+and unowned warming in separate runs. See [accounting](https://github.com/OrbitInfra/OrbitKV/blob/4a36b11c680b9e82f05a663da5cb38c0dc694a9b/docs/queued-warming.md#measuring-whether-preparation-was-useful)
 and [request preparation](request-preparation.md).
 
 ### Pool Metrics (Pinned Memory)

@@ -99,6 +99,6 @@
 <text x="640" y="716" font-size="13" text-anchor="middle" fill="#f6f5f0">Members · incarnations · protocol identity</text>
 <text x="32" y="775" font-size="15" text-anchor="start" fill="#ab4d29" font-weight="700">READY ≠ DRAINED ≠ REAPED</text>
 <text x="32" y="799" font-size="14" text-anchor="start">Layer events gate consumers. Sources stay retained until all submitted work drains; credits retire afterwards.</text>
-<text x="32" y="826" font-size="13" text-anchor="start" fill="#60695f">Open: HA and broader topology · physical lifetime · unified routes · semantic retention.</text>
+<text x="32" y="826" font-size="13" text-anchor="start" fill="#60695f">Open: persistent SSD · router lookup · node-loss recovery · installed qualification.</text>
   </g>
 </svg>

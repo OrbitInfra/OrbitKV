@@ -62,7 +62,7 @@ import { layers, localUrl } from "../data/site";
             synchronized through bounded inventory streams. etcd maintains leased
             membership; peer gRPC authorizes exact source replicas. OrbiTE READ
             targets GPU memory for restore and DRAM for cache fills. The engine
-            owns staging. <a href={localUrl("/docs/shared-cache-qualification/")}>Historical TENT peer results</a>{" "}
+            owns staging. <a href={localUrl("/docs/fault-qualification/#shared-cache-gates")}>Peer recovery gates</a>{" "}
             do not qualify OrbiTE; current hardware and HA gates remain open.
           </p>
         </article>
@@ -147,23 +147,21 @@ import { layers, localUrl } from "../data/site";
       <h2>Contracts and future work</h2>
       <p class="reading-copy">
         Rust records bounded, opt-in route costs. Experimental selectors cover
-        matching peer owners and equal-coverage host routes; a unified optimizer
-        across cache restoration and P/D handoff remains planned. The completion
+        matching peer owners and equal-coverage host routes. The completion
         plan records implementation status and qualification; a design or CPU
         control does not authorize a broader serving profile.
       </p>
       <p class="reading-copy">
         Native P/D fault behavior, independent failure domains and current
         OrbiTE hardware profiles remain unqualified. Preparation stays opt-in.
-        The hybrid-attention design is an unexecuted experiment plan.
-        General lifetime analysis, cross-engine byte conversion and
-        KV-aware routing remain future work.
+        The delivery plan prioritizes official engine integration, persistent SSD,
+        cluster discovery and upstream acceptance.
       </p>
       <div class="doc-links">
         <a href={localUrl("/docs/completion-plan/")}>
           Implementation plan and upstream references <span>→</span>
         </a>
-        <a href={localUrl("/docs/state-planning/#policies-by-deployment-mode")}>
+        <a href={localUrl("/docs/architecture/#planning-and-cost-observations")}>
           Transfer costs and deployment policies <span>→</span>
         </a>
         <a href={localUrl("/docs/distributed-cache/")}>
@@ -172,8 +170,8 @@ import { layers, localUrl } from "../data/site";
         <a href={localUrl("/docs/state-identity/")}>
           Model-aware identity <span>→</span>
         </a>
-        <a href={localUrl("/docs/distributed-comparison/")}>
-          LMCache and Mooncake deployment paths <span>→</span>
+        <a href={localUrl("/docs/completion-plan/#standard-and-complete-checklist")}>
+          Standard cache capability checklist <span>→</span>
         </a>
         <a href={localUrl("/docs/completion-plan/")}>
           Completion and qualification gates <span>→</span>

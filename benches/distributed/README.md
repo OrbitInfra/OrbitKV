@@ -290,7 +290,7 @@ independent-pair geometric mean and bootstrap calculation.
 
 ## Shared-cache qualification
 
-For shared replicas, use the [shared-cache qualification guide](../../docs/shared-cache-qualification.md).
+For shared replicas, use the [shared-cache qualification guide](../../docs/fault-qualification.md#shared-cache-gates).
 Its HTTP driver works with either engine on existing deployments. The model-serving
 restart gate lives in `python/tests/e2e/test_shared_cache.py`; same-host results do
 not qualify physical two-host or RDMA deployment.
