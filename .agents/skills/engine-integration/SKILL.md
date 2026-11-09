@@ -71,10 +71,15 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
 - The candidate profile reads/writes cache on P and only saves on D. Native P/D
   owns incoming destinations; cache retains completed state until its own drain.
   Preserve reliable P/D delivery and release unselected cache query leases.
-- OrbitKV on official vLLM 0.33.0 requires V1 (`VLLM_USE_V2_MODEL_RUNNER=0`) and one attention
-  cache group. Reject V2/recurrent profiles before connection; the runner and
-  native-prefix monkey patches are removed. Reopen only after consumed released
-  ordering and atomic state hand-off pass GPU/model gates.
+- Ordinary vLLM 0.33.0 deployment keeps V1 (`VLLM_USE_V2_MODEL_RUNNER=0`) and one
+  attention group. The V2 gate additionally opts in with `orbitkv.v2=true` and
+  admits only uniform Full attention: no pre-forward zeroing/CoW, speculation or
+  query-control fan-out, and a consumer role for deferred block frees. Follow the
+  pinned ordering audit in `docs/adapters.md`.
+  Keep V1 unchanged, reject recurrent/multi-group and preserve the preemption
+  barrier before any new writes, even if the scheduler has reassigned a block ID.
+  CPU allocator controls are not generation or GPU/model qualification. V2
+  hardware gates remain unrun. No runner or native-prefix monkeypatch is installed.
 - SGLang native P/D candidate enables released deferred KV release on both P
   and D, but 0.5.23 still releases on timeout without a full drain ACK. Keep
   transfer cancellation, peer-loss and delayed-ACK page reuse unqualified;

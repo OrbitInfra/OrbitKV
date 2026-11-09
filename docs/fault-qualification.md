@@ -57,6 +57,25 @@ neither alone proves the whole matrix. Allocator-generation issues
 checked November 9, 2026. Do not add a private runner, shadow tree, synthetic
 generation or a passing placeholder for that missing proof.
 
+### V2 controls
+
+The [V2 suite](../python/tests/integration/test_vllm_v2_contract.py) uses installed
+vLLM 0.33.0 `Scheduler`, `KVCacheManager`, `Request`, `ActiveKVConnector` and the
+OrbitKV adapter. CPU seams control only GPU events and Manager replies. It proves
+the [admitted ordering](adapters.md#released-v2-lifetime-contract), not CUDA behavior.
+
+| Case | Installed-CPU control | Written installed-GPU gate |
+| --- | --- | --- |
+| Preempt during Save | Reassign the actual block ID; V2's preemption barrier must prevent the next load until Save completion. | Pause native Publish; V2 dispatch waits; reallocate/overwrite after drain and restore the original saved bytes. |
+| Abort during Load | Deferred allocator refs survive abort and a failed Restore wait; only a completed step releases them. | Pause after the first native CUDA enqueue; abort in the released scheduler; check retained refs and bytes before reallocation. |
+| Finish before Save completion | `request_finished` delays free; no `finished_sending` until the native receipt. | Pause Publish, finish, verify held block; drain, reallocate and check saved bytes. |
+| Freed/reallocated slot | The actual allocator reuses the same object/ID; the public preemption barrier fences writes, not ID reassignment. | The three cases above reuse the physical slot after their receipt and compare sentinels. No allocator-generation claim. |
+
+All GPU entries remain **unrun and unqualified**. The native fixture drives
+released scheduler/connector methods with real CUDA and a Manager, but no model
+forward; the separate model-output/restart gate does not prove injected model
+preemption. End-to-end model fault qualification remains in the M1 queue.
+
 ## Native fault boundaries
 
 The deterministic process gate runs a real Cache Manager, retained engine
@@ -152,6 +171,37 @@ KV. Recurrent fixtures, V2, multi-group/HMA, Graph and P/D are separate profiles
 The harness checks CUDA, local model config/weights and an executable Manager;
 missing test-hooks barriers fail by deadline rather than being skipped. These
 commands do not manufacture the still-missing allocator-generation receipt.
+
+### V2 opt-in gates
+
+Keep ordinary commands above on V1. In the same tests-only projection, use the
+vLLM 0.33.0 interpreter, an immutable dense Full-attention model and fresh output
+directories. `--vllm-runner=v2` admits only `vllm_v2`-marked GPU tests; an unmarked
+or empty selection fails. The connector opt-in is added by the model fixture.
+
+```bash
+export VLLM_USE_V2_MODEL_RUNNER=1 ORBITKV_REQUIRE_ENGINE_TESTS=1
+# Normal matching wheel + Manager: repeat with --vllm-cache-tier ssd.
+"$PYTHON" -m pytest -m '' --engine=vllm --engine-evidence=installed-gpu \
+  --vllm-runner=v2 tests/e2e/test_vllm_e2e_correctness.py \
+  -k 'not same_process_hma' --model "$MODEL" --max-model-len 4096 \
+  --vllm-cudagraph-mode NONE --vllm-cache-tier dram \
+  --basetemp=/var/tmp/orbitkv-conformance/v2-model-dram \
+  --engine-report=/var/tmp/orbitkv-conformance/v2-model-dram.json
+
+# Matching test-hooks wheel AND Manager: actual native transfers and sentinels.
+export ORBITKV_FAULT_TESTS=1 ORBITKV_CACHE_MANAGER_BINARY="$MANAGER"
+"$PYTHON" -m pytest -m '' --engine=vllm --engine-evidence=installed-gpu \
+  --vllm-runner=v2 tests/integration/test_vllm_v2_contract.py \
+  -k native_v2_page_reuse_bytes --model "$MODEL" \
+  --basetemp=/var/tmp/orbitkv-conformance/v2-native-reuse \
+  --engine-report=/var/tmp/orbitkv-conformance/v2-native-reuse.json
+```
+
+These commands are **written only**, not qualification. The normal gate compares
+model outputs and requires restart restore bytes; the fault gate compares exact
+fixture bytes. Repeat failing runs as failures, never omit a case to make a gate
+green. Neither gate resolves #62810 or authorizes release on an unknown receipt.
 
 ### Build the native fault runtime
 

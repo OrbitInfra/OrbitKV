@@ -28,7 +28,7 @@ retains Python 3.10+. Use separate environments.
 | --- | --- |
 | vLLM `KVConnectorBase_V1` | Adds `supports_sleep_mode`, `unregister_kv_caches` and `restore_kv_caches`. OrbitKV returns false from the capability method: sleep remaps storage and current registrations cannot follow it safely. No sleep/remap support is claimed. |
 | vLLM loaded groups / hit attribution | Adds `get_loaded_kv_cache_group_ids` and `get_external_cache_hit_sources`. Inherit the one prefix-cacheable group's ID and `EXTERNAL_UNSPECIFIED`; do not guess a DRAM/disk/peer split from a mixed OrbitKV restore. |
-| vLLM completion / preemption | `KVConnectorTransferResults`, `handle_preemptions`, request completion, reset and `SupportsHMA` callbacks retain their signatures. V1 drains saves before reuse; V2 and multi-group/recurrent remain rejected. MultiConnector forwards the new capabilities; best-effort cache and reliable native P/D remain separate. |
+| vLLM completion / preemption | `KVConnectorTransferResults`, `handle_preemptions`, request completion, reset and `SupportsHMA` callbacks retain their signatures. V1 is unchanged; V2 is opt-in for uniform Full attention under the ordering below. Multi-group/recurrent remain rejected. MultiConnector forwards the new capabilities; best-effort cache and reliable native P/D remain separate. |
 | vLLM private dependencies | `resolve_kv_cache_block_sizes(config, vllm_config)` stays at `v1.core.kv_cache_utils`; it now rejects a mismatched single-group `prefix_match_unit`. Consume that rejection. `bind_kv_cache_manager` still forwards to `bind_gpu_block_pool`; pool pinning, block hashes, `extract_layer_index`, layout specs and metric construction remain consumed unchanged. |
 | SGLang `UnifiedCacheLinker.offload` | Adds optional `session_id`; accept it without using session attribution as cache identity. Native wrapper supplies it. |
 | SGLang producer readiness | Consume released `record_offload_ready()`, passing the worker's `forward_stream`. Hold and wait both index/current-stream and forward-stream events before submitting a prepared Save. Unknown completion still retains the tree lock and registration. |
@@ -170,10 +170,14 @@ branches, P/D prerequisite patches and support matrices are not inherited claims
 registers tensors and consumes Restore/Save completion. Layout and metadata
 modules describe groups/intents, not another scheduler.
 
-The profile requires **`VLLM_USE_V2_MODEL_RUNNER=0` and one attention group**.
-V1's public preemption callback precedes page changes. V2 and recurrent/multi-group
-serving reject before connecting. No runner replacement or native-prefix override
-is installed. Framework-neutral recovery validation remains in Rust.
+The ordinary profile keeps **`VLLM_USE_V2_MODEL_RUNNER=0` and one attention group**.
+The V2 gate explicitly sets `VLLM_USE_V2_MODEL_RUNNER=1` and
+`kv_connector_extra_config: {"orbitkv.v2": true}`. It admits only one uniform
+`FullAttentionSpec`, without zeroing, speculative decoding or native query-control
+fan-out. It requires `kv_role=kv_both` or `kv_consumer`, so overlapping loads
+receive the scheduler's deferred-free protection. Missing/MLA/hybrid layouts reject before connecting. This is implemented,
+**unqualified**, and does not change V1 defaults. No runner replacement,
+monkeypatch or parallel prefix tree is used in production.
 
 The selected role alone is constructed. Native sessions close on initialization
 failure, plugin conflicts stay visible, and `get_transfer_results` uses the
@@ -181,6 +185,53 @@ released completion/failure contract, including MultiConnector. Ordinary cache
 publication has `requires_kv_delivery=False`; native reliable P/D retains its own
 requirement. Saves submit at step end. Restore errors retain GPU ownership rather
 than becoming a silent availability fallback.
+
+### Released V2 lifetime contract
+
+The following audit is pinned to vLLM **0.33.0, `4ba787ec`**:
+
+- Registration: [V2 dispatch, lines 62–96](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/worker/gpu/kv_connector.py#L62-L96)
+  registers tensors once; `pre_forward` calls `handle_preemptions`, binds metadata,
+  then starts synchronous loads. Independent async loads start after forward;
+  OrbitKV's admitted restores use the synchronous path.
+- Forward: [runner, lines 2050–2099](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/worker/gpu/model_runner.py#L2050-L2099)
+  invokes pre-forward before eager/piecewise execution or full-graph replay, then
+  `finish_forward`. The [attention wrapper, lines 37–57](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/model_executor/layers/attention/kv_transfer_utils.py#L37-L57)
+  calls `wait_for_layer_load`, attention, `save_kv_layer` on the caller's current
+  stream. OrbitKV links full-graph loads on the replay stream and submits saves
+  at step end, independent of replay executing Python layer callbacks.
+- Completion: [post-forward, lines 136–175](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/worker/gpu/kv_connector.py#L136-L175)
+  waits/submits saves, collects finished sends/receives and failed receives through
+  `KVConnectorTransferResults`, errors/stats/events/worker metadata, then clears
+  metadata. Empty steps follow this path. OrbitKV waits for its Restore drain
+  here; saves may remain asynchronous. Speculation's deferred finalization is rejected.
+- Finish during Save: [the scheduler, lines 3031–3067](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/sched/scheduler.py#L3031-L3067)
+  honors `request_finished[_all_groups]` returning true until
+  [`finished_sending`, lines 3556–3582](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/sched/scheduler.py#L3556-L3582).
+  OrbitKV reports that completion only after its own save receipt.
+- Abort during Load: with overlapping batches and a consumer connector, the
+  scheduler [defers block frees](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/sched/scheduler.py#L189-L201)
+  until the owning step is processed ([free/drain, lines 3077–3119](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/sched/scheduler.py#L3077-L3119)).
+  Without overlap, [EngineCore processes aborts after the worker result](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/engine/core.py#L677-L693).
+  A failed/unknown OrbitKV Restore wait cannot return a successful step receipt.
+- Preemption: [`_preempt_request`, lines 1799–1818](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/sched/scheduler.py#L1799-L1818)
+  can return IDs to the allocator before worker dispatch. The public
+  `handle_preemptions` barrier must drain the old save **before new bytes are
+  written**, even if the ID is already reassigned. CPU controls exercise that
+  ordering with the actual allocator and V2 dispatcher; this is not a generation proof.
+
+The scope restriction matters: V2 [updates requests](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/worker/gpu/model_runner.py#L1775-L1796)
+before pre-forward; its [zeroing/CoW writes](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/worker/gpu/model_runner.py#L1291-L1304)
+would precede the barrier. Uniform Full attention has [no required zeroing](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/kv_cache_interface.py#L1651-L1660),
+single-group [hash boundaries equal block boundaries](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/kv_cache_utils.py#L840-L858),
+and therefore no partial-tail CoW. Recurrent pre-copy remains outside this profile.
+The current stream is the runner's [main stream](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/worker/gpu/model_runner.py#L602-L605);
+its output-copy event is not an OrbitKV drain receipt.
+
+[#62810](https://github.com/vllm-project/vllm/issues/62810) remains open (checked
+November 9, 2026). No allocator generation is invented here. Forced reuse after
+uncertain transfer, permanent worker/device loss, multi-group, Graph and P/D
+qualification remain separate. See the [V2 fault gates](fault-qualification.md#v2-opt-in-gates).
 
 ## SGLang linker and current internal dependencies
 

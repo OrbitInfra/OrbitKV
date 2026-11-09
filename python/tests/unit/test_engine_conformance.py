@@ -12,6 +12,29 @@ from tests.support import engine_registry as registry
 pytest_plugins = ["pytester"]
 
 
+def declared_nodes(tree, prefix=()):
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            yield from declared_nodes(node, (*prefix, node.name))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield "::".join((*prefix, node.name))
+
+
+def test_declared_nodes_include_async_methods_and_class_identity():
+    tree = ast.parse("""
+async def test_async(): pass
+class TestFirst:
+    async def test_same(): pass
+class TestSecond:
+    def test_same(): pass
+""")
+    assert set(declared_nodes(tree)) == {
+        "test_async",
+        "TestFirst::test_same",
+        "TestSecond::test_same",
+    }
+
+
 def test_registry_covers_engine_imports_and_resolves_every_declared_node():
     roots = ("vllm", "sglang", "orbitkv.vllm", "orbitkv.sglang")
     entries = {node for rows in registry.REGISTRY.values() for node in rows}
@@ -22,11 +45,7 @@ def test_registry_covers_engine_imports_and_resolves_every_declared_node():
         path = gate.TEST_ROOT / relative
         assert path.is_file(), f"missing registry suite: {node}"
         if function:
-            definitions = {
-                n.name
-                for n in ast.walk(ast.parse(path.read_text()))
-                if isinstance(n, ast.FunctionDef)
-            }
+            definitions = set(declared_nodes(ast.parse(path.read_text())))
             assert function in definitions, f"stale registry selector: {node}"
     for path in gate.TEST_ROOT.rglob("test_*.py"):
         tree = ast.parse(path.read_text())
@@ -38,6 +57,39 @@ def test_registry_covers_engine_imports_and_resolves_every_declared_node():
                 imports.extend(alias.name for alias in node.names)
         if any(name == root or name.startswith(root + ".") for name in imports for root in roots):
             assert path.relative_to(gate.TEST_ROOT).as_posix() in modules, path
+
+
+def test_exact_class_selector_does_not_admit_another_class_method(pytester, monkeypatch):
+    monkeypatch.setenv("ORBITKV_REQUIRE_ENGINE_TESTS", "1")
+    pytester.makeconftest(f"""
+import sys
+from pathlib import Path
+sys.path.insert(0, {str(gate.TEST_ROOT.parent)!r})
+from tests.support import engine_gate as gate, engine_registry as registry
+pytest_plugins = ["tests.support.engine_gate"]
+gate.TEST_ROOT = Path(__file__).parent
+registry.REGISTRY = {{
+    "source": {{"test_control.py": ("vllm",)}},
+    "installed-cpu": {{"test_control.py::TestAdmitted::test_same": ("vllm",)}},
+}}
+registry.CPU_REPLAYS = {{}}
+gate.prerequisites = lambda *args: {{}}
+""")
+    pytester.makepyfile(
+        test_control="""
+class TestAdmitted:
+    def test_same(self): pass
+class TestOther:
+    def test_same(self):
+        raise AssertionError("a different class was incorrectly admitted")
+"""
+    )
+    result = pytester.runpytest_subprocess(
+        "--engine=vllm",
+        "--engine-evidence=installed-cpu",
+        timeout=30,
+    )
+    result.assert_outcomes(passed=1, deselected=1)
 
 
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])
@@ -86,8 +138,15 @@ def test_control():
         assert "prerequisite removed" in result.stderr.str()
 
 
-@pytest.mark.parametrize("engine", ["vllm", "sglang"])
-@pytest.mark.parametrize("missing", ["engine", "torch", "extension", "cuda", "model", "manager"])
+@pytest.mark.parametrize(
+    "engine,missing",
+    [
+        (engine, missing)
+        for engine in ("vllm", "sglang")
+        for missing in ("engine", "torch", "extension", "cuda", "model", "manager")
+    ]
+    + [("vllm", "v1-runner"), ("vllm", "v2-runner")],
+)
 def test_installed_preflight_rejects_each_missing_prerequisite(
     monkeypatch, tmp_path, engine, missing
 ):
@@ -98,7 +157,7 @@ def test_installed_preflight_rejects_each_missing_prerequisite(
     manager = tmp_path / "manager"
     manager.touch(mode=0o700)
     monkeypatch.setenv("ORBITKV_CACHE_MANAGER_BINARY", str(manager))
-    monkeypatch.setenv("VLLM_USE_V2_MODEL_RUNNER", "0")
+    monkeypatch.setenv("VLLM_USE_V2_MODEL_RUNNER", "1" if missing == "v1-runner" else "0")
     monkeypatch.setattr(gate.sys, "platform", "linux")
 
     def package(name, version=None):
@@ -135,9 +194,48 @@ def test_installed_preflight_rejects_each_missing_prerequisite(
         "cuda": "visible CUDA GPU",
         "model": "local config and weights",
         "manager": "executable Cache Manager",
+        "v1-runner": "VLLM_USE_V2_MODEL_RUNNER=0",
+        "v2-runner": "VLLM_USE_V2_MODEL_RUNNER=1",
     }
     with pytest.raises((ImportError, RuntimeError), match=messages[missing]):
-        gate.prerequisites(engine, "installed-gpu", str(model))
+        gate.prerequisites(
+            engine, "installed-gpu", str(model), "v2" if missing == "v2-runner" else "v1"
+        )
+
+
+@pytest.mark.parametrize("runner,marked", [("v2", True), ("v2", False), ("v1", True)])
+def test_gpu_selection_honors_the_runner_scope(pytester, monkeypatch, runner, marked):
+    monkeypatch.setenv("ORBITKV_REQUIRE_ENGINE_TESTS", "1")
+    pytester.makeconftest(f"""
+import sys
+from pathlib import Path
+sys.path.insert(0, {str(gate.TEST_ROOT.parent)!r})
+from tests.support import engine_gate as gate, engine_registry as registry
+pytest_plugins = ["tests.support.engine_gate"]
+gate.TEST_ROOT = Path(__file__).parent
+registry.REGISTRY = {{"installed-gpu": {{"test_control.py": ("vllm",)}}}}
+registry.CPU_REPLAYS = {{}}
+gate.prerequisites = lambda *args: {{}}
+""")
+    pytester.makepyfile(
+        test_control=f"""
+import pytest
+{"@pytest.mark.vllm_v2(only=True)" if marked else ""}
+def test_control(): assert {runner!r} == "v2"
+def test_ordinary(): assert {runner!r} == "v1"
+"""
+    )
+    result = pytester.runpytest_subprocess(
+        "--engine=vllm",
+        "--engine-evidence=installed-gpu",
+        f"--vllm-runner={runner}",
+        timeout=30,
+    )
+    if marked:
+        result.assert_outcomes(passed=1, deselected=1)
+    else:
+        result.assert_outcomes(deselected=2)
+        assert result.ret != 0
 
 
 @pytest.mark.parametrize("invalid", ["version", "editable", "source", "stub"])

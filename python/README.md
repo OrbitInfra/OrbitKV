@@ -31,8 +31,10 @@ base package does not install. See [release requirements](../docs/releases.md).
 ## Engine integration
 
 Use separate official environments for **vLLM 0.33.0** and **SGLang 0.5.23**,
-with the same OrbitKV build in the Manager environment. vLLM requires
-`VLLM_USE_V2_MODEL_RUNNER=0` and one attention cache group. SGLang uses the
+with the same OrbitKV build in the Manager environment. Ordinary vLLM deployments keep
+`VLLM_USE_V2_MODEL_RUNNER=0` and one attention cache group. The
+[V2 gate](../docs/fault-qualification.md#v2-opt-in-gates) is explicitly opt-in,
+uniform Full attention only, and unqualified. SGLang uses the
 UnifiedRadixCache external linker and its public load-completion callback.
 Engine extras target Linux: vLLM on Python 3.11–3.14 and SGLang on 3.11–3.13. Earlier 0.5.22 Qwen3-8B normal-path
 acceptance and 0.5.21 measurements are historical; neither qualifies these

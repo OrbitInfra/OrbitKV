@@ -43,6 +43,7 @@ SOURCE = {
 }
 CPU = {
     "integration/test_vllm_connector_contract.py": VLLM,
+    "integration/test_vllm_v2_contract.py": VLLM,
     "integration/test_sglang_admission.py": SGLANG,
     "integration/test_engine_fault_contracts.py": BOTH,
     "integration/test_vllm_recovery.py::test_native_contract_gates_vllm_hits": VLLM,
@@ -52,6 +53,7 @@ CPU = {
     "integration/test_sglang_direct_transfer.py::test_cancel_before_forward_releases_only_unsubmitted_leases": SGLANG,
 }
 GPU = {
+    "integration/test_vllm_v2_contract.py::test_native_v2_page_reuse_bytes": VLLM,
     "integration/test_cache_faults.py": BOTH,
     "e2e/test_vllm_e2e_correctness.py": VLLM,
     "e2e/test_vllm_native_pd_e2e.py": VLLM,

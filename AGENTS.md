@@ -157,9 +157,10 @@ an upgrade. Use main only to locate fixes and prepare upstream contributions.
 See `docs/adapters.md` and the `engine-integration` skill for ownership and
 removal gates; do not delete a correctness Hook before its replacement is consumed.
 
-The official vLLM cache profile requires `VLLM_USE_V2_MODEL_RUNNER=0` and one
-attention cache group; V2/recurrent serving is rejected pending safe released
-lifecycle contracts. P/D uses official native NIXL/MultiConnector or SGLang
+The ordinary vLLM cache profile keeps `VLLM_USE_V2_MODEL_RUNNER=0` and one
+attention cache group. V2 is opt-in for one uniform Full-attention group; its
+installed gates remain unrun/unqualified. Recurrent/multi-group serving stays
+rejected. See the pinned V2 audit in `docs/adapters.md`. P/D uses official native NIXL/MultiConnector or SGLang
 native disaggregation, with independent cache adapters. Do not reintroduce
 fork-only factories/callbacks. Manager shared-cache traffic uses OrbiTE.
 

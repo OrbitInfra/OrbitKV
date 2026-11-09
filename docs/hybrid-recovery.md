@@ -1,7 +1,8 @@
 # Compiled hybrid recovery
 
-The official vLLM 0.33.0 profile requires V1 with one attention cache group
-(`VLLM_USE_V2_MODEL_RUNNER=0`); multi-group/recurrent serving is rejected.
+The ordinary vLLM 0.33.0 profile uses V1 with one attention cache group
+(`VLLM_USE_V2_MODEL_RUNNER=0`); the [unqualified V2 opt-in](adapters.md#released-v2-lifetime-contract)
+admits uniform Full attention only. Multi-group/recurrent serving is rejected.
 OrbitKV on SGLang 0.5.23 supports Full and SWA components;
 OrbitKV rejects recurrent/SSM startup. Full MHA/MLA and Full + SWA are implemented
 SGLang layouts, with model qualification recorded separately in

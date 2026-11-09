@@ -56,6 +56,13 @@ for dependencies, model-quality results and GPU workspace limits.
 
 ## Build a candidate
 
+The experimental vLLM V2 profile requires both `VLLM_USE_V2_MODEL_RUNNER=1` and
+the boolean connector option `orbitkv.v2=true`. Ordinary V1 deployment is
+unchanged. Only uniform Full attention in one group is admitted; installed GPU
+qualification is pending. This adds an explicit opt-in, with no compatibility
+alias or production API break. Before 0.1.0, breaking API changes are allowed;
+record each break here instead of retaining compatibility shims.
+
 From the repository root, select a Python interpreter with shared `libpython`
 (required by the embedded Manager) and use a CUDA 13 toolkit:
 
