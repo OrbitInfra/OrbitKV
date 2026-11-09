@@ -2,9 +2,9 @@
 
 import math
 import random
-from dataclasses import dataclass, field, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 
-from .model import Boundary, LimitError, Limits, Node, Recipe
+from .model import Boundary, LimitError, Limits, Node, PageLayer, Recipe
 from .schema import Schema
 
 
@@ -52,6 +52,10 @@ class Workload:
     checkpoint_spacing: int = 1
     cold: bool = False
     adversarial: bool = True
+    layered: bool = False
+    lookahead: int = 1
+    layer_overlap: float = 0.5
+    new_page_locality: float = 0.5
 
     def __post_init__(self):
         if type(self.seed) is not int or not 0 <= self.seed < 1 << 63:
@@ -79,6 +83,14 @@ class Workload:
             raise ValueError("invalid tool distribution")
         if not math.isfinite(self.prediction_scale) or not 0.1 <= self.prediction_scale <= 10:
             raise ValueError("invalid predictor scale")
+        if (
+            type(self.layered) is not bool
+            or type(self.lookahead) is not int
+            or not 0 <= self.lookahead <= 2
+        ):
+            raise ValueError("layer lookahead must be 0, 1 or 2")
+        if not 0 <= self.layer_overlap <= 1 or not 0 <= self.new_page_locality <= 1:
+            raise ValueError("invalid layer overlap/locality")
 
 
 @dataclass(frozen=True)
@@ -140,6 +152,62 @@ def selections(rng, pool, steps, top_k, overlap, adversarial):
     return tuple(result)
 
 
+def layer_selections(rng, layers, w):
+    """Synthetic overlap targets, never measured model attention.
+
+    Same-layer retention has first claim on k slots, then adjacent-layer reuse.
+    Conflicting targets need not be achievable; the simulator reports realized
+    intersections. Fresh pages exclude both sets, with a locality bias toward
+    the last observed position. Declared consumers copy their source exactly.
+    """
+    result, previous = [], {}
+    for step in range(w.steps):
+        current = {}
+        adjacent = ()
+        for layer in layers:
+            if layer.index_source != layer.layer:
+                picked = current[layer.index_source]
+            else:
+                pool = range(len(layer.pages))
+                k = min(w.top_k, len(pool))
+                past = previous.get(layer.layer, ())
+                disjoint = w.adversarial and step % 4 == 3
+                keep = (
+                    rng.sample(past, min(len(past), round(k * w.overlap))) if not disjoint else []
+                )
+                candidates = sorted(set(adjacent) - set(keep))
+                count = (
+                    0
+                    if disjoint
+                    else min(
+                        k - len(keep),
+                        max(0, round(k * w.layer_overlap) - len(set(keep) & set(adjacent))),
+                    )
+                )
+                keep += rng.sample(candidates, min(count, len(candidates)))
+                fresh = sorted(set(pool) - set(past) - set(adjacent) - set(keep))
+                if len(fresh) < k - len(keep):
+                    raise ValueError("page pool cannot realize requested overlap")
+                anchor = (
+                    past[-1] if past else (adjacent[-1] if adjacent else rng.randrange(len(pool)))
+                )
+                while len(keep) < k:
+                    near = sorted(fresh, key=lambda p: (abs(p - anchor), p))[
+                        : max(1, len(fresh) // 4)
+                    ]
+                    page = rng.choice(near if rng.random() < w.new_page_locality else fresh)
+                    fresh.remove(page)
+                    keep.append(page)
+                picked = tuple(sorted(keep))
+            if any(p >= len(layer.pages) for p in picked):
+                raise ValueError("reused selection outside consumer page range")
+            current[layer.layer] = picked
+            adjacent = picked
+        result.append(tuple(current[layer.layer] for layer in layers))
+        previous = current
+    return tuple(result)
+
+
 def generate(schema: Schema, sizes: Sizes, w=None, limits=None) -> Trace:
     """Open-loop producer boundaries; this does not simulate model prefill kernels.
 
@@ -150,6 +218,19 @@ def generate(schema: Schema, sizes: Sizes, w=None, limits=None) -> Trace:
     if w.sessions * (1 + w.forks * w.turns) > limits.branches:
         raise LimitError("synthetic branch budget")
     rng = random.Random(w.seed)
+    paging = schema.paging_layers(sizes.indexer_ratios) if w.layered else ()
+    if w.layered and not paging:
+        raise ValueError("layer pipeline requires config-declared sparse selection")
+    sources = {i: (index, kv) for i, index, kv in paging}
+    components = (
+        [
+            (ci, replace(c, layers=(i,)), i)
+            for ci, c in enumerate(schema.components)
+            for i in c.layers
+        ]
+        if w.layered
+        else [(ci, c, None) for ci, c in enumerate(schema.components)]
+    )
     events, known = [], {}
     counter, references = 0, 0
 
@@ -169,7 +250,8 @@ def generate(schema: Schema, sizes: Sizes, w=None, limits=None) -> Trace:
             at = turn * w.tool_mean_us * 128 + session * 100
             branch = f"s{session}"
             roots, history, sparse, new = [], [], [], []
-            for ci, c in enumerate(schema.components):
+            pools = {i: [] for i, _, _ in paging}
+            for ci, c, layer in components:
                 if c.kind == "indexer" and c.ratio not in sizes.indexer_ratios:
                     continue
                 if c.kind == "tail" and count * sizes.page_tokens % c.ratio == 0:
@@ -184,7 +266,10 @@ def generate(schema: Schema, sizes: Sizes, w=None, limits=None) -> Trace:
                         owner = f"doc{session // 2}" if shared else branch
                         if page >= w.pages or c.rule == "checkpoint":
                             owner = f"{branch}:q{turn}"
-                    key = f"{owner}:c{ci}:p{page}"
+                    source = sources.get(layer, (layer, layer))[1]
+                    alias = source if c.kind in {"kv", "latent", "compressed", "indexer"} else layer
+                    tag = f":l{alias}" if w.layered else ""
+                    key = f"{owner}:c{ci}{tag}:p{page}"
                     layers = len(c.layers)
                     entry = sizes.index_entry_bytes if c.kind == "indexer" else sizes.entry_bytes
                     payload = ((sizes.page_tokens + c.ratio - 1) // c.ratio) * entry * layers
@@ -198,7 +283,14 @@ def generate(schema: Schema, sizes: Sizes, w=None, limits=None) -> Trace:
                     if key not in known:
                         if len(known) >= limits.nodes:
                             raise LimitError("synthetic component budget")
-                        node = Node(key, physical, c.kind)
+                        kind = (
+                            "dense"
+                            if w.layered
+                            and c.kind in {"kv", "latent", "compressed"}
+                            and layer not in sources
+                            else c.kind
+                        )
+                        node = Node(key, physical, kind)
                         known[key] = node
                         new.append(node)
                     history.append(key)
@@ -208,10 +300,12 @@ def generate(schema: Schema, sizes: Sizes, w=None, limits=None) -> Trace:
                         roots.append(key)
                     if c.kind in {"kv", "latent", "compressed"}:
                         sparse.append(key)
+                        if layer in pools:
+                            pools[layer].append(key)
             counter += 1
             boundary = Boundary(
                 f"b{counter}",
-                tuple(roots),
+                tuple(dict.fromkeys(roots)),
                 count * sizes.page_tokens,
                 count * sizes.page_tokens * sizes.prefill_us_per_token,
                 (
@@ -225,7 +319,8 @@ def generate(schema: Schema, sizes: Sizes, w=None, limits=None) -> Trace:
                 )
                 if previous and w.family != "document"
                 else (),
-                tuple(history),
+                tuple(dict.fromkeys(history)),
+                tuple(PageLayer(i, index, tuple(pools[i])) for i, index, _ in paging),
             )
             add(
                 at,
@@ -274,7 +369,9 @@ def generate(schema: Schema, sizes: Sizes, w=None, limits=None) -> Trace:
                     start + delay,
                     "tool_return",
                     branch=target,
-                    selections=selections(rng, sparse, w.steps, w.top_k, w.overlap, w.adversarial),
+                    selections=layer_selections(rng, boundary.layers, w)
+                    if w.layered
+                    else selections(rng, sparse, w.steps, w.top_k, w.overlap, w.adversarial),
                 )
             if turn % w.checkpoint_spacing == 0:
                 previous, previous_turn = boundary, turn

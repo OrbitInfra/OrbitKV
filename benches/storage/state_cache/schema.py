@@ -34,6 +34,45 @@ class Schema:
     def record(self):
         return asdict(self)
 
+    def paging_layers(self, indexer_ratios):
+        """(layer, index source, KV owner), using declared group starts only.
+
+        Source-ID lists start contiguous groups; indexer_types='shared' reuses
+        the preceding full indexer. Absent declarations imply independent layers.
+        Native packing remains a size parameter, not an inferred byte layout.
+        """
+        active = sorted(
+            i
+            for c in self.components
+            if c.kind == "indexer" and c.ratio in indexer_ratios
+            for i in c.layers
+        )
+        maps = []
+        for field in ("index_source_layer_ids", "kv_source_layer_ids"):
+            starts = self.facts.get(field)
+            if starts is None and field.startswith("index_") and "indexer_types" in self.facts:
+                types = self.facts["indexer_types"]
+                if len(types) != self.layers or set(types) - {"full", "shared"}:
+                    raise ValueError("unsupported indexer reuse pattern")
+                starts = [i for i in active if types[i] == "full"]
+            if starts is None:
+                maps.append({i: i for i in active})
+                continue
+            if not starts or starts != sorted(set(starts)) or set(starts) - set(active):
+                raise ValueError("reuse sources must be ordered active sparse layers")
+            if active and starts[0] != active[0]:
+                raise ValueError("reuse consumer has no preceding source")
+            maps.append({i: max(s for s in starts if s <= i) for i in active})
+        shapes = {
+            i: (c.kind, c.ratio)
+            for c in self.components
+            if c.kind in {"kv", "latent", "compressed"}
+            for i in c.layers
+        }
+        if any(shapes[i] != shapes[maps[1][i]] for i in active):
+            raise ValueError("KV reuse crosses incompatible component shapes")
+        return tuple((i, maps[0][i], maps[1][i]) for i in active)
+
 
 def integer(value, name, minimum=1, maximum=1 << 30):
     if type(value) is not int or not minimum <= value <= maximum:
@@ -44,9 +83,9 @@ def integer(value, name, minimum=1, maximum=1 << 30):
 def describe(config: dict, source="synthetic", revision="fixture", sha256="fixture") -> Schema:
     """Generic config-field lowering, not an engine manifest or model-name table.
 
-    Sharing source lists do not say how consumers map to owners. Preserve those
-    lists as facts; additional physical aliasing stays unresolved. Fixtures can
-    explicitly share an owner key without inferring a native layout from a list.
+    Preserve sharing declarations for optional layer lowering. Logical source
+    groups can alias an owner; native packing and additional aliases remain
+    unresolved rather than inferred from model names.
     Draft/vision/embedding state is outside the text-backbone simulation.
     """
     c = config.get("text_config", config)
@@ -145,7 +184,7 @@ def describe(config: dict, source="synthetic", revision="fixture", sha256="fixtu
         facts,
         (
             "native bytes/scales/padding per physical entry",
-            "physical alias mapping",
+            "native packing and undeclared physical aliases",
             "page tokens and alignment",
             "recurrent/conv and compression-carry bytes",
             "replay legality and cost",

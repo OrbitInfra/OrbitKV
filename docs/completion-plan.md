@@ -1,6 +1,6 @@
 # OrbitKV completion plan
 
-**Current focus: the [design-v2 simulator](../benches/storage/state_cache/README.md), awaiting review.**
+**Current focus: the [P3 layer-paging simulator](../benches/storage/state_cache/README.md#layer-paging-experiment), awaiting review.**
 OrbiTE beta.1 source adaptation is merged in
 [PR #330](https://github.com/OrbitInfra/OrbitKV/pull/330), `d54da80e`;
 internal Rust crates are unpublishable following
@@ -9,7 +9,7 @@ The 2026-11-08 maintainer direction is a state compiler, versioned agent state
 trees and attention-guided paging. The design was reviewed in
 [PR #332](https://github.com/OrbitInfra/OrbitKV/pull/332), `93d67424`.
 The bounded Python simulator exercises synthetic traces and ownership controls;
-P3's cross-layer pipeline and prediction of newly selected pages remain untested.
+the P3 extension adds bounded layer lookahead, declared reuse and past-only predictors.
 Production policy and hardware experiments have not started. See the simulator's
 [interpretation](../benches/storage/state_cache/README.md#interpretation-of-the-submitted-runs)
 for the modeled scope of the P2 and P3 findings.

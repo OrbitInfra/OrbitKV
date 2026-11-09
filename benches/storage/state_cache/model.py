@@ -23,6 +23,7 @@ class Limits:
     candidates: int = 64
     planner_work: int = 65536
     references: int = 65536
+    prefetches: int = 256
 
     def __post_init__(self):
         if any(type(v) is not int or not 1 <= v <= 1 << 22 for v in vars(self).values()):
@@ -48,6 +49,13 @@ class Recipe:
 
 
 @dataclass(frozen=True)
+class PageLayer:
+    layer: int
+    index_source: int
+    pages: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Boundary:
     key: str
     roots: tuple[str, ...]
@@ -55,6 +63,7 @@ class Boundary:
     recompute_us: int
     alternatives: tuple[Recipe, ...] = ()
     history: tuple[str, ...] = ()
+    layers: tuple[PageLayer, ...] = ()
 
 
 @dataclass

@@ -17,6 +17,9 @@ class Policy:
     prefetch: bool = False
     oracle: bool = False
     static: bool = False
+    previous_step: bool = False
+    previous_layer: bool = False
+    declared_reuse: bool = False
 
     def __post_init__(self):
         if any(type(v) is not bool for k, v in vars(self).items() if k != "name"):
@@ -33,6 +36,11 @@ POLICIES = {
         Policy("p1", dag=True, recompute=True),
         Policy("p2", sharing=True, jit=True),
         Policy("p3", sparse=True, prefetch=True),
+        Policy("paging", sparse=True),
+        Policy("reuse", sparse=True, declared_reuse=True),
+        Policy("previous_step", sparse=True, prefetch=True, previous_step=True),
+        Policy("previous_layer", sparse=True, prefetch=True, previous_layer=True),
+        Policy("paging_oracle", sparse=True, prefetch=True, oracle=True, declared_reuse=True),
         Policy("all", dag=True, recompute=True, sharing=True, jit=True, sparse=True, prefetch=True),
         Policy(
             "oracle",

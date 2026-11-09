@@ -11,6 +11,7 @@ from benches.storage.state_cache.campaign import (
     campaign,
     external_directory,
     matched,
+    p3_regions,
     variants,
 )
 from benches.storage.state_cache.model import LimitError
@@ -99,3 +100,35 @@ def test_point_gate_needs_all_controls_complete_work_and_measured_latency():
     rows[-2]["metrics"]["rejected"] = 0
     rows[-2]["metrics"]["tpot_p95_us"] = None
     assert not matched(rows)[0]["p1_point_all_controls"]
+
+
+def test_joint_p3_gate_requires_bytes_capacity_latency_and_oracle_slo():
+    rows = []
+    for name in [*sorted(BASELINES), "paging", "previous_step", "paging_oracle"]:
+        for sessions in (1, 2, 3):
+            candidate = name in {"previous_step", "paging_oracle"}
+            rows.append(
+                {
+                    "run": f"{name}-{sessions}",
+                    "status": "ok",
+                    "policy": asdict(POLICIES[name]),
+                    "settings": {"workload": {"layered": True, "sessions": sessions}},
+                    "metrics": {
+                        "slo_pass": candidate or sessions <= 2,
+                        "wire_bytes_per_decode_tokens": 60 if candidate else 100,
+                        "ttft_p95_us": 100,
+                        "tpot_p95_us": 10,
+                        "speculative_bytes": 10 if candidate else 0,
+                        "completed": sessions,
+                        "decode_tokens": sessions * 10,
+                    },
+                }
+            )
+    assert p3_regions(rows)[0]["p3_joint_gate"]
+    target = next(r for r in rows if r["run"] == "previous_step-3")
+    target["metrics"]["tpot_p95_us"] = 11
+    assert not p3_regions(rows)[0]["p3_joint_gate"]
+    target["metrics"]["tpot_p95_us"] = 10
+    oracle = next(r for r in rows if r["run"] == "paging_oracle-3")
+    oracle["metrics"]["slo_pass"] = False
+    assert not p3_regions(rows)[0]["p3_joint_gate"]

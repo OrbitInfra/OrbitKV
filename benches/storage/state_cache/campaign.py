@@ -175,6 +175,90 @@ def capacity_table(rows):
     return list(groups.values())
 
 
+def p3_regions(rows):
+    """Joint P3 gate, including serialized exact paging as a strong control.
+
+    Compare matched work at the strongest baseline's admitted concurrency; also
+    require the candidate's higher capacity to retain those latency bounds.
+    Oracle SLO misses stop the corresponding modeled load, not hardware claims.
+    Repetition across seeds/families/adjacent budgets is a separate requirement.
+    """
+    groups = {}
+    for row in rows:
+        settings = {**row["settings"], "workload": dict(row["settings"]["workload"])}
+        if not settings["workload"].get("layered"):
+            continue
+        sessions = settings["workload"].pop("sessions")
+        group = groups.setdefault(json.dumps(settings, sort_keys=True), {})
+        group.setdefault(row["policy"]["name"], {})[sessions] = row
+    result = []
+    for signature, group in groups.items():
+
+        def admitted(row):
+            return row["status"] == "ok" and row["metrics"]["slo_pass"]
+
+        capacity = {
+            p: max((n for n, r in runs.items() if admitted(r)), default=0)
+            for p, runs in group.items()
+        }
+        baselines = (BASELINES | {"paging"}) & group.keys()
+        best = max((capacity[p] for p in baselines), default=0)
+        controls = [
+            group[p][best]["metrics"]
+            for p in baselines
+            if best in group[p] and admitted(group[p][best])
+        ]
+        oracle = group.get("paging_oracle", {})
+        for name, runs in group.items():
+            policy = next(iter(runs.values()))["policy"]
+            if name in baselines or policy["oracle"]:
+                continue
+            count = capacity[name]
+            row, peak = runs.get(best), runs.get(count)
+            comparable = bool(controls and row and peak and admitted(row) and admitted(peak))
+            entry = {
+                "settings": json.loads(signature),
+                "policy": name,
+                "baseline_capacities": {p: capacity[p] for p in sorted(baselines)},
+                "candidate_capacity": count,
+                "baseline_capacity": best,
+                "capacity_censored": count == max(runs),
+                "oracle_slo_misses": [n for n, r in oracle.items() if not admitted(r)],
+                "comparable": comparable,
+                "p3_joint_gate": False,
+            }
+            if comparable:
+                m, high = row["metrics"], peak["metrics"]
+                wire = m["wire_bytes_per_decode_tokens"] / max(
+                    1, min(b["wire_bytes_per_decode_tokens"] for b in controls)
+                )
+                latency = {
+                    k: max(m[k], high[k]) / max(1, min(b[k] for b in controls))
+                    for k in ("ttft_p95_us", "tpot_p95_us")
+                }
+                nonnull = not policy["prefetch"] or m["speculative_bytes"] > 0
+                oracle_ok = all(n in oracle and admitted(oracle[n]) for n in {best, count})
+                equal_work = all(
+                    m["completed"] == b["completed"] and m["decode_tokens"] == b["decode_tokens"]
+                    for b in controls
+                )
+                entry.update(
+                    wire_ratio=wire,
+                    latency_ratios=latency,
+                    capacity_ratio=count / best,
+                    predictor_non_null=nonnull,
+                    oracle_admitted=oracle_ok,
+                    p3_joint_gate=equal_work
+                    and nonnull
+                    and oracle_ok
+                    and wire <= 0.7
+                    and count >= 1.2 * best
+                    and max(latency.values()) <= 1.05,
+                )
+            result.append(entry)
+    return result
+
+
 def plot(rows, path):
     import matplotlib
 
@@ -262,6 +346,7 @@ def campaign(schema, parameters, output, *, maximum=512, plots=False):
     write_json(output / "runs.json", rows)
     write_json(output / "point-gates.json", matched(rows))
     write_json(output / "capacity.json", capacity_table(rows))
+    write_json(output / "p3-regions.json", p3_regions(rows))
     flat = [
         {
             "run": r["run"],

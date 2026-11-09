@@ -59,10 +59,10 @@ No config is redistributed and no dataset is imported.
 Bytes per native entry, indexer entry and checkpoint (including convolution
 carry) are explicit parameters. Entry sizes must include native scales and any
 format-specific overhead; page metadata and alignment are charged separately.
-Weight quantization does not establish KV precision. Layer counts multiply these
-assumed sizes; no additional cross-layer sharing is inferred from source-layer
-lists. Those lists remain unresolved facts. Exact physical aliases are represented
-by the same owner key in analytic fixtures and shared prefixes. Indexer candidates
+Weight quantization does not establish KV precision. The legacy aggregate profile
+multiplies sizes by layer counts. The layer profile lowers declared source groups
+to shared owner keys; native packing and undeclared aliases remain unresolved.
+Exact aliases are charged once in every policy, including baselines. Indexer candidates
 are filtered by the explicit `indexer_ratios` parameter (default 1/2/4); this is
 an assumption, not proof that every candidate owns an indexer. Replay legality
 and per-token cost are also hypothetical inputs, not released engine contracts.
@@ -102,7 +102,8 @@ is deliberately conservative; it does not invent layer overlap, NVLink bandwidth
 quality preservation or an installed engine's compute scheduling. A sparse cold
 miss may pay full recompute again when a later selected page was not materialized.
 HBM capacity means cache bytes after weights and runtime workspace, not device
-capacity. Sparse pages aggregate layer groups; no layer pipeline is assumed.
+capacity. The legacy profile aggregates layer groups; `layered: true` enables the
+bounded pipeline described below.
 Decode steps read the supplied boundary; KV growth appears at the next producer
 boundary. Active inference workspace and output quality are outside this model.
 
@@ -128,6 +129,11 @@ any engine's native cache. No product performance comparison is implied.
 | `p1` | Marginal-benefit/byte greedy closure retention; costed load/replay/recompute |
 | `p2` | Shared versions plus JIT from the last 32 completed tool durations |
 | `p3` | Serialized sparse demand paging with a null last-set predictor |
+| `paging` | Exact demand paging, with no lookahead transfers |
+| `reuse` | Fetch declared consumer ranges after their source indexer reveals them |
+| `previous_step` | Predict from the same layer's previous step |
+| `previous_layer` | Predict from the immediately preceding layer's revealed set |
+| `paging_oracle` | Layer lookahead with future selections; unavailable online |
 | `all` | P1 + P2 + serialized sparse demand paging |
 | `oracle` | `all` with future return/selection knowledge; separate lookahead control |
 
@@ -149,6 +155,83 @@ Sweep any scalar `Workload`, `Sizes`, `Costs` field, or `hbm_bytes`, `dram_bytes
 `ssd_bytes`. Vary relative component bytes, checkpoint spacing, fan-out, route
 costs, overlap and `prediction_scale` in separate bounded campaigns. Freeze seeds
 and holdouts before comparing; never tune them after observing policy wins.
+
+## Layer paging experiment
+
+**Simulation only, not hardware evidence.** `layered: true` expands sparse
+layers into ordered page maps. Each step runs indexer → exact gather → attention
+for every sparse layer. `layer_indexer_us` and `layer_compute_us` are explicit
+assumptions; the latter includes any intervening non-sparse work assigned to that
+stage. There is one compute lane and **one link, which serializes all gathers**.
+No sparse query is revealed before its indexer event. The page map becomes usable
+only after every exact byte is ready; missing predictions stall for exact demand.
+
+`lookahead` is 0–2 layers (default 1), including across step boundaries. Reservations
+protect prefetched pages until the target layer takes over; in-flight slots stay
+charged through physical drain, even if the request is rejected. Global slots
+are capped by `Limits.prefetches` (256), with at most `lookahead` per request.
+HBM, owner, event, reference and transfer limits still apply. Failed prefetch
+admission increments `prefetch_rejected`, without silently shortening a vector.
+
+Declared `index_source_layer_ids` and `kv_source_layer_ids` start contiguous
+groups; `indexer_types: shared` uses the preceding full indexer. No declaration
+means no reuse. Index consumers use exactly their source's revealed indices and
+pay no duplicate indexer compute. KV consumers alias their declared source owner.
+This follows the [CSA2 modes](https://arxiv.org/html/2609.19969v1#S2.SS3.SSS1);
+it does not infer tensor packing or new replay recipes. Known transfers are
+`declared_reuse_bytes`, separate from speculation. A shared-KV group may need no
+additional transfer at all; reuse is not a license to multiply bytes or savings.
+
+The independent predictors use either previous-step indices of the target layer
+or this step's revealed previous-layer indices. They may name evicted/nonresident
+pages. Prediction-only ablations skip consumers whose exact demand is already
+revealed; enable `declared_reuse` to combine the mechanisms. Neither reads future
+selections. Only `policy.oracle` does so; it retains the same budgets and queues,
+and is a bounded lookahead control, not a globally optimal offline scheduler.
+
+The generator's `overlap`, `layer_overlap` and `new_page_locality` are **unknown for
+real models**. Same-layer overlap gets first claim on top-k slots, followed by
+adjacent-layer overlap; conflicting targets may be infeasible. Report realized
+intersections as well as targets. Fresh pages exclude both previous sets; locality
+biases their positions toward recent positions. Declared consumers override these
+assumptions with exact source reuse. The zero-overlap control concerns independent
+indexers; a declared consumer cannot be made disjoint without changing the model.
+
+The pinned sparse profiles are V4/V4.1-Flash, GLM-5.3/Flash, Flash-Next and MiniMax
+M3. V4.1 has index and KV reuse; GLM-5.3 has index reuse with independent KV owners.
+Qwen3.8-27B declares no sparse selection and is **excluded** from this P3 experiment;
+Flash-Next declares an indexer and applies. The same rule rejects the dense/linear
+Kimi and Gemma profiles; there are no model-name branches in lowering.
+
+Frozen definitions live in `p3_workloads.py`. `parameters(schema, "grid")` sweeps
+overlap targets, locality, depths 0–2, bandwidth, attention and indexer time.
+`"holdout"` uses seeds 41/73, tool/document families, adjacent HBM budgets and
+2/3-session admission sweeps; `"probe"` covers the other sparse configs. Budgets
+come from the two-session mandatory-owner union plus 8/10 maximum sparse pages.
+These cache budgets exclude weights/workspace and deliberately force eviction.
+Tool waits are fixed and JIT is off to isolate P3; no dataset is imported.
+`top_k=2` counts synthetic pages, not native token-level top-k or measured quality.
+
+After loading a pinned config with `load_config`, run through the existing driver:
+
+```python
+from benches.storage.state_cache.campaign import campaign
+from benches.storage.state_cache.p3_workloads import parameters
+
+for name, settings in parameters(schema, "holdout"):
+    campaign(schema, settings, external_root / name, plots=True)
+```
+
+`p3-regions.json` requires ≥30% fewer wire bytes/decode token, ≥20% greater
+SLO-admitted capacity and p95 TTFT/TPOT within 5% of the strongest compatible
+control. Controls include serialized exact paging as well as the four full-state
+approximations. Compare equal completed work at baseline capacity and require
+latency bounds at the candidate's higher capacity too. A null predictor cannot
+pass. Oracle SLO misses stop the corresponding modeled load. Repetition across
+both holdouts and adjacent budgets is still required; no isolated point qualifies.
+Report consumed and **wasted speculative bytes**, declared reuse, fetch stall and
+the regions where each mechanism helps or hurts. Real indexer selection traces
+and service times require a later GPU run; none are measured here.
 
 ## Bounds, outputs and interpretation
 
@@ -204,11 +287,13 @@ per config means JIT earned no capacity gain over that control. It does not test
 the benefit of freeing HBM during tool waits. Some JIT TTFT gains occur, but the
 required capacity gain does not; the P2 configuration does not earn promotion.
 
-**P3 is untested in its main mechanisms.** There is no cross-layer pipeline, and
-the online predictor cannot name newly selected, nonresident pages. These runs
+**P3 in #333 was untested in its main mechanisms.** There was no cross-layer pipeline,
+and its online predictor could not name newly selected, nonresident pages. Those runs
 test serialized per-step demand paging. `p3` moves zero speculative bytes in all
 72 Qwen/DeepSeek rows; `all` and `no_prefetch` have identical speculative bytes
 throughout the ablation and sensitivity campaigns, all from JIT. The null
 last-set predictor cannot support a P3 kill verdict. The Qwen lookahead oracle's
 p95 TPOT of 0.25–0.76× the online combined policy is measured headroom using
 **unavailable future knowledge**, not an online gain.
+The layer profile above now tests those mechanisms with causal controls; its
+campaigns and conditional verdict are recorded separately from the #333 evidence.
