@@ -17,3 +17,5 @@ consts = "consts"
 arange = "arange"
 # POSIX msghdr field: ancillary data length.
 msg_controllen = "msg_controllen"
+# Released SGLang 0.5.23 release_req keyword (upstream spelling).
+remaing_req_count = "remaing_req_count"

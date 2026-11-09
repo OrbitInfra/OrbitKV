@@ -256,6 +256,62 @@ and output comparisons remain required. Native fixtures prove different facts
 from a serving run; neither supplies the missing allocator-generation contract.
 Real model-level pressure/preemption and abort remain required hardware follow-up.
 
+### SGLang component gates
+
+**Written only; unrun and unqualified.** The
+[0.5.23 audit](adapters.md#released-sglang-component-contract) admits static
+Full+Mamba checkpoints and keeps ordinary MLA per rank. Required installed-CPU
+controls in `test_sglang_components.py` use real SGLang pools, allocators, tree,
+components, wrapper, `Scheduler.run_batch` and `release_req`. Only CUDA events,
+model compute and Manager replies are controlled. They establish no GPU receipt.
+
+| Case | CPU-run control | Written installed-GPU control |
+| --- | --- | --- |
+| Atomic boundary / missing state | Full+checkpoint intersection; missing checkpoint and mismatched boundaries miss; MLA requires its complete Full range | Restart hit and every registered component's restored bytes |
+| Layout isolation | Conv axis/roles, tensor dtype and MLA latent/RoPE partition; rank-isolated identities | Same admitted model/config freeze in each restart |
+| Abort during Load | Private Full/Mamba slots and every lease remain through native wait; abort cannot cancel started work | Real Manager `restore` barrier, aborted request, poisoned destination and untouched-slot byte checks |
+| Abort during Save | Real tree eviction cannot reclaim Full/checkpoint sources while Save waits; FIFO drain releases locks | Real Manager `publish` barrier with abort and eviction attempt |
+| Retraction with Load pending | Released `run_batch` blocks before `release_req`; slots become reusable only after drain | Same released free path after actual native Restore receipt |
+| Unsupported state | Moving pool, int8, short-conv/ngram, replay/speculative/sibling state, combined Full/SWA/Mamba serving, MLA broadcast dedup; existing sidecar/window/scale guards retained | Startup must fail with its named reason |
+
+Use the tests-only installed projection and prerequisite variables above, with
+an installed wheel and official SGLang 0.5.23 environment. Record model revisions
+and hashes, wheel/Manager hashes, engine freeze, GPU and runtime libraries.
+Start eager TP=1/PP=1, raw state, no speculation or ReplaySSM. The model gate
+checks the actual registration in **each** restarted process; a dense model
+cannot satisfy the recurrent or MLA gate. Set `PYTHON` to that environment.
+
+```bash
+ORBITKV_REQUIRE_ENGINE_TESTS=1 ORBITKV_REQUIRE_SGLANG_COMPONENT=recurrent \
+  "$PYTHON" -m pytest --import-mode=importlib -m e2e \
+  --engine=sglang --engine-evidence=installed-gpu \
+  tests/e2e/test_sglang_direct_e2e.py \
+  --model /models/Qwen3-Next-80B-A3B-Instruct-immutable \
+  --engine-report=/var/tmp/orbitkv-m1/sglang-recurrent.json
+ORBITKV_REQUIRE_ENGINE_TESTS=1 ORBITKV_REQUIRE_SGLANG_COMPONENT=mla \
+  "$PYTHON" -m pytest --import-mode=importlib -m e2e \
+  --engine=sglang --engine-evidence=installed-gpu \
+  tests/e2e/test_sglang_direct_e2e.py \
+  --model /models/DeepSeek-V2-Lite-immutable \
+  --engine-report=/var/tmp/orbitkv-m1/sglang-mla.json
+
+# Matching test-hooks wheel and Manager; this is not a release binary.
+ORBITKV_REQUIRE_ENGINE_TESTS=1 ORBITKV_FAULT_TESTS=1 \
+  ORBITKV_CACHE_MANAGER_BINARY="$MANAGER" \
+  "$PYTHON" -m pytest --import-mode=importlib -m gpu \
+  --engine=sglang --engine-evidence=installed-gpu \
+  tests/integration/test_sglang_components.py::test_native_component_bytes_and_faults \
+  --model /models/Qwen3-Next-80B-A3B-Instruct-immutable \
+  --engine-report=/var/tmp/orbitkv-m1/sglang-component-bytes-faults.json
+```
+
+The first two commands cover output/logprob parity, a live-Manager engine
+restart, hits and cold identity controls. The third covers real component
+buffers and drain barriers, separately on DRAM and io_uring. End-to-end model
+abort/retraction under serving load and physical multi-rank operation remain
+hardware queue items; neither model parity nor a fixture closes them. Manager
+restart may miss until M2. No allocator-generation proof is claimed.
+
 ### Build the native fault runtime
 
 Build the matching OrbiTE artifacts before starting any native/GPU tests.

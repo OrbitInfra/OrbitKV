@@ -150,8 +150,8 @@ CI consume the OrbiTE Rust dependency from Cargo.lock; no native transfer-engine
 submodule is needed. Initialize engine submodules for
 source inspection or release upgrades. The selected baselines are vLLM
 0.33.0 and SGLang 0.5.23; current OrbiTE installed profiles remain unqualified.
-Both engines require Python 3.11+. OrbitKV consumes Full/SWA only from
-SGLang's linker; its newly released Mamba support is not integrated. Public load completion is consumed;
+Both engines require Python 3.11+. OrbitKV consumes Full/SWA and static Mamba conv/SSM checkpoints from
+SGLang's linker; unsupported replay, draft and moving-pool state is rejected. Public load completion is consumed;
 pre-capture and pending-admission hooks still need released replacements. Check official release tags again when starting
 an upgrade. Use main only to locate fixes and prepare upstream contributions.
 See `docs/adapters.md` and the `engine-integration` skill for ownership and

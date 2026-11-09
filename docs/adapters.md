@@ -33,7 +33,7 @@ retains Python 3.10+. Use separate environments.
 | SGLang `UnifiedCacheLinker.offload` | Adds optional `session_id`; accept it without using session attribution as cache identity. Native wrapper supplies it. |
 | SGLang producer readiness | Consume released `record_offload_ready()`, passing the worker's `forward_stream`. Hold and wait both index/current-stream and forward-stream events before submitting a prepared Save. Unknown completion still retains the tree lock and registration. |
 | SGLang wrapper pool contract | Supply `pools` explicitly: the wrapper now uses it to decide whether SWA is available. Full/SWA stay complete; request-ring/replay layouts, sidecar/draft state and separate scale buffers are rejected. |
-| SGLang linker construction / components | The new dynamic linker factory supports external classes and Full/SWA/Mamba. Keep the public RadixCache factory because OrbitKV still needs `RecoveryLinkerWrapper` for absolute boundaries and rank agreement. Newly released Mamba support is not integrated in this PR. |
+| SGLang linker construction / components | The new dynamic linker factory supports external classes and Full/SWA/Mamba. Keep the public RadixCache factory because OrbitKV still needs `RecoveryLinkerWrapper` for absolute boundaries and rank agreement. Static Mamba checkpoints now use that released component; see the component audit below. |
 | SGLang retained private dependencies | `DevicePoolEntry._row_span`, location translation, `hit_markers`, `inflight_load_rids`, `_tail_hashes`, `_all_reduce_attn_groups`, resolved runtime configuration and the three hook targets below retain their consumed signatures. Native private destinations, post-forward insertion and `finish(ABORT)` remain the owners. No hook is removed. |
 
 Sources: [vLLM base contract](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/distributed/kv_transfer/kv_connector/v1/base.py),
@@ -301,8 +301,8 @@ Plugin discovery does not eagerly load native/GPU resources.
 SGLang 0.5.23 owns private destination allocation, cancellation and tree insertion.
 `RecoveryLinkerWrapper` translates absolute boundaries and rank agreement;
 `finish_layer_wise_loading` waits for native Restore before insertion or release.
-Unknown completion raises and retains ownership. OrbitKV still admits only Full/SWA; the release adds Mamba to its linker
-contract, but recurrent/SSM startup remains rejected here. Aborts use native
+Unknown completion raises and retains ownership. OrbitKV admits Full/SWA and
+static Mamba conv/SSM checkpoints through the released component. Aborts use native
 `BasePrefixCache.finish(ABORT)`; lookup-only cancellation retires unsubmitted queries.
 
 Two private Hooks remain: graph initialization and pending-query admission. An
@@ -317,6 +317,39 @@ completion, not task cancellation, releases destinations. The
 [original shutdown record](https://github.com/OrbitInfra/OrbitKV/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#sglang-linker-and-current-internal-dependencies)
 preserves warnings and 0.5.21 measurements. Unknown auxiliary/draft state and
 unsupported request modes remain rejected.
+
+### Released SGLang component contract
+
+Audited at **v0.5.23, `297e54fd`**, November 10, 2026. These are source and
+installed-CPU contracts, **not GPU qualification**. No engine tree, runner or
+allocator is replaced.
+
+| Component | Released handoff and ownership | OrbitKV decision |
+| --- | --- | --- |
+| Full / SWA | The wrapper [requires every pool at one boundary](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/unified_cache/unified_cache_linker.py#L165-L198), intersects rank boundaries, then [allocates private destinations and unwinds refused loads](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/unified_cache/unified_cache_linker.py#L392-L497). Full needs the prefix; SWA needs the trailing window at that boundary. | Existing behavior unchanged; no partial component hit. |
+| Mamba / SSM | [OFFLOAD names one checkpoint at the node's final hash; LOAD allocates one slot](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/unified_cache/components/mamba.py#L729-L759). Every conv tensor and nonempty temporal tensor belongs to that slot. [PREPARE adopts it and removes obsolete deferred CoW/clear; ABORT frees only unsubmitted allocations](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/unified_cache/components/mamba.py#L761-L790). | Admit static `HybridReqToTokenPool` / exact `MambaPool.State` with Full attention. Combined Full/SWA/Mamba serving remains rejected pending a combined lifecycle gate. Register all conv/temporal buffers; restore the checkpoint at exactly the selected boundary, never a nearby state. |
+| Checkpoint production | [Finished requests donate an exactly tracked checkpoint; running requests donate a tracked slot or copy into a distinct slot](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/unified_cache/components/mamba.py#L582-L727). The [tree floors every component to one common boundary](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/unified_radix_cache.py#L1164-L1238). [Mamba locks protect checkpoints from eviction](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/unified_cache/components/mamba.py#L465-L553). | Keep those engine owners. OrbitKV's Save completion is emitted only after native drain; request finish is not the Save receipt. |
+| MLA | [The ordinary MLA pool](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/memory_pool.py#L4754-L4866) holds latent KV plus rotary dimensions in each row. The Full component hands off all these rows; the ordinary wrapper owns them exactly as Full KV. | Retain per-rank storage. Identity now records latent/RoPE/physical widths separately, plus tensor shape, dtype, stride, layer map and TP/PP/CP coordinates. Equal total widths with different partitions cannot alias. Separate scale/indexer buffers remain rejected. |
+| MLA writer selection | [`HiCacheStorageConfig.is_storage_writer`](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/hicache_storage.py#L28-L74) selects TP rank 0, or the first replica of each DCP shard. The native linker [accepts follower offloads without sending bytes](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/storage/mooncake_store/mooncake_direct_linker.py#L376-L423); the [tree reduces completion count and success across ranks](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/unified_radix_cache.py#L3651-L3667). | A released writer rule exists. M3 still owns shared-entry identity and rank-common bounded admission/failure handling. This PR retains rank-isolated entries; two ranks cannot write one entry. `--enable-linker-mla-dedup` (native rank-0 Load/broadcast) is explicitly rejected: it is not an OrbiTE byte path. |
+| Other state | The [released component set is Full/SWA/Mamba](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/unified_cache/unified_cache_linker.py#L59-L65). [Mamba state also has optional replay/speculative fields](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/memory_pool.py#L521-L568); [the native assembler rejects moving, int8 and side-state layouts](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/hybrid_cache/linker_pool_assembler.py#L488-L531). | Reject moving/unified pools, int8 checkpoints, ReplaySSM, draft/speculative buffers, short-conv/ngram siblings and unknown pool types. Existing DSA/sidecar/draft-window/request-ring/scale-buffer rejections stay. Convolution-only checkpoints use the same exact-boundary rule. |
+
+The linker is a queue before `start_layer_wise_loading`. A queued cancellation
+releases only unsubmitted leases; PREPARE's private slots remain engine-owned.
+For a started load, [per-layer pool getters wait for the load counter](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/memory_pool.py#L1667-L1726).
+[`Scheduler.run_batch` waits for `finish_external_linker_loads` before returning](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/managers/scheduler.py#L4926-L4935);
+the [wrapper waits for the native receipt before releasing private-load bookkeeping](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/unified_cache/unified_cache_linker.py#L564-L620).
+Thus the next decode step's [retraction/free](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/managers/schedule_batch.py#L2360-L2395)
+cannot overtake an in-flight load. CPU controls execute the released `run_batch`
+and `release_req` with controlled model compute and native receipts. They do not
+call retraction illegally in the middle of a forward or claim allocator generations.
+
+[Offload locks and FIFO completion](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/unified_cache/unified_cache_linker.py#L501-L562)
+are independent of request lifetime. An abort or retraction cannot free a locked
+checkpoint or attention source; unknown completion retains locks and registrations.
+All-group leases are acquired before reporting an external hit and all required
+bytes enter one native Restore. A missing component or mismatched boundary is a
+miss, not a mixed recovery. [Controls and unrun hardware gates](fault-qualification.md#sglang-component-gates)
+separate logical decisions, fixture bytes and model execution.
 
 ## Remaining internal Hooks
 
@@ -337,8 +370,9 @@ Missing allocator-generation contracts are tracked in
 Worker preparation [#44856](https://github.com/sgl-project/sglang/pull/44856) and
 pending admission [#44873](https://github.com/sgl-project/sglang/pull/44873) are
 upstream replacement candidates, not consumed interfaces in our current pins.
-All four remain open and unmerged as of November 9, 2026; neither allocator
-exposes the requested physical-page generation. Submission alone never removes
+The three SGLang items remain open and unmerged on November 10, 2026; none
+is in v0.5.23. vLLM #62810 was still open at its November 9 audit. Neither
+allocator exposes the requested physical-page generation. Submission alone never removes
 a correctness hook. See the [upstream path](completion-plan.md#upstream-path).
 
 ## P/D and cache composition

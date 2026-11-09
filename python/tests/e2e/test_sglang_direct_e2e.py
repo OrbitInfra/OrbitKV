@@ -240,6 +240,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
         launch_env = dict(env)
         if fingerprint is not None:
             launch_env["ORBITKV_MODEL_FINGERPRINT"] = fingerprint
+        log_start = log_path.stat().st_size if log_path.exists() else 0
         with log_path.open("a") as log_file:
             process = subprocess.Popen(
                 launch_cmd,
@@ -265,6 +266,13 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                 time.sleep(1)
             else:
                 pytest.fail(f"SGLang startup timed out:\n{log_path.read_text()[-8000:]}")
+            required = os.environ.get("ORBITKV_REQUIRE_SGLANG_COMPONENT")
+            if required:
+                assert required in {"recurrent", "mla"}, "unknown component gate"
+                current_log = log_path.read_bytes()[log_start:].decode(errors="replace")
+                assert f"components={required}" in current_log or (
+                    required == "recurrent" and "components=attention,recurrent" in current_log
+                ), "the model gate did not register the required component"
             return process, base_url
         except BaseException:
             _stop_server(process, tmp_path)

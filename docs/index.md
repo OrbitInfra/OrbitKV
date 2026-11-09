@@ -39,7 +39,8 @@ owns DRAM, SSD and peer cache state; OrbiTE moves the bytes.
 
 See [features and limits](features.md) and the [engine support matrix](compatibility.md).
 The current adapters target **vLLM 0.33.0** (V1 single-group or Full + SWA) and
-**SGLang 0.5.23** (Full/SWA external linker). Recurrent external recovery is rejected.
+**SGLang 0.5.23** (Full/SWA and static Mamba checkpoints; MLA per rank).
+See the [admission limits](adapters.md#released-sglang-component-contract).
 
 (evidence-title)=
 ```{note}
