@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from importlib.metadata import version
 from typing import TYPE_CHECKING
@@ -332,6 +332,7 @@ def derive_namespace(
     cross_layer_blocks: bool = False,
     hash_block_size: int | None = None,
     static_loras: tuple[tuple[str, str], ...] | None = None,
+    kv_cache_config=None,
 ) -> str:
     """Resolve the model computation and cache representation once per connector."""
     model_config = vllm_config.model_config
@@ -379,6 +380,17 @@ def derive_namespace(
         "mamba_cache_mode": getattr(cache_config, "mamba_cache_mode", None),
         "mamba_ssm_cache_dtype": getattr(cache_config, "mamba_ssm_cache_dtype", None),
     }
+
+    groups = tuple(getattr(kv_cache_config, "kv_cache_groups", ()) or ())
+    if len(groups) > 1:
+        factors["cache_groups"] = [
+            {
+                "layers": tuple(group.layer_names),
+                "spec_type": type(group.kv_cache_spec).__name__,
+                "spec": {key: str(value) for key, value in asdict(group.kv_cache_spec).items()},
+            }
+            for group in groups
+        ]
 
     return state_namespace(
         engine="vllm",

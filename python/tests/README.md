@@ -65,8 +65,8 @@ test reports are covered. There are no reviewed skip exceptions; new exceptions
 must name an exact node/profile, reason and review link in the registry.
 
 Use `-m ''` to clear the source-only default marker filter, then select the
-intended profile and, for GPU runs, the exact files/cases. Excluding unsupported
-HMA from a V1/one-group gate is a declared scope, not an allowed skip. An empty
+intended profile and, for GPU runs, the exact files/cases. Excluding
+hybrid cases from a V1/one-group gate is a declared scope, not an allowed skip. An empty
 `-k` result fails. `--engine-report=/external/path/evidence.json` records the final
 selection, results, skips and exit status without overwriting an existing run.
 The [fault matrix](../../docs/fault-qualification.md#engine-conformance-matrix)
@@ -113,8 +113,10 @@ collection.
 
 For required engine runs use the flags and tests-only projection in
 [installed-GPU reproduction](../../docs/fault-qualification.md#required-installed-gpu-runs).
-All current GPU entries are unrun/unqualified, including vLLM V1/one group and
-SGLang Full/SWA. No test may infer allocator-generation safety from registration
+All current GPU entries are unrun/unqualified, including vLLM V1 single-group,
+V1 Full/SWA, V2 opt-in and SGLang Full/SWA. The [HMA case table](../../docs/fault-qualification.md#fullswa-gates)
+separates installed-CPU allocator controls from model/byte/fault gates.
+No test may infer allocator-generation safety from registration
 replacement or source-contract results while the upstream generation issues
 remain open.
 

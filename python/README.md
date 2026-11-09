@@ -32,7 +32,8 @@ base package does not install. See [release requirements](../docs/releases.md).
 
 Use separate official environments for **vLLM 0.33.0** and **SGLang 0.5.23**,
 with the same OrbitKV build in the Manager environment. Ordinary vLLM deployments keep
-`VLLM_USE_V2_MODEL_RUNNER=0` and one attention cache group. The
+`VLLM_USE_V2_MODEL_RUNNER=0`; single-group attention and
+[Full + SWA](../docs/hybrid-recovery.md#vllm-hybrid-handoff) are admitted. The
 [V2 gate](../docs/fault-qualification.md#v2-opt-in-gates) is explicitly opt-in,
 uniform Full attention only, and unqualified. SGLang uses the
 UnifiedRadixCache external linker and its public load-completion callback.

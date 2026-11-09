@@ -93,7 +93,7 @@ def test_unsupported_released_profiles_fail_before_connecting(
         cache.kv_cache_groups[0].kv_cache_spec = MambaSpec(
             block_size=16, shapes=((2, 4),), dtypes=(torch.float32,), mamba_cache_mode="align"
         )
-    with pytest.raises(RuntimeError, match="VLLM_USE_V2|one attention|single cache group"):
+    with pytest.raises(RuntimeError, match="VLLM_USE_V2|require window|single cache group"):
         OrbitKVConnector(config, KVConnectorRole.SCHEDULER, cache)
 
 

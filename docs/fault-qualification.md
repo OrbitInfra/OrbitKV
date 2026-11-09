@@ -203,6 +203,59 @@ model outputs and requires restart restore bytes; the fault gate compares exact
 fixture bytes. Repeat failing runs as failures, never omit a case to make a gate
 green. Neither gate resolves #62810 or authorizes release on an unknown receipt.
 
+### Full+SWA gates
+
+The [HMA suite](../python/tests/integration/test_vllm_hma_contract.py) is registered
+as installed-CPU, except its explicitly registered native GPU byte test. CPU
+controls use official 0.33.0 specs, requests, allocator, scheduler retirement and
+V1 worker finalization; Manager replies and CUDA events are narrow seams.
+
+| Case | CPU-run control | Written-only GPU evidence |
+| --- | --- | --- |
+| Atomic boundary | Full + window hit; missing either group, missing materialization or different boundaries miss entirely; changed allocation boundary rejects. One Restore owns all leases. | Per-group DRAM/SSD bytes and untouched out-of-window destinations. |
+| Window retirement / preemption / abort during Save | Real `build_connector_meta` pins all groups; retire through the allocator, exhaust the free queue, and reallocate only after all-worker drain. | Pause native Publish, retire/preempt, retain the source, drain, overwrite its reused slot and restore the original bytes for both groups. |
+| Bounded Save owners | At the pool-sized job cap, drop only the optional Save; never reject the scheduler step. No new pin/job/pending Save is created; earlier intents still reach metadata. Count `vllm:orbitkv_save_dropped_total{reason="job_budget"}` and warn at most once per minute. Worker drain receipts reopen admission. | Hardware pressure remains unrun. |
+| Abort / preemption during Load | Processed-token window retirement and deferred frees keep required destinations. A failed physical wait cannot return a V1 step; preemption waits for that step. | Pause CUDA restore, abort/refuse premature preemption, verify retained owners, drain and compare both groups before reuse. |
+| Layout / startup exclusions | Changed order, window, block size, head shape or layer names change identity. Unknown specs, MLA, Mamba, zeroing, speculation/draft, host groups, producer-only, PP and V2 multi-group reject. | Model/layout variants remain unrun; recurrent is not an admitted GPU profile. |
+
+Use the same tests-only installed projection and prerequisite variables described
+above. Set `PYTHON` to the official vLLM 0.33.0 environment and `MODEL` to a local
+immutable **Gemma 3 Full/SWA** checkpoint with its revision recorded. The model
+gate requires admitted Full/SWA groups in both engine processes, so a dense model
+cannot substitute. Start eager TP=1/PP=1 with raw KV and no speculation.
+
+```bash
+export VLLM_USE_V2_MODEL_RUNNER=0 ORBITKV_REQUIRE_ENGINE_TESTS=1
+export ORBITKV_REQUIRE_VLLM_FULL_SWA=1
+# Matching normal wheel + Manager; repeat with --vllm-cache-tier ssd.
+"$PYTHON" -m pytest -m '' --engine=vllm --engine-evidence=installed-gpu \
+  --vllm-runner=v1 tests/e2e/test_vllm_e2e_correctness.py \
+  -k 'not same_process_hma' --model "$MODEL" --max-model-len 4096 \
+  --vllm-cudagraph-mode NONE --vllm-cache-tier dram \
+  --basetemp=/var/tmp/orbitkv-conformance/hma-model-dram \
+  --engine-report=/var/tmp/orbitkv-conformance/hma-model-dram.json
+
+# Exact Full/SWA fixture bytes in DRAM and io_uring SSD. Checkpoint cases excluded.
+"$PYTHON" -m pytest -m '' --engine=vllm --engine-evidence=installed-gpu \
+  tests/integration/test_vllm_recovery.py \
+  -k 'window_and_checkpoint_restore and False' --model "$MODEL" \
+  --basetemp=/var/tmp/orbitkv-conformance/hma-bytes \
+  --engine-report=/var/tmp/orbitkv-conformance/hma-bytes.json
+
+# Matching test-hooks wheel AND Manager; no engine or CUDA module stubs.
+export ORBITKV_FAULT_TESTS=1 ORBITKV_CACHE_MANAGER_BINARY="$MANAGER"
+"$PYTHON" -m pytest -m '' --engine=vllm --engine-evidence=installed-gpu \
+  tests/integration/test_vllm_hma_contract.py -k native_hma_page_reuse_bytes \
+  --model "$MODEL" --basetemp=/var/tmp/orbitkv-conformance/hma-native-reuse \
+  --engine-report=/var/tmp/orbitkv-conformance/hma-native-reuse.json
+```
+
+All three are **unrun and unqualified**. The excluded `same_process_hma` assertion
+belongs to the old recurrent fixture, which is not admitted here; restart hits
+and output comparisons remain required. Native fixtures prove different facts
+from a serving run; neither supplies the missing allocator-generation contract.
+Real model-level pressure/preemption and abort remain required hardware follow-up.
+
 ### Build the native fault runtime
 
 Build the matching OrbiTE artifacts before starting any native/GPU tests.

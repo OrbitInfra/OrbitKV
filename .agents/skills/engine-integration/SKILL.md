@@ -76,8 +76,11 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   admits only uniform Full attention: no pre-forward zeroing/CoW, speculation or
   query-control fan-out, and a consumer role for deferred block frees. Follow the
   pinned ordering audit in `docs/adapters.md`.
-  Keep V1 unchanged, reject recurrent/multi-group and preserve the preemption
-  barrier before any new writes, even if the scheduler has reassigned a block ID.
+  V1 also admits exact FullAttentionSpec + SlidingWindowSpec groups with the same
+  block size: bind the GPU pool, pin Save jobs until all-worker drain, and match
+  one complete recovery boundary. Bind resolved group order/specs to identity.
+  Reject recurrent, zeroing, speculation, host-resident, PP and V2 multi-group state.
+  Preserve the preemption barrier before writes even after block-ID reassignment.
   CPU allocator controls are not generation or GPU/model qualification. V2
   hardware gates remain unrun. No runner or native-prefix monkeypatch is installed.
 - SGLang native P/D candidate enables released deferred KV release on both P

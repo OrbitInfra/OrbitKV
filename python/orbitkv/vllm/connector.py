@@ -61,13 +61,39 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
         world_size = vllm_config.parallel_config.world_size
         is_mla = detect_mla(vllm_config)
         cache_groups = tuple(getattr(kv_cache_config, "kv_cache_groups", ()) or ())
-        if len(cache_groups) > 1 or (
-            cache_groups and CacheGroupLayout.from_config(kv_cache_config).has_recurrent_state
-        ):
-            raise RuntimeError(
-                "OrbitKV on official vLLM 0.33.0 supports one attention cache group; "
-                "hybrid recovery requires an upstream atomic state hand-off."
+        if len(cache_groups) > 1:
+            from vllm.v1.kv_cache_interface import (
+                FullAttentionSpec,
+                MambaSpec,
+                MLAAttentionSpec,
+                SlidingWindowSpec,
             )
+
+            specs = tuple(group.kv_cache_spec for group in cache_groups)
+            if any(isinstance(spec, MambaSpec) for spec in specs):
+                raise RuntimeError("OrbitKV HMA rejects recurrent/Mamba state: hand-off unproven")
+            if vllm_config.use_v2_model_runner:
+                raise RuntimeError("OrbitKV V2 rejects multiple cache groups")
+            if is_mla or any(isinstance(spec, MLAAttentionSpec) for spec in specs):
+                raise RuntimeError("OrbitKV HMA rejects MLA with multiple cache groups")
+            if any(type(spec) not in (FullAttentionSpec, SlidingWindowSpec) for spec in specs):
+                raise RuntimeError("OrbitKV HMA rejects unknown cache specs; require Full + SWA")
+            if kv_cache_config.needs_kv_cache_zeroing:
+                raise RuntimeError("OrbitKV HMA rejects groups requiring KV zeroing")
+            if getattr(vllm_config, "speculative_config", None) is not None or any(
+                spec.is_draft or getattr(spec, "extra_retained_tokens", 0) for spec in specs
+            ):
+                raise RuntimeError("OrbitKV HMA rejects speculative decoding and draft state")
+            if any(group.host_resident for group in cache_groups):
+                raise RuntimeError("OrbitKV HMA rejects host-resident engine cache groups")
+            if not vllm_config.kv_transfer_config.is_kv_consumer:
+                raise RuntimeError("OrbitKV HMA requires a KV consumer role for load retirement")
+            if getattr(vllm_config.parallel_config, "pipeline_parallel_size", 1) != 1:
+                raise RuntimeError("OrbitKV HMA rejects pipeline-parallel group projections")
+        if cache_groups:
+            CacheGroupLayout.from_config(kv_cache_config)
+        if len(cache_groups) > 1:
+            logger.info("[OrbitKVConnector] HMA Full+SWA: groups=%d", len(cache_groups))
         get_option = vllm_config.kv_transfer_config.get_from_extra_config
         if vllm_config.use_v2_model_runner:
             if get_option("orbitkv.v2", False) is not True:
@@ -135,6 +161,7 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             cross_layer_blocks=cross_layer_blocks,
             hash_block_size=hash_block_size,
             static_loras=static_loras,
+            kv_cache_config=kv_cache_config,
         )
 
         tp_rank: int | None = None

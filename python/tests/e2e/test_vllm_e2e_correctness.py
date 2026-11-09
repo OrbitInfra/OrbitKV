@@ -22,6 +22,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -477,6 +478,14 @@ class TestE2ECorrectness:
                 limit = 0.875 if request.config.getoption("--storage-codec") == "ans" else 0.55
                 assert encoded["stored"] <= encoded["logical"] * limit
 
+        connector_logs = [
+            (log_dir / name).read_text(errors="replace")
+            for name in ("orbitkv.log", "orbitkv-load.log")
+        ]
+        if os.environ.get("ORBITKV_REQUIRE_VLLM_FULL_SWA") == "1":
+            assert all("HMA Full+SWA: groups=" in log for log in connector_logs), (
+                "the Full+SWA gate requires admitted multiple groups in both engine processes"
+            )
         print("[Phase 2] Done\n")
         return {
             "outputs": outputs,
@@ -484,10 +493,7 @@ class TestE2ECorrectness:
             "metrics_same_process": metrics_same_process,
             "metrics_end": metrics_end,
             "long_warm_load_bytes": long_warm_load_bytes,
-            "connector_logs": (
-                (log_dir / "orbitkv.log").read_text(errors="replace")
-                + (log_dir / "orbitkv-load.log").read_text(errors="replace")
-            ),
+            "connector_logs": "".join(connector_logs),
         }
 
     def test_execution_plan_outputs_match_baseline(self, baseline_outputs, orbitkv_results):

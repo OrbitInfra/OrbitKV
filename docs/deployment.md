@@ -6,8 +6,9 @@
 > evidence, not installed GPU qualification.
 
 Use separate vLLM 0.33.0 and SGLang 0.5.23 environments (Python 3.11+).
-Keep vLLM on V1 with one attention group and SGLang on Full/SWA; these new
-pins still await installed GPU conformance.
+Keep ordinary vLLM on V1 and SGLang on Full/SWA. V1 also admits the narrow
+[Full + SWA profile](hybrid-recovery.md#vllm-hybrid-handoff); all these profiles
+still await installed GPU conformance.
 
 Run one independent Cache Manager per inference host. Engines on that host share
 its DRAM/SSD capacity while retaining their own HBM allocation and scheduling.

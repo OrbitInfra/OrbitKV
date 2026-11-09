@@ -37,8 +37,9 @@ transfer LMCache's deployment qualification to OrbitKV.
 Install the official vLLM release, its `nixl==1.4.1` dependency (including the
 matching CUDA backend), the router, and the OrbitKV wheel. Use
 `VLLM_USE_V2_MODEL_RUNNER=0`: the released V1 runner drains preempted saves before
-page updates. OrbitKV rejects V2 and multi-group/recurrent models until their
-required lifecycle boundaries have a safe released implementation.
+page updates. This P/D candidate remains single-group. Cache-only V2 and
+V1 Full + SWA have [separate contracts](adapters.md); they do not qualify hybrid
+P/D composition. Recurrent models remain rejected.
 
 The candidate profile uses a read/write cache on P and a save-only cache on D:
 

@@ -181,6 +181,8 @@ class SchedulerAdapter:
         # Completion tracking
         self._pending_saves: set[str] = set()
         self._held_requests: set[str] = set()
+        self._save_dropped_job_budget = 0
+        self._last_save_budget_warning = float("-inf")
 
         # Hybrid (HMA) recurrent boundary states. vLLM hands off every
         # committed align-mode boundary block through
@@ -696,7 +698,9 @@ class SchedulerAdapter:
             # The engine can retire an SWA page while its request keeps running.
             # Job ownership, rather than request lifetime, fences every queued copy.
             for intent in save_intents.values():
-                boundary_save_intents[self._pin_save_intent(intent)] = intent
+                job_id = self._pin_save_intent(intent)
+                if job_id is not None:
+                    boundary_save_intents[job_id] = intent
             save_intents = {}
 
         self._pending_saves.update(save_intents.keys())
@@ -767,6 +771,7 @@ class SchedulerAdapter:
             # past the loaded prefix may be saved.
             loaded_blocks = self._external_matched_blocks.get(req_id, 0)
             rows: list[tuple[int, int, bytes]] = []
+            keys: set[tuple[int, int]] = set()
             for group_index, block_id, boundary_tokens in entries:
                 if group_index not in recurrent or block_id <= 0:
                     continue
@@ -776,9 +781,9 @@ class SchedulerAdapter:
                 if hash_index < loaded_blocks or hash_index >= len(block_hashes):
                     continue
                 key = (group_index, hash_index)
-                if key in saved:
+                if key in saved or key in keys:
                     continue
-                saved.add(key)
+                keys.add(key)
                 rows.append((group_index, block_id, block_hashes[hash_index]))
             if not rows:
                 continue
@@ -793,6 +798,9 @@ class SchedulerAdapter:
                 block_hashes=tuple(block_hash for _, _, block_hash in rows),
             )
             job_id = self._pin_save_intent(intent)
+            if job_id is None:
+                continue
+            saved.update(keys)
             intents[job_id] = intent
             logger.debug(
                 "[OrbitKVConnector] req=%s boundary_save job=%d boundaries=%s blocks=%s",
@@ -803,10 +811,20 @@ class SchedulerAdapter:
             )
         return intents
 
-    def _pin_save_intent(self, intent: SaveIntent) -> int:
+    def _pin_save_intent(self, intent: SaveIntent) -> int | None:
         pool = self._gpu_block_pool
         if pool is None:
             raise RuntimeError("GPU block pool must be bound before a hybrid save")
+        if len(self._pinned_boundary_jobs) >= len(pool.blocks) - 1:
+            self._save_dropped_job_budget += 1
+            now = time.monotonic()
+            if now - self._last_save_budget_warning >= 60:
+                self._last_save_budget_warning = now
+                logger.warning(
+                    "[OrbitKVConnector] Dropping hybrid Save: job_budget (%d jobs pending)",
+                    len(self._pinned_boundary_jobs),
+                )
+            return None
         pinned = list(
             dict.fromkeys(
                 block_id for group in intent.block_ids_by_group for block_id in group if block_id
@@ -1245,7 +1263,9 @@ class SchedulerAdapter:
             "pending_prefetches": prefetch_stats["pending_prefetches"],
             "prefetch_duration": prefetch_stats["prefetch_duration"],
             "prefetch_blocks": prefetch_stats["prefetch_blocks"],
+            "save_dropped_job_budget": self._save_dropped_job_budget,
         }
+        self._save_dropped_job_budget = 0
 
         stats = OrbitKVConnectorStats(data=data)
         if stats.is_empty():

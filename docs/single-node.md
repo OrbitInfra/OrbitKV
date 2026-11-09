@@ -104,8 +104,8 @@ VLLM_USE_V2_MODEL_RUNNER=0 .venv/vllm-release/bin/vllm serve "$ORBITKV_MODEL" \
 ```
 
 The starting configuration has one attention cache group. The experimental
-[V2 gate](adapters.md#released-v2-lifetime-contract) is opt-in and unqualified; multiple groups
-and recurrent external recovery are rejected. vLLM uses its native HBM prefix
+[V2 gate](adapters.md#released-v2-lifetime-contract) is opt-in and unqualified; V1 also admits [Full + SWA](hybrid-recovery.md#vllm-hybrid-handoff).
+Recurrent and V2 multi-group recovery remain rejected. vLLM uses its native HBM prefix
 cache first; OrbitKV restores missing compatible blocks and saves newly computed
 full blocks. For another Manager port, set `orbitkv.port` in
 `kv_connector_extra_config` or `ORBITKV_PORT`; use `orbitkv.bootstrap_socket` for
