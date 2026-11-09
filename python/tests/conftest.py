@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+pytest_plugins = ["tests.support.engine_gate"]
+
 
 @pytest.fixture(scope="module")
 def model(request) -> str:

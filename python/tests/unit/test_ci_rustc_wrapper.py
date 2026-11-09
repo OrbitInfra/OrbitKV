@@ -4,6 +4,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts/configure-rustc-wrapper.sh"
 
 
@@ -13,10 +15,12 @@ def executable(path: Path, body: str) -> Path:
     return path
 
 
-def run_probe(tmp_path: Path, wrapper_status: int, rustc_status: int):
+def run_probe(tmp_path: Path, wrapper_status: int | None, rustc_status: int):
     tools = tmp_path / "bin"
     tools.mkdir()
-    wrapper = executable(tools / "cache", f"exit {wrapper_status}")
+    wrapper = tools / "cache"
+    if wrapper_status is not None:
+        executable(wrapper, f"exit {wrapper_status}")
     executable(tools / "rustc", f"printf 'rustc-probe\\n'; exit {rustc_status}")
     github_env = tmp_path / "github-env"
     environment = {
@@ -41,14 +45,16 @@ def test_available_cache_remains_selected(tmp_path):
     assert not github_env.exists()
 
 
-def test_cache_failure_selects_direct_rustc(tmp_path):
-    result, github_env = run_probe(tmp_path, wrapper_status=2, rustc_status=0)
+@pytest.mark.parametrize("wrapper_status", [2, None], ids=["broken", "not-installed"])
+def test_cache_failure_selects_direct_rustc(tmp_path, wrapper_status):
+    result, github_env = run_probe(tmp_path, wrapper_status=wrapper_status, rustc_status=0)
     assert result.returncode == 0
     assert "using direct rustc" in result.stdout
     assert github_env.read_text() == "RUSTC_WRAPPER=\nSCCACHE_GHA_ENABLED=false\n"
 
 
-def test_direct_rustc_failure_remains_fatal(tmp_path):
-    result, github_env = run_probe(tmp_path, wrapper_status=2, rustc_status=9)
+@pytest.mark.parametrize("wrapper_status", [2, None], ids=["broken", "not-installed"])
+def test_direct_rustc_failure_remains_fatal(tmp_path, wrapper_status):
+    result, github_env = run_probe(tmp_path, wrapper_status=wrapper_status, rustc_status=9)
     assert result.returncode == 9
     assert github_env.is_file()

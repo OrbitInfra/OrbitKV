@@ -405,5 +405,6 @@ The retained vLLM consumer shutdown error matches the ordering described in
 upstream [issue #48745](https://github.com/vllm-project/vllm/issues/48745): engine
 teardown can wake the output handler before its cancellation. The related
 [PR #49000](https://github.com/vllm-project/vllm/pull/49000) is open as checked on
-2026-10-10. Official vLLM 0.31.0 remains unchanged. Do not suppress this error in
+2026-11-09, with #48745 also open. Official vLLM 0.33.0 has no released fix for
+this reported ordering problem. Do not suppress this error in
 the benchmark or treat a CPU protocol check as a repaired hardware lifecycle.

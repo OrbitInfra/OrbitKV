@@ -1406,6 +1406,10 @@ def test_manager_restart_rejects_old_leases_and_restore_handles(fault_cache):
             num_layers=1,
         )
         replacement.register_kv_caches()
+        # Until the persistent index lands in M2, a restarted Manager is cold.
+        # Reusing the old instance/namespace must not resurrect its old payload.
+        cold = query(fresh, replacement, [b"restart"], "cold-after-manager-restart")
+        assert cold.num_hit_blocks == 0 and not cold.lease
         publish(fresh, replacement, [b"new-engine"])
         new = query(fresh, replacement, [b"new-engine"], "fresh")
         assert new.num_hit_blocks == 1

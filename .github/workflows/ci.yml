@@ -172,6 +172,7 @@ jobs:
           components: clippy
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true # The next step requires working cached or direct rustc.
       - name: Validate sccache or select direct rustc
         run: scripts/configure-rustc-wrapper.sh
       - name: Run rust clippy check
@@ -259,6 +260,7 @@ jobs:
           components: clippy
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true # The next step requires working cached or direct rustc.
       - name: Validate sccache or select direct rustc
         run: scripts/configure-rustc-wrapper.sh
       - name: Run cargo check
@@ -422,6 +424,7 @@ jobs:
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true # The next step requires working cached or direct rustc.
       - name: Validate sccache or select direct rustc
         run: scripts/configure-rustc-wrapper.sh
 
@@ -463,4 +466,5 @@ jobs:
           path: |
             ${{ runner.temp }}/engine-api/*-freeze.txt
             ${{ runner.temp }}/engine-api/*.xml
+            ${{ runner.temp }}/engine-api/*-evidence.json
           retention-days: 14

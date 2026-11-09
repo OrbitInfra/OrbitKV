@@ -182,16 +182,10 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
     if not Path(model).exists():
         pytest.skip("pass --model with a local model path")
 
-    if not any(
+    assert any(
         entry.value == "orbitkv.sglang.plugin:register"
         for entry in importlib.metadata.entry_points(group="sglang.srt.plugins")
-    ):
-        plugin_dir = tmp_path / "orbitkv_source_plugin-0.0.dist-info"
-        plugin_dir.mkdir()
-        (plugin_dir / "METADATA").write_text("Name: orbitkv-source-plugin\nVersion: 0.0\n")
-        (plugin_dir / "entry_points.txt").write_text(
-            "[sglang.srt.plugins]\norbitkv = orbitkv.sglang.plugin:register\n"
-        )
+    ), "installed OrbitKV wheel must register the SGLang plugin"
 
     cmd = [
         sys.executable,

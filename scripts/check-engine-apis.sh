@@ -26,16 +26,13 @@ PY
     "$engine==$version" pytest requests
   uv pip install --python "$engine_env/bin/python" --no-deps "$WHEEL"
   uv pip freeze --python "$engine_env/bin/python" > "$RUN_DIR/$engine-freeze.txt"
-  if [[ "$engine" == vllm ]]; then
-    test_file=tests/integration/test_vllm_connector_contract.py
-  else
-    test_file=tests/integration/test_sglang_admission.py
-  fi
   (
     cd "$RUN_DIR"
     # Exercise the GPU adapter's Python contracts, not SGLang's CPU serving backend.
     env -u PYTHONPATH VLLM_TARGET_DEVICE=cpu VLLM_PLUGINS='' SGLANG_USE_CPU_ENGINE=0 \
-      "$engine_env/bin/python" -m pytest --import-mode=importlib -m integration \
-      "$test_file" --junitxml="$RUN_DIR/$engine.xml"
+      ORBITKV_REQUIRE_ENGINE_TESTS=1 \
+      "$engine_env/bin/python" -m pytest --import-mode=importlib -m '' \
+      --engine="$engine" --engine-evidence=installed-cpu \
+      --engine-report="$RUN_DIR/$engine-evidence.json" --junitxml="$RUN_DIR/$engine.xml"
   )
 done

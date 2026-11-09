@@ -47,7 +47,37 @@ Use the complete `benches/tests` suite for shared harness changes or before
 merge. Retired S2 campaign controllers/tests are reproduced from their
 [immutable source](https://github.com/OrbitInfra/OrbitKV/tree/dc52461078bb22910ba6c783ecf0d9213599b10b/benches/cluster).
 
-## Released engine API controls (CPU)
+## Engine evidence and required runs
+
+`support/engine_registry.py` explicitly classifies engine suites and mixed-suite
+exceptions as **source**, **installed-cpu** or **installed-gpu**. Directory names
+and the existing integration/E2E markers do not determine evidence. Selected
+source assertions also have an explicit installed-CPU replay: the assertions are
+the same, but the required run imports official engine classes and the installed
+OrbitKV extension before collection. Test-support, event and Manager-reply seams
+remain visible; no engine module may be stubbed in an installed run.
+
+Set `ORBITKV_REQUIRE_ENGINE_TESTS=1` and both `--engine=vllm|sglang` and
+`--engine-evidence=source|installed-cpu|installed-gpu`. Missing packages or wrong
+pins, source/editable imports, absent GPU/model/Manager prerequisites, empty
+selections and unexpected skips fail. Both collection skips and skipped/xfail
+test reports are covered. There are no reviewed skip exceptions; new exceptions
+must name an exact node/profile, reason and review link in the registry.
+
+Use `-m ''` to clear the source-only default marker filter, then select the
+intended profile and, for GPU runs, the exact files/cases. Excluding unsupported
+HMA from a V1/one-group gate is a declared scope, not an allowed skip. An empty
+`-k` result fails. `--engine-report=/external/path/evidence.json` records the final
+selection, results, skips and exit status without overwriting an existing run.
+The [fault matrix](../../docs/fault-qualification.md#engine-conformance-matrix)
+states what each control proves and retains the hardware gaps.
+
+The source-only harness controls force missing prerequisites, runtime/collection
+skips, an empty selection and last-test module injection to fail. The registry
+audit catches missing engine-import classifications and stale selectors. New
+tests must join the registry before serving as engine evidence.
+
+### Released engine controls (CPU)
 
 Use uv 0.13.7 or newer. After building a complete Python 3.12 wheel, run from
 the repository root:
@@ -62,8 +92,11 @@ source package. No engine modules are stubbed; events and native completion
 failures are controlled test seams. Missing packages fail rather than skip.
 CPU PyTorch runs the Python callbacks without selecting SGLang's CPU serving
 backend; no model, GPU or Manager is started. CI runs this with a Python 3.12 wheel in
-addition to the existing Python 3.14 TCP/RDMA wheel legs. Freezes and JUnit reports
-are external artifacts. This is API/ownership evidence, not GPU qualification.
+addition to the existing Python 3.14 TCP/RDMA wheel legs. Both profiles are required;
+the script selects the registry, not a fixed pair of test files. Freezes, JSON
+inventories and JUnit reports are external artifacts. This is API/ownership
+evidence, not GPU qualification. Save completion replies and CUDA events are
+fault seams, not replacement implementations of the engines or native transport.
 
 ## Select a hardware gate
 
@@ -71,6 +104,13 @@ Run from `python/` in the selected installed engine environment. Set
 `ORBITKV_CACHE_MANAGER_BINARY` to the matching frozen OrbiTE Manager. Actual
 CUDA/IPC and model prerequisites are part of each gate, not provided by pytest
 collection.
+
+For required engine runs use the flags and tests-only projection in
+[installed-GPU reproduction](../../docs/fault-qualification.md#required-installed-gpu-runs).
+All current GPU entries are unrun/unqualified, including vLLM V1/one group and
+SGLang Full/SWA. No test may infer allocator-generation safety from registration
+replacement or source-contract results while the upstream generation issues
+remain open.
 
 | Change | Gate |
 | --- | --- |
