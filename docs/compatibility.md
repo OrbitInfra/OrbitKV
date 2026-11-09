@@ -9,11 +9,11 @@ none carries over to the current data path.
 
 | Engine | Current package/source pin | Implemented boundary |
 | --- | --- | --- |
-| vLLM | 0.31.0 | KV Connector, V1 model runner (`VLLM_USE_V2_MODEL_RUNNER=0`), one attention cache group; V2/recurrent/multi-group rejected |
-| SGLang | 0.5.22 | UnifiedRadixCache external linker, Full/SWA components; recurrent/SSM rejected; private pre-capture and admission hooks remain |
+| vLLM | 0.33.0 | KV Connector, V1 model runner (`VLLM_USE_V2_MODEL_RUNNER=0`), one attention cache group; V2/recurrent/multi-group rejected |
+| SGLang | 0.5.23 | UnifiedRadixCache external linker, Full/SWA components; recurrent/SSM rejected; private pre-capture and admission hooks remain |
 
-The [completion plan](completion-plan.md#m1--engine-baseline) targets 0.33.x /
-0.5.23; those versions are not supported by the current adapters. Follow
+The pins select adapter source contracts; installed GPU conformance remains
+queued in [M1](completion-plan.md#m1--engine-baseline). Follow
 [adapter contracts](adapters.md) and [model recipes](models.md), not upstream
 model support alone, when selecting a layout.
 

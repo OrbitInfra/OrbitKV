@@ -214,8 +214,8 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
     from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, SaveIntent
     from orbitkv.vllm.worker import WorkerAdapter
 
-    if importlib.metadata.version("vllm") != "0.31.0":
-        pytest.fail("Prepared Save adapter gate requires official vLLM 0.31.0")
+    if importlib.metadata.version("vllm") != "0.33.0":
+        pytest.fail("Prepared Save adapter gate requires official vLLM 0.33.0")
     client = CacheManagerClient(channel_server.bootstrap_socket)
     identity = f"producer-{uuid.uuid4().hex}"
     client.start_session_watcher(identity, identity, 1, 1)
@@ -438,7 +438,7 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(
         receipt = {
             "pid": os.getpid(),
             "start_ticks": int(Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]),
-            "release": "0.31.0",
+            "release": "0.33.0",
             "instance_id": identity,
             "prepared_ids": prepared_ids,
             "producer_reserved": True,

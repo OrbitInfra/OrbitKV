@@ -1,5 +1,6 @@
 """Exercise the pinned SGLang admission hook with controlled backing completion."""
 
+import importlib.metadata
 import threading
 from array import array
 from types import SimpleNamespace
@@ -12,7 +13,9 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 def linker(monkeypatch):
-    pytest.importorskip("sglang")
+    from tests.support.installed_artifacts import ENGINE_VERSIONS
+
+    assert importlib.metadata.version("sglang") == ENGINE_VERSIONS["sglang"]
     from orbitkv.sglang.linker import OrbitKVLinker
 
     monkeypatch.setattr(
@@ -119,7 +122,7 @@ def test_native_save_wait_failure_does_not_complete_offload(
     if later == "producer-error":
         ready[3].synchronize.side_effect = RuntimeError("later producer failed")
     for node in nodes:
-        linker._offload_queue.put((handles[node], ready[node]))
+        linker._offload_queue.put((handles[node], [ready[node]]))
     linker._offload_queue.put(None)
 
     worker = threading.Thread(target=linker._offload_worker, daemon=True)
@@ -176,7 +179,9 @@ def test_unknown_preparation_preserves_released_tree_ownership(linker, monkeypat
             kind="attention", layer_names=["kv:0"], block_ids=lambda *_: [2]
         )
     }
-    monkeypatch.setattr("orbitkv.sglang.linker.torch.cuda.Event", MagicMock)
+    monkeypatch.setattr(
+        "sglang.srt.mem_cache.unified_cache.unified_cache_linker.device_module.Event", MagicMock
+    )
     transfers = [SimpleNamespace(name=PoolName.KV, keys=["key"], device_indices=[2])]
     linker.client.prepare_save.side_effect = MemoryError("unknown handoff")
     assert linker.offload(transfers)
@@ -202,7 +207,9 @@ def test_proven_preparation_rejection_does_not_accept_tree_ownership(linker, mon
             kind="attention", layer_names=["kv:0"], block_ids=lambda *_: [2]
         )
     }
-    monkeypatch.setattr("orbitkv.sglang.linker.torch.cuda.Event", MagicMock)
+    monkeypatch.setattr(
+        "sglang.srt.mem_cache.unified_cache.unified_cache_linker.device_module.Event", MagicMock
+    )
     transfers = [SimpleNamespace(name=PoolName.KV, keys=["key"], device_indices=[2])]
     linker.client.prepare_save.side_effect = SaveNotSubmittedError("native preflight rejection")
     assert linker.offload(transfers) is False
@@ -231,7 +238,9 @@ def test_python_lookup_rejection_preserves_offload_tree_hold(linker, monkeypatch
             kind="attention", layer_names=["kv:0"], block_ids=lambda *_: [2]
         )
     }
-    monkeypatch.setattr("orbitkv.sglang.linker.torch.cuda.Event", MagicMock)
+    monkeypatch.setattr(
+        "sglang.srt.mem_cache.unified_cache.unified_cache_linker.device_module.Event", MagicMock
+    )
     transfers = [SimpleNamespace(name=PoolName.KV, keys=["key"], device_indices=[2])]
     prepare, submit, cancel = (
         linker.client.prepare_save,
@@ -895,7 +904,9 @@ def test_offload_keeps_producer_registration_and_reports_rejection(linker, monke
         )
     }
     ready = MagicMock()
-    monkeypatch.setattr("orbitkv.sglang.linker.torch.cuda.Event", lambda: ready)
+    monkeypatch.setattr(
+        "sglang.srt.mem_cache.unified_cache.unified_cache_linker.device_module.Event", lambda: ready
+    )
     transfers = [SimpleNamespace(name=PoolName.KV, keys=["key"], device_indices=[2])]
     expected = [("kv:0", [2], linker._hashes(["key"]))]
     from orbitkv import SaveNotSubmittedError
@@ -924,6 +935,95 @@ def test_offload_keeps_producer_registration_and_reports_rejection(linker, monke
     linker._offload_worker()
     assert linker.pop_completed_offload() is True
     assert linker._retained_offloads == []
+
+
+def test_released_offload_waits_indices_and_forward_before_submission(linker, monkeypatch):
+    import queue
+
+    from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
+
+    calls = []
+    events = [MagicMock(), MagicMock()]
+    events[0].synchronize.side_effect = lambda: calls.append("indices")
+    events[1].synchronize.side_effect = lambda: calls.append("forward")
+    monkeypatch.setattr(
+        "sglang.srt.mem_cache.unified_cache.unified_cache_linker.device_module.Event",
+        MagicMock(side_effect=events),
+    )
+    linker.forward_stream = object()
+    linker.registration = object()
+    linker._offload_queue = queue.Queue()
+    linker._completed_offloads = queue.Queue()
+    linker.layout.pools = {
+        PoolName.KV: SimpleNamespace(
+            kind="attention", layer_names=["kv:0"], block_ids=lambda *_: [2]
+        )
+    }
+    linker.client.submit_saves.side_effect = lambda _: calls.append("submit")
+    assert linker.offload(
+        [PoolTransfer(name=PoolName.KV, keys=["key"], device_indices=[2])], session_id="turn-1"
+    )
+    events[0].record.assert_called_once_with()
+    events[1].record.assert_called_once_with(linker.forward_stream)
+    linker._offload_queue.put(None)
+    linker._offload_worker()
+    assert calls == ["indices", "forward", "submit"]
+    assert linker.pop_completed_offload() is True
+
+
+@pytest.mark.parametrize(
+    "unsupported",
+    [
+        "recurrent",
+        "sidecar_draft_device_pools",
+        "mtp_draft_mamba_pools",
+        "draft_swa_window",
+        "decoder_swa_bounded_replay",
+        "swa_gates_prefix_match",
+    ],
+)
+def test_new_released_components_are_not_silently_admitted(unsupported):
+    from sglang.srt.mem_cache.cache_init_params import CacheInitParams
+    from sglang.srt.mem_cache.registry import TreeCacheBuildContext
+
+    from orbitkv.sglang.plugin import create_cache
+
+    params = CacheInitParams(False, object(), object(), 64)
+    ctx = TreeCacheBuildContext(
+        server_args=None,
+        params=params,
+        is_hybrid_swa=False,
+        is_hybrid_ssm=False,
+        enable_hierarchical_cache=False,
+        disable_radix_cache=False,
+        tp_worker=None,
+        model_config=None,
+        tp_size=1,
+        tp_rank=0,
+        tp_group=None,
+    )
+    if unsupported == "recurrent":
+        ctx.is_hybrid_ssm = True
+    else:
+        setattr(params, unsupported, False if unsupported == "swa_gates_prefix_match" else 1)
+    with pytest.raises(ValueError, match="recurrent state|auxiliary GPU state"):
+        create_cache(ctx)
+
+
+@pytest.mark.parametrize("field", ["k_scale_buffer", "native_k_scale_buffer", "kv_scale_buffer"])
+def test_separate_scale_buffers_require_a_complete_layout(field):
+    from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool, MLATokenToKVPool
+    from sglang.srt.mem_cache.unified_cache.components import ComponentType
+
+    from orbitkv.sglang.layout import GpuLayout
+
+    pool_type = MLATokenToKVPool if field == "kv_scale_buffer" else MHATokenToKVPool
+    pool = object.__new__(pool_type)
+    pool.layer_num = 1
+    pool.k_scale_buffer = pool.native_k_scale_buffer = pool.kv_scale_buffer = None
+    setattr(pool, field, object())
+    with pytest.raises(ValueError, match="separate SGLang .*scale buffers"):
+        GpuLayout.from_pool(64, pool, None, {ComponentType.FULL})
 
 
 @pytest.mark.parametrize("failure", [None, "unregister", "close"])

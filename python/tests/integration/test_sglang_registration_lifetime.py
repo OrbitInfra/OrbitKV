@@ -36,8 +36,8 @@ def test_sglang_close_retires_only_its_registration(
 ):
     torch = pytest.importorskip("torch")
     pytest.importorskip("sglang")
-    if importlib.metadata.version("sglang") != "0.5.22":
-        pytest.fail("Prepared Save pool gate requires official SGLang 0.5.22")
+    if importlib.metadata.version("sglang") != "0.5.23":
+        pytest.fail("Prepared Save pool gate requires official SGLang 0.5.23")
     from sglang.srt.mem_cache.allocator.paged import PagedTokenToKVPoolAllocator
     from sglang.srt.mem_cache.cache_init_params import CacheInitParams
     from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
@@ -87,7 +87,7 @@ def test_sglang_close_retires_only_its_registration(
         layout = GpuLayout.from_pool(64, pool, request_pool, {ComponentType.FULL})
         counter = _LayerDoneCounter(layout)
         pool.register_layer_transfer_counter(counter)
-        linker = OrbitKVLinker(args, params)
+        linker = OrbitKVLinker(args, params, forward_stream=None)
         channel_server.record_runtime()
         exporters = [weakref.ref(tensor) for tensor in layout.pools[PoolName.KV].entry.kv_buffer]
         assert len(exporters) == 4
@@ -236,7 +236,7 @@ def test_sglang_close_retires_only_its_registration(
                     "workers_joined": True,
                     "registration_retired": True,
                     "client_closed": True,
-                    "release": "0.5.22",
+                    "release": "0.5.23",
                     "prepared_submission_consumed": True,
                     "linker_load_consumed": True,
                     "full_byte_oracle": True,

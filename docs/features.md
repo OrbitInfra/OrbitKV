@@ -44,7 +44,7 @@ even where conservative ownership prevents premature release.
 
 ## Engines and models
 
-The selected releases are vLLM 0.31.0 and SGLang 0.5.22. vLLM uses the official
+The selected releases are vLLM 0.33.0 and SGLang 0.5.23. vLLM uses the official
 KV Connector; SGLang uses UnifiedRadixCache's external linker with bounded
 internal lifecycle hooks still present. Recorded Qwen3-8B/32B dense recovery and SGLang 0.5.22 public load-completion
 results retain their original revisions and transfer paths.

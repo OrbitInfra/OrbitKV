@@ -21,13 +21,14 @@ including the Python extension crate, are internal and are not published.
 One distribution provides the `orbitkv` import and `orbitkv-cache-manager`
 command. CUDA 12 is not a release target. There are ten wheels per release:
 five CPython versions on each of two architectures; pip selects the matching wheel.
-Engine extras pin vLLM 0.31.0 or SGLang 0.5.22.
-SGLang requires Python 3.11+; core OrbitKV retains Python 3.10+. The selected
-0.5.22 Qwen3-8B installed profile is recorded in [compatibility](compatibility.md).
+Engine extras pin vLLM 0.33.0 or SGLang 0.5.23.
+Both require Python 3.11+; SGLang 0.5.23 publishes wheels for 3.11–3.13
+only. Core OrbitKV retains Python 3.10+. Current installed
+profiles are unqualified; [compatibility](compatibility.md) separates historical evidence.
 Use separate engine environments. Build-matrix coverage does not establish
 that every engine/GPU combination works on every Python version; serving
-qualification uses Python 3.11 on H20 and A100, with each result tied to its
-engine release. See [engine baseline](completion-plan.md#milestones).
+historical qualification used Python 3.11 on H20 and A100, with each result
+tied to its original engine release and backend. See [engine baseline](completion-plan.md#milestones).
 
 The wheel contains the PyO3 extension, Manager executable with OrbiTE linked in,
 engine plugins, type stubs, Apache-2.0 license and third-party attribution in

@@ -1,8 +1,8 @@
 # Compiled hybrid recovery
 
-The official vLLM 0.31.0 profile requires V1 with one attention cache group
+The official vLLM 0.33.0 profile requires V1 with one attention cache group
 (`VLLM_USE_V2_MODEL_RUNNER=0`); multi-group/recurrent serving is rejected.
-SGLang 0.5.22's released external linker supports Full and SWA components;
+OrbitKV on SGLang 0.5.23 supports Full and SWA components;
 OrbitKV rejects recurrent/SSM startup. Full MHA/MLA and Full + SWA are implemented
 SGLang layouts, with model qualification recorded separately in
 [compatibility](compatibility.md) and [model recipes](models.md).
@@ -100,7 +100,7 @@ no TTFT claim.
 At load time, transferred keys and engine-attested retained keys must be
 disjoint and together equal the keys in each compiled range. SGLang uses the
 contract instead of Python formulas for each pool kind. All group leases remain
-held until the combined restore completes. SGLang 0.5.22 owns private load
+held until the combined restore completes. SGLang 0.5.23 owns private load
 destinations until the post-forward `finish_layer_wise_loading` callback proves
 that the batch has stopped writing. Only then can it insert or release those
 slots. Unknown submission, timeout or lost completion raises while ownership

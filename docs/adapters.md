@@ -1,11 +1,51 @@
 # vLLM and SGLang integration
 
-Use official **vLLM 0.31.0** and **SGLang 0.5.22** with the
+Use official **vLLM 0.33.0** and **SGLang 0.5.23** with the
 [single-node quickstart](single-node.md). OrbiTE is the sole cache transfer engine;
 GPU/RDMA/GDS and installed profiles need fresh hardware qualification. Historical
 [ordinary, Graph, shared-Manager and two-host acceptances](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/adapters.md)
 retain their original releases/backend and do not carry over. Current limits are
 in [compatibility](compatibility.md), status in the [completion plan](completion-plan.md).
+
+## Release upgrade audit
+
+Checked November 9, 2026 against official final tags and PyPI:
+
+| Engine | Previous → current | Source revision |
+| --- | --- | --- |
+| vLLM | 0.31.0 → **0.33.0** | [`4ba787ec`](https://github.com/vllm-project/vllm/tree/4ba787ec9959e566d3b587a796dff07673324da5) |
+| SGLang | 0.5.22 → **0.5.23** | [`297e54fd`](https://github.com/sgl-project/sglang/tree/297e54fd105e974cdf401e5b4d20253a22c16f90) |
+
+The vLLM release page still points to `v0.33.0rc3`, but the official
+[final tag](https://github.com/vllm-project/vllm/tree/v0.33.0) and
+[non-yanked 0.33.0 package](https://pypi.org/project/vllm/0.33.0/) exist.
+The annotated final tag resolves to the same source commit as rc3; the pin uses
+that final tag, not a release candidate. The extras follow published Linux artifacts: Python 3.11–3.14 for vLLM and
+3.11–3.13 for SGLang (no 3.14 wheel or sdist). OrbitKV's engine-free package
+retains Python 3.10+. Use separate environments.
+
+| Consumed surface | Change and OrbitKV response |
+| --- | --- |
+| vLLM `KVConnectorBase_V1` | Adds `supports_sleep_mode`, `unregister_kv_caches` and `restore_kv_caches`. OrbitKV returns false from the capability method: sleep remaps storage and current registrations cannot follow it safely. No sleep/remap support is claimed. |
+| vLLM loaded groups / hit attribution | Adds `get_loaded_kv_cache_group_ids` and `get_external_cache_hit_sources`. Inherit the one prefix-cacheable group's ID and `EXTERNAL_UNSPECIFIED`; do not guess a DRAM/disk/peer split from a mixed OrbitKV restore. |
+| vLLM completion / preemption | `KVConnectorTransferResults`, `handle_preemptions`, request completion, reset and `SupportsHMA` callbacks retain their signatures. V1 drains saves before reuse; V2 and multi-group/recurrent remain rejected. MultiConnector forwards the new capabilities; best-effort cache and reliable native P/D remain separate. |
+| vLLM private dependencies | `resolve_kv_cache_block_sizes(config, vllm_config)` stays at `v1.core.kv_cache_utils`; it now rejects a mismatched single-group `prefix_match_unit`. Consume that rejection. `bind_kv_cache_manager` still forwards to `bind_gpu_block_pool`; pool pinning, block hashes, `extract_layer_index`, layout specs and metric construction remain consumed unchanged. |
+| SGLang `UnifiedCacheLinker.offload` | Adds optional `session_id`; accept it without using session attribution as cache identity. Native wrapper supplies it. |
+| SGLang producer readiness | Consume released `record_offload_ready()`, passing the worker's `forward_stream`. Hold and wait both index/current-stream and forward-stream events before submitting a prepared Save. Unknown completion still retains the tree lock and registration. |
+| SGLang wrapper pool contract | Supply `pools` explicitly: the wrapper now uses it to decide whether SWA is available. Full/SWA stay complete; request-ring/replay layouts, sidecar/draft state and separate scale buffers are rejected. |
+| SGLang linker construction / components | The new dynamic linker factory supports external classes and Full/SWA/Mamba. Keep the public RadixCache factory because OrbitKV still needs `RecoveryLinkerWrapper` for absolute boundaries and rank agreement. Newly released Mamba support is not integrated in this PR. |
+| SGLang retained private dependencies | `DevicePoolEntry._row_span`, location translation, `hit_markers`, `inflight_load_rids`, `_tail_hashes`, `_all_reduce_attn_groups`, resolved runtime configuration and the three hook targets below retain their consumed signatures. Native private destinations, post-forward insertion and `finish(ABORT)` remain the owners. No hook is removed. |
+
+Sources: [vLLM base contract](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/distributed/kv_transfer/kv_connector/v1/base.py),
+[SGLang linker and wrapper](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/unified_cache/unified_cache_linker.py),
+[linker factory](https://github.com/sgl-project/sglang/blob/297e54fd105e974cdf401e5b4d20253a22c16f90/python/sglang/srt/mem_cache/unified_cache/linker_factory.py).
+The released vLLM LMCache entry remains a thin external-package delegate; it does
+not remove these OrbitKV ownership obligations.
+
+CPU API checks validate released classes, rejection and callback wiring. Installed
+GPU eager/Graph output and byte checks, abort/preemption, queue waits, engine and
+Manager restart, identity collisions, rank shapes and native P/D are **unrun and
+unqualified for both new pins**, queued in [M1](completion-plan.md#m1--engine-baseline).
 
 ## Ownership contract
 
@@ -42,7 +82,7 @@ does not establish cancellation, physical termination or eventual fault reclamat
 
 ## Explicit cache reset
 
-Official vLLM 0.31.0 distinguishes an HBM-only prefix reset from
+Official vLLM 0.33.0 distinguishes an HBM-only prefix reset from
 `POST /reset_prefix_cache?reset_external=true` (development API), or the public
 engine `reset_prefix_cache(reset_connector=True)` call. OrbitKV refuses an
 external reset while it tracks requests, query leases, restores or saves. Once
@@ -149,11 +189,11 @@ Enable `--enable-unified-cache-external-linker --radix-cache-backend orbitkv`.
 layer progress, offload, reset and close. SGLang owns tree locks and page allocation.
 Plugin discovery does not eagerly load native/GPU resources.
 
-SGLang 0.5.22 owns private destination allocation, cancellation and tree insertion.
+SGLang 0.5.23 owns private destination allocation, cancellation and tree insertion.
 `RecoveryLinkerWrapper` translates absolute boundaries and rank agreement;
 `finish_layer_wise_loading` waits for native Restore before insertion or release.
-Unknown completion raises and retains ownership. Full/SWA are the released
-external-linker components; recurrent/SSM startup is rejected. Aborts use native
+Unknown completion raises and retains ownership. OrbitKV still admits only Full/SWA; the release adds Mamba to its linker
+contract, but recurrent/SSM startup remains rejected here. Aborts use native
 `BasePrefixCache.finish(ABORT)`; lookup-only cancellation retires unsubmitted queries.
 
 Two private Hooks remain: graph initialization and pending-query admission. An
@@ -188,7 +228,8 @@ Missing allocator-generation contracts are tracked in
 Worker preparation [#44856](https://github.com/sgl-project/sglang/pull/44856) and
 pending admission [#44873](https://github.com/sgl-project/sglang/pull/44873) are
 upstream replacement candidates, not consumed interfaces in our current pins.
-Recheck their released status during the upgrade; submission alone never removes
+All four remain open and unmerged as of November 9, 2026; neither allocator
+exposes the requested physical-page generation. Submission alone never removes
 a correctness hook. See the [upstream path](completion-plan.md#upstream-path).
 
 ## P/D and cache composition

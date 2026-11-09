@@ -5,18 +5,17 @@ into both upstream mainlines.** OrbiTE is the only byte mover. Engines own
 scheduling, HBM and native P/D; OrbitKV owns cache identity, storage, discovery,
 grants and resource lifetime. This is the only execution queue.
 
-The current delivery is the README and Sphinx docs-site alignment with
-[LMCache's structure](https://docs.lmcache.ai/). M1 starts after this PR is reviewed
-and merged. Each coherent PR stops for review before dependent work starts.
-Research designs, simulator campaigns and their roadmap are removed from the
-maintained tree; Git history retains them. External artifacts are untouched.
-DeepInfer/OrbitInfer and an OrbiTE NIXL plugin are outside this plan.
+The current delivery is **M1 PR 1: official engine pins and consumed APIs**.
+Each coherent PR stops for review before dependent work starts. Research designs
+and simulator campaigns are removed from the maintained tree; Git history retains
+them and external artifacts are untouched. DeepInfer/OrbitInfer and an OrbiTE
+NIXL plugin are outside this plan.
 
-Current pins remain **vLLM 0.31.0 / SGLang 0.5.22**. M1 targets **vLLM 0.33.x /
-SGLang 0.5.23**. The release check found [v0.33.0rc3](https://github.com/vllm-project/vllm/releases/tag/v0.33.0rc3)
-dated November 2, 2026, and [SGLang v0.5.23](https://github.com/sgl-project/sglang/releases/tag/v0.5.23).
-Freeze exact official tags when M1 begins; a release candidate is not a
-stable-release qualification. No dependency changes are part of this plan PR.
+Current pins are **vLLM 0.33.0 / SGLang 0.5.23**, verified against final tags and
+published package metadata on November 9, 2026. The vLLM release page still names
+rc3, but the final tag and package exist; exact revisions and the consumed API
+audit are in [adapters](adapters.md#release-upgrade-audit). This updates source
+contracts only: all installed GPU profiles for these pins remain unqualified.
 
 ## Upstream path
 
@@ -28,7 +27,7 @@ Follow the existing thin, in-tree integrations that import an external package:
   delegates to its installed package. Propose the same small entry for OrbitKV,
   with upstream tests and documentation. The directory name `v1` does not
   establish V2 model-runner compatibility: consume the released
-  [connector lifecycle and HMA contracts](https://github.com/vllm-project/vllm/blob/v0.33.0rc3/vllm/distributed/kv_transfer/kv_connector/v1/base.py)
+  [connector lifecycle and HMA contracts](https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/distributed/kv_transfer/kv_connector/v1/base.py)
   and prove each runner/group combination.
 - **SGLang:** the [storage integrations](https://github.com/sgl-project/sglang/tree/v0.5.23/python/sglang/srt/mem_cache/storage)
   include FlexKV, LMCache, Mooncake Store, HF3FS and NIXL, but not every integration
@@ -68,8 +67,8 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 
 | Capability | OrbitKV status and evidence | Precedent |
 | --- | --- | --- |
-| Latest vLLM, V2 runner, HMA multi-group/hybrid | **Partial:** 0.31.0 V1, one attention group; V2/recurrent/multi-group rejected. `SupportsHMA` inheritance is not serving support. [Adapter contract](adapters.md#vllm-callbacks-and-current-internal-dependencies). | L/F/M thin entries; released V lifecycle |
-| Latest SGLang | **Partial:** 0.5.22 Full/SWA linker; pre-capture and pending-admission hooks remain private. [Contract](adapters.md#sglang-linker-and-current-internal-dependencies). | Released linker and HiCache integrations above |
+| Latest vLLM, V2 runner, HMA multi-group/hybrid | **Partial:** 0.33.0 V1, one attention group; V2/recurrent/multi-group rejected. `SupportsHMA` inheritance is not serving support. [Adapter contract](adapters.md#vllm-callbacks-and-current-internal-dependencies). | L/F/M thin entries; released V lifecycle |
+| Latest SGLang | **Partial:** 0.5.23 Full/SWA linker; pre-capture and pending-admission hooks remain private. [Contract](adapters.md#sglang-linker-and-current-internal-dependencies). | Released linker and HiCache integrations above |
 | Async load | **Have:** pending queries, bounded admission and completion-owned destinations; installed faults remain unqualified. [Lifecycle](vllm-request-state-machine.md). | L/F/V asynchronous offload |
 | Layerwise load/save | **Partial:** eligible raw Restore has layer readiness; other routes may wait for whole completion. vLLM saves at step end; `save_kv_layer` does not submit. [Restore](engine-local-restore.md#layer-readiness-and-framework-consumption), [connector](https://github.com/OrbitInfra/OrbitKV/blob/main/python/orbitkv/vllm/connector.py). | L layerwise transfer, V layer hooks |
 | Official P/D composition | **Partial:** NIXL/MultiConnector and SGLang native paths are candidates; full faults unqualified. [P/D](pd.md). | V MultiConnector, L/F native integration |
@@ -114,9 +113,19 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 
 ### M1 — Engine baseline
 
-Small reviewed PRs: update official pins and consumed lifecycle APIs; enable V2
-and multi-group/hybrid through those interfaces; add real-engine conformance and
-fault gates. Cover abort, queue wait, preemption, engine/Manager restart, identity
+Reviewed in order, one PR at a time:
+
+1. **Pins and consumed APIs (this PR):** vLLM 0.33.0 / SGLang 0.5.23;
+   keep V1/one attention group and Full/SWA, with CPU API-contract controls.
+2. **Real-engine conformance/fault harness:** make required prerequisites and
+   unexpected skips fail; distinguish source contracts from installed execution.
+3. **vLLM V2 runner:** consume the official lifecycle and prove page-reuse safety.
+4. **HMA multi-group/hybrid:** complete groups and atomic recovery through the
+   official interface, with model/layout-specific rejection controls.
+5. **SGLang 0.5.23 components:** integrate additional released components only
+   with complete recovery and lifecycle controls; retain required private hooks.
+
+Cover abort, queue wait, preemption, engine/Manager restart, identity
 collisions, partial load/save and generation reuse. Required gates fail on missing
 prerequisites or unexpected skips. Until M2, Manager restart may safely miss;
 it must never return stale state as a hit.

@@ -1,4 +1,4 @@
-"""Official vLLM 0.31.0 NIXL P/D + MultiConnector + upstream Router.
+"""Official vLLM 0.33.0 NIXL P/D + MultiConnector + upstream Router.
 
 Two TP=1 processes share one GPU using NIXL/UCX. Cache-first and P/D-first modes
 exercise exclusive destination writes through native MultiConnector selection.

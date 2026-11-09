@@ -45,11 +45,11 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
 - vLLM uses the KV Connector contract; SGLang uses UnifiedRadixCache and the
   external linker. Preserve valid native HBM hits without external synchronous
   lookup. Keep unselected backend imports free of native initialization.
-- vLLM 0.31.0 workers return `KVConnectorTransferResults` directly. P/D failed
+- vLLM 0.33.0 workers return `KVConnectorTransferResults` directly. P/D failed
   receives must also be finished receives in the same poll; do not restore a
   custom worker-metadata failure queue. Ordinary cache delivery is best effort,
   while a P/D producer retains the native reliable-delivery requirement.
-- SGLang 0.5.22 cancellation already reaches the external linker through
+- SGLang 0.5.23 cancellation already reaches the external linker through
   `BasePrefixCache.finish(ABORT)` and `UnifiedRadixCache.release_aborted_request`.
   Keep cancellation/drain in that consumed lifecycle; do not restore a duplicate
   private Scheduler abort Hook. Queue preparation is opt-in; fork P/D observation
@@ -71,12 +71,12 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
 - The candidate profile reads/writes cache on P and only saves on D. Native P/D
   owns incoming destinations; cache retains completed state until its own drain.
   Preserve reliable P/D delivery and release unselected cache query leases.
-- Official vLLM 0.31.0 requires V1 (`VLLM_USE_V2_MODEL_RUNNER=0`) and one attention
+- OrbitKV on official vLLM 0.33.0 requires V1 (`VLLM_USE_V2_MODEL_RUNNER=0`) and one attention
   cache group. Reject V2/recurrent profiles before connection; the runner and
   native-prefix monkey patches are removed. Reopen only after consumed released
   ordering and atomic state hand-off pass GPU/model gates.
 - SGLang native P/D candidate enables released deferred KV release on both P
-  and D, but 0.5.22 still releases on timeout without a full drain ACK. Keep
+  and D, but 0.5.23 still releases on timeout without a full drain ACK. Keep
   transfer cancellation, peer-loss and delayed-ACK page reuse unqualified;
   ordinary linker cancellation is a separate cache-owned contract.
 - vLLM's public `reset_cache()` now invalidates future external reuse through
@@ -92,7 +92,7 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   safe matching. This immutable profile does not intercept engine SDK/RPC
   add/remove/reload or live-weight updates; change artifacts only after stopping
   the engine.
-- SGLang 0.5.22 preserves raw `ServerArgs` and publishes resolved configuration
+- SGLang 0.5.23 preserves raw `ServerArgs` and publishes resolved configuration
   separately. Consume `runtime_context.get_lora()` for effective enable, startup
   LoRARef UIDs, backend and target modules, as its native loader/registry do.
   `--lora-paths` does not make the raw `enable_lora` field true.
@@ -109,7 +109,7 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
 
 ## Replace internal coupling safely
 
-SGLang 0.5.22 requires `finish_layer_wise_loading(index) -> bool`. Its native
+SGLang 0.5.23 requires `finish_layer_wise_loading(index) -> bool`. Its native
 wrapper owns private load destinations and inserts/releases them after forward.
 Return only after actual native Restore completion; unknown submission, timeout
 or lost completion must retain ownership and raise. Catch `CancelledError` as
@@ -117,12 +117,13 @@ non-submission only at the pre-forward activation future. The same exception
 from submission or completion waiting must retain leases/pages and publish an
 error, rather than return false. Use `Req.prefix_len`,
 `MatchResult.device_prefix_len` and `Req.refresh_fill_ids()`; do not reintroduce
-removed load polling or custom `_update_load` insertion. Full/SWA are the only
-released external-linker components; reject recurrent/SSM startup rather than
-adding a custom component override. Earlier 0.5.21 result freezes retain their
+removed load polling or custom `_update_load` insertion. OrbitKV admits Full/SWA only even though 0.5.23 adds Mamba to the released
+external-linker contract; reject recurrent/SSM startup until separately integrated.
+Pass the forward stream and consume `record_offload_ready()` before Save submission.
+Accept the optional `offload(..., session_id=...)` attribution without changing identity. Earlier 0.5.21 result freezes retain their
 original pins. The 0.5.22 Qwen3-8B installed DRAM/io_uring byte/model/restart
-profile passes; broader Graph, shared-pressure, peer and physical fault profiles
-need their own requalification.
+profile is historical; it does not qualify OrbiTE or either new pin. All current
+installed GPU profiles remain unqualified, including Graph and fault controls.
 
 The producer-admission candidate reserves native Save handles before adapter
 queues. vLLM keeps completion markers; SGLang returns ownership acceptance on
@@ -130,7 +131,7 @@ unknown preparation so its released wrapper cannot drop tree locks. Rust owns
 batch merge and submission; only never-submitted cancellation may release a
 prepared owner. Preserve the same installed CPU/GPU/engine qualification gates.
 
-Audit every remaining Hook against `docs/adapters.md`. SGLang 0.5.22
+Audit every remaining Hook against `docs/adapters.md`. SGLang 0.5.23
 captures graphs before the tree-cache factory; preserve pre-capture events until
 a safe released callback exists. Its linker lookup lacks pending tickets, so
 pending-query admission remains a guarded internal Hook; queue preparation is

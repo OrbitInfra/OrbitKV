@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Official vLLM 0.31.0 NIXL + MultiConnector with independent OrbitKV cache.
+# Official vLLM 0.33.0 NIXL + MultiConnector with independent OrbitKV cache.
 # Experimental composition: see docs/pd.md for qualification limits.
 set -euo pipefail
 

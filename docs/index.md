@@ -38,8 +38,8 @@ owns DRAM, SSD and peer cache state; OrbiTE moves the bytes.
   peer reads; engines retain scheduling, GPU allocation and native P/D.
 
 See [features and limits](features.md) and the [engine support matrix](compatibility.md).
-The current adapters target **vLLM 0.31.0** (V1, one attention group) and
-**SGLang 0.5.22** (Full/SWA external linker). Recurrent external recovery is rejected.
+The current adapters target **vLLM 0.33.0** (V1, one attention group) and
+**SGLang 0.5.23** (Full/SWA external linker). Recurrent external recovery is rejected.
 
 (evidence-title)=
 ```{note}

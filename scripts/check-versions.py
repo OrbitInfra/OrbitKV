@@ -36,8 +36,11 @@ def check_engine_releases(root: Path) -> None:
     for engine, version in versions.items():
         extra = extras.get(engine)
         requirement = f"{engine}=={version}"
-        if engine == "sglang":
-            requirement += "; python_version >= '3.11'"
+        upper_python = "3.14" if engine == "sglang" else "3.15"
+        requirement += (
+            f"; python_version >= '3.11' and python_version < '{upper_python}'"
+            " and sys_platform == 'linux'"
+        )
         if extra != [requirement]:
             raise SystemExit(
                 f"{engine} extra {extra!r} differs from release gate {requirement!r}"
