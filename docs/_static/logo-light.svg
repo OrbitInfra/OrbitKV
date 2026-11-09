@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 80" role="img" aria-labelledby="title">
+  <title id="title">OrbitKV</title>
+  <g transform="translate(4 8)">
+    <path d="M18 4H36V18H24L18 24V40L24 46H40L46 40V28H60V46L46 60H18L4 46V18Z" fill="#203b30"/>
+    <path d="M40 4H46L60 18V24H46V22L42 18H40Z" fill="#ab4d29"/>
+  </g>
+  <text x="82" y="55" fill="#203b30" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="700" letter-spacing="1">OrbitKV</text>
+</svg>

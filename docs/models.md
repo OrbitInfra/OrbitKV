@@ -63,7 +63,7 @@ Immutable local PEFT artifacts, startup fingerprints and effective LoRA settings
 participate in cache identity. Stop the engine before changing artifacts. Dynamic
 add/remove/reload and live weight replacement are unsupported. See
 [adapter identity](adapters.md#immutable-static-lora) and
-[installed tests](../python/tests/README.md#model-and-feature-gates).
+[installed tests](https://github.com/OrbitInfra/OrbitKV/blob/main/python/tests/README.md#model-and-feature-gates).
 
 ## Adding a model
 

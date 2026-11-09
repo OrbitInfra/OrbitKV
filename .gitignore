@@ -2,6 +2,7 @@
 /.orbitkv/
 /.infer/
 /.venv/
+/docs/_build/
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -10,9 +11,7 @@ __pycache__/
 venv/
 python/uv.lock
 .pytest_cache/
-node_modules/
 dist/
-.astro/
 # New experiment output belongs outside the source checkout.
 /benches/results/
 /benches/runs/

@@ -87,7 +87,7 @@ GPU, RDMA and GDS profiles remain unqualified without that installed evidence.
 
 ## Bare-metal acceptance script
 
-[`benches.storage.gds`](../benches/storage/gds.py) runs the native qualification sequence. It
+[`benches.storage.gds`](https://github.com/OrbitInfra/OrbitKV/blob/main/benches/storage/gds.py) runs the native qualification sequence. It
 rejects containers, verifies the selected ext4/XFS mount is NVMe-backed,
 disables CPU compatibility, and enables per-process cuFile statistics through
 a private config overlay. It does not change system configuration. A private

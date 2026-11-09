@@ -3,9 +3,9 @@
 ## Overview
 
 Scrape the Manager's `/metrics` with Prometheus; use
-[`examples/metric-prometheus`](../examples/metric-prometheus/) for Grafana.
+[`examples/metric-prometheus`](https://github.com/OrbitInfra/OrbitKV/blob/main/examples/metric-prometheus/) for Grafana.
 Existing OpenTelemetry deployments can use
-[`examples/metric`](../examples/metric/) and `--metrics-otel-endpoint` instead.
+[`examples/metric`](https://github.com/OrbitInfra/OrbitKV/blob/main/examples/metric/) and `--metrics-otel-endpoint` instead.
 Neither export path participates in cache decisions or proves physical drain.
 
 ## Available Metrics

@@ -121,7 +121,7 @@ hit as evidence of causal latency savings. Default activation requires repeated
 paired measurements, including order reversal, with bounded cleanup and no
 material read amplification.
 
-For current launches, use [the maintained preparation script](../benches/serving/reproduce_preparation.sh)
+For current launches, use [the maintained preparation script](https://github.com/OrbitInfra/OrbitKV/blob/main/benches/serving/reproduce_preparation.sh)
 with an explicit external output root.
 
 ## Queued warming

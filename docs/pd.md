@@ -74,7 +74,7 @@ For P, set the NIXL role to `kv_producer`, put the cache child first, select
 engine IDs. Give each process a distinct `VLLM_NIXL_SIDE_CHANNEL_PORT` and an
 appropriate `VLLM_NIXL_SIDE_CHANNEL_HOST`.
 
-The [local launcher](../scripts/run_pd_local.sh) takes `PREFILL_CACHE_SOCKET`,
+The [local launcher](https://github.com/OrbitInfra/OrbitKV/blob/main/scripts/run_pd_local.sh) takes `PREFILL_CACHE_SOCKET`,
 `DECODE_CACHE_SOCKET`, `VLLM_PYTHON` (default `.venv/vllm-release/bin/python`),
 `PREFILL_GPU` and `DECODE_GPU`. It starts official vLLM and `vllm-router` on two
 local GPUs. It does not start Managers or install engines. Separate Managers

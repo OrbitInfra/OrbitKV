@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" role="img" aria-labelledby="title desc">
+  <title id="title">OrbitKV over OrbiTE</title>
+  <desc id="desc">Inference engines own scheduling, GPU allocation and native prefill/decode transport. OrbitKV owns cache identity, placement, leases and extents. OrbiTE moves all cache bytes. Implemented boundaries; GPU, RDMA, GDS and installed profiles remain unqualified.</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#546c58"/></marker></defs>
+  <rect width="960" height="560" rx="12" fill="#18241e"/>
+  <g fill="#263b2e" stroke="#546c58" stroke-width="1.5">
+    <rect x="190" y="24" width="580" height="82" rx="8"/>
+    <rect x="90" y="157" width="780" height="90" rx="8"/>
+    <rect x="190" y="298" width="580" height="86" rx="8"/>
+    <rect x="30" y="449" width="210" height="65" rx="8"/>
+    <rect x="260" y="449" width="210" height="65" rx="8"/>
+    <rect x="490" y="449" width="210" height="65" rx="8"/>
+    <rect x="720" y="449" width="210" height="65" rx="8"/>
+  </g>
+  <g stroke="#546c58" stroke-width="2" fill="none" marker-end="url(#arrow)">
+    <path d="M480 106V153"/>
+    <path d="M480 247V294"/>
+    <path d="M480 384V420H135V445"/>
+    <path d="M480 420H365V445"/>
+    <path d="M480 420H595V445"/>
+    <path d="M480 420H825V445"/>
+  </g>
+  <g fill="#d3e3ce" font-family="Arial, Helvetica, sans-serif" text-anchor="middle">
+    <g font-size="24" font-weight="700">
+      <text x="480" y="58">vLLM / SGLang</text>
+      <text x="480" y="193">OrbitKV · Cache Manager and native client</text>
+      <text x="480" y="332">OrbiTE · the only byte mover</text>
+    </g>
+    <g font-size="17">
+      <text x="135" y="488">Engine GPU pages</text><text x="365" y="488">Pinned DRAM</text>
+      <text x="595" y="488">SSD extents</text><text x="825" y="488">Granted peer memory</text>
+    </g>
+  </g>
+  <g fill="#bec8bc" font-family="Arial, Helvetica, sans-serif" text-anchor="middle" font-size="16">
+    <text x="480" y="84">Scheduling · GPU allocation · native P/D</text>
+    <text x="480" y="222">Identity · index · placement · leases · layouts · extents</text>
+    <text x="480" y="359">Local GPU↔DRAM copy · file I/O · peer READ</text>
+    <text x="650" y="135">Cache operations + layouts</text>
+    <text x="670" y="277">Bounded requests + retained owners</text>
+    <text x="480" y="543">Implemented ownership boundaries · hardware paths unqualified</text>
+  </g>
+</svg>

@@ -17,8 +17,8 @@ env:
   RUSTC_WRAPPER: sccache
 
 jobs:
-  website-check:
-    name: website and documentation
+  docs-check:
+    name: documentation
     needs:
       - ruff-check
       - python-unit-tests
@@ -28,22 +28,19 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-python@v5
         with:
-          node-version: "24.19.0"
-          cache: npm
-          cache-dependency-path: website/package-lock.json
-      - name: Install and audit
-        working-directory: website
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+      - name: Install pinned docs dependencies
+        run: pip install -r docs/requirements.txt
+      - name: Build strict documentation
+        run: sphinx-build -b dirhtml -n -W --keep-going docs "$RUNNER_TEMP/orbitkv-docs"
+      - name: Validate links, fragments and redirects
         run: |
-          npm ci
-          npm audit --audit-level=high
-      - name: Check and publish locally
-        working-directory: website
-        run: |
-          npm run check
-          npm run build
-          npm test
+          python docs/check_site.py "$RUNNER_TEMP/orbitkv-docs"
+          python -m unittest discover -s docs/tests
 
   commit-check:
     name: commit message check
@@ -91,7 +88,7 @@ jobs:
                   native = any(
                       not (
                           (path.endswith(".md") and path != "python/README.md")
-                          or path.startswith("website/")
+                          or path.startswith("docs/")
                           or (path.startswith(("benches/", "python/tests/")) and path.endswith(".py"))
                       )
                       for path in paths
@@ -231,7 +228,7 @@ jobs:
     name: cargo check (CUDA 13)
     # Finish the short feedback waves before consuming the available runners
     # with CUDA builds, so no job expires while waiting for a runner.
-    needs: [website-check, version-consistency-check]
+    needs: [docs-check, version-consistency-check]
     if: needs.version-consistency-check.outputs.native == 'true'
     runs-on: ubuntu-24.04
     steps:
@@ -347,12 +344,12 @@ jobs:
   cargo-check:
     name: cargo check
     if: always()
-    needs: [cargo-check-native, website-check, version-consistency-check]
+    needs: [cargo-check-native, docs-check, version-consistency-check]
     runs-on: ubuntu-latest
     steps:
       - name: Check results
         run: |
-          if [[ "${{ needs.version-consistency-check.result }}" != "success" || "${{ needs.website-check.result }}" != "success" ]]; then
+          if [[ "${{ needs.version-consistency-check.result }}" != "success" || "${{ needs.docs-check.result }}" != "success" ]]; then
             echo "prerequisite checks failed"
             exit 1
           fi

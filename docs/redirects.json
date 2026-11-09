@@ -1,0 +1,23 @@
+{
+  "docs": "index",
+  "integration": "adapters",
+  "evidence": "performance",
+  "docs/client-performance": "performance",
+  "docs/communication-performance": "performance",
+  "docs/single-node-performance": "performance",
+  "docs/concurrent-performance": "performance",
+  "docs/sustained-performance": "performance",
+  "docs/recovery-performance": "performance",
+  "docs/pd-mooncake-push": "pd",
+  "docs/rust-quality": "contributing",
+  "docs/distributed-comparison": "completion-plan",
+  "docs/distributed-design": "distributed-cache",
+  "docs/engine-release-audit": "adapters",
+  "docs/kernel-optimization": "transport",
+  "docs/ssd-performance": "gds",
+  "docs/state-planning": "architecture",
+  "docs/queued-warming": "request-preparation",
+  "docs/shared-cache-qualification": "fault-qualification",
+  "docs/benchmark-evidence": "performance",
+  "docs/peer-control": "distributed-cache"
+}

@@ -232,7 +232,7 @@ Publish diagnostics can observe active/retained calls without blocking behind
 lifecycle exchange. Overdue/missing/dead-peer observations never complete pages.
 Native calls release the GIL. Repeated live registration is rejected; close and
 unregister fence admission and drain. A timeout/drop cannot release a page while
-copies remain possible. See [native signatures](../python/orbitkv/orbitkv.pyi)
+copies remain possible. See [native signatures](https://github.com/OrbitInfra/OrbitKV/blob/main/python/orbitkv/orbitkv.pyi)
 and [layer consumption](engine-local-restore.md#layer-readiness-and-framework-consumption).
 
 ## Process channel
@@ -324,7 +324,7 @@ live P/D coordination or a watch of local saves.
 Keep source-only tests separate from native/engine gates. Installed qualification
 checks actual bytes and drain as well as output: disabled startup, native HBM,
 cold/partial/full hits, DRAM/SSD/peer, cancel/preemption/restart and each advertised
-Graph/rank/container profile. See [test gates](../python/tests/README.md).
+Graph/rank/container profile. See [test gates](https://github.com/OrbitInfra/OrbitKV/blob/main/python/tests/README.md).
 
 ### Registered TP query-control transport
 

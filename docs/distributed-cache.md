@@ -151,7 +151,7 @@ Native engine P/D has an independent transport and destination ownership.
 ## Limits and validation
 
 Current CPU controls cover migration, quota, journal overflow, membership, scope
-and shutdown; see [cluster benchmarks](../benches/cluster/README.md) and
+and shutdown; see [cluster benchmarks](https://github.com/OrbitInfra/OrbitKV/blob/main/benches/cluster/README.md) and
 [fault gates](fault-qualification.md#shared-cache-gates). Missing coverage blocks
 remote admission without blocking local cache operation. The supported inventory
 scope remains four owners. Historical DRAM/SSD isolation is **FAIL** and sixteen

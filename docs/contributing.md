@@ -44,10 +44,45 @@ invariant at the call site; if it does not hold, fix the owner before documentin
 it. The strict feature gates cover no-backend, OrbiTE TCP, and OrbiTE RDMA/GDS builds.
 
 
-PRs limited to Markdown, website and Python benchmark/test files run the relevant
+PRs limited to Markdown, docs tooling and Python benchmark/test files run the relevant
 fast checks. Native, package, CI or unrecognized inputs keep CUDA checks, wheels
 and Clippy; main pushes retain the complete pipeline. Native source moves are
 classified as deletions and additions, so moving a file cannot hide its check.
+
+## Documentation
+
+The single Sphinx site reads MyST Markdown from `docs/`. Add guides to the
+appropriate `toctree` in `docs/index.md`; keep source files in place when regrouping.
+The layout follows [LMCache's documentation](https://docs.lmcache.ai/) using
+`sphinxawesome_theme`, with OrbitKV's own text, logo and colors. No affiliation
+is implied. The landing page and README share the light/dark architecture figures.
+
+From the repository root, with Python 3.13 and `uv`:
+
+```bash
+uv venv --python 3.13 .venv/docs
+uv pip sync --python .venv/docs/bin/python docs/requirements.txt
+.venv/docs/bin/sphinx-build -b dirhtml -n -W --keep-going docs /tmp/orbitkv-docs
+.venv/docs/bin/python docs/check_site.py /tmp/orbitkv-docs
+.venv/docs/bin/python -m unittest discover -s docs/tests
+```
+
+Keep warnings fatal. The link check verifies built pages, assets, fragments and
+repository/evidence targets without fetching third-party websites. Use a full Git
+history checkout so historical evidence permalinks can be verified. It also checks
+legacy URL redirects and search coverage. `docs/redirects.json` preserves retired
+aliases; `/docs/<page>/` redirects are derived from the maintained guides. Redirects
+retain query strings and fragments. No Node/npm toolchain is needed; Mermaid
+runs in the browser from a version-pinned CDN module.
+
+Update `docs/requirements.in`, then regenerate the complete pinned Python set:
+
+```bash
+uv pip compile docs/requirements.in --python-version 3.13 -o docs/requirements.txt
+```
+
+CI builds and checks the site without publishing. The existing Pages workflow
+publishes the same `/OrbitKV/` URL after a merge to main.
 
 ## Submit a change
 
@@ -56,7 +91,7 @@ Commitizen messages and `feichai0017 <songguocheng348@gmail.com>` for repository
 commits. Keep the PR focused on the final behavior and relevant validation.
 
 Update affected technical documentation under `docs/`; the website renders it
-directly. Preserve website components and visual identity. When shortening a
+directly through Sphinx. Keep the Awesome theme, OrbitKV logo and palette. When shortening a
 historical report, verify its archive and keep immutable evidence/reproduction
 links. Generated experiment output belongs outside Git; see [evidence policy](performance.md#evidence-and-instrumentation).
 

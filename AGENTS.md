@@ -22,8 +22,8 @@ remaining limits. A missing hardware gate stays unqualified, not passed.
   deployment recipes, compatibility matrix, benchmark methodology and contributor
   navigation. Adapt these to OrbitKV's Rust ownership boundaries; do not copy
   LMCache's implementation layers or claim its deployment support as our own.
-- Preserve OrbitKV's website typography, colors, components and visual identity.
-  Maintain technical content in `docs/` and render it on the website. Diagrams
+- Use the Sphinx Awesome theme with OrbitKV's own logo and palette.
+  Maintain MyST Markdown content in `docs/` and render one documentation site. Diagrams
   must distinguish implemented paths, experimental paths and future work.
 - Keep experiment results outside the source checkout and Git history: raw
   JSON/CSV, logs, traces, run manifests, generated plots and per-run reports belong

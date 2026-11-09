@@ -175,7 +175,7 @@ A registered layout or passing state-byte fixture is not a model-serving result.
 
 ## Reproducible gates
 
-Use the [maintained Python gates](../python/tests/README.md) for the current
+Use the [maintained Python gates](https://github.com/OrbitInfra/OrbitKV/blob/main/python/tests/README.md) for the current
 native contracts, state-demand bytes and selected official-engine model profile.
 Keep exact-byte and malformed/partial-evidence controls separate from model
 output, restart and physical-lifetime gates. They measure correctness rather

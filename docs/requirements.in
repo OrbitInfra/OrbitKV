@@ -1,0 +1,5 @@
+# Build with Python 3.13. Update the complete lock with uv pip compile.
+sphinx==9.2.0
+myst-parser==5.1.0
+sphinxawesome-theme==6.0.6
+sphinxcontrib-mermaid==2.1.1
