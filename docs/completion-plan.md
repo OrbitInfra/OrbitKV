@@ -10,9 +10,12 @@ trees and attention-guided paging. The design was reviewed in
 [PR #332](https://github.com/OrbitInfra/OrbitKV/pull/332), `93d67424`.
 The bounded Python simulator exercises synthetic traces and ownership controls;
 the P3 extension adds bounded layer lookahead, declared reuse and past-only predictors.
+Its 717 simulation-only trials exercise non-null predictors; no tested holdout
+region meets P3's joint byte, capacity and latency gate. Exact reuse and prediction
+remain separate findings, conditional on synthetic selections and service costs.
 Production policy and hardware experiments have not started. See the simulator's
-[interpretation](../benches/storage/state_cache/README.md#interpretation-of-the-submitted-runs)
-for the modeled scope of the P2 and P3 findings.
+[interpretation](../benches/storage/state_cache/README.md#layer-campaign-interpretation)
+for the tested regions, oracle stops and limits.
 
 **Presentation decision, 2026-11-07:** use [LMCache](https://github.com/LMCache/LMCache)
 and [its docs](https://docs.lmcache.ai/) as content/navigation references, and
@@ -60,8 +63,9 @@ re-qualified on the current path before publication.
 
 1. **Design reviewed:** [design v2](design-v2.md), including pinned config schemas,
    upstream contracts, lifetime invariants and falsifiable experiment gates.
-2. **Current review:** the [bounded trace-driven simulator](../benches/storage/state_cache/README.md).
-   Synthetic inputs, capped ownership/queues, matched controls and ablations only;
+2. **Current review:** the [layer-paging extension](../benches/storage/state_cache/README.md#layer-paging-experiment)
+   to the simulator merged in [PR #333](https://github.com/OrbitInfra/OrbitKV/pull/333),
+   `4a36b11c`. Synthetic inputs, capped ownership/queues and causal controls only;
    simulation results are not hardware evidence or production policy.
 3. **Reliable consumed path:** finish required ownership contracts and qualify
    bytes, cold/partial/full hits, cancellation, bounds and normal shutdown.
@@ -336,8 +340,9 @@ proposes the next S6/S7 direction: engine-derived component/dependency IR,
 cost-based materialization and recomputation, agent forks/JIT restore, and sparse
 paging through upstream vLLM contracts. The safety foundation preserves existing
 owners, grants, epochs and physical-drain receipts; OrbiTE remains the only byte
-path. The hardware-free simulator is implemented for review, with its methodology
-and external-artifact reproduction under `benches/storage/state_cache/`. All
+path. The hardware-free simulator is implemented; its layer-paging extension is
+under review, with methodology and external-artifact reproduction under
+`benches/storage/state_cache/`. All
 hardware experiments remain **unexecuted** and current model guards remain in
 force. Review simulator controls and the scope of its findings before production work.
 

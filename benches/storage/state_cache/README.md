@@ -97,9 +97,9 @@ such. It still pays byte movement and queueing: there is no zero-cost overlap mo
 
 One shared non-preemptive link serializes every transfer, including fork copies,
 demotion and speculation. DRAM and SSD can have different service parameters.
-One compute lane serializes indexer, replay, recomputation and token work. This
-is deliberately conservative; it does not invent layer overlap, NVLink bandwidth,
-quality preservation or an installed engine's compute scheduling. A sparse cold
+One compute lane serializes indexer, replay, recomputation and token work. Overlap
+requires explicitly modeled work on the separate link; there is no assumed NVLink
+bandwidth, quality preservation or installed engine scheduling. A sparse cold
 miss may pay full recompute again when a later selected page was not materialized.
 HBM capacity means cache bytes after weights and runtime workspace, not device
 capacity. The legacy profile aggregates layer groups; `layered: true` enables the
@@ -299,3 +299,51 @@ p95 TPOT of 0.25–0.76× the online combined policy is measured headroom using
 **unavailable future knowledge**, not an online gain.
 The layer profile above now tests those mechanisms with causal controls; its
 campaigns and conditional verdict are recorded separately from the #333 evidence.
+
+### Layer campaign interpretation
+
+**Simulation only, not hardware evidence.** Source `da588c35` ran 717 trials in
+48 frozen campaigns. All drained; all 186 enabled predictor rows moved speculative
+bytes. The external handoff includes parameters, hashes, events, plots and per-row
+waste. Earlier runs that charged shared-index consumers for duplicate indexer
+owners are superseded; the corrected run keeps the same scenarios and reapplies
+the static HBM-budget formula to the corrected owner union.
+
+**Joint gate: no passing region in the holdout sweeps.**
+At both tested budgets, each mechanism and the strongest admitted control (exact
+serialized paging) admits two sessions, not three. Common mandatory-state pressure
+limits that capacity comparison; it does not establish a general capacity ceiling.
+Holdout wire-byte ratios are 1.00–1.27 for declared reuse, 1.08–1.30 for previous-step
+prediction, and 1.06–1.34 for previous-layer prediction. None meets the required
+0.70 byte ratio and 1.20 capacity ratio together with the latency bound. Grid and
+probe points without a concurrency sweep are diagnostics, not capacity evidence.
+
+- **Declared reuse:** the analytic two-layer control has residual stall
+  `max(0, transfer − compute)` and depth zero is serialized. In the GLM-5.3 grid,
+  exact index reuse lowers fetch stall, but base-case p95 TPOT rises to 1.245×
+  paging. At 8,192 B/µs and 100 µs compute it falls to 0.962×, with 1.137× bytes.
+  Thus the overlap mechanism works, but this tested region fails the joint gate.
+  V4.1's shared KV owners already hold consumer bytes; declared lookahead moves
+  zero additional bytes there. Every control receives those aliases too.
+  Flash-Next has no reuse declaration; its `reuse` rows are null controls.
+- **Prediction:** at 1,024 B/µs and 50 µs compute, same-layer overlap 1 helps the
+  previous-step predictor on V4.1 and GLM; adjacent-layer overlap 1 helps the
+  previous-layer predictor on all three grid configs. These are conditional
+  latency gains, not gate passes. At 128 B/µs and 25 µs compute both predictors
+  worsen TPOT on all three. Higher overlap is not monotonically better under
+  contention, so the sampled 0/0.5/1 overlaps establish no universal threshold.
+  Unconsumed speculation ranges from 0–100% per run. The never-revisited,
+  zero-overlap CI trace wastes every speculative byte and reduces no stall;
+  campaign zero targets still permit later revisits and declared exact reuse.
+- **Oracle:** unavailable future selections produce matched p95 TPOT ratios of
+  0.759–1.187× paging, not an online win or a global optimum. The GLM slow-link
+  point misses the SLO even with this oracle; Flash-Next at depth two rejects
+  work under pressure. Three-session holdouts also fail oracle admission. Those
+  modeled loads stop under the design's oracle rule; partial completions cannot
+  count as gains. No impossible-overlap mode is used.
+
+P3 earns no promotion in the tested region. Exact pipelining and non-null
+prediction are now tested, but no overlap/bandwidth threshold for the full gate
+has been found. The deciding next evidence would be actual indexer selection
+traces, native footprints and service timings from the later GPU hardware batch.
+No such statistics or hardware evidence are supplied here.
