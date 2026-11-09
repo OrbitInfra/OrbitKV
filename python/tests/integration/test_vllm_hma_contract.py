@@ -510,8 +510,8 @@ def test_native_hma_page_reuse_bytes(allocation, fault_cache, case):  # noqa: F8
                 h.scheduler._drain_deferred_frees()
             else:
                 assert not h.scheduler._request_blocks_can_be_freed(h.request)
-            assert worker._restore is not None
-            assert not client.poll_restore(worker._restore.handle).done
+            restore_owner = until(lambda: worker._restore)
+            assert not client.poll_restore(restore_owner.handle).done
             assert all(
                 h.manager.block_pool.blocks[bid].ref_cnt == 1
                 for targets in destinations.values()
