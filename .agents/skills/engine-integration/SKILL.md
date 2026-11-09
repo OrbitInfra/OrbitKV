@@ -125,8 +125,12 @@ non-submission only at the pre-forward activation future. The same exception
 from submission or completion waiting must retain leases/pages and publish an
 error, rather than return false. Use `Req.prefix_len`,
 `MatchResult.device_prefix_len` and `Req.refresh_fill_ids()`; do not reintroduce
-removed load polling or custom `_update_load` insertion. OrbitKV admits Full/SWA only even though 0.5.23 adds Mamba to the released
-external-linker contract; reject recurrent/SSM startup until separately integrated.
+removed load polling or custom `_update_load` insertion. OrbitKV admits Full/SWA and static Mamba conv/SSM checkpoints through the 0.5.23
+external-linker component. Keep all-component boundary agreement and private-slot
+ownership through the post-forward drain. Reject ReplaySSM, int8 checkpoints,
+draft/sibling/moving pools and combined Full/SWA/Mamba serving. MLA stays per-rank;
+its latent/RoPE partition participates in identity, and native broadcast dedup
+is rejected. M3 owns shared-writer identity/admission. See the component audit.
 Pass the forward stream and consume `record_offload_ready()` before Save submission.
 Accept the optional `offload(..., session_id=...)` attribution without changing identity. Earlier 0.5.21 result freezes retain their
 original pins. The 0.5.22 Qwen3-8B installed DRAM/io_uring byte/model/restart

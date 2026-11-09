@@ -72,6 +72,13 @@ entries created by earlier internal hybrid experiments cannot match. There is no
 alias or migration shim. Single-group identities and the V2 opt-in are unchanged;
 installed Full/SWA model and fault gates remain unqualified.
 
+SGLang Mamba checkpoints now use the released 0.5.23 component. Their identity
+records conv/SSM roles and layout; ordinary MLA identity additionally records
+latent/RoPE partitions. Earlier MLA entries intentionally miss after upgrading;
+there is no identity alias. Full/SWA identity is unchanged. The native
+`--enable-linker-mla-dedup` broadcast option now fails explicitly with OrbitKV;
+per-rank MLA storage remains available. Installed GPU gates are unqualified.
+
 From the repository root, select a Python interpreter with shared `libpython`
 (required by the embedded Manager) and use a CUDA 13 toolkit:
 

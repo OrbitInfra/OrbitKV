@@ -109,10 +109,12 @@ slots. Unknown submission, timeout or lost completion raises while ownership
 remains held; a logical failure is not a physical completion receipt.
 
 SGLang owns HBM allocation and eviction. Its released external-linker wrapper
-exposes Full, SWA and Mamba; OrbitKV consumes Full/SWA only. OrbitKV rejects recurrent/SSM model startup;
-the old custom recurrent component is removed. Generic state-layout byte tests
-do not establish a model lifecycle or authorize that profile. Full hybrid
-recovery needs a released complete-state contract plus model and fault gates.
+exposes Full, SWA and Mamba. OrbitKV consumes static conv/SSM checkpoints
+through the released Mamba component, with no custom component or tree. Each
+checkpoint is usable only at its exact token boundary. Its layout identity
+includes conv roles/axis, temporal presence, every tensor shape/dtype/stride
+and TP placement. [The released audit](adapters.md#released-sglang-component-contract)
+and CPU ownership controls do not qualify model execution; GPU gates remain unrun.
 
 ## vLLM hybrid handoff
 
@@ -171,11 +173,15 @@ cancellation while submitted work drains under its existing owners.
 ## SGLang deployment and limits
 
 Use the [current dense recipe](single-node.md#sglang). The plugin accepts Full
-MHA/MLA and Full + SWA contiguous, page-aligned pools. Attention groups must cover
-disjoint layers and together cover the model. Recurrent/conv combinations are
-not supported by the current SGLang plugin; the custom recurrent override and
-its unused Inkling fixture have been removed. Unknown auxiliary state, moving
-unified-memory pools and SWA request rings remain unsupported.
+MHA/MLA, Full + SWA, and static Mamba conv/SSM checkpoints in contiguous,
+page-aligned pools. Attention layers must be disjoint; the union with recurrent
+layers must cover the model. Recurrent checkpoints accompany Full attention; combined Full/SWA/Mamba
+serving remains rejected pending a combined lifecycle gate.
+MLA remains per-rank; its latent and rotary dimensions participate in identity.
+Moving/unified pools, int8 checkpoints, ReplaySSM, speculative buffers, short-conv/
+ngram side states, separate scale buffers and SWA request rings remain rejected.
+Native MLA broadcast deduplication is not used. See the
+[component decisions](adapters.md#released-sglang-component-contract).
 
 Complete hybrid recovery, page generations, physical fault reclamation,
 multi-rank serving and cross-engine byte reuse remain separate qualifications.

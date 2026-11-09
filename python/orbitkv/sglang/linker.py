@@ -161,11 +161,12 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self._load_thread.start()
         self._offload_thread.start()
         logger.info(
-            "OrbitKV GPU linker registered %s buffers, %s pages on device %s, transfer backend %s",
+            "OrbitKV GPU linker registered %s buffers, %s pages on device %s, transfer backend %s, components=%s",
             sum(len(pool.layer_names) for pool in self.layout.pools.values()),
             self.layout.pools[PoolName.KV].num_blocks[0],
             self.device_id,
             transfer_backend,
+            ",".join(pool.kind for pool in self.layout.pools.values()),
         )
 
     @staticmethod

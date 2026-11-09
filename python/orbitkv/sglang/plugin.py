@@ -46,9 +46,14 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
     if ctx.enable_hierarchical_cache:
         raise ValueError("OrbitKV direct GPU linker does not support hierarchical cache")
     if ctx.is_hybrid_ssm:
+        if ctx.is_hybrid_swa:
+            raise ValueError("OrbitKV Full/SWA/Mamba serving needs a combined lifecycle gate")
+        from .layout import validate_recurrent_pool
+
+        validate_recurrent_pool(ctx.params.req_to_token_pool)
+    if getattr(ctx.server_args, "enable_linker_mla_dedup", False):
         raise ValueError(
-            "OrbitKV supports only Full/SWA external-linker components; "
-            "recurrent state is not yet integrated"
+            "OrbitKV MLA uses per-rank storage; linker MLA broadcast dedup is unsupported"
         )
     if (
         ctx.is_dsa
@@ -83,6 +88,8 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
     components = [ComponentType.FULL]
     if ctx.is_hybrid_swa:
         components.append(ComponentType.SWA)
+    if ctx.is_hybrid_ssm:
+        components.append(ComponentType.MAMBA)
     ctx.params.tree_components = tuple(components)
     cache = UnifiedRadixCache(ctx.params)
     linker = OrbitKVLinker(

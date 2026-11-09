@@ -10,10 +10,37 @@ from sglang.srt.mem_cache.hicache_storage import PoolName
 from sglang.srt.mem_cache.hybrid_cache.linker_pool_assembler import DevicePoolEntry
 from sglang.srt.mem_cache.memory_pool import (
     HybridLinearKVPool,
+    HybridReqToTokenPool,
+    MambaPool,
     MHATokenToKVPool,
     MLATokenToKVPool,
 )
 from sglang.srt.mem_cache.unified_cache.components import ComponentType
+
+
+def validate_recurrent_pool(request_pool: Any) -> None:
+    """Admit only the static slot store covered by Mamba's linker handoff."""
+    if type(request_pool) is not HybridReqToTokenPool:
+        raise ValueError("OrbitKV recurrent state requires the static HybridReqToTokenPool")
+    if request_pool.mamba_ckpt_pool is not None:
+        raise ValueError("OrbitKV cannot restore int8 Mamba checkpoint pools")
+    if request_pool.short_conv_pool.enabled or request_pool.ngram_pool.enabled:
+        raise ValueError("OrbitKV cannot restore Mamba short-conv or ngram side states")
+    pool = request_pool.mamba_pool
+    if type(pool) is not MambaPool:
+        raise ValueError("OrbitKV cannot restore moving or unknown Mamba slot stores")
+    if (
+        type(pool.mamba_cache) is not MambaPool.State
+        or pool.enable_linear_replayssm
+        or pool.enable_linear_replayssm_spec
+        or pool._slot_siblings
+        or any(
+            value is not None
+            for name, value in vars(pool.mamba_cache).items()
+            if name not in {"conv", "temporal"}
+        )
+    ):
+        raise ValueError("OrbitKV cannot restore Mamba replay, draft or sibling state")
 
 
 @dataclass(frozen=True)
@@ -120,6 +147,8 @@ class GpuLayout:
         supported = {ComponentType.FULL, ComponentType.SWA, ComponentType.MAMBA}
         if ComponentType.FULL not in components or not components <= supported:
             raise ValueError(f"Unsupported SGLang state components: {components}")
+        if ComponentType.MAMBA in components:
+            validate_recurrent_pool(request_pool)
 
         if ComponentType.SWA in components:
             from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
@@ -147,7 +176,7 @@ class GpuLayout:
             kind = "mla" if type(kvcache) is MLATokenToKVPool else "attention"
             attention(PoolName.KV, kvcache, {i: i for i in range(kvcache.layer_num)}, kind)
         else:
-            if not isinstance(kvcache, HybridLinearKVPool):
+            if type(kvcache) is not HybridLinearKVPool:
                 raise ValueError("Recurrent recovery requires HybridLinearKVPool")
             attention(
                 PoolName.KV,
@@ -159,14 +188,6 @@ class GpuLayout:
         if ComponentType.MAMBA in components:
             mamba = request_pool.mamba_pool
             state = mamba.mamba_cache
-            if (
-                getattr(mamba, "enable_linear_replayssm", False)
-                or getattr(mamba, "enable_linear_replayssm_spec", False)
-                or getattr(mamba, "_slot_siblings", ())
-            ):
-                raise ValueError(
-                    "Recurrent replay, draft, and sibling state need separate recovery rules"
-                )
             mapping = dict(request_pool.mamba_map)
             layers = len(mapping)
             if not state.conv or state.temporal.shape[0] != layers:

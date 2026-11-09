@@ -134,8 +134,8 @@ before enabling other request modes, or add SSD with the Manager recipe above.
 
 **Prerequisites:** complete the common setup above and use Python 3.11+ for
 SGLang 0.5.23. Start with the dense DRAM/io_uring configuration in
-[compatibility](compatibility.md); the released external linker supports Full/SWA,
-and recurrent startup is rejected. Historical results do not qualify this recipe.
+[compatibility](compatibility.md); the adapter admits Full/SWA and static Mamba checkpoints, with
+MLA kept per rank and [named limits](adapters.md#released-sglang-component-contract). Historical results do not qualify this recipe.
 
 ### Install and run SGLang
 

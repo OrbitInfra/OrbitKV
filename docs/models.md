@@ -49,20 +49,29 @@ a prefix hit count cannot replace missing state. vLLM V1 admits exact Full + SWA
 groups with equal block sizes, atomic recovery and pinned Save jobs. Recurrent,
 zeroing, unknown specs and MLA multi-group remain rejected. Its
 [V2 opt-in](adapters.md#released-v2-lifetime-contract) is
-limited to uniform Full attention, not hybrid recovery. OrbitKV's SGLang adapter accepts Full/SWA,
-not the Mamba components newly exposed by the released linker. The next hardware input is an immutable Gemma 3 Full/SWA checkpoint, eager
+limited to uniform Full attention, not hybrid recovery. SGLang also admits static
+Mamba conv/SSM checkpoints through its released component, without ReplaySSM,
+speculation, int8 checkpoints or side-state buffers. The next hardware input is an immutable Gemma 3 Full/SWA checkpoint, eager
 TP=1/PP=1, raw KV, without speculation. Record its exact revision; require both
 groups in engine logs, native-output parity, restart hits, per-group bytes and
 [HMA faults](fault-qualification.md#fullswa-gates). This gate is written only,
 unrun and unqualified. Follow [recovery contracts](hybrid-recovery.md) before
 broadening those guards.
 
+For SGLang's checkpoint path, the queued model gate uses an immutable
+Qwen3-Next-80B-A3B checkpoint (Full + Gated DeltaNet state), eager TP=1/PP=1,
+with its revision recorded. The [component gates](fault-qualification.md#sglang-component-gates)
+require actual recurrent registration, output parity, restart hits, exact
+conv/SSM fixture bytes and ownership faults. No model-family name is a qualification.
+
 ## MLA and auxiliary state
 
-A byte-layout fixture is not model recovery. MLA latent state, indexer state,
-draft/auxiliary buffers and TP replication must be described by the engine
-interface before reuse. Unknown state is rejected; deduplicating replicated MLA
-state across ranks is missing. Validate native output, then complete external
+Ordinary SGLang `MLATokenToKVPool` latent/RoPE rows are admitted per rank.
+The queued model gate uses an immutable DeepSeek-V2-Lite checkpoint, eager
+TP=1/PP=1, with its revision recorded. DSA indexers, draft/auxiliary buffers and
+separate scales remain rejected. Deduplicating replicated MLA state across
+ranks remains M3 work despite the released writer-selection rule. A byte-layout
+fixture is not model recovery. Validate native output, then complete external
 recovery, before measuring performance.
 
 ## Static LoRA

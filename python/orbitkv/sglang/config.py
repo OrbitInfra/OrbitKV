@@ -14,7 +14,30 @@ from orbitkv.identity import (
 )
 
 if TYPE_CHECKING:
-    from .layout import GpuLayout
+    from .layout import GpuLayout, GpuPool
+
+
+def _component_format(pool: GpuPool) -> dict:
+    if pool.kind == "mla":
+        native = pool.entry.device_pool
+        return {
+            "mla": {
+                "latent": native.kv_lora_rank,
+                "rope": native.qk_rope_head_dim,
+                "physical": native.kv_cache_dim,
+            }
+        }
+    if pool.kind in {"recurrent", "convolution"}:
+        native = pool.entry.device_pool
+        state = native.mamba_cache
+        return {
+            "checkpoint": {
+                "conv_buffers": len(state.conv),
+                "conv_window_axis": native.conv_window_axis,
+                "temporal": bool(state.temporal.numel()),
+            }
+        }
+    return {}
 
 
 def resolve_transfer_backend() -> str:
@@ -123,6 +146,7 @@ def derive_namespace(
                 "kind": pool.kind,
                 "window": pool.window,
                 "layers": sorted(pool.entry.layer_mapping.items()),
+                **_component_format(pool),
                 "buffers": [
                     {
                         "dtype": str(tensor.dtype),

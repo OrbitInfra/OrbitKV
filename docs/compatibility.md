@@ -10,7 +10,7 @@ none carries over to the current data path.
 | Engine | Current package/source pin | Implemented boundary |
 | --- | --- | --- |
 | vLLM | 0.33.0 | KV Connector, V1 runner by default; single attention group or [Full + SWA](adapters.md#released-hma-contract); [V2 opt-in](adapters.md#released-v2-lifetime-contract) admits uniform Full attention only and remains unqualified; recurrent, zeroing and V2 multi-group rejected |
-| SGLang | 0.5.23 | UnifiedRadixCache external linker, Full/SWA components; recurrent/SSM rejected; private pre-capture and admission hooks remain |
+| SGLang | 0.5.23 | UnifiedRadixCache external linker, Full/SWA and static Mamba checkpoints; MLA per-rank; replay, draft, moving pools and combined Full/SWA/Mamba serving rejected; private pre-capture and admission hooks remain |
 
 The pins select adapter source contracts; installed GPU conformance remains
 queued in [M1](completion-plan.md#m1--engine-baseline). Follow

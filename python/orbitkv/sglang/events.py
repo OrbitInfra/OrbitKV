@@ -105,7 +105,7 @@ def initialize_layer_counter(worker: Any, capture_decode_cuda_graph: bool = True
     if get_memory().radix_cache_backend != "orbitkv":
         return
 
-    from sglang.srt.mem_cache.memory_pool import HybridLinearKVPool
+    from sglang.srt.mem_cache.memory_pool import HybridReqToTokenPool
     from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
     from sglang.srt.mem_cache.unified_cache.components import ComponentType
 
@@ -116,7 +116,7 @@ def initialize_layer_counter(worker: Any, capture_decode_cuda_graph: bool = True
     if isinstance(kvcache.layer_transfer_counter, _LayerDoneCounter):
         return
     components = {ComponentType.FULL}
-    if isinstance(kvcache, HybridLinearKVPool):
+    if isinstance(request_pool, HybridReqToTokenPool):
         components.add(ComponentType.MAMBA)
     if isinstance(kvcache, SWAKVPool):
         components.add(ComponentType.SWA)

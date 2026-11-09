@@ -6,7 +6,8 @@
 > evidence, not installed GPU qualification.
 
 Use separate vLLM 0.33.0 and SGLang 0.5.23 environments (Python 3.11+).
-Keep ordinary vLLM on V1 and SGLang on Full/SWA. V1 also admits the narrow
+Start ordinary vLLM on V1 and SGLang on Full/SWA. Static SGLang Mamba
+checkpoints are admitted under the [component contract](adapters.md#released-sglang-component-contract); installed GPU gates remain unqualified. V1 also admits the narrow
 [Full + SWA profile](hybrid-recovery.md#vllm-hybrid-handoff); all these profiles
 still await installed GPU conformance.
 

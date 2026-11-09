@@ -46,6 +46,7 @@ CPU = {
     "integration/test_vllm_v2_contract.py": VLLM,
     "integration/test_vllm_hma_contract.py": VLLM,
     "integration/test_sglang_admission.py": SGLANG,
+    "integration/test_sglang_components.py": SGLANG,
     "integration/test_engine_fault_contracts.py": BOTH,
     "integration/test_vllm_recovery.py::test_native_contract_gates_vllm_hits": VLLM,
     "integration/test_vllm_recovery.py::test_native_contract_rejects_duplicate_or_unordered_evidence": VLLM,
@@ -54,6 +55,7 @@ CPU = {
     "integration/test_sglang_direct_transfer.py::test_cancel_before_forward_releases_only_unsubmitted_leases": SGLANG,
 }
 GPU = {
+    "integration/test_sglang_components.py::test_native_component_bytes_and_faults": SGLANG,
     "integration/test_vllm_hma_contract.py::test_native_hma_page_reuse_bytes": VLLM,
     "integration/test_vllm_v2_contract.py::test_native_v2_page_reuse_bytes": VLLM,
     "integration/test_cache_faults.py": BOTH,

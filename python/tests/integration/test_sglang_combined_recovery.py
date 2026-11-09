@@ -15,7 +15,11 @@ pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 def test_three_component_recovery(channel_server, monkeypatch, temporal_state):
     torch = pytest.importorskip("torch")
     from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
-    from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool
+    from sglang.srt.mem_cache.memory_pool import (
+        HybridReqToTokenPool,
+        MambaPool,
+        MHATokenToKVPool,
+    )
     from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
     from sglang.srt.mem_cache.unified_cache.components import ComponentType
 
@@ -28,6 +32,7 @@ def test_three_component_recovery(channel_server, monkeypatch, temporal_state):
     # Construction avoids allocating the engine's entire serving budget.
     def attention_pool(offset):
         pool = object.__new__(MHATokenToKVPool)
+        pool.k_scale_buffer = pool.native_k_scale_buffer = None
         pool.k_buffer = [
             torch.arange(64 * 128, device="cuda", dtype=torch.float32).reshape(64, 1, 128) + offset
         ]
@@ -43,18 +48,22 @@ def test_three_component_recovery(channel_server, monkeypatch, temporal_state):
     temporal = (
         torch.arange(64 * 256, device="cuda", dtype=torch.float32).reshape(1, 64, 256) + 50000
     )
-    state = SimpleNamespace(
+    state = MambaPool.State(
         conv=[conv], temporal=temporal if temporal_state else temporal[:, :, :0]
     )
+    mamba_pool = object.__new__(MambaPool)
+    mamba_pool.mamba_cache = state
+    mamba_pool.enable_linear_replayssm = mamba_pool.enable_linear_replayssm_spec = False
+    req_pool = object.__new__(HybridReqToTokenPool)
+    req_pool.mamba_pool = mamba_pool
+    req_pool.mamba_map = {2 if temporal_state else 0: 0}
+    req_pool.mamba_ckpt_pool = None
+    req_pool.short_conv_pool = req_pool.ngram_pool = SimpleNamespace(enabled=False)
     params = SimpleNamespace(
         page_size=4,
         sliding_window_size=8,
         token_to_kv_pool_allocator=SimpleNamespace(get_kvcache=lambda: cache),
-        req_to_token_pool=SimpleNamespace(
-            mamba_pool=SimpleNamespace(mamba_cache=state),
-            mamba_map={2 if temporal_state else 0: 0},
-            translate_mamba_indices=lambda indices: indices,
-        ),
+        req_to_token_pool=req_pool,
     )
     monkeypatch.setattr(
         "sglang.srt.runtime_context.get_disagg",
