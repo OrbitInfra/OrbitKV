@@ -30,13 +30,13 @@ base package does not install. See [release requirements](../docs/releases.md).
 
 ## Engine integration
 
-Use separate official environments for **vLLM 0.31.0** and **SGLang 0.5.22**,
+Use separate official environments for **vLLM 0.33.0** and **SGLang 0.5.23**,
 with the same OrbitKV build in the Manager environment. vLLM requires
 `VLLM_USE_V2_MODEL_RUNNER=0` and one attention cache group. SGLang uses the
 UnifiedRadixCache external linker and its public load-completion callback.
-SGLang requires Python 3.11+. Its 0.5.22 Qwen3-8B normal-path acceptance is
-scoped in [compatibility](../docs/compatibility.md); broader 0.5.21 measurements
-remain historical. Pre-capture and pending-admission hooks remain until released
+Engine extras target Linux: vLLM on Python 3.11–3.14 and SGLang on 3.11–3.13. Earlier 0.5.22 Qwen3-8B normal-path
+acceptance and 0.5.21 measurements are historical; neither qualifies these
+pins or the OrbiTE data path. See [compatibility](../docs/compatibility.md). Pre-capture and pending-admission hooks remain until released
 replacements are available.
 Follow the [engine quickstart](../docs/single-node.md) for complete commands and
 an external-hit check. Native P/D owns its transport; OrbitKV owns independent
@@ -51,7 +51,7 @@ client; Python supplies retained tensors and layouts, without serialized pickle
 wrappers. Matching lifecycle-13 packages are required. Storage and view offsets,
 GPU UUID, dtype/layout, counter and readiness fields are validated before import.
 Earlier installed GPU/adapter and export-error ownership acceptances do not
-qualify the current OrbiTE data path; see S3 in the [completion plan](../docs/completion-plan.md). Physical
+qualify the current OrbiTE data path; see M1 in the [completion plan](../docs/completion-plan.md). Physical
 fault termination and allocation/page-generation qualification remain open.
 
 Use `save(registration, saves)` for Publish. Queued engine callbacks capture that

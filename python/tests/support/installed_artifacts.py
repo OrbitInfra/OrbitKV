@@ -13,10 +13,10 @@ import sys
 import sysconfig
 from pathlib import Path
 
-ENGINE_VERSIONS = {"vllm": "0.31.0", "sglang": "0.5.22"}
+ENGINE_VERSIONS = {"vllm": "0.33.0", "sglang": "0.5.23"}
 ENGINE_COMMITS = {
-    "vllm": "db9527a46873454610df6dbedf79a36d6bf1a7f6",
-    "sglang": "baa9befa381511cd4d56f83980951e5a45fffc6d",
+    "vllm": "4ba787ec9959e566d3b587a796dff07673324da5",
+    "sglang": "297e54fd105e974cdf401e5b4d20253a22c16f90",
 }
 REMOVED_LIBRARIES = {
     "libtent_shared.so",

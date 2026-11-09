@@ -47,6 +47,24 @@ Use the complete `benches/tests` suite for shared harness changes or before
 merge. Retired S2 campaign controllers/tests are reproduced from their
 [immutable source](https://github.com/OrbitInfra/OrbitKV/tree/dc52461078bb22910ba6c783ecf0d9213599b10b/benches/cluster).
 
+## Released engine API controls (CPU)
+
+Use uv 0.13.7 or newer. After building a complete Python 3.12 wheel, run from
+the repository root:
+
+```bash
+scripts/check-engine-apis.sh /var/tmp/orbitkv-engine-api /absolute/path/to/wheel.whl
+```
+
+This creates separate environments at the exact release pins, installs the built
+OrbitKV wheel and tests the real official connector/linker classes outside the
+source package. No engine modules are stubbed; events and native completion
+failures are controlled test seams. Missing packages fail rather than skip.
+CPU PyTorch runs the Python callbacks without selecting SGLang's CPU serving
+backend; no model, GPU or Manager is started. CI runs this with a Python 3.12 wheel in
+addition to the existing Python 3.14 TCP/RDMA wheel legs. Freezes and JUnit reports
+are external artifacts. This is API/ownership evidence, not GPU qualification.
+
 ## Select a hardware gate
 
 Run from `python/` in the selected installed engine environment. Set
@@ -58,8 +76,8 @@ collection.
 | --- | --- |
 | Server/native/session or GPU registration | `pytest -m integration` with a matching built/installed runtime |
 | Distributed membership, inventory or peer recovery | `ETCD_BIN=/path/to/etcd pytest -m integration tests/integration/test_distributed_cache.py` |
-| vLLM adapter/save/load/recovery | Official vLLM 0.31.0: `python -m pytest -m e2e tests/e2e/test_vllm_e2e_correctness.py --model /path/to/model --max-model-len 4096` |
-| SGLang linker/layout/plugin | Official SGLang 0.5.22: `python -m pytest -m e2e tests/e2e/test_sglang_direct_e2e.py --model /path/to/model` |
+| vLLM adapter/save/load/recovery | Official vLLM 0.33.0: `python -m pytest -m e2e tests/e2e/test_vllm_e2e_correctness.py --model /path/to/model --max-model-len 4096` |
+| SGLang linker/layout/plugin | Official SGLang 0.5.23: `python -m pytest -m e2e tests/e2e/test_sglang_direct_e2e.py --model /path/to/model` |
 | Shared-cache adapter or peer ownership | `pytest -m e2e tests/e2e/test_shared_cache.py -k vllm --model /path/to/model`; repeat with `-k sglang` in its environment |
 | Warm-hit concurrency | `pytest -m stress tests/stress/test_vllm_warm_hit_stress.py --model /path/to/model` |
 | Native P/D composition | `tests/e2e/test_vllm_native_pd_e2e.py` or `test_sglang_pd_e2e.py`, with `-m e2e` and the [native P/D runtime](../../docs/pd.md) |
@@ -94,7 +112,7 @@ loop. `support/install_wheel.py` preserves wheel executable modes and RECORD
 bytes; `support/installed_pytest.py` keeps the installed package ahead of source.
 Run the retained native and adapter integration tests when those contracts change,
 including `test_sglang_registration_lifetime.py` for sole-owner and independent
-exporter holds in DRAM and io_uring. Its SGLang 0.5.22 normal pool/linker fixture
+exporter holds in DRAM and io_uring. Its SGLang 0.5.23 normal pool/linker fixture
 is independently accepted; it is not a model-shutdown or fault-reclamation gate.
 
 Completed registration-campaign controllers, their validator-only tests and CPU

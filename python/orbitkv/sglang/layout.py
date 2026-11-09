@@ -95,6 +95,12 @@ class GpuLayout:
         def attention(name, pool, mapping, kind, window=0):
             if type(pool) not in (MHATokenToKVPool, MLATokenToKVPool):
                 raise ValueError(f"Unsupported SGLang attention pool: {type(pool).__name__}")
+            if type(pool) is MHATokenToKVPool and (
+                pool.k_scale_buffer is not None or pool.native_k_scale_buffer is not None
+            ):
+                raise ValueError("OrbitKV cannot restore separate SGLang KV scale buffers")
+            if type(pool) is MLATokenToKVPool and pool.kv_scale_buffer is not None:
+                raise ValueError("OrbitKV cannot restore separate SGLang MLA scale buffers")
             buffers = (
                 [list(pool.k_buffer), list(pool.v_buffer)]
                 if type(pool) is MHATokenToKVPool

@@ -14,10 +14,16 @@ def release_checker(tmp_path, monkeypatch):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     (tmp_path / "python/tests/support").mkdir(parents=True)
-    versions = {"vllm": "0.31.0", "sglang": "0.5.22"}
+    versions = {"vllm": "0.33.0", "sglang": "0.5.23"}
     commits = {"vllm": "a" * 40, "sglang": "b" * 40}
-    requirements = {name: f"{name}=={version}" for name, version in versions.items()}
-    requirements["sglang"] += "; python_version >= '3.11'"
+    requirements = {
+        name: (
+            f"{name}=={version}; python_version >= '3.11' "
+            f"and python_version < '{'3.14' if name == 'sglang' else '3.15'}' "
+            "and sys_platform == 'linux'"
+        )
+        for name, version in versions.items()
+    }
     (tmp_path / "python/pyproject.toml").write_text(
         "[project.optional-dependencies]\n"
         + "\n".join(f"{name} = {json.dumps([value])}" for name, value in requirements.items())
@@ -37,8 +43,8 @@ def test_aligned_release_inputs_pass(release_checker, layout):
     if layout == "multiline":
         (root / "python/pyproject.toml").write_text(
             "[project.optional-dependencies]\n"
-            "vllm = [\n  'vllm==0.31.0', # official release\n]\n"
-            "sglang = [\"sglang==0.5.22; python_version >= '3.11'\"]\n"
+            "vllm = [\n  \"vllm==0.33.0; python_version >= '3.11' and python_version < '3.15' and sys_platform == 'linux'\", # official release\n]\n"
+            "sglang = [\"sglang==0.5.23; python_version >= '3.11' and python_version < '3.14' and sys_platform == 'linux'\"]\n"
         )
     module.check_engine_releases(root)
 
@@ -60,7 +66,7 @@ def test_release_input_drift_is_rejected(release_checker, drift):
     module, root, helper, entries = release_checker
     if drift == "extra":
         path = root / "python/pyproject.toml"
-        path.write_text(path.read_text().replace("vllm==0.31.0", "vllm==0.30.0"))
+        path.write_text(path.read_text().replace("vllm==0.33.0", "vllm==0.30.0"))
     elif drift in ("missing-marker", "wrong-marker"):
         path = root / "python/pyproject.toml"
         marker = "" if drift == "missing-marker" else "; python_version < '3.11'"
@@ -75,6 +81,6 @@ def test_release_input_drift_is_rejected(release_checker, drift):
     elif drift == "commit":
         helper.write_text(helper.read_text().replace("a" * 40, "invalid"))
     else:
-        helper.write_text(helper.read_text().replace("'sglang': '0.5.22'", "'unknown': '0.5.22'"))
+        helper.write_text(helper.read_text().replace("'sglang': '0.5.23'", "'unknown': '0.5.23'"))
     with pytest.raises(SystemExit):
         module.check_engine_releases(root)

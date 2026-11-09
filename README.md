@@ -107,8 +107,8 @@ only native GPU cache. [Manager options](docs/server.md) explain the example bud
 
 The [documentation](https://orbitinfra.github.io/OrbitKV/) covers engine integration,
 storage, distributed cache, deployment, observability and internals. The
-[support matrix](docs/compatibility.md) selects **vLLM 0.31.0** (V1, one attention
-group) and **SGLang 0.5.22** (Full/SWA external linker); recurrent external
+[support matrix](docs/compatibility.md) selects **vLLM 0.33.0** (V1, one attention
+group) and **SGLang 0.5.23** (Full/SWA external linker); recurrent external
 recovery remains rejected. See [model recipes and limits](docs/models.md).
 
 ## Contributing

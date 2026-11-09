@@ -3,7 +3,8 @@
 A model loading in an inference engine does not establish external-cache
 recovery. OrbitKV must restore every state component the engine reads, at a
 legal boundary and with matching artifact, computation and layout identity.
-All current OrbiTE GPU and installed profiles remain unqualified.
+The adapter pins are vLLM 0.33.0 and SGLang 0.5.23. All current OrbiTE GPU
+and installed profiles remain unqualified.
 
 ## Choose a model
 
@@ -45,8 +46,8 @@ not automatically interchangeable.
 Full, window and checkpoint recovery requirements are implemented in the shared
 state contract. Each adapter must supply all required groups and a legal boundary;
 a prefix hit count cannot replace missing state. vLLM currently rejects V2,
-multiple groups and recurrent profiles. SGLang's pinned linker accepts Full/SWA,
-not recurrent components. Follow [recovery contracts](hybrid-recovery.md) and
+multiple groups and recurrent profiles. OrbitKV's SGLang adapter accepts Full/SWA,
+not the Mamba components newly exposed by the released linker. Follow [recovery contracts](hybrid-recovery.md) and
 [M1](completion-plan.md#m1--engine-baseline) before broadening those guards.
 
 ## MLA and auxiliary state

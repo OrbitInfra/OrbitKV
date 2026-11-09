@@ -81,7 +81,7 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
     monkeypatch.setattr(
         "sglang.srt.runtime_context.get_lora", lambda: SimpleNamespace(enable_lora=False)
     )
-    linker = OrbitKVLinker(None, params)
+    linker = OrbitKVLinker(None, params, forward_stream=None)
     keys = [f"prefix-{i}" for i in range(4)]
     state_keys = keys[-1:] if kind == "recurrent" else keys[-2:]
     try:

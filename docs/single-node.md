@@ -11,7 +11,7 @@ hardware re-qualification before any support or performance claim.
 
 - A Linux host with an NVIDIA GPU, a compatible CUDA 13 toolkit/driver and enough
   GPU memory for the model. Follow the [build/runtime requirements](releases.md#packages);
-  install Rust, uv and the native build prerequisites listed there before building.
+  install Rust, uv 0.13.7 or newer, and the native build prerequisites listed there before building.
 - Python 3.11 with shared `libpython`, used for both engine environments below.
 - An immutable local dense model compatible with the [selected release](compatibility.md#official-engine-releases),
   such as the [Qwen3-8B recipe](models.md). These profiles remain **unqualified on OrbiTE**.
@@ -72,14 +72,14 @@ startup; it is not durable across Manager restarts. See [GPU storage](gds.md).
 ## vLLM
 
 **Prerequisites:** complete the common setup above; this recipe uses the pinned
-vLLM 0.31.0 V1 release with one attention group. Use a separate terminal for the
+vLLM 0.33.0 V1 release with one attention group. Use a separate terminal for the
 Manager and keep it running during engine restarts.
 
 ### Install and run vLLM
 
 ```bash
 uv venv .venv/vllm-release --python 3.11
-uv pip install --python .venv/vllm-release/bin/python 'vllm==0.31.0' --torch-backend=cu130
+uv pip install --python .venv/vllm-release/bin/python 'vllm==0.33.0' --torch-backend=cu130
 uv pip install --python .venv/vllm-release/bin/python "$ORBITKV_WHEEL"
 ```
 
@@ -132,7 +132,7 @@ before enabling other request modes, or add SSD with the Manager recipe above.
 ## SGLang
 
 **Prerequisites:** complete the common setup above and use Python 3.11+ for
-SGLang 0.5.22. Start with the dense DRAM/io_uring configuration in
+SGLang 0.5.23. Start with the dense DRAM/io_uring configuration in
 [compatibility](compatibility.md); the released external linker supports Full/SWA,
 and recurrent startup is rejected. Historical results do not qualify this recipe.
 
@@ -142,7 +142,7 @@ Use a separate environment, with no other engine occupying the GPU:
 
 ```bash
 uv venv .venv/sglang-release --python 3.11
-uv pip install --python .venv/sglang-release/bin/python 'sglang==0.5.22' --torch-backend=cu130
+uv pip install --python .venv/sglang-release/bin/python 'sglang==0.5.23' --torch-backend=cu130
 uv pip install --python .venv/sglang-release/bin/python "$ORBITKV_WHEEL"
 ```
 

@@ -367,11 +367,17 @@ jobs:
       matrix:
         include:
           - check-name: build Python 3.14 wheel (CUDA 13, OrbiTE TCP)
+            python: '3.14'
             features: ""
             artifact: orbitkv-wheel-ci
           - check-name: build Python 3.14 wheel (CUDA 13, OrbiTE RDMA)
+            python: '3.14'
             features: orbite-rdma
             artifact: orbitkv-wheel-ci-orbite-rdma
+          - check-name: build Python 3.12 wheel and engine API controls
+            python: '3.12'
+            features: ""
+            artifact: orbitkv-wheel-ci-engine-api
     needs: [cargo-check, version-consistency-check]
     if: needs.version-consistency-check.outputs.native == 'true'
     runs-on: ubuntu-24.04
@@ -381,10 +387,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Python 3.14
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          python-version: ${{ matrix.python }}
 
       - name: Free up disk space
         run: |
@@ -442,3 +448,19 @@ jobs:
           name: ${{ matrix.artifact }}
           path: target/wheels/*.whl
           retention-days: 1
+
+      - name: Check installed official engine APIs without a GPU
+        if: matrix.python == '3.12'
+        run: |
+          pip install uv==0.13.7
+          scripts/check-engine-apis.sh "$RUNNER_TEMP/engine-api" target/wheels/*.whl
+
+      - name: Upload engine API evidence
+        if: always() && matrix.python == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-api-controls
+          path: |
+            ${{ runner.temp }}/engine-api/*-freeze.txt
+            ${{ runner.temp }}/engine-api/*.xml
+          retention-days: 14

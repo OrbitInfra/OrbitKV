@@ -77,7 +77,7 @@ def test_three_component_recovery(channel_server, monkeypatch, temporal_state):
             params.sliding_window_size,
         )
     )
-    linker = OrbitKVLinker(None, params)
+    linker = OrbitKVLinker(None, params, forward_stream=None)
     tensors = [
         *cache.full_kv_pool.k_buffer,
         *cache.full_kv_pool.v_buffer,

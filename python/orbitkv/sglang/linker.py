@@ -62,13 +62,15 @@ class OrbitKVLinker(UnifiedCacheLinker):
 
     _QUERY_WAIT_SECONDS = 5.0
 
-    def __init__(self, server_args: Any, params: Any):
+    def __init__(self, server_args: Any, params: Any, *, forward_stream: torch.cuda.Stream | None):
+        self.forward_stream = forward_stream
         transfer_backend = resolve_transfer_backend()
         counter = params.token_to_kv_pool_allocator.get_kvcache().layer_transfer_counter
         if not isinstance(counter, _LayerDoneCounter):
             raise RuntimeError("OrbitKV layer events must be installed before graph capture")
         self.layer_done_counter = counter
         self.layout = counter.layout
+        self.pools = self.layout.pools
         self.page_size = self.layout.page_size
         from sglang.srt.runtime_context import get_lora
 
@@ -142,7 +144,9 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self._expired_queries: set[str] = set()
         self._queued_loads: dict[str, _Load] = {}
         self._load_queue: queue.Queue[tuple[int, list[_Load]] | None] = queue.Queue()
-        self._offload_queue: queue.Queue[tuple[object, torch.cuda.Event] | None] = queue.Queue()
+        self._offload_queue: queue.Queue[tuple[object, list[torch.cuda.Event]] | None] = (
+            queue.Queue()
+        )
         self._load_completions: dict[int, Future[bool]] = {}
         self._load_error: Exception | None = None
         self._completed_offloads: queue.Queue[bool] = queue.Queue()
@@ -514,7 +518,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 "OrbitKV restore failed; GPU pages remain held until transfer teardown"
             ) from self._load_error
 
-    def offload(self, transfers: list[PoolTransfer]) -> bool:
+    def offload(self, transfers: list[PoolTransfer], session_id: str | None = None) -> bool:
         if self._retained_offloads:
             raise RuntimeError(
                 "native Save completion unknown; new source pages cannot be admitted"
@@ -543,8 +547,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
             block_ids = pool.block_ids(transfer.device_indices, len(keys))
             hashes = self._hashes(keys)
             saves.extend((layer, block_ids, hashes) for layer in pool.layer_names)
-        ready = torch.cuda.Event()
-        ready.record()
+        # Session attribution is optional; cache identity remains the content namespace.
+        ready = self.record_offload_ready()
         try:
             prepare = self.client.prepare_save
             registration = self.registration
@@ -580,7 +584,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 completed = False
                 attempted = False
                 try:
-                    ready.synchronize()
+                    for event in ready:
+                        event.synchronize()
                     attempted = True
                     submit = self.client.submit_saves
                     handles = [handle]

@@ -35,8 +35,8 @@ Repository = "https://github.com/OrbitInfra/OrbitKV"
 Issues = "https://github.com/OrbitInfra/OrbitKV/issues"
 
 [project.optional-dependencies]
-vllm = ["vllm==0.31.0"]
-sglang = ["sglang==0.5.22; python_version >= '3.11'"]
+vllm = ["vllm==0.33.0; python_version >= '3.11' and python_version < '3.15' and sys_platform == 'linux'"]
+sglang = ["sglang==0.5.23; python_version >= '3.11' and python_version < '3.14' and sys_platform == 'linux'"]
 
 [tool.uv]
 conflicts = [[{ extra = "vllm" }, { extra = "sglang" }]]

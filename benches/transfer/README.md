@@ -28,7 +28,7 @@ work must not release backing memory.
 
 The actual-layout oracle and copy-observer contracts currently freeze SGLang
 0.5.21. Reproduce those measurements with their archived matching wheel and
-harness. A new 0.5.22 performance comparison must qualify its actual pool and
+harness. A new 0.5.23 performance comparison must qualify its actual pool and
 update the consumed contract; ordinary-cache upgrade checks do not do this.
 
 Profiler-off application measurements decide promotion. Isolated copy bandwidth,
