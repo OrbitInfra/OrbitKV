@@ -171,8 +171,8 @@ for registered layers. Validation precedes lease consumption. Even a layer with
 no bytes receives a fresh generation. Event publication and intermediate part
 ACKs never release source allocations or logical GPU pages.
 
-The selected vLLM profile uses V1 and one attention group; V2/recurrent serving
-is rejected. Attention callbacks consume layer dependencies, with supported
+vLLM admits V1 single-group or Full + SWA and an opt-in V2 single-Full profile;
+recurrent and V2 multi-group serving remain rejected. Attention callbacks consume layer dependencies, with supported
 full-graph paths using entry waits. SGLang installs external events before graph
 capture, admits load when the consuming forward supplies its stream and uses
 per-layer waits during replay. Split K/V copies follow consumer-layer order;

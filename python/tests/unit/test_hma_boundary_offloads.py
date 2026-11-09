@@ -264,10 +264,8 @@ def test_hma_requires_boundary_state_hand_off_api():
         scheduler.build_connector_meta(_scheduler_output({}, with_block_state=False))
 
 
-@pytest.mark.parametrize(
-    "use_v2,error", [(True, "one attention cache group"), (False, "one attention cache group")]
-)
-def test_hma_rejects_incompatible_vllm_before_opening_cache_connections(monkeypatch, use_v2, error):
+@pytest.mark.parametrize("use_v2", [True, False])
+def test_hma_rejects_incompatible_vllm_before_opening_cache_connections(monkeypatch, use_v2):
     from vllm.v1.kv_cache_interface import FullAttentionSpec, MambaSpec
 
     import orbitkv.vllm as vllm
@@ -295,7 +293,7 @@ def test_hma_rejects_incompatible_vllm_before_opening_cache_connections(monkeypa
         model_config=SimpleNamespace(hf_text_config=SimpleNamespace()),
     )
 
-    with pytest.raises(RuntimeError, match=error):
+    with pytest.raises(RuntimeError, match="recurrent/Mamba"):
         vllm.OrbitKVConnector(
             config,
             vllm.KVConnectorRole.SCHEDULER,

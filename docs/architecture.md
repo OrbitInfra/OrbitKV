@@ -105,7 +105,8 @@ future tokens. See [state identity](state-identity.md) and [hybrid recovery](hyb
 ### Framework adapters
 
 vLLM uses the official KV Connector scheduler/worker callbacks; its current
-cache configuration keeps V1 and one attention group by default. The narrow
+cache configuration keeps V1 by default, admitting single-group attention or
+Full + SWA. The narrow
 [V2 opt-in](adapters.md#released-v2-lifetime-contract) remains unqualified. SGLang uses the official
 UnifiedRadixCache external linker and remaining version-coupled safety hooks.
 Python retains engine allocation/events and Rust owns shared cache state/waits.

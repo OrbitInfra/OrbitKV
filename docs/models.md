@@ -45,11 +45,17 @@ not automatically interchangeable.
 
 Full, window and checkpoint recovery requirements are implemented in the shared
 state contract. Each adapter must supply all required groups and a legal boundary;
-a prefix hit count cannot replace missing state. vLLM rejects multiple groups and
-recurrent profiles. Its [V2 opt-in](adapters.md#released-v2-lifetime-contract) is
+a prefix hit count cannot replace missing state. vLLM V1 admits exact Full + SWA
+groups with equal block sizes, atomic recovery and pinned Save jobs. Recurrent,
+zeroing, unknown specs and MLA multi-group remain rejected. Its
+[V2 opt-in](adapters.md#released-v2-lifetime-contract) is
 limited to uniform Full attention, not hybrid recovery. OrbitKV's SGLang adapter accepts Full/SWA,
-not the Mamba components newly exposed by the released linker. Follow [recovery contracts](hybrid-recovery.md) and
-[M1](completion-plan.md#m1--engine-baseline) before broadening those guards.
+not the Mamba components newly exposed by the released linker. The next hardware input is an immutable Gemma 3 Full/SWA checkpoint, eager
+TP=1/PP=1, raw KV, without speculation. Record its exact revision; require both
+groups in engine logs, native-output parity, restart hits, per-group bytes and
+[HMA faults](fault-qualification.md#fullswa-gates). This gate is written only,
+unrun and unqualified. Follow [recovery contracts](hybrid-recovery.md) before
+broadening those guards.
 
 ## MLA and auxiliary state
 

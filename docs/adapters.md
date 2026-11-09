@@ -28,7 +28,7 @@ retains Python 3.10+. Use separate environments.
 | --- | --- |
 | vLLM `KVConnectorBase_V1` | Adds `supports_sleep_mode`, `unregister_kv_caches` and `restore_kv_caches`. OrbitKV returns false from the capability method: sleep remaps storage and current registrations cannot follow it safely. No sleep/remap support is claimed. |
 | vLLM loaded groups / hit attribution | Adds `get_loaded_kv_cache_group_ids` and `get_external_cache_hit_sources`. Inherit the one prefix-cacheable group's ID and `EXTERNAL_UNSPECIFIED`; do not guess a DRAM/disk/peer split from a mixed OrbitKV restore. |
-| vLLM completion / preemption | `KVConnectorTransferResults`, `handle_preemptions`, request completion, reset and `SupportsHMA` callbacks retain their signatures. V1 is unchanged; V2 is opt-in for uniform Full attention under the ordering below. Multi-group/recurrent remain rejected. MultiConnector forwards the new capabilities; best-effort cache and reliable native P/D remain separate. |
+| vLLM completion / preemption | `KVConnectorTransferResults`, `handle_preemptions`, request completion, reset and `SupportsHMA` callbacks retain their signatures. V1 is unchanged; V2 is opt-in for uniform Full attention under the ordering below. V1 Full + SWA uses the HMA contract below; recurrent and V2 multi-group remain rejected. MultiConnector forwards the new capabilities; best-effort cache and reliable native P/D remain separate. |
 | vLLM private dependencies | `resolve_kv_cache_block_sizes(config, vllm_config)` stays at `v1.core.kv_cache_utils`; it now rejects a mismatched single-group `prefix_match_unit`. Consume that rejection. `bind_kv_cache_manager` still forwards to `bind_gpu_block_pool`; pool pinning, block hashes, `extract_layer_index`, layout specs and metric construction remain consumed unchanged. |
 | SGLang `UnifiedCacheLinker.offload` | Adds optional `session_id`; accept it without using session attribution as cache identity. Native wrapper supplies it. |
 | SGLang producer readiness | Consume released `record_offload_ready()`, passing the worker's `forward_stream`. Hold and wait both index/current-stream and forward-stream events before submitting a prepared Save. Unknown completion still retains the tree lock and registration. |
@@ -170,7 +170,8 @@ branches, P/D prerequisite patches and support matrices are not inherited claims
 registers tensors and consumes Restore/Save completion. Layout and metadata
 modules describe groups/intents, not another scheduler.
 
-The ordinary profile keeps **`VLLM_USE_V2_MODEL_RUNNER=0` and one attention group**.
+The ordinary profile keeps **`VLLM_USE_V2_MODEL_RUNNER=0`**. Single-group
+attention is unchanged; V1 Full + SWA follows the [HMA contract](#released-hma-contract).
 The V2 gate explicitly sets `VLLM_USE_V2_MODEL_RUNNER=1` and
 `kv_connector_extra_config: {"orbitkv.v2": true}`. It admits only one uniform
 `FullAttentionSpec`, without zeroing, speculative decoding or native query-control
@@ -232,6 +233,63 @@ its output-copy event is not an OrbitKV drain receipt.
 November 9, 2026). No allocator generation is invented here. Forced reuse after
 uncertain transfer, permanent worker/device loss, multi-group, Graph and P/D
 qualification remain separate. See the [V2 fault gates](fault-qualification.md#v2-opt-in-gates).
+
+### Released HMA contract
+
+Audit at vLLM **0.33.0 / `4ba787ec`**, November 9, 2026. Admit **V1 Full + SWA**
+only: exact Full/SlidingWindow specs, equal logical block sizes, no speculation,
+zeroing or host-resident groups, and `kv_both`/`kv_consumer`. Unknown subclasses,
+MLA multi-group, recurrent state and V2 multi-group fail before connecting.
+PP is also rejected for this profile: [the scheduler copies one worker's group
+names](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/kv_cache_utils.py#L1096-L1117),
+while [PP projects layer membership per worker](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/kv_cache_planning.py#L1413-L1455).
+A common resolved-group identity across those projections is not established.
+
+| Boundary | Released contract and OrbitKV consumption |
+| --- | --- |
+| Hit selection | [`get_num_new_matched_tokens`, lines 516–548](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/distributed/kv_transfer/kv_connector/v1/base.py#L516-L548) returns **one** prefix count, not one per group. The [scheduler, lines 1129–1187](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/sched/scheduler.py#L1129-L1187) waits on `None`, otherwise allocates for the scalar hit. OrbitKV reports it only after every required group is leased at the same boundary; a missing group makes the entire external lookup miss. |
+| Allocated destinations | [`update_state_after_alloc`, lines 569–592](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/distributed/kv_transfer/kv_connector/v1/base.py#L569-L592) receives [`KVCacheBlocks.blocks[group][block]`, lines 35–107](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/kv_cache_manager.py#L35-L107). The scheduler [passes all groups](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/sched/scheduler.py#L1482-L1485). OrbitKV rejects an allocation that changes its selected recovery boundary. |
+| Step metadata | [`NewRequestData`, lines 40–48](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/sched/output.py#L40-L48) and [`CachedRequestData`, lines 137–152](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/sched/output.py#L137-L152) carry ordered per-group IDs. `build_connector_meta` translates these to OrbitKV load/save vectors; [scheduler-local block state](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/sched/output.py#L214-L228) is cleared before worker dispatch. Worker hooks consume connector-owned metadata and registered layer tensors, not separate per-group hit counts. |
+| Worker ordering | V1 calls [`handle_preemptions` before state updates](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/worker/gpu_model_runner.py#L3934-L3945), then [bind/load → forward → wait_save → transfer results and worker metadata](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/worker/kv_connector_model_runner_mixin.py#L67-L107). [Layer hooks](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/model_executor/layers/attention/kv_transfer_utils.py#L37-L57) wait before attention and call Save afterward on the forward stream. OrbitKV submits one Restore over all group leases and waits for its physical receipt before returning the step; Save remains asynchronous. |
+| Finish and Save ownership | [`SupportsHMA.request_finished_all_groups`, lines 101–128](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/distributed/kv_transfer/kv_connector/v1/base.py#L101-L128) receives all current tables and may delay request free. Window retirement can happen earlier, so OrbitKV uses the explicitly permitted [pool refcount binding, lines 490–503](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/distributed/kv_transfer/kv_connector/v1/base.py#L490-L503). Every multi-group Save job pins its source blocks until all workers report drain through `OrbitKVWorkerMetadata`, independently of request finish. |
+
+Full attention needs every page of the restored prefix. A window needs every
+page intersecting its **W−1 past tokens at that same boundary**; vLLM includes the
+next query token in W ([window manager, lines 1148–1182](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/single_type_kv_cache_manager.py#L1148-L1182)).
+The shared Rust recovery contract intersects these requirements before publishing
+a hit. The scheduler's loaded-group default includes its prefix-cacheable groups
+([base, lines 505–513](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/distributed/kv_transfer/kv_connector/v1/base.py#L505-L513));
+OrbitKV does not use it to advertise partial-group success.
+
+Window retirement [nulls table entries and drops their allocator refs](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/single_type_kv_cache_manager.py#L655-L720).
+The [pool returns only zero-ref blocks to its free queue](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/block_pool.py#L792-L847),
+so a Save pin prevents reassignment. During Load, both [allocation](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/kv_cache_manager.py#L555-L569)
+and [finish](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/sched/scheduler.py#L3367-L3375)
+retire windows using processed tokens, subtracting in-flight tokens. The
+consumer's deferred-free fence retains the remaining destinations on abort;
+[scheduling refuses to preempt an in-flight victim](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/sched/scheduler.py#L924-L942).
+Timeout is not a step or all-worker drain receipt.
+
+**Mamba stays rejected.** The release does expose exact checkpoint offers:
+[`MambaSpec`, lines 1094–1186](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/kv_cache_interface.py#L1094-L1186)
+defines position-indexed state/scratch blocks and legal boundaries;
+[`take_boundary_state_offloads`](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/kv_cache_manager.py#L880-L900)
+offers `(group, block, boundary)` states. Recovery needs the state **exactly at t**,
+not an earlier prefix. But [Mamba requires zeroing](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/kv_cache_interface.py#L1651-L1660),
+V1 [zeros/CoW-copies in state updates](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/worker/gpu_model_runner.py#L1203-L1212)
+and [preprocesses Mamba state before connector load](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/worker/gpu_model_runner.py#L4049-L4068).
+Its [old state copies retire separately](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/core/single_type_kv_cache_manager.py#L1610-L1657).
+OrbitKV has not proven a handoff that supplies the exact loaded state before
+those copies or retains every such owner. Generic checkpoint fixtures do not
+admit recurrent serving; no private hook is added to bridge this gap.
+
+Resolved group order, layer membership and all spec fields now enter multi-group
+namespace identity. Single-group identities are unchanged. Installed-CPU
+[controls](../python/tests/integration/test_vllm_hma_contract.py) cover atomic
+miss/hit, boundary mismatch, identity, named rejections and allocator retirement.
+They control CUDA events/Manager replies, not physical DMA. [GPU gates](fault-qualification.md#fullswa-gates)
+remain unrun and unqualified. #62810 remains open on November 9, 2026; references
+and barriers are not allocator-generation proof.
 
 ## SGLang linker and current internal dependencies
 

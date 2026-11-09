@@ -18,7 +18,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def allocation():
+def allocation(request):
     import torch
     from vllm import SamplingParams
     from vllm.v1.core.encoder_cache_manager import EncoderCacheManager
@@ -30,6 +30,7 @@ def allocation():
         FullAttentionSpec,
         KVCacheConfig,
         KVCacheGroupSpec,
+        SlidingWindowSpec,
     )
     from vllm.v1.request import Request, RequestStatus
 
@@ -38,13 +39,29 @@ def allocation():
     from orbitkv.vllm.scheduler import SchedulerAdapter
 
     register_all_kvcache_specs(SimpleNamespace())
+    profile = getattr(request, "param", {})
+    tokens = profile.get("tokens", 16)
     spec = FullAttentionSpec(block_size=16, num_kv_heads=2, head_size=64, dtype=torch.float16)
-    cache = KVCacheConfig(2, [], [KVCacheGroupSpec(["layer"], spec)])
-    manager = KVCacheManager(cache, 64, 16, 16, enable_caching=False)
-    request = Request("request", [1] * 16, SamplingParams(max_tokens=32), None)
+    groups = [KVCacheGroupSpec(["layer"], spec)]
+    if "window" in profile:
+        groups.append(
+            KVCacheGroupSpec(
+                ["window"],
+                SlidingWindowSpec(
+                    block_size=16,
+                    num_kv_heads=2,
+                    head_size=64,
+                    dtype=torch.float16,
+                    sliding_window=profile["window"],
+                ),
+            )
+        )
+    cache = KVCacheConfig(profile.get("blocks", 2), [], groups)
+    manager = KVCacheManager(cache, max(64, tokens * 2), 16, 16, enable_caching=False)
+    request = Request("request", [1] * tokens, SamplingParams(max_tokens=32), None)
     request.status = RequestStatus.RUNNING
-    assert manager.allocate_slots(request, 16) is not None
-    request.num_computed_tokens = 16
+    assert manager.allocate_slots(request, tokens) is not None
+    request.num_computed_tokens = tokens
     block = manager.get_blocks(request.request_id).blocks[0][0]
 
     # No constructor replacement in vLLM: allocate the actual scheduler object
@@ -71,10 +88,13 @@ def allocation():
     scheduler.log_stats = False
     scheduler.vllm_config = SimpleNamespace(kv_transfer_config=None)
 
-    adapter = SchedulerAdapter(ConnectorContext("v2", "test", 16, 1, 1, 0, 0, MagicMock()))
+    adapter = SchedulerAdapter(
+        ConnectorContext("v2", "test", 16, 1, 1, 0, 0, MagicMock()), kv_cache_config=cache
+    )
     scheduler.connector = OrbitKVConnector.__new__(OrbitKVConnector)
     scheduler.connector._scheduler = adapter
     scheduler.connector._worker = None
+    scheduler.connector.bind_kv_cache_manager(manager)
     yield SimpleNamespace(
         scheduler=scheduler,
         adapter=adapter,

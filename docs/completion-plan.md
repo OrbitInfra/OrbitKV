@@ -5,7 +5,7 @@ into both upstream mainlines.** OrbiTE is the only byte mover. Engines own
 scheduling, HBM and native P/D; OrbitKV owns cache identity, storage, discovery,
 grants and resource lifetime. This is the only execution queue.
 
-The current delivery is **the Python distribution rename to `orbitkv` and README slimming**, before M1 PR 4.
+The current delivery is **M1 PR 4: vLLM V1 Full + sliding-window cache groups**.
 Each coherent PR stops for review before dependent work starts. Research designs
 and simulator campaigns are removed from the maintained tree; Git history retains
 them and external artifacts are untouched. DeepInfer/OrbitInfer and an OrbiTE
@@ -67,7 +67,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 
 | Capability | OrbitKV status and evidence | Precedent |
 | --- | --- | --- |
-| Latest vLLM, V2 runner, HMA multi-group/hybrid | **Partial:** 0.33.0 V1 with one group; V2 is opt-in for uniform Full attention and unqualified. Recurrent/multi-group remain rejected. `SupportsHMA` inheritance is not serving support. [Adapter contract](adapters.md#vllm-callbacks-and-current-internal-dependencies). | L/F/M thin entries; released V lifecycle |
+| Latest vLLM, V2 runner, HMA multi-group/hybrid | **Partial:** 0.33.0 V1 single-group and Full + SWA; V2 opt-in remains one uniform Full group. Atomic recovery, Save pins and identity have CPU controls; GPU profiles are unqualified. Recurrent, zeroing and V2 multi-group reject. [Released HMA contract](adapters.md#released-hma-contract). | L/F/M thin entries; released V lifecycle |
 | Latest SGLang | **Partial:** 0.5.23 Full/SWA linker; pre-capture and pending-admission hooks remain private. [Contract](adapters.md#sglang-linker-and-current-internal-dependencies). | Released linker and HiCache integrations above |
 | Async load | **Have:** pending queries, bounded admission and completion-owned destinations; installed faults remain unqualified. [Lifecycle](vllm-request-state-machine.md). | L/F/V asynchronous offload |
 | Layerwise load/save | **Partial:** eligible raw Restore has layer readiness; other routes may wait for whole completion. vLLM saves at step end; `save_kv_layer` does not submit. [Restore](engine-local-restore.md#layer-readiness-and-framework-consumption), [connector](https://github.com/OrbitInfra/OrbitKV/blob/main/python/orbitkv/vllm/connector.py). | L layerwise transfer, V layer hooks |
@@ -127,8 +127,11 @@ Reviewed in order, one PR at a time:
    allocator/completion controls. The early zeroing/CoW and speculative-finalize
    paths remain excluded. GPU byte/model/fault gates are written, unrun and
    unqualified; physical page generations remain an upstream gap.
-4. **HMA multi-group/hybrid:** complete groups and atomic recovery through the
-   official interface, with model/layout-specific rejection controls.
+4. **HMA multi-group/hybrid (implemented, awaiting review):** V1 Full + SWA,
+   one atomic recovery boundary, resolved-group identity and pinned Save jobs.
+   [Released contract](adapters.md#released-hma-contract) and installed-CPU
+   allocator controls cover window retirement, abort and preemption. Recurrent,
+   zeroing and V2 multi-group profiles remain rejected; GPU gates are unrun.
 5. **SGLang 0.5.23 components:** integrate additional released components only
    with complete recovery and lifecycle controls; retain required private hooks.
 
@@ -155,6 +158,7 @@ commands and the distinction between fixture bytes and serving are in
 | Gate | Scope / acceptance |
 | --- | --- |
 | V1 single-group and SGLang Full/SWA recovery | Installed model outputs, restart hits, actual restored bytes and untouched destinations; DRAM and io_uring separately. |
+| V1 Full + SWA | [Exact commands](fault-qualification.md#fullswa-gates): immutable Gemma 3 Full/SWA model outputs and restart hits, per-group fixture bytes, window retirement during Save and abort/preemption during Load. All unrun; recurrent hybrids remain rejected. |
 | V2 opt-in, uniform Full attention | [Exact commands](fault-qualification.md#v2-opt-in-gates): model outputs/restart restore metrics plus native fixture bytes for save preemption, abort during load, finish before save drain and reallocation. The fixture invokes released scheduler/dispatcher classes; it does not substitute for an end-to-end model fault run or allocator-generation proof. |
 | Abort, timeout, cancellation, partial load/save | Native fault barriers plus released adapter controls; no early source/destination/registration/grant release. A normal model-output run alone cannot close these cases. |
 | Engine-worker / Manager restart | Live-Manager engine restart restores bytes; Manager restart starts cold until M2, rejects old handles/leases and never reports stale state as a hit. |

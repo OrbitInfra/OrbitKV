@@ -1,8 +1,9 @@
 # Compiled hybrid recovery
 
-The ordinary vLLM 0.33.0 profile uses V1 with one attention cache group
-(`VLLM_USE_V2_MODEL_RUNNER=0`); the [unqualified V2 opt-in](adapters.md#released-v2-lifetime-contract)
-admits uniform Full attention only. Multi-group/recurrent serving is rejected.
+vLLM 0.33.0 V1 (`VLLM_USE_V2_MODEL_RUNNER=0`) admits single-group attention
+and Full + SWA groups. The [unqualified V2 opt-in](adapters.md#released-v2-lifetime-contract)
+admits one uniform Full-attention group only. Recurrent, zeroing and V2
+multi-group serving remain rejected.
 OrbitKV on SGLang 0.5.23 supports Full and SWA components;
 OrbitKV rejects recurrent/SSM startup. Full MHA/MLA and Full + SWA are implemented
 SGLang layouts, with model qualification recorded separately in
@@ -108,16 +109,18 @@ slots. Unknown submission, timeout or lost completion raises while ownership
 remains held; a logical failure is not a physical completion receipt.
 
 SGLang owns HBM allocation and eviction. Its released external-linker wrapper
-supports Full and SWA, not Mamba. OrbitKV rejects recurrent/SSM model startup;
+exposes Full, SWA and Mamba; OrbitKV consumes Full/SWA only. OrbitKV rejects recurrent/SSM model startup;
 the old custom recurrent component is removed. Generic state-layout byte tests
 do not establish a model lifecycle or authorize that profile. Full hybrid
 recovery needs a released complete-state contract plus model and fault gates.
 
 ## vLLM hybrid handoff
 
-This describes the shared group-layout implementation. The current public vLLM
-profile rejects multi-group/recurrent startup; these mechanics do not qualify
-that deployment.
+V1 admits exact `FullAttentionSpec` + `SlidingWindowSpec` groups with equal
+logical block sizes and a consumer role. Unknown specs, MLA multi-group, recurrent
+state, zeroing, host-resident groups, PP, speculation and V2 multi-group reject at
+startup. The [released audit](adapters.md#released-hma-contract) explains why.
+CPU controls pass; installed model/byte/fault gates remain unrun and unqualified.
 
 `CacheGroupLayout` maps vLLM's full-attention groups to storage group zero.
 Each sliding-window or aligned Mamba group gets an independent storage key and
@@ -138,7 +141,7 @@ shutdown and session teardown retire interests; submitted I/O retains its
 buffers until completion. The operation and lease lifecycle is shared with
 dense queries, including byte-budget admission.
 
-Allocation must preserve the selected checkpoint exactly. Lease positions stay
+Allocation must preserve the selected recovery boundary exactly. Lease positions stay
 relative to the original queried tail so the worker can map a one-page
 checkpoint to the right GPU slot. Required attention pages and conv/temporal
 state move into one restore operation, owned through GPU completion. There are
@@ -150,7 +153,11 @@ hybrid P/D partial tails and cross-engine byte reuse remain unsupported.
 The worker maps window leases by their query-relative page positions, preserving
 null destinations outside the required window. Window pages can retire while
 their request is still executing. Their save jobs pin GPU blocks independently
-of request lifetime and release them only after every worker reports completion.
+of request lifetime and release them only after every worker reports physical
+completion. The pool size bounds outstanding jobs; exhaustion rejects admission
+without releasing existing pins. Resolved group order, layer membership and every
+spec field (including window and block size) participate in the namespace.
+Single-group identity is unchanged.
 
 ## Scope
 

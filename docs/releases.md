@@ -65,6 +65,13 @@ qualification is pending. This adds an explicit opt-in, with no compatibility
 alias or production API break. Before 0.1.0, breaking API changes are allowed;
 record each break here instead of retaining compatibility shims.
 
+V1 Full + SWA now admits multiple cache groups under the
+[released HMA contract](adapters.md#released-hma-contract). Multi-group namespace
+identity now includes resolved group order, layer membership and every spec field;
+entries created by earlier internal hybrid experiments cannot match. There is no
+alias or migration shim. Single-group identities and the V2 opt-in are unchanged;
+installed Full/SWA model and fault gates remain unqualified.
+
 From the repository root, select a Python interpreter with shared `libpython`
 (required by the embedded Manager) and use a CUDA 13 toolkit:
 

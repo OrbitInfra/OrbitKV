@@ -807,6 +807,8 @@ class SchedulerAdapter:
         pool = self._gpu_block_pool
         if pool is None:
             raise RuntimeError("GPU block pool must be bound before a hybrid save")
+        if len(self._pinned_boundary_jobs) >= len(pool.blocks) - 1:
+            raise RuntimeError("hybrid Save jobs exhausted the GPU block budget")
         pinned = list(
             dict.fromkeys(
                 block_id for group in intent.block_ids_by_group for block_id in group if block_id
