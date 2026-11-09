@@ -36,7 +36,7 @@ working sets; see [performance](performance.md).
   retaining grants and physical-drain ownership.
 - **Explicit state contracts.** Model/computation/layout identity and declared
   recovery requirements prevent treating incompatible or incomplete state as a
-  cache hit. General semantic retention/planning remains future work.
+  cache hit. Unknown layouts remain rejected.
 
 These are architectural properties, not a claim of universal superiority over
 another cache. Physical fault termination and eventual reclamation remain open
@@ -60,7 +60,7 @@ P/D cancellation/peer-loss/page-reuse composition remains unqualified.
 Storage codecs, retention/cost policies, explicit CUDA kernels, native cuFile/GDS
 and broader Graph/rank/container profiles have separate support limits. See
 [storage formats](storage-formats.md), [cache policies](cache-policies.md),
-[kernel copies](kernel-optimization.md) and [GDS](gds.md).
+[kernel copies](transport.md#local-gpudram-copies) and [GDS](gds.md).
 Native GDS is implemented but unqualified. Object-store backends, CacheBlend-style
 non-prefix reuse and automatic cross-engine byte interoperability are not current
 OrbitKV support claims.

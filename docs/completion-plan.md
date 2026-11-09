@@ -1,417 +1,203 @@
 # OrbitKV completion plan
 
-**Current focus: the [design-v2 simulator](../benches/storage/state_cache/README.md), awaiting review.**
-OrbiTE beta.1 source adaptation is merged in
-[PR #330](https://github.com/OrbitInfra/OrbitKV/pull/330), `d54da80e`;
-internal Rust crates are unpublishable following
-[PR #331](https://github.com/OrbitInfra/OrbitKV/pull/331), `87991239`.
-The 2026-11-08 maintainer direction is a state compiler, versioned agent state
-trees and attention-guided paging. The design was reviewed in
-[PR #332](https://github.com/OrbitInfra/OrbitKV/pull/332), `93d67424`.
-The bounded Python simulator exercises synthetic traces and ownership controls;
-P3's cross-layer pipeline and prediction of newly selected pages remain untested.
-Production policy and hardware experiments have not started. See the simulator's
-[interpretation](../benches/storage/state_cache/README.md#interpretation-of-the-submitted-runs)
-for the modeled scope of the P2 and P3 findings.
+**Goal: a standard, complete distributed KV cache for vLLM and SGLang, accepted
+into both upstream mainlines.** OrbiTE is the only byte mover. Engines own
+scheduling, HBM and native P/D; OrbitKV owns cache identity, storage, discovery,
+grants and resource lifetime. This is the only execution queue.
 
-**Presentation decision, 2026-11-07:** use [LMCache](https://github.com/LMCache/LMCache)
-and [its docs](https://docs.lmcache.ai/) as content/navigation references, and
-[kern](https://kern-baa.pages.dev/) ([website source](https://github.com/pegainfer-project/kern/tree/master/website))
-as a layout-pattern reference. Keep OrbitKV's palette, banner and identity;
-copy no text, images, logos or code, and imply no affiliation.
+The current delivery is documentation and scope cleanup. Next comes the README
+and docs-site alignment with [LMCache's structure](https://docs.lmcache.ai/),
+then M1. Each coherent PR stops for review before dependent work starts.
+Research designs, simulator campaigns and their roadmap are removed from the
+maintained tree; Git history retains them. External artifacts are untouched.
+DeepInfer/OrbitInfer and an OrbiTE NIXL plugin are outside this plan.
 
-**Maintainer decision, 2026-11-07:** OrbiTE is the sole transfer engine before
-hardware re-qualification. The TENT implementation and engine-family/default
-comparison gate are removed. Historical acceptances retain their original
-backends, revisions and limits. No current OrbiTE GPU, RDMA, GDS or installed
-profile inherits them; CPU/TCP, io_uring and CUDA-shim checks remain CI evidence.
+Current pins remain **vLLM 0.31.0 / SGLang 0.5.22**. M1 targets **vLLM 0.33.x /
+SGLang 0.5.23**. The release check found [v0.33.0rc3](https://github.com/vllm-project/vllm/releases/tag/v0.33.0rc3)
+dated November 2, 2026, and [SGLang v0.5.23](https://github.com/sgl-project/sglang/releases/tag/v0.5.23).
+Freeze exact official tags when M1 begins; a release candidate is not a
+stable-release qualification. No dependency changes are part of this plan PR.
 
-Ship a reliable external cache for official vLLM and SGLang, then demonstrate
-its effect on real inference. Engines own scheduling/HBM; Rust owns cache
-resources; OrbiTE moves bytes. Live P/D retains its engine-native transport.
+## Upstream path
 
-This is the only execution queue and status record. [Compatibility](compatibility.md)
-describes current boundaries, [models](models.md) gives recipes, and
-[performance](performance.md) links reviewed measurements. Architecture guides
-specify contracts rather than independent completion claims.
+Follow the existing thin, in-tree integrations that import an external package:
 
-## Delivery status and dependencies
+- **vLLM:** the [V1 connector directory](https://github.com/vllm-project/vllm/tree/main/vllm/distributed/kv_transfer/kv_connector/v1)
+  includes FlexKV, LMCache/LMCache MP, Mooncake, HF3FS and UMBP.
+  [FlexKV's entry](https://github.com/vllm-project/vllm/blob/main/vllm/distributed/kv_transfer/kv_connector/v1/flexkv_connector.py)
+  delegates to its installed package. Propose the same small entry for OrbitKV,
+  with upstream tests and documentation. The directory name `v1` does not
+  establish V2 model-runner compatibility: consume the released
+  [connector lifecycle and HMA contracts](https://github.com/vllm-project/vllm/blob/v0.33.0rc3/vllm/distributed/kv_transfer/kv_connector/v1/base.py)
+  and prove each runner/group combination.
+- **SGLang:** the [storage integrations](https://github.com/sgl-project/sglang/tree/v0.5.23/python/sglang/srt/mem_cache/storage)
+  include FlexKV, LMCache, Mooncake Store, HF3FS and NIXL, but not every integration
+  there implements the same interface. [HiCacheStorage](https://github.com/sgl-project/sglang/blob/v0.5.23/python/sglang/srt/mem_cache/hicache_storage.py)
+  serves HiCache's host pools. OrbitKV should use the released
+  **[UnifiedCacheLinker](https://github.com/sgl-project/sglang/blob/v0.5.23/python/sglang/srt/mem_cache/unified_cache/unified_cache_linker.py)**:
+  it connects device pools directly to an external cache, matching our existing
+  linker and independent DRAM/SSD ownership. This avoids another mandatory host
+  tier and keeps OrbitKV movement in OrbiTE. Follow the lazy imports and
+  direct-linker registrations in [the factory](https://github.com/sgl-project/sglang/blob/v0.5.23/python/sglang/srt/mem_cache/unified_cache/linker_factory.py),
+  including MooncakeDirectLinker and UMBPDirectLinker. Version 0.5.23 declares
+  Full/SWA/Mamba components; that is an upgrade opportunity, not proof of
+  OrbitKV recurrent recovery or fault safety.
 
-| Stage | Delivered | Remaining |
+Keep shared state machines in Rust and Python limited to engine callbacks,
+layouts and GPU handoff. Replace private hooks only when a released replacement
+is consumed. Recheck missing contracts during M1, including allocator generations
+([vLLM #62810](https://github.com/vllm-project/vllm/issues/62810),
+[SGLang #45493](https://github.com/sgl-project/sglang/issues/45493)). Do not solve an
+upstream gap with a private runner or parallel cache tree. Submission, merge,
+release and local consumption are separate states; acceptance into both mainlines
+is the final integration goal.
+
+## Standard and complete checklist
+
+**Have** means implemented within the stated scope, not hardware-qualified.
+**Partial** means a working subset with a missing contract or gate.
+**Missing** means the required product behavior is absent. Comparator references
+are precedents, not claims that every product supports every feature or that
+its semantics and performance transfer to OrbitKV.
+
+References: **L** = [LMCache storage and operations][L], [legacy layerwise transfer][LL]
+and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed reuse][FD];
+**V** = [vLLM native offload][V]; **M** = [Mooncake Store replicas/leases/eviction][M].
+
+### Engine integration and models
+
+| Capability | OrbitKV status and evidence | Precedent |
 | --- | --- | --- |
-| S0/S1 | Repository organization and ownership baseline accepted | Preserve established owners and historical evidence |
-| S2 | Accepted engineering scope: inventory-fed indexes, scoped discovery, four-owner baseline and three-host etcd process-only controls | Isolation FAIL; sixteen owners UNQUALIFIED; cross-host cache HA and independent failure domains unqualified |
-| S3 | Explicit registration, native Save ownership and bounded normal-path controls, including vLLM 0.31.0 and SGLang 0.5.22 prepared-adapter pairs | Current-release adapter faults, page generations, physical termination and eventual fault reclamation |
-| S4 | KDA copy work, SSD batching, bounded kernel improvement and RDMA paths | Inference contention, repeatable complete serving benefit and safe promotion |
-| S5 | Official dense cache/restart, scoped Graph/shared-Manager/two-host profiles; custom P/D removed | Public lifecycle, complete hybrid recovery, native P/D faults and broader topology |
-| S6 | Cost observations and guarded limited route choices | One consumed route/admission planner |
-| S7 | Declared recovery requirements validated | Semantic retention and checkpoint compiler |
-| S8 | Documentation, wheel builds and release workflow | Final images, installed-artifact qualification and publication |
+| Latest vLLM, V2 runner, HMA multi-group/hybrid | **Partial:** 0.31.0 V1, one attention group; V2/recurrent/multi-group rejected. `SupportsHMA` inheritance is not serving support. [Adapter contract](adapters.md#vllm-callbacks-and-current-internal-dependencies). | L/F/M thin entries; released V lifecycle |
+| Latest SGLang | **Partial:** 0.5.22 Full/SWA linker; pre-capture and pending-admission hooks remain private. [Contract](adapters.md#sglang-linker-and-current-internal-dependencies). | Released linker and HiCache integrations above |
+| Async load | **Have:** pending queries, bounded admission and completion-owned destinations; installed faults remain unqualified. [Lifecycle](vllm-request-state-machine.md). | L/F/V asynchronous offload |
+| Layerwise load/save | **Partial:** eligible raw Restore has layer readiness; other routes may wait for whole completion. vLLM saves at step end; `save_kv_layer` does not submit. [Restore](engine-local-restore.md#layer-readiness-and-framework-consumption), [connector](../python/orbitkv/vllm/connector.py). | L layerwise transfer, V layer hooks |
+| Official P/D composition | **Partial:** NIXL/MultiConnector and SGLang native paths are candidates; full faults unqualified. [P/D](pd.md). | V MultiConnector, L/F native integration |
+| Dense and hybrid models | **Partial:** dense layouts and declared Prefix/Window/Checkpoint validation exist; complete SWA/MLA/recurrent recovery is not qualified. Unsupported layouts are rejected. [Models](models.md), [recovery](hybrid-recovery.md). | V hybrid offload, L recipes, SGLang components |
+| MLA TP deduplication | **Missing:** ordinary TP sharding is not replica deduplication. [TP boundary](adapters.md#tp-shards-and-host-boundary). | SGLang `HiCacheStorageConfig.is_storage_writer` selects MLA writers |
 
-S3/S4/S5/S6/S8 remain **Partial**; S7 is **Open**. S2 is complete only for its
-accepted engineering scope. Existing failed qualifications keep their verdicts.
-Missing hardware is unqualified, never passed.
+### Storage tiers
 
-## Current delivery sequence
-
-The first release profile is dense TP=1/PP=1 on vLLM 0.31.0 and SGLang 0.5.22,
-with DRAM, io_uring SSD and the already accepted scoped peer profiles, all
-re-qualified on the current path before publication.
-
-1. **Design reviewed:** [design v2](design-v2.md), including pinned config schemas,
-   upstream contracts, lifetime invariants and falsifiable experiment gates.
-2. **Current review:** the [bounded trace-driven simulator](../benches/storage/state_cache/README.md).
-   Synthetic inputs, capped ownership/queues, matched controls and ablations only;
-   simulation results are not hardware evidence or production policy.
-3. **Reliable consumed path:** finish required ownership contracts and qualify
-   bytes, cold/partial/full hits, cancellation, bounds and normal shutdown.
-   Retaining unknown work is not eventual fault reclamation.
-4. **Measured serving benefit:** compare native caching, OrbitKV and applicable
-   LMCache/HiCache profiles with equal inputs/budgets and regression controls.
-5. **Installed release:** follow S8's artifact and publication gates. Additional
-   hybrid, P/D-fault and rank profiles need their own scope and evidence.
-
-Independent healthy-path performance/package work may proceed while a distinct
-upstream or physical-fault contract is blocked; it cannot waive that contract.
-
-## S2 — Metadata reliability and measured capacity
-
-Etcd stores protocol identity, persistent node epochs and leased membership.
-Owner inventory streams maintain covered local indexes. Ordinary lookups do not
-perform per-key etcd calls or directory RPCs. Keep incarnation fencing, atomic
-snapshot installation, contiguous deltas, bounded queues and explicit coverage.
-See [distributed cache](distributed-cache.md) and [P2P deployment](p2p.md).
-
-- [x] S2.1–S2.9: metadata faults, capacity, coalescing, owner streams and scoped
-  discovery independently accepted in their recorded profiles.
-- [x] S2.10: same-host DRAM/io_uring correctness and sustained collection accepted.
-- [x] Three-host etcd process-only normal-SIGTERM cohort accepted.
-- [ ] DRAM/SSD foreground isolation: existing qualification is **FAIL**.
-- [ ] Sixteen-owner support: ordinary visibility passes; overall **UNQUALIFIED**.
-  Support remains four owners.
-- [ ] Cross-host cache HA and independent physical etcd failure domains.
-
-The frozen five-percent isolation and fifty-millisecond visibility requirements
-remain unchanged. A process fault is not an independent host/power/network fault.
-Historical S2-only campaign programs are retired from the maintained tree;
-their [source and contracts](https://github.com/OrbitInfra/OrbitKV/tree/dc52461078bb22910ba6c783ecf0d9213599b10b/benches/cluster)
-remain available for reproduction. Existing integration tests and the reusable
-metadata benchmark continue to exercise the current implementation.
-
-## S3 — Transfer lifetime and generation-safe ownership
-
-**Partial.** Native client, registration, query/source leases and workers own
-lifetime. Extend those owners rather than add a Python coordinator. Current
-contracts are in [transport](transport.md), [engine-local Restore](engine-local-restore.md)
-and [adapters](adapters.md).
-
-| Accepted delivery | Retained result |
-| --- | --- |
-| Transfer boundary / dependency, #309–#312 | Typed failures, bounded budgets, registrations and file-segment ownership; later superseded by the concrete OrbiTE owner |
-| Peer GPU Restore, `eb9e9785` (#313) | Persistent tensor/codec registrations and one batch per bounded source plan; DRAM fills retain host destinations |
-| Native SSD removal, `78e31f8a` (#315) | Engine file I/O; no native OrbitKV io_uring/cuFile fallback |
-| Padded file vectors, `25ebc535` (#316), `c1cce1bb` (#319) | Layout ranges/padding reach engines; GPU slots and TENT scratch adapter deleted |
-| Local copies, `73570259` (#317) | OrbiTE stream-local engine, bounded windows/slots and completions retained through drain |
-| Intent/deadlines, `67d9ac4b` (#321) | Foreground/high Restore, background/low preparation, checkpoint/low write-back; Unspec by default |
-| Peer retirement, `a683f991` (#322) | Membership fence before requester-specific close; wait-only retries and identity capacity returned only after drain |
-| cfg confinement, `70ebeb48` (#323) | Shared logic compiles without backends; typed Unavailable, no native startup and strict Clippy |
-| Unsafe hygiene, `7f68a1a6` (#324) | Invariant notes/lint, redundant unsafe impl removal, owner-before-failure and unregister-before-unmap |
-| Panic removal, `c7fd6144` (#325) | Source lints, three justified expectations, typed boundaries and unloading exception to Drop-time abort |
-| OrbiTE only, `1f30895a` (#326) | Pin `1312e9b1`, auto/tcp/rdma hint, concrete engine and lifecycle 13; TENT/submodule/build/wheels/custom router removed; 12 CI checks green |
-
-These implementation acceptances preserve grants, epochs, bounded admission and
-physical-drain receipts. They are not hardware qualification. Source grants remain
-authoritative; every requester owns its `RemoteSegment`. Timeout/cancellation/
-Unquiesced keeps owners and capacity; unknown effects are never replayed.
-CPU/TCP priorities remain advisory without per-priority dispatch statistics.
-Replacing pure transfer-leg timings needs an engine timing API; end-to-end
-KV-path observations remain. No TENT API gap is a current OrbitKV dependency.
-
-- [x] Explicit registration identity/failure propagation and retained retry ownership.
-- [x] Prepared Save, native batching and bounded producer admission.
-- [x] Normal-path registration and selected-release prepared-adapter controls at
-  the historical revisions below.
-- [ ] Carry allocator-issued page generations through source/destination use and reuse.
-- [ ] Qualify physical completion after timeout, partial submission and cancellation.
-- [ ] Reclaim after permanent loss only with valid termination proof; unresolved
-  owners remain bounded and observable.
-- [ ] Complete current-release installed adapter-fault and OrbiTE hardware coverage.
-
-Selected releases lack allocator-issued page identity on connector/linker
-handoffs. Registration/session epochs and adapter-local counters cannot observe
-all native allocation/free paths. Track [vLLM #62810](https://github.com/vllm-project/vllm/issues/62810)
-and [SGLang #45493](https://github.com/sgl-project/sglang/issues/45493).
-
-| Historical upstream candidate | Accepted evidence | Limit |
+| Capability | OrbitKV status and evidence | Precedent |
 | --- | --- | --- |
-| [vLLM #62819](https://github.com/vllm-project/vllm/pull/62819), `b37aa38c` | Source/CPU allocator identity and ordinary/HMA/partial-tail/MultiConnector finish-time handoff | Unmerged, unreleased and unconsumed at review; no page-reuse or physical-fault acceptance |
-| [SGLang #45548](https://github.com/sgl-project/sglang/pull/45548), `3cc5121f` | Source/CPU ownership/geometry and scoped H20 warmed asynchronous issuance/snapshot/readiness/stale-generation primitive | Unwarmed first call waits; no serving threshold or complete installed faults; unreleased/unconsumed at review |
+| Host DRAM | **Have:** bounded pinned pools, replicas and leased restores. [Policies](cache-policies.md). | L/F/V host tiers, M memory objects |
+| SSD surviving Manager restart | **Missing:** SSD I/O exists, but [allocation](../crates/orbitkv-core/src/storage/ssd/files.rs) truncates files at startup; index/extent state is volatile. Engine restart reuse requires a live Manager. | L/F disk and V filesystem tiers; persistence needs a separate crash contract |
+| Peer DRAM/SSD cluster tier | **Partial:** inventory discovery, source-owned SSD preparation and OrbiTE reads exist; durable cluster recovery/node-loss qualification remain open. [Distributed cache](distributed-cache.md). | F distributed reuse, L P2P, M replicas |
+| Shared filesystem / 3FS mount | **Missing:** a local SSD path on a shared mount supplies no shared metadata, locking, GC or safe restart. | L filesystem/HF3FS, V secondary filesystem, F remote storage |
 
-An upstream merge alone does not change supported pins. Consume the released API
-and pass installed reuse/fault gates before broadening support.
+### Distributed behavior
 
-Historical evidence stays scoped:
+| Capability | OrbitKV status and evidence | Precedent |
+| --- | --- | --- |
+| Membership | **Have:** etcd leases, persistent epochs and Watch fencing. [Membership](distributed-cache.md#local-global-index-and-etcd-metadata). | F/M coordination |
+| Bounded-stale placement directory | **Partial:** covered requester-local inventories and authoritative grants; no external directory API or qualified visibility bound under loss/pressure. [Coverage](distributed-cache.md#owner-inventory-streams). | F metadata service, L coordinator, M master |
+| Router lookup / KV events | **Missing:** diagnostics are not a router API. Target [llm-d's event index](https://github.com/llm-d/llm-d/blob/main/docs/architecture/advanced/kv-management/kv-indexer.md) and [Dynamo's selection interface](https://docs.nvidia.com/dynamo/dev/knowledge-base/modular-components/router/standalone-selection). | L coordination and V KV events; no new inference router |
+| Replica selection | **Partial:** compatible candidates and opt-in cost observations; complete failure-aware selection remains open. [Planning owners](architecture.md#planning-and-cost-observations). | L/F/M replica lookup |
+| Node loss | **Partial:** retired epochs are fenced and uncertain owners retained; permanent-loss reclamation/cache HA unqualified. [Retirement](transport.md#peer-departure). | F distributed reuse, M leases/replicas |
+| LRU / TTL / watermarks | **Partial:** LRU/protected retention and SSD admission; data TTL and coordinated high/low watermarks missing. Membership TTL is not data TTL. [Policies](cache-policies.md). | L/F LRU, V LRU/ARC, M watermarks/soft pinning |
+| Exact capacity accounting | **Partial:** local pool/index/query/registration/file budgets include retained work; persistent/shared tiers and fleet reconciliation missing. [Budgets](server.md). | L/F/V tier limits, M replica accounting |
+| Tenant namespaces | **Partial:** computation scope and inventory filtering exist; neither authenticates tenants nor provides quotas. [Identity](state-identity.md), [scope](distributed-cache.md#scope-and-bounded-resources). | L/F namespace and management controls |
 
-- [OrbiTE TCP source pilot](transport.md#experimental-orbite-peer-tcp-profile),
-  `5a50d092` / #304: same-host H20/CUDA 12.2; not installed serving or CUDA 13.
-- [OrbiTE host RDMA and CUDA 13.1 source profiles](transport.md#experimental-orbite-peer-rdma-profile),
-  `660f893d` / #305–#306: host bytes and A-node embedded Manager; not installed
-  cross-host Manager/GPU, GDR, physical faults or broader topology.
-- [Installed OrbiTE TCP/same-RNIC profile](transport.md#installed-client-and-manager-profile),
-  `eb1cc90f` / #307: frozen CPython 3.11 wheel, unified Torch CUDA 13.0.96,
-  original IPC-credit retirement; not current-path or serving qualification.
-- [Prepared vLLM 0.31.0 pairs](https://github.com/OrbitInfra/OrbitKV/pull/290) and
-  [SGLang 0.5.22 pairs](https://github.com/OrbitInfra/OrbitKV/pull/295): normal
-  DRAM/io_uring retirement; the SGLang pool/linker fixture checks 2,621,440 bytes,
-  sentinels and four original credits with sole/independent exporter holds.
-  [#293](https://github.com/OrbitInfra/OrbitKV/pull/293) retains earlier 0.5.21 results.
-- [Original lifetime ledger](https://github.com/OrbitInfra/OrbitKV/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
-  and [pre-C4 transfer ledger](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership)
-  preserve exact hashes, failed freezes and earlier TENT source-close/buffer
-  repairs, including #237/#288 and [Mooncake #4816](https://github.com/kvcache-ai/Mooncake/issues/4816).
-  TENT hardware limits and verdicts remain historical, not new OrbiTE work.
+### Correctness and operations
 
-Acceptance still requires real crash, delayed/lost grants/ACKs, partial submit,
-repeated reuse and restart. TTL, lease expiry and logical errors are not drain.
+| Capability | OrbitKV status and evidence | Precedent |
+| --- | --- | --- |
+| Full identity | **Have** for admitted layouts: immutable artifacts, computation, representation and recovery identity; unknown auxiliary state rejected. [Identity](state-identity.md). | L/F/V cache keys; no cross-engine byte-equivalence assumption |
+| Read-time checksums | **Partial:** encoded segments validate CRC on decode; raw replicas lack a uniform read-time integrity contract. [CPU validation](../crates/orbitkv-core/src/codec/mod.rs), [GPU decode](../crates/orbitkv-core/src/codec/gpu.rs). | Tier integrity is a requirement to verify, not inferred from advertised disk support |
+| Abort/preemption/restart safety | **Partial:** conservative ownership and CPU faults exist; current installed faults, allocation reuse and permanent loss unqualified. [Fault gates](fault-qualification.md). | Released engine lifecycle; comparator smoke tests do not prove ours |
+| Per-tier metrics / miss explanations | **Partial:** RAM/SSD/remote attribution and diagnostics; stable user-facing miss reasons and all-tier coverage incomplete. [Metrics](metrics.md). | L observability, F/V tier stats, M monitoring |
+| Configuration / deployment recipes | **Have** for current pins and scoped topologies; recipes are not qualification. [Quickstart](single-node.md), [deployment](deployment.md), [Manager](server.md). | L/F/V/M operating guides |
+| Authenticated endpoints | **Partial:** local bootstrap credentials; grants authorize allocations, but peer gRPC/HTTP lack a complete authenticated deployment contract. Restrict network access. [Channel](transport.md#host-and-lifecycle-boundary), [deployment](deployment.md). | Production security requirement; cache leases are not authentication |
+| No pickle | **Have:** bounded typed native/protobuf/JSON boundaries; no pickle in the adapter or Manager path. [Process contract](transport.md#process-channel). | Thin typed integration, not serialized executable objects |
 
-## S4 — Finish communication execution and demonstrate gains
+## Milestones
 
-**Partial.** Owners: existing transfer, channel, SSD, codec and engine-hook code.
-New reuse or early consumption depends on S3; independent healthy-path work does
-not require finishing every fault/topology combination first.
+### M1 — Engine baseline
 
-- [x] Separate production CUDA source, KDA fragmented-copy work, bounded SSD
-  host batching, separated SSD read/write submission and GPU/NUMA identity.
-- [x] Explicit SGLang kernel profile accepted: Qwen3-32B BF16/raw, TP1/PP1,
-  eager serial 4K/8K. The reviewed 8K TTFT reduction is versus our DMA route;
-  this does not select a general default.
-- [x] Descriptive two-host Manager RDMA and GPU-pointer component measurements;
-  they do not establish complete serving superiority.
-- [x] Bounded native observation and offline matched-pair validation implemented.
-- [x] Diagnose SGLang 0.5.22 concurrent admission and compare its official
-  equal-priority option across four independent process pairs. Shared-prefix
-  recovery improves, but mixed-prefix regression guards fail; keep the option
-  explicit and defaults unchanged. See [performance](performance.md#sglang-concurrent-admission).
-- [ ] **Qualification failed:** the implemented native observer must pass its
-  matched overhead pilot before diagnosing first peer recovery and warm steady
-  state. Its current tail guard fails.
-- [ ] **Qualification failed:** reduce the implemented engine-local H2D
-  observer overhead until the full matched guard passes. Keep prior failed
-  cohorts and clocks distinct.
-- [ ] **Qualification open:** demonstrate repeatable complete serving benefit with concurrent inference,
-  cold/native-HBM regression controls, throughput, tails and resource budgets.
-- [ ] Qualify S3-dependent reuse, fault reclamation and earlier multipart,
-  SSD or codec consumption before enabling those behaviors.
+Small reviewed PRs: update official pins and consumed lifecycle APIs; enable V2
+and multi-group/hybrid through those interfaces; add real-engine conformance and
+fault gates. Cover abort, queue wait, preemption, engine/Manager restart, identity
+collisions, partial load/save and generation reuse. Required gates fail on missing
+prerequisites or unexpected skips. Until M2, Manager restart may safely miss;
+it must never return stale state as a hit.
 
-Use [retained benchmarks](../benches/README.md), the
-[kernel workflow](kernel-optimization.md) and [SSD methodology](ssd-performance.md).
-Profile the consumed path before choosing another optimization. Use KDA for a
-CUDA bottleneck; fix native submission/admission/I/O in their existing Rust
-owners when those are the cause. Add no speculative policy or unused kernel.
+**CPU now:** source-only adapter tests, state/recovery contracts, protocol faults,
+etcd inventory controls, CPU/TCP/file tests and CUDA-shim byte controls. Extend
+these against installed official engine classes where no GPU is required.
+**Hardware later:** model outputs/restored bytes for every claimed runner/group/rank,
+allocator reuse, cancellation/preemption, Graph and native P/D composition.
+CPU mocks and shim passes cannot satisfy these gates.
 
-Acceptance: exact restored bytes and output controls; equal inputs, budgets and
-coverage; independent matched repetitions and uncertainty; original benefit,
-regression and observation-overhead guards. Source built, fixture fast and model
-fast are different results. Keep the frozen detailed guards in
-[the accepted measurement contracts](https://github.com/OrbitInfra/OrbitKV/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/completion-plan.md#s4--finish-communication-execution-and-demonstrate-gains).
+### M2 — A complete node
 
-## S5 — Released-engine integration and upstream contributions
+Separate PRs for a crash-consistent persistent SSD index/extent allocator and GC;
+layerwise load/save; read-time checksums for every stored representation;
+TTL/watermark eviction. Reuse storage/lease owners and OrbiTE file I/O. Document
+commit/recovery ordering, orphan reclamation and corrupt-data misses. Never reuse
+bytes still held by a reader or undrained transfer.
 
-**Partial.** Engines own allocation, scheduling, native prefix trees, request
-readiness and P/D. Python translates callbacks/layout/CUDA readiness; Rust owns
-shared-cache state machines, waiting, planning, batching and resource holds.
-Use official releases; do not restore fork factories, custom P/D connectors,
-handshake/proxy implementations or compatibility facades.
+**CPU now:** real io_uring files on ext4, crash/reopen boundaries, short reads,
+corruption, orphan GC, disk-full behavior and concurrent leases are CI-qualifiable.
+Existing file-byte tests are a starting point, not persistence evidence.
+**Hardware later:** installed recovery across Manager restart, layer readiness
+under compute, raw/encoded GPU bytes and matched DRAM/SSD serving.
 
-### S5.1 — Release and interface audit
+### M3 — A complete cluster
 
-- [x] Select official vLLM 0.31.0 and consume SGLang 0.5.22 public load completion;
-  runtime pins and source tags agree. Earlier SGLang acceptances use 0.5.21.
-- [x] Repeat the 0.5.22 Qwen3-8B dense TP1/PP1 profile with final installed
-  DRAM/io_uring byte and model/restart controls. Known-unsubmitted cancellation
-  and independent consumer leases pass; physical cancellation/page reuse remain
-  in S3/S5.2. Wider 0.5.21 profiles are not inherited.
+Separate PRs for bounded-stale placement discovery and router lookup/events;
+a shared filesystem/3FS tier; node-loss recovery; MLA TP deduplication and hybrid
+coverage allowed by engines. Extend existing inventory/source owners. Define
+staleness, missed-event resync, replica fallback, tenant isolation, authentication
+and exact capacity accounting before exposing APIs. An index is a hint; only a
+current grant authorizes bytes.
 
-On an upgrade, check official tags and consume exact released interfaces before
-changing all pins together. Upstream main is not the user's runtime.
+**CPU now:** multi-process etcd/TCP faults, epochs, bounded snapshots/events,
+router contracts, shared-file races/GC, tenant isolation and dedup accounting.
+Loss of coverage is not an authoritative absence result.
+**Hardware later:** cross-host GPU/RDMA restores, permanent peer loss/physical
+drain, MLA TP layouts and complete hybrid output/restart controls. Same-host
+process tests do not establish independent failure domains or HA.
 
-### S5.2 — Minimal official cache backends
+### M4 — Release and upstream
 
-- [x] vLLM KV Connector and SGLang UnifiedRadixCache external linker; ordinary
-  dense TP1/PP1 DRAM/io_uring recovery, engine restart and scoped sharing accepted.
-- [x] Scoped shared-Manager pressure, fixed batch-1 FULL decode Graph recovery,
-  static immutable LoRA and two-H20 RDMA profiles recorded in
-  [compatibility](compatibility.md).
-- [x] Selected-release normal prepared-adapter retirement in DRAM/io_uring;
-  the SGLang 0.5.22 pool/linker fixture covers sole and independent exporter holds.
-- [ ] Finish consumed cancellation/preemption/page-reuse lifetime contracts with
-  S3 before extending support. Manager restart does not preserve the SSD file.
+Build the wheel and deployment artifacts, then submit thin vLLM and SGLang
+integrations with upstream tests/docs. Track both upstreams' review and release
+requirements. Publication needs maintainer approval; the sole distribution is
+`orbitkv-llm`, and Rust crates remain unpublished. Before release, consume OrbiTE's
+crates.io release and record resolved provenance.
 
-vLLM currently requires V1 and one attention cache group. SGLang still uses
-bounded private pre-capture and pending-query admission hooks. Preserve their
-correctness protection until a consumed released replacement exists.
+**CPU now:** wheel contents/loader checks, upstream interface/registration tests,
+source-only suites, docs and reproducible manifests. These do not authorize
+publication. **Hardware after M3:** one installed-artifact batch comparing native
+caching, OrbitKV and compatible LMCache profiles with matched inputs/budgets,
+byte/output, fault, restart and drain controls. Record TTFT, tails, throughput
+and limits; do not inherit TENT results. Qualify the release candidate on claimed
+hosts before the maintainer publishes 0.1.0. No hardware is requested by this plan.
 
-### S5.3 — Public lifecycle and hybrid-state contracts
+## Invariants and evidence
 
-- [x] Public SGLang preparation/pending-lookup contributions submitted and CPU
-  controls accepted; submission is not released adoption.
-- [x] Consume SGLang 0.5.22 private load destinations and public post-forward
-  completion; delete custom load polling/tree insertion and recurrent component
-  override. Official installed CPU and selected Qwen3-8B GPU controls pass;
-  complete hybrid and fault qualification remain open.
-- [ ] **Waiting on released APIs:** consume pre-capture and pending-admission replacements and remove
-  each superseded private hook in the same delivery.
-- [ ] Complete recovery for all required attention, window, recurrent,
-  checkpoint and auxiliary state of each claimed hybrid model. Qwen3.8 native
-  output controls and historical fork results are not external-cache support.
-- [ ] Qualify native HBM hits, legal partial boundaries, cancellation,
-  preemption, restart and generation-safe page reuse with actual model output.
+Preserve identity/generation/coverage checks, ready versus drained receipts,
+source grants, requester-specific segment retirement, epochs and bounded
+admission. Timeout, cancellation, TTL and Unquiesced never release physical
+owners; unknown submitted work is not replayed. Prefix/Window/Checkpoint
+[recovery requirements](hybrid-recovery.md) remain implemented and used.
 
-Unknown state remains unsupported. Keep [model recipes](models.md),
-[hybrid contracts](hybrid-recovery.md) and [interface audit](engine-release-audit.md)
-aligned with code guards.
+Current OrbiTE GPU, RDMA, GDS and installed profiles remain **unqualified**.
+CPU/TCP, io_uring and shim controls are CI evidence. Historical TENT results and
+revisions stay linked from [performance](performance.md); they do not qualify
+OrbiTE. Metadata isolation **FAIL**, sixteen-owner **UNQUALIFIED**, and
+observer-overhead failures are unchanged. Four owners remain the scoped limit,
+not a new current-path hardware acceptance.
 
-### S5.4 — Official native P/D and independent cache
+For each PR, report commit, scope, changed contracts, exact commands/results,
+unrun gates, external artifact locations, remaining limits and line delta.
+Keep output outside Git. Review precedes merge; publication and expansion of
+qualification require explicit maintainer decisions.
 
-- [x] Native vLLM NIXL/MultiConnector and SGLang disaggregation selected;
-  obsolete custom P/D code removed. Manager shared-cache bytes now use OrbiTE.
-- [ ] Qualify installed native P/D plus independent cache for cancellation,
-  peer loss, partial submission, delayed ACK, restart and page reuse.
-
-The candidate allows cache read/write on P and save-only on D, preserving one
-writer for incoming D pages and native reliable-delivery requirements. Both
-cache query leases and P/D ownership must drain through their own owners.
-See [P/D composition](pd.md); ordinary linker abort support does not prove
-physical P/D cancellation or timeout-drain safety.
-
-### S5.5 — Deployment matrix and upstream maintenance
-
-- [x] Bounded official native/OrbitKV/LMCache comparison and scoped two-host
-  dense RDMA serving accepted, with limitations in [performance](performance.md).
-- [ ] Qualify each additional model, Graph shape, DP/TP/PP/EP rank or container
-  deployment before claiming support; distinguish byte layout from model output.
-- [ ] Complete matched serving gains and S3-dependent faults for retained
-  deployment claims; no extrapolation from one-GPU process controls.
-
-For a confirmed Mooncake/TENT, SGLang or vLLM defect, isolate the root cause and
-search open and closed issues/PRs. Reuse matching work. When absent, create a
-reproducible issue and tested fix PR using the authorized identity; keep private
-artifacts and credentials out of public contributions. Track upstream merged,
-released and locally consumed states separately.
-
-## S6 — One consumed route and admission planner
-
-**Partial; after retained S3/S4/S5 prerequisites.** Extend existing planning,
-cost, query and residency owners. Compare complete compatible DRAM/SSD/peer/direct
-recovery and engine recomputation costs, including freshness and uncertainty.
-Selected plans must acquire actual source leases, destination ownership and byte
-credits; bounded replanning must not blindly retry submitted unknown transfers.
-
-- [ ] Consume one route/admission plan with device/SSD/NIC budgets, per-instance
-  fairness, deadlines, retention/write admission and deterministic unknown costs.
-- [ ] Add receiver byte windows and pacing plus source egress limits; include
-  engine-native P/D traffic in shared physical NIC budgets without replacing its
-  transport. Credit return is separate from buffer release.
-- [ ] Compare fixed, shadow and executed decisions under contention; qualify
-  cross-medium/peer-SSD choices and cancellation/RDMA before promotion.
-
-Router integration, replica-risk/eviction research, WRITE replication, alternate
-rails, topology slicing and NIXL expansion stay explicit deferred research.
-See [planning contracts](state-planning.md). Do not add a second planner.
-
-## S7 — Semantic retention and checkpoint compiler
-
-**Open; depends on S3/S5/S6.** Compile an explicit supported-state read contract
-into legal ranges, checkpoints, retention and reclamation, then consume it in
-real storage and planning. Validate soundness, generation safety, bounded-case
-minimality, retained bytes, amplification and reclamation latency on dense,
-window/sink and recurrent/hybrid models. Demonstrate measured state reduction.
-Recovery validation alone is not this compiler; unknown auxiliary state remains
-unsupported.
-
-### Future stage: design v2
-
-[State compiler, versioned state trees and attention-guided paging](design-v2.md)
-proposes the next S6/S7 direction: engine-derived component/dependency IR,
-cost-based materialization and recomputation, agent forks/JIT restore, and sparse
-paging through upstream vLLM contracts. The safety foundation preserves existing
-owners, grants, epochs and physical-drain receipts; OrbiTE remains the only byte
-path. The hardware-free simulator is implemented for review, with its methodology
-and external-artifact reproduction under `benches/storage/state_cache/`. All
-hardware experiments remain **unexecuted** and current model guards remain in
-force. Review simulator controls and the scope of its findings before production work.
-
-The [hybrid-cache proposal](hybrid-cache-design.md), reviewed in
-[PR #328](https://github.com/OrbitInfra/OrbitKV/pull/328), stays unchanged as
-historical design context. Design v2 supersedes its experiment sequence; it does
-not upgrade any qualification or claim existing minimal-range recovery as new.
-
-## S8 — Product organization, final artifacts and release
-
-**Partial.** Follow [LMCache's documentation organization](https://docs.lmcache.ai/)
-for user navigation while retaining OrbitKV's Rust owners and website identity.
-
-- [x] Consolidate the product documentation and retire completed campaign code
-  and duplicate reports in [PR #289](https://github.com/OrbitInfra/OrbitKV/pull/289).
-  Feature/model recipes, current support limits, links and historical references
-  have independent source/CPU review; runtime support is unchanged.
-- [x] Consolidate the release build into one CUDA 13 `orbitkv-llm` distribution
-  and one PyPI Trusted Publishing job. The ten-wheel matrix covers CPython 3.10–3.14
-  on Linux x86_64/aarch64; final candidate qualification and publication remain open.
-- [x] Remove TENT native packaging and the fork submodule in #326; historical
-  provenance remains at immutable source links.
-- [x] C4 concise user/contract guides accepted in #327 (`37722fec`); evidence
-  pages and frozen verdicts are preserved, with no runtime or claim change.
-- [ ] Build final Manager/engine images and wheels, preserve licenses/provenance,
-  and qualify clean installed artifacts on claimed hosts and profiles.
-- [ ] Re-qualify the current data path before any publication. Qualifications
-  recorded before engine-routed SSD, direct peer→GPU restore, removal of
-  `storage/ssd/gpu.rs`, and OrbiTE local copies do **not** carry over. Preserve
-  those records as historical evidence; they cannot qualify the new path.
-- [ ] Before release, replace the OrbiTE git revision with the crates.io release
-  (`orbite = "0.1"`) and document the resolved engine version in release provenance.
-- [ ] Publish only after GPU re-qualification and maintainer authorization.
-  **0.1.0 is OrbitKV's first release.** `orbitkv-llm` stays unpublished until
-  then; wheel CI and candidate artifacts do not authorize publication.
-
-Once hardware returns, use this order:
-
-1. OrbiTE **0.1.0**.
-2. Re-run OrbitKV's claimed profiles with **installed wheels with OrbiTE**:
-   vLLM **0.31.0** and SGLang **0.5.22**, dense **TP=1/PP=1**, DRAM plus
-   io_uring SSD, and the accepted scoped peer profiles. Record current artifacts,
-   bytes, ownership/drain and fault evidence; do not expand a scoped claim.
-3. Build **0.1.0rc1**.
-4. Perform clean installed-artifact qualification on the claimed hosts.
-5. **0.1.0**.
-
-OrbiTE is the only transfer engine. The former comparison that selected TENT or
-OrbiTE as the release default is removed by the 2026-11-07 maintainer decision.
-Matched benchmarks and fault controls still inform qualification; publication
-remains blocked on the installed hardware gates.
-
-Maintain concise README, quickstart, configuration and benchmark guidance with
-each future behavior change. Publication remains the maintainer's action;
-implementation and CI results do not authorize it.
-
-## Review contract for every delivery
-
-Deliver a coherent user capability or necessary boundary repair. Report the
-commit, changed behavior, relevant tests, external evidence and remaining limit.
-An independent reviewer inspects the diff/callers, repeats the smallest meaningful
-checks and verifies claims before dependent work or merge. Exact-head CI and the
-required author/committer identity remain merge requirements.
-
-Keep tests with a current developer, CI, release or operational consumer. Merge
-duplicate contract cases; retired one-off campaigns do not belong in routine
-gates. Raw results, traces, manifests and per-run reports stay outside Git.
-
-## Historical evidence
-
-The [pre-C4 plan](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/completion-plan.md)
-preserves the integration and cleanup chronology. The [pre-cleanup plan](https://github.com/OrbitInfra/OrbitKV/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/completion-plan.md)
-preserves detailed accepted/failed runs, commits, artifact locations and frozen
-measurement contracts. It is an evidence reference, not another execution queue.
-Its S2 isolation failures, physical-lifetime limits and unqualified scopes remain
-unchanged. Earlier S1 consolidation is retained at
-[`ec3add9b`](https://github.com/OrbitInfra/OrbitKV/tree/ec3add9bcaf91a0171685ba42b5ae8330076c397).
+[L]: https://docs.lmcache.ai/
+[LL]: https://docs.lmcache.ai/legacy/kv_cache_optimizations/layerwise.html
+[LC]: https://docs.lmcache.ai/mp/coordinator.html
+[F]: https://github.com/taco-project/FlexKV
+[FD]: https://github.com/taco-project/FlexKV/blob/main/docs/dist_reuse/README_en.md
+[V]: https://docs.vllm.ai/en/latest/features/kv_offloading_usage/
+[M]: https://kvcache-ai.github.io/Mooncake/design/store/mooncake-store.html

@@ -140,7 +140,7 @@ See [request preparation](request-preparation.md) for limits and control runs.
   contiguous inventory interval before sending a delta (default: `0`, range
   `0..=5`). `0` preserves immediate delivery. An explicit source fence causes
   subscribed requesters to prioritize the captured target without treating frame
-  receipt as installation. The frozen S2.7 experiment qualifies `2` as an opt-in
+  receipt as installation. Historical controls tested `2` as an opt-in
   tradeoff; see
   [the historical coalescing measurements](https://github.com/OrbitInfra/OrbitKV/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/distributed-cache.md#bounded-etcd-publication-coalescing).
 - `--metadata-namespace`: Exact generated storage namespace to receive from every

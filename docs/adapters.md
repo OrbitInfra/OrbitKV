@@ -35,7 +35,7 @@ leases and propagates failure.
 The selected releases lack allocator-issued page generations for their handoffs.
 Registration lifetime cannot detect every same-allocation slot reuse. Uncertain
 pages remain held; local counters cannot replace an engine allocator contract.
-The [upstream interface record](engine-release-audit.md#upstream-work-and-independent-limits)
+The [hook and upstream contracts](#remaining-internal-hooks)
 tracks proposals separately from released consumption. Existing
 [normal-path lifetime evidence](https://github.com/OrbitInfra/OrbitKV/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#ownership-contract)
 does not establish cancellation, physical termination or eventual fault reclamation.
@@ -61,7 +61,7 @@ remain unsupported. The completion plan records qualification separately.
 ## Immutable static LoRA
 
 The fixed local PEFT adapter contract has historical vLLM 0.31.0 / SGLang 0.5.21
-dense TP=1/PP=1 evidence in the [completion plan](completion-plan.md#s53--public-lifecycle-and-hybrid-state-contracts).
+dense TP=1/PP=1 evidence in [performance](performance.md#historical-evidence).
 It does not qualify the current OrbiTE path.
 At startup OrbitKV hashes each adapter's configuration and weights and binds the complete named set and LoRA
 computation configuration to the external cache namespace. Engine prefix hashes
@@ -168,6 +168,28 @@ completion, not task cancellation, releases destinations. The
 [original shutdown record](https://github.com/OrbitInfra/OrbitKV/blob/1d173c1a27401f6e219c5120f97ba5eab3e2d52b/docs/adapters.md#sglang-linker-and-current-internal-dependencies)
 preserves warnings and 0.5.21 measurements. Unknown auxiliary/draft state and
 unsupported request modes remain rejected.
+
+## Remaining internal Hooks
+
+The public Hook registry does not make string targets stable APIs. Keep each
+correctness protection until a released replacement is actually consumed.
+
+| Target | Purpose | Removal gate |
+| --- | --- | --- |
+| `TpModelWorker.init_cuda_graphs` BEFORE | Install stable restore events before Graph capture; cache factory runs later | Released worker preparation callback plus actual eager/Graph restore and page-reuse gates |
+| `PrefillAdder.add_one_req` AROUND | Defer pending SSD/peer lookup and preserve rank agreement | Released asynchronous lookup/admission contract plus miss/hit/cancel/rank gates |
+| `Scheduler._add_request_to_queue` AROUND, opt-in | Optional queued preparation/warming | Released enqueue callback or remove optimization with matched workloads |
+
+Plugin discovery stays lazy and opens no native/GPU resources for an unselected backend.
+
+Missing allocator-generation contracts are tracked in
+[vLLM #62810](https://github.com/vllm-project/vllm/issues/62810) and
+[SGLang #45493](https://github.com/sgl-project/sglang/issues/45493).
+Worker preparation [#44856](https://github.com/sgl-project/sglang/pull/44856) and
+pending admission [#44873](https://github.com/sgl-project/sglang/pull/44873) are
+upstream replacement candidates, not consumed interfaces in our current pins.
+Recheck their released status during the upgrade; submission alone never removes
+a correctness hook. See the [upstream path](completion-plan.md#upstream-path).
 
 ## P/D and cache composition
 
@@ -317,4 +339,4 @@ shares while accepted native work remains with its completion owner. Each
 interest permits 128 lifetime operation identities, including terminal replay
 fences. Open one interest per lookup and close it after handoff/completion; Claim
 does not reset admission. Cross-host and physical multi-rank qualification stays
-in the [completion plan](completion-plan.md#s55--deployment-matrix-and-upstream-maintenance).
+in the [completion plan](completion-plan.md#milestones).

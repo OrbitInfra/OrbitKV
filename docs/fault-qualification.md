@@ -1,10 +1,8 @@
-# Single-node fault qualification
+# Fault behavior and qualification
 
-> Historical qualification below applies only to its original revisions and
-> recorded backend, including TENT. OrbitKV now uses OrbiTE exclusively; all
-> current GPU/RDMA/GDS and installed profiles need fresh hardware qualification.
+> Current OrbiTE GPU/RDMA/GDS and installed profiles are unqualified.
+> The gates below describe required behavior, not new passing results.
 > CPU/TCP and io_uring controls remain CI evidence.
-
 
 The deterministic process gate runs a real Cache Manager, retained engine
 tensors, independently imported shared payload arenas, CUDA IPC physical routes,
@@ -39,110 +37,10 @@ against claim in separate mappings, and prove a delayed request cannot execute
 after cancellation. They distinguish UDS closure from actual peer process exit
 and cover shared-record capacity, generation reuse, and duplicate claim rejection.
 
-## Completion-evidence requalification
-
-The September 28 completion-evidence increment uses bootstrap 7, channel ABI 11,
-cache schema 8 and lifecycle 4. Its matching test-hooks build passes **12 selected
-H20 process/GPU fault cases in 37.22 seconds**. They cover the local Restore
-faults below plus lost completion notification/ACK, restart with stale clients,
-and `test_local_completion_evidence_excludes_retirement_and_trains_once`.
-That test pauses Manager retirement after native drain: the engine consumes
-correct GPU bytes while Manager source reservations remain held. On release,
-the report trains once with the native duration, excluding the delayed reap.
-Channel tests also reject stale/recycled or duplicate reports and discard
-invalid optional timings without blocking authoritative completion.
-
-The final production build, including source/backend cost-key isolation
-(`c1d8d43c`), passes **7** native channel/client cases in 13.02 seconds. On
-Qwen3-8B with direct, unencoded DRAM, vLLM passes **6 / 1 skipped** in 279.98
-seconds and SGLang passes **1 / 1 deselected** in 204.96 seconds. The vLLM skip
-is the dense model's inapplicable recurrent-state case; the SGLang SSD case was
-not selected. Both use their existing deterministic restart/output contracts.
-This is single-GPU serving correctness, not multi-rank/P-D/RDMA qualification.
-
-| Final production artifact | SHA-256 |
-| --- | --- |
-| Manager | `85ec9d8fa351259970ee24d06ec504f39d2651ee362a0666e41565eb1dcc4b34` |
-| Native extension | `5cfef266efa208318cc0e8595dd7f06f335aa179a86ab06a8bdd573e5f39ecce` |
-
-Logs and artifact identifiers are retained in
-`.orbitkv/completion-evidence-20260928/`. The diagnostic performance cohorts in
-[communication measurements](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/communication-performance.md#completion-evidence-and-copy-path-diagnosis)
-use the preceding Manager build; their hashes are recorded separately.
-
-## Engine-local raw Restore gates
-
-The frozen `compact-restore-final-fault` bundle passed the selected real
-Manager/native-client integration and fault suite: **38 passed, 30 skipped in
-97.05 seconds**. The skipped cases require the cuFile configuration, which was
-not selected. All selected single-GPU local Restore lifecycle cases listed below
-passed with bootstrap 6/channel ABI 9/lifecycle 4.
-
-| Frozen artifact | SHA-256 |
-| --- | --- |
-| Cache Manager | `c60b7a780bc24a8eaa9e95f4f7d8aabd9c6498afed6cc9ff64d772d78c0ffbbc` |
-| Python native extension | `fee45f97cfda2a8980b2cdb33f76782c434ff6dc89511950c024efc86e9a2806` |
-
-The cases are implemented in
-[`test_cache_faults.py`](../python/tests/integration/test_cache_faults.py).
-Earlier Manager-owned Restore results remain separate from this evidence.
-
-| Passed test | Observed contract |
-| --- | --- |
-| `test_local_restore_survives_manager_death_after_claim` | Kill the Manager after claim and after the first copy enqueue. The engine must remain pending while its local barrier is held, then drain and verify exact GPU bytes through its own imported registration. |
-| `test_local_partial_enqueue_failure_drains_before_page_reuse` | Inject failure after an accepted copy; the failed result permits page reuse only after stream drain, and Manager source reservations eventually retire. |
-| `test_engine_death_after_claim_quarantines_source_reservation` | Kill a separate engine process after claim; the live Manager retains its charged sources despite UDS loss. |
-| `test_local_restore_retains_tensor_when_caller_drops_handle_and_tensor` | Dropping Python tensor references and the handle cannot free the native binding during a pending copy; unregister releases it after drain. |
-| `test_local_restore_fences_previous_use_on_nondefault_stream` | Two successive restores use different busy nondefault engine streams. Each previous write finishes before Restore overwrites the destination; exact bytes prove that the reused event does not substitute an earlier completion. |
-
-The CUDA unit test
-`caller_context_survives_registration_and_readiness_success_and_failure` in
-[`transfer/local.rs` tests](../crates/orbitkv-core/tests/unit/transfer/local.rs)
-also passed, covering restoration of the caller's CUDA context after both
-successful and rejected registration/readiness paths.
-
-The final release workspace gate passed **488 tests / 38 ignored**, excluding
-nested child-helper invocations from the pass count. The context test above was
-also run explicitly outside that default gate. Python unit tests passed **374**
-cases and benchmark-tool units passed **199**. The matching production Manager
-and extension passed all **7** ordinary channel/client GPU integration cases.
-The same-host Mooncake TCP raw and encoded peer round trips also passed. These
-remote checks qualify data correctness through the new local executor, not
-cross-host RDMA performance.
-
-The compaction unit gates cover permuted dense/sparse destinations, split K/V,
-adjacent distinct allocation IDs, destination overlap, a 32,768-page dense plan,
-and lease preservation for oversized fragmented plans. The existing 32,768-block
-GPU benchmark passes Criterion `--test` mode; it checks submission/drain, while
-the matched communication runs separately verify GPU bytes and copy counters.
-
-The `local_restore_dma` barrier is reached after the first enqueue call. It
-proves that Manager death does not manufacture local completion, and that
-retained imports support subsequent drain and correct bytes. It does **not**
-prove that the copy was physically in flight at the exact instant of SIGKILL.
-The engine-death case pauses after claim; it verifies conservative source
-quarantine, not engine death during proven active hardware DMA.
-
-The native worker captures `ready_stream` and owns tensors independently of
-Python waiters. Its local terminal result precedes asynchronous Manager source
-reaping. The channel suite separately covers claim/revoke races, plan-bank
-pressure, record generations, and retirement acknowledgement. Full serving,
-multiple-GPU, huge-page, prolonged allocator-pressure, and graph replay gates
-remain separate from these single-GPU process tests. See
-[engine-local qualification](engine-local-restore.md#qualification-gates).
-
-The matching production bundle subsequently passed Qwen3-8B DRAM serving
-correctness on H20: vLLM **6 passed / 1 skipped** (the skipped recurrent-state
-case does not apply to this dense model), and SGLang **1 passed / 1 deselected**
-(DRAM selected, SSD excluded). Both exercise engine restart with a retained
-Manager. These are normal serving gates, not additional injected-fault tests;
-the [exact configuration](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/single-node-performance.md#engine-local-restore-serving-qualification)
-does not qualify arbitrary graph modes, hybrid models, or multiple GPUs.
-
 ## Reproduce
 
 Build the matching OrbiTE artifacts before starting any native/GPU tests.
-These commands target the current path; the historical results above must be rerun.
+These commands target the current path; historical results do not qualify it.
 
 ```bash
 PYO3_PYTHON=$PWD/.venv/sglang-release/bin/python \
@@ -157,10 +55,9 @@ ORBITKV_FAULT_TESTS=1 ../.venv/sglang-release/bin/python -m pytest -m integratio
 
 The test fixture alone sets `ORBITKV_TEST_FAULTS` for its private process. Do not
 ship `test-hooks` binaries. Run the [hybrid recovery gates](hybrid-recovery.md#reproducible-gates)
-with normal builds as well. The H20 container verifies functional SSD I/O on its
-mounted filesystem; it does not measure physical NVMe or RDMA behavior.
+with normal builds as well. A container file test cannot establish physical NVMe or RDMA behavior.
 
-The cuFile cases additionally requires `--ssd-backend cufile` and a writable
+The cuFile cases additionally require `--ssd-backend cufile` and a writable
 `--basetemp` on a cuFile-compatible mount. Use the environment settings in
 [GPU storage recovery](gds.md) and record whether compatibility mode was enabled.
 Without this option, the ordinary fault gate skips the cuFile-only cases.
@@ -193,3 +90,120 @@ of the evidence directory.
 Multi-rank serving, long-running injected-fault traffic, hardware hangs and remote
 failover have separate qualification gates. Logical framework page-generation
 evidence remains separate from payload-allocation IDs and process/session fencing.
+
+## Shared-cache gates
+
+Use matching immutable models, engine releases, layouts, identities and
+independent Manager sockets/pools. Start with [P2P](p2p.md) and fresh namespaces;
+keep optional preparation disabled. Run byte checks before model comparisons.
+For forced peer SSD, evict the source DRAM only after saves complete, then require
+positive source SSD reads plus requester OrbiTE READ and GPU restore bytes.
+An HTTP success or an HBM-only hit is not peer recovery evidence.
+
+### Byte-exact GPU recovery
+
+Use `benches.distributed.shared_cache_bytes` before model comparisons on different GPU
+architectures. It checks four split-K/V layers, source pages spaced by one gap,
+permuted destination pages and untouched sentinel bytes. After an 8 MiB remote
+Restore, the driver evicts the original source's DRAM and requires the received
+replica to serve the same bytes back. Both directions require 8 MiB of OrbiTE
+READ and GPU Restore, source-release acknowledgements, matching SHA-256 digests
+and drained resource counters. This checks the full GPU-to-Manager-to-peer-to-GPU
+path; it does not claim direct GPU-to-GPU RDMA or model-output equivalence.
+
+Start fresh DRAM-only test Managers, with no unrelated traffic, using the
+P2P setup. Run one fixture worker beside each Manager from a checkout
+with a built or installed OrbitKV extension and the engine's Torch environment.
+The workers expose only fixed test operations; use the trusted test network:
+
+```bash
+# Host A; on host B use 10.0.0.2 and --instance byte-target.
+python -m benches.distributed.shared_cache_bytes worker \
+  --host 10.0.0.1 --port 8002 --manager-socket /tmp/orbitkv-50055.sock \
+  --instance byte-source --namespace byte-qualification
+
+# Controller; leave both workers running during this command.
+python -m benches.distributed.shared_cache_bytes run \
+  --source-url http://10.0.0.1:8002 --target-url http://10.0.0.2:8002 \
+  --source-manager http://10.0.0.1:9091 --target-manager http://10.0.0.2:9091 \
+  --output /var/tmp/orbitkv-bench/gpu-byte-roundtrip.json
+```
+
+The source DRAM cleanup is intentional. Stop both workers after the gate; use
+fresh test Managers and a matching namespace on both workers for each rerun.
+
+### Model requests
+
+Create `prompts.json` containing fresh token-ID arrays of at least 128 tokens,
+tokenized with the deployed model's tokenizer. Prefer distinct first pages and
+several prompt lengths. Each prompt is first computed by the source, then sent
+to a consumer that has never seen it.
+
+```bash
+python -m benches.distributed.shared_cache \
+  --engine vllm --model /path/to/immutable-model \
+  --source-url http://10.0.0.1:8000 --target-url http://10.0.0.2:8000 \
+  --source-manager http://10.0.0.1:9091 --target-manager http://10.0.0.2:9091 \
+  --prompts /path/to/prompts.json --deployment two-host-tcp \
+  --output /var/tmp/orbitkv-bench/shared-cache-vllm.json
+```
+
+Use `--engine sglang` for its native serving endpoint. The driver requires only
+the benchmark HTTP dependencies, not an installed engine or CUDA runtime.
+
+The source must expose new bytes. `POST /cache/sync` waits for already submitted
+saves and returns an `inventory_fence`; the driver sends it to the consumer's
+bounded `/cache/metadata/await` endpoint with the exact scope digest. Each
+consumer request must increase both OrbiTE READ and GPU
+restore bytes, match the cold source output, and drain query, source-transfer
+and I/O reservations, including requester completion records awaiting a source
+acknowledgement. A response without these counters does not pass as a
+remote hit. This gate proves recovery, not throughput superiority.
+
+### Restart and ownership
+
+The repository's model-serving test starts etcd, two Managers and two replicas
+on one GPU. It checks ordinary sharing, a complete index rebuild after restarting
+the consumer, and a clean recomputation after the source restarts without its payload.
+The gate requires each explicitly restarted Manager to exit successfully within
+10 seconds without the cleanup helper's forced-kill fallback. It then observes
+old membership deletion and verifies an increased epoch and changed incarnation
+before testing the new process. This exercises inventory-stream shutdown as well
+as restart fencing. A crash can leave its old registration until lease expiry.
+It runs separately in the pinned vLLM and SGLang environments:
+
+```bash
+cd python
+ETCD_BIN=/path/to/etcd \
+ORBITKV_CACHE_MANAGER_BINARY=/path/to/orbitkv-cache-manager \
+  ../.venv/vllm-release/bin/python -m pytest -m e2e \
+  tests/e2e/test_shared_cache.py -k vllm --model /workspace/models/qwen3-8b
+```
+
+Repeat with `../.venv/sglang-release/bin/python` and `-k sglang`. The fixture uses
+the installed OrbitKV wheel and explicit eager mode. It resolves input paths
+before starting child processes in a private temporary directory. Its common vLLM launcher
+sets the official `--shutdown-timeout 30`; the consumed shutdown validator
+requires native drain/teardown messages and rejects abort or force-kill logs.
+Service-leader exit zero alone cannot pass this check. Preserve SGLang's native
+child exit statuses and CUDA IPC warnings separately; healthy output and final
+GPU zero do not establish physical lifetime or fault reclamation.
+
+Build the Manager before starting these processes. Raw logs belong in external artifact directories or CI
+artifacts; retain only the final summary and reproduction commands in a PR.
+
+Rust tests separately verify stale owner/residency rejection, source budget
+exhaustion, retained source allocations after timeout, cancellation during a
+blocking transfer, bounded retry of lost release replies, lost authorization
+replies after pinning, close-before-authorize races, stale slot generations and
+idle-window eviction. Connection recovery verifies that an old requester
+completion cannot release a new runtime’s hold. These tests cannot prove
+transport revocation after a permanently lost requester. Such source pins remain
+charged until safe release or coordinated Manager teardown. Real partitions,
+multi-rank replicas and metadata HA remain separate gates; historical results do not qualify the current OrbiTE path.
+
+
+Current required gates must not treat absent prerequisites or unexpected skips
+as success. M1 completes real-engine conformance; M2 adds persistent SSD crash
+recovery. The [historical shared-cache record](https://github.com/OrbitInfra/OrbitKV/blob/4a36b11c680b9e82f05a663da5cb38c0dc694a9b/docs/shared-cache-qualification.md)
+retains earlier native/TENT revisions, forced-SSD recipes and failed controls.

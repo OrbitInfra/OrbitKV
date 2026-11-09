@@ -136,7 +136,7 @@ close shares its deadline with that drain; server I/O shutdown alone is not
 proof that a global-executor callback ended. Readiness is published after all
 native worker initialization.
 Keep CPU host-registration/C ABI test-shim controls separate from real CUDA
-registration and installed hardware gates; see S3 and `docs/transport.md`.
+registration and installed hardware gates; see `docs/transport.md`.
 
 For a normal Manager stop, require SIGTERM to fence membership before gRPC waits
 for inventory streams, then drain lifecycle ownership and revoke the member lease.

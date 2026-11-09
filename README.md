@@ -113,10 +113,10 @@ only native GPU cache. [Manager options](docs/server.md) explain the example bud
 | Supported engines and models | [Support matrix](docs/compatibility.md), [model recipes](docs/models.md) |
 | Configuration | [Manager](docs/server.md), [engine adapters](docs/adapters.md) |
 | Storage tiers | [DRAM retention](docs/cache-policies.md), [SSD/io_uring and GDS](docs/gds.md), [formats and compression](docs/storage-formats.md) |
-| Distributed KV cache | [P2P deployment](docs/p2p.md), [peer control](docs/peer-control.md) |
+| Distributed KV cache | [P2P deployment](docs/p2p.md), [peer control](docs/distributed-cache.md#application-and-transport-boundary) |
 | Disaggregated prefill | [Native P/D composition](docs/pd.md) |
 | Production | [Deployment](docs/deployment.md), [observability](docs/metrics.md), [fault behavior](docs/fault-qualification.md), [releases](docs/releases.md) |
-| Benchmarks | [Historical performance](docs/performance.md), [methodology and evidence](docs/benchmark-evidence.md) |
+| Benchmarks | [Methodology and evidence](docs/performance.md) |
 | Developer guide | [Architecture](docs/architecture.md), [contributing](docs/contributing.md), [completion plan](docs/completion-plan.md) |
 
 ## Supported engines and models
@@ -131,7 +131,6 @@ measurements retain their original revisions and do not establish current suppor
 ## Updates
 
 - **2026-11-07:** [OrbiTE becomes the sole transfer engine](https://github.com/OrbitInfra/OrbitKV/pull/326); hardware re-qualification remains open.
-- **2026-11-07:** [Hybrid cache design published](https://github.com/OrbitInfra/OrbitKV/pull/328); experiments are [unexecuted](docs/hybrid-cache-design.md).
 
 ## Contributing
 

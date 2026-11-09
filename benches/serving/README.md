@@ -28,7 +28,7 @@ and output validation in each selected engine environment.
 
 Choose an explicit empty directory with `--output /var/tmp/orbitkv-bench/<name>`.
 The harness rejects output inside this checkout, including symlinks back into it.
-See [benchmark evidence](../../docs/benchmark-evidence.md) for historical archives,
+See [benchmark evidence](../../docs/performance.md#evidence-and-instrumentation) for historical archives,
 hashes, retention and CI artifact handling. The
 harness owns the engine and the OrbitKV/LMCache process; do not start other GPU
 workloads during measurement. Use `--installed-artifact` for release comparisons:
@@ -50,7 +50,7 @@ sequence, and dependencies. Supported model scope is dense Qwen3 in BF16, TP=1.
 `native` measures resident engine HBM caching with no host cache. `cpu` uses
 vLLM's OffloadingConnector or SGLang's HiCache and is the equal-host-budget
 reference for OrbitKV and LMCache. Report the HBM reference separately from
-external restore work. The [serving comparison method](../../docs/benchmark-evidence.md#serving-comparisons)
+external restore work. The [serving comparison method](../../docs/performance.md#evidence-and-instrumentation)
 defines correctness, capacity, repetitions and the separate distributed controls.
 FlexKV compatibility failures observed on these releases are documented in the
 [measurement report](../../docs/performance.md); accepting a backend
@@ -149,7 +149,7 @@ Automatic queued warming is experimental and disabled by default. For comparison
 request-correlated `cache_timeline` JSON in both service logs. Keep tracing equal
 between controls. Hints exceeding a quarter of the query budget are skipped;
 choose and report the budget explicitly. See [the lifecycle and current
-limits](../../docs/queued-warming.md). Streaming samples also retain the engine's
+limits](../../docs/request-preparation.md#queued-warming). Streaming samples also retain the engine's
 request ID for correlating measured traffic with the logs.
 `timeline.jsonl` extracts only measured requests; `timeline-summary.json` reports
 stage coverage and preparation/restore/queue intervals. Durations use one
@@ -158,10 +158,10 @@ of clocks on different hosts. Missing restore/completion intervals have
 `count: 0` and null quantiles. `completion_coverage` counts linked restore batches,
 observed worker/notification events and client restore intervals;
 missing stages are not counted as zero latency.
-The [initial Qwen3-8B pressure controls](../../docs/queued-warming.md#initial-pressure-controls)
+The [initial Qwen3-8B pressure controls](https://github.com/OrbitInfra/OrbitKV/blob/4a36b11c680b9e82f05a663da5cb38c0dc694a9b/docs/queued-warming.md#initial-pressure-controls)
 increased SSD bytes per request without a throughput gain. These results also
 retain a native HBM control for SGLang's prepared-reference output differences.
-The [page-use/reclamation controls](../../docs/queued-warming.md#page-use-and-reclamation-controls)
+The [page-use/reclamation controls](https://github.com/OrbitInfra/OrbitKV/blob/4a36b11c680b9e82f05a663da5cb38c0dc694a9b/docs/queued-warming.md#page-use-and-reclamation-controls)
 retain complete starting/ending counters and show why warming stays opt-in:
 vLLM admits few hints, while SGLang releases most prepared pages unused.
 Reports also retain warmup prepared/restored/unused byte deltas, completed

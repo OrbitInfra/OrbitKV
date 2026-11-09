@@ -7,7 +7,7 @@ compute. The native OrbitKV io_uring/cuFile fallback and
 for the contracts, bounds and exact GPU gate commands.
 
 GPU staging and native GDS are implemented but unqualified.
-Historical measurements below apply to their original native SSD implementation.
+[Historical native SSD measurements](https://github.com/OrbitInfra/OrbitKV/blob/4a36b11c680b9e82f05a663da5cb38c0dc694a9b/docs/gds.md) apply only to that implementation.
 CPU file bytes and ownership controls cannot qualify CUDA or GDS.
 
 ## Selection and capacity
@@ -85,121 +85,6 @@ first-write/overwrite behavior and drain results. Compare with engine io_uring
 using equal layouts and cache policy before claiming a performance advantage.
 GPU, RDMA and GDS profiles remain unqualified without that installed evidence.
 
-## Historical review against LMCache
-
-Reviewed on 2026-09-24 against LMCache **v0.5.5**, commit
-`05a013b29da78cf2321b9b46ec5039dde2fb0bb0`. Its
-[legacy GDS backend documentation](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/docs/source/kv_cache/storage_backends/gds.rst)
-marks in-process mode deprecated and recommends MP mode. The MP implementation
-is the relevant reference for the Manager architecture.
-
-LMCache MP also registers GPU staging; GDS does not imply direct I/O into every
-engine page. Its
-[GDS context](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/gpu_connector/gds_context.py)
-keeps file/buffer registrations, splits transfers at registered-region boundaries,
-and retains asynchronous submissions behind per-stream GPU events. Its
-[cuFile binding](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/gpu_connector/_cufile_async.py)
-uses `cuFileStreamRegister`, `cuFileReadAsync` and `cuFileWriteAsync`.
-
-| Concern | LMCache MP reference | OrbitKV at the historical review |
-| --- | --- | --- |
-| GPU registration | Reusable staging, registered in regions of at most 16 MiB | Two reusable registered 4 MiB slots per instance/device |
-| File allocation | Preallocates its slab with `posix_fallocate` | Native `fallocate` reserves all GPU-storage shards before admission; allocation errors fail startup and release partial reservations |
-| Submission/completion | Stream-ordered asynchronous I/O; event-scoped submission lifetime | Rust stream-ordered asynchronous I/O with stable arguments/results, completion byte checks and retained leases |
-| Batching | GPU context provides four chunk slots | Two slots, at most one write; adjacent ranges merge by file across source leases without reading unrequested aligned gaps |
-| Tier policy | GDS L1 replaces pinned-DRAM L1 in that configuration | Complete-group GPU writeback also creates a DRAM copy; Publish waits for SSD completion |
-
-The four-slot geometry comes from LMCache's
-[CUDA cache context](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/platform/cuda/cache_context.py);
-its [MP configuration](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/docs/source/mp/configuration.rst)
-describes the L1 medium switch. Neither its slot count nor OrbitKV's 8 MiB size
-establishes an optimum for another model or storage device.
-
-This comparison records the removed implementation. Current engine-file contracts
-are above; [the completion plan](completion-plan.md) owns hardware qualification
-and future placement decisions. The [original evaluation requirements](https://github.com/OrbitInfra/OrbitKV/blob/1f30895a0501670cabe16e64eeb5688e05a2aa54/docs/gds.md#historical-review-against-lmcache)
-remain available without forming a second queue.
-
-## Historical native SSD qualification
-
-The following commands and results describe the removed native SSD implementation
-and remain as evidence references. Current engine-file gates are linked above;
-compatibility-mode runs below do not apply to the native-only engine GDS profile.
-
-The development serving gates use **cuFile 1.16.1 from CUDA 13.1**. Their Torch
-2.13/cu130 environments preload cuFile 1.15.1.6, which fails to register this
-overlay mount even in compatibility mode. The commands below explicitly preload
-the verified library. Qualify the library and mount together on another host;
-do not infer native support from a successful compatibility run.
-
-Both serving gates accept `--ssd-backend cufile` and require positive cuFile
-reads after writes drain, DRAM eviction and an engine restart, plus positive
-cuFile write bytes:
-
-```bash
-cd python
-ORBITKV_CACHE_MANAGER_BINARY=../target/release/orbitkv-cache-manager-py \
-LD_PRELOAD=/usr/local/cuda/lib64/libcufile.so.0 \
-CUFILE_ALLOW_COMPAT_MODE=true CUFILE_FORCE_COMPAT_MODE=true \
-../.venv/vllm-release/bin/python -m pytest -m e2e \
-  tests/e2e/test_vllm_e2e_correctness.py --model /workspace/models/qwen3-8b \
-  --vllm-cache-tier ssd --ssd-backend cufile \
-  --max-model-len 4096 --orbitkv-pool-size 1gb \
-  --basetemp=/var/tmp/orbitkv-bench/cufile-vllm
-
-ORBITKV_CACHE_MANAGER_BINARY=../target/release/orbitkv-cache-manager-py \
-LD_PRELOAD=/usr/local/cuda/lib64/libcufile.so.0 \
-CUFILE_ALLOW_COMPAT_MODE=true CUFILE_FORCE_COMPAT_MODE=true \
-../.venv/sglang-release/bin/python -m pytest -m e2e \
-  tests/e2e/test_sglang_direct_e2e.py -k ssd --model /workspace/models/qwen3-8b \
-  --ssd-backend cufile \
-  --basetemp=/var/tmp/orbitkv-bench/cufile-sglang
-```
-
-Use a separate `--basetemp` for each run and run GPU gates sequentially. Change
-both cuFile environment values to `false` for native-path qualification.
-
-## Recorded functional qualification
-
-Final checks on 2026-09-24 used one H20, cuFile 1.16.1, vLLM 0.29.0 and
-SGLang 0.5.20. Explicit cuFile runs **forced CPU compatibility mode** on this
-container's overlay mount. Baseline `auto` runs selected io_uring after cuFile
-file registration failed. These results establish
-correctness, not native GDS throughput.
-
-| Gate | Final result |
-| --- | --- |
-| Rust GPU layouts, encoded payloads, checkpoints, pinning, failure recovery and auto fallback | 8 passed |
-| Manager process faults, concurrent GPU I/O, encoded storage and cancellation ownership | 51 passed |
-| vLLM / Qwen3-8B / SSD | 6 passed; 1 recurrent-only check skipped, with both explicit `cufile` and default `auto` |
-| SGLang / Qwen3-8B / SSD | Passed with both explicit `cufile` and default `auto` |
-| vLLM / Qwen3.8-27B-FP8 / SSD | 7 passed |
-| SGLang / Qwen3.8-27B-FP8 / SSD | Passed |
-
-The final Manager gate covers SSD reads during a held write completion,
-GPU write admission saturation with host fallback, cancellation/unregister
-with both read slots occupied, held host-copy completion, corrupted encoded
-objects, GPU/CPU SIMD FP8 conversion against Torch, and ANS/TurboQuant recovery
-after DRAM eviction and re-registration. Each checks actual GPU bytes and final
-resource release. The exact-storage serving results are retained from the
-[GDS baseline](https://github.com/OrbitInfra/OrbitKV/pull/176).
-
-The serving results above use exact storage. GPU codec capacity and model-quality
-qualification are recorded separately in [storage formats](storage-formats.md#qualification).
-
-Both models' explicit cuFile checks require cuFile writes and new reads after
-DRAM eviction and engine restart. Default-auto checks require new SSD reads
-through the selected backend after the same eviction and restart sequence.
-Qwen3.8 also exercises full-attention and GDN
-conv/recurrent state in the same request. Reproduce it with the
-[Qwen3.8 engine settings](https://github.com/OrbitInfra/OrbitKV/blob/251f463d8997eff783871ab2820da83a13a97196/docs/models.md#qwen38-on-h20) and `--ssd-backend cufile`.
-
-The Manager gate verifies four adjacent 64 KiB pages restore with one 256 KiB
-cuFile read. Splitting them across two files requires two reads; selecting only
-alternating pages reads 128 KiB in two operations. It checks actual GPU bytes,
-physical file allocation, per-operation metrics and cancellation ownership.
-These are transfer-shape and correctness results, not native throughput claims.
-
 ## Bare-metal acceptance script
 
 [`benches.storage.gds`](../benches/storage/gds.py) runs the native qualification sequence. It
@@ -260,8 +145,8 @@ functional passes do not satisfy it.
 
 - `orbitkv_ssd_cufile_read_bytes_total` / `orbitkv_ssd_cufile_write_bytes_total`:
   physical bytes, including alignment.
-- `orbitkv_ssd_cufile_read_seconds` / `orbitkv_ssd_cufile_write_seconds`: submission-to-completion latency, including GPU gather/scatter and polling; excludes time waiting for a slot and is not pure device I/O time.
-- `orbitkv_ssd_cufile_inflight_batches`: slots occupied through I/O and scatter completion; at most two per active instance/device.
+- `orbitkv_ssd_cufile_read_seconds` / `orbitkv_ssd_cufile_write_seconds`: submission-to-completion latency, including engine staging and polling; excludes admission waiting and is not pure device I/O time.
+- `orbitkv_ssd_cufile_inflight_batches`: file receipts held through engine completion; at most two per active instance/device.
 - `orbitkv_ssd_gpu_write_fallbacks_total`: write jobs sent through host publication when eight GPU writes are already admitted.
 - `orbitkv_ssd_cufile_read_failures_total` / `orbitkv_ssd_cufile_write_failures_total`: failed or short I/O.
 - `orbitkv_ssd_backend_fallbacks_total`: transitions from automatic cuFile admission to io_uring.

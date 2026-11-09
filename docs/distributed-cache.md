@@ -109,6 +109,31 @@ remote DRAM/SSD → OrbiTE READ → destination GPU (or DRAM for cache-tier fill
 RDMA component test does not imply that this route directly exports live engine
 HBM or qualifies GPU-direct operation.
 
+## Application and transport boundary
+
+| Operation | Implemented path |
+| --- | --- |
+| Block discovery | Complete local global index; no foreground network query |
+| Inventory publication | Bounded Manager inventory streams |
+| Index synchronization | Covered inventory snapshots and deltas |
+| Membership/incarnations | Background etcd registration, lease renewal and Watch |
+| Source grants/completion | Bounded batched OrbitKV gRPC |
+| Remote payload | OrbiTE READ under source grants |
+| P/D payload | Inference engine native transport |
+
+Admission, incarnation/generation fences, idempotent completion and retry
+ownership belong to OrbitKV. OrbiTE owns registered-memory transfer and native
+completion. SEND completion, receiver ACK and drained payload READ are distinct
+events. A metadata lease or dead requester cannot prove old READs have drained.
+
+Keep one active READ and at most one authorization lookahead. Submitted work
+owns its source guard and destination buffers until native drain. A bounded
+completion owner retries release until acknowledged. Index replacement must
+preserve these implemented limits and ownership.
+
+Live P/D uses each inference engine's native transport; OrbiTE handles Manager
+sharing. See [P/D composition](pd.md). The custom router is removed.
+
 ## Transfer lifetime and resource control
 
 Query admission owns byte credits and destination reservations. Source grants
@@ -120,24 +145,15 @@ bounded retention is observable and cannot be described as completed reclamation
 
 Keep replica discovery in Catalog, source authority in existing peer/storage
 owners, and payload work in the transfer owner. Cost selection and global
-retention remain in their existing [planning owners](state-planning.md).
+retention remain in their existing [planning owners](architecture.md#planning-and-cost-observations).
 Native engine P/D has an independent transport and destination ownership.
 
-## Qualification and historical protocols
+## Limits and validation
 
-The [completion plan](completion-plan.md#s2--metadata-reliability-and-measured-capacity)
-records the accepted engineering scope, unchanged isolation FAIL and sixteen-owner
-UNQUALIFIED verdict. Three-host etcd acceptance is process-only; controlled peer
-restart is not full cache HA or an independent fault domain.
-
-The old per-block etcd Watch/coalescing path is retired. Current inventory
-coalescing does not put per-block writes back into etcd. Migration, quota,
-journal-overflow, membership, scope and shutdown controls remain in current
-Rust/Python integration tests. The reusable metadata benchmark is documented in
-[cluster benchmarks](../benches/cluster/README.md).
-
-Detailed historical protocols, measurements, failed controls and external
-artifact locations are preserved in the
-[immutable distributed report](https://github.com/OrbitInfra/OrbitKV/blob/dc52461078bb22910ba6c783ecf0d9213599b10b/docs/distributed-cache.md).
-The [completion plan](completion-plan.md#s2--metadata-reliability-and-measured-capacity)
-owns remaining qualification; the historical report is not another work queue.
+Current CPU controls cover migration, quota, journal overflow, membership, scope
+and shutdown; see [cluster benchmarks](../benches/cluster/README.md) and
+[fault gates](fault-qualification.md#shared-cache-gates). Missing coverage blocks
+remote admission without blocking local cache operation. The supported inventory
+scope remains four owners. Historical DRAM/SSD isolation is **FAIL** and sixteen
+owners remain **UNQUALIFIED**; process-only etcd controls are not independent
+failure-domain or cache-HA evidence. See [qualification limits](performance.md#qualification-limits).

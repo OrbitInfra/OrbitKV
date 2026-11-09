@@ -13,7 +13,7 @@ not permission to enable every combination in a released engine. Recurrent/conv
 model recipes and earlier hybrid serving results are historical. A valid
 attention prefix alone is insufficient to restore a model that also reads
 recurrent, convolution or auxiliary state. See the
-[released interface audit](engine-release-audit.md).
+[released interface audit](adapters.md#remaining-internal-hooks).
 
 ## Rules and runtime ownership
 
@@ -151,25 +151,14 @@ null destinations outside the required window. Window pages can retire while
 their request is still executing. Their save jobs pin GPU blocks independently
 of request lifetime and release them only after every worker reports completion.
 
-## Scope and production-cache lessons
+## Scope
 
-Compilation here turns declared semantic requirements into deterministic page
-demand for a known range. It removes duplicate adapter arithmetic and bounds
-payload reads by the selected recovery boundary. No latency or throughput improvement has
-been measured for this increment. General model-graph analysis, numerical proofs,
-future-token prediction, retention policy and physical planning remain outside its scope.
-A required range grants neither a lease nor permission to reclaim state, and
-does not enable automatic hybrid warming.
-
-The [pinned production-cache source review](queued-warming.md#reference-implementations-and-policy-order)
-informs this work. OrbitKV applies the usable-boundary lesson to demand that
-includes every required component. LMCache's request reader locks and Dynamo's
-session holders illustrate consumer ownership; existing OrbitKV leases retain
-pages through GPU completion. HiCache's stopping policies inform
-[bounded preparation](request-preparation.md): stop new reads, drain submitted
-work and return only completed legal boundaries. Automatic hybrid preparation
-remains open. These are established cache lessons,
-not a novelty or performance claim.
+Compilation turns adapter-declared recovery rules into deterministic page demand
+for a known range. It validates every required component at the selected boundary;
+it does not infer model semantics or supply missing auxiliary state. A required
+range grants neither a lease nor permission to reclaim bytes. Automatic hybrid
+warming is not enabled. [Preparation](request-preparation.md) stops new reads on
+cancellation while submitted work drains under its existing owners.
 
 ## SGLang deployment and limits
 

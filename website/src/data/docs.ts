@@ -22,8 +22,7 @@ export const docGroups = [
     items: [
       { slug: "server", title: "Manager configuration" },
       { slug: "adapters", title: "Engine adapters: configuration & contracts" },
-      { slug: "request-preparation", title: "Request preparation" },
-      { slug: "queued-warming", title: "Queued-request warming" },
+      { slug: "request-preparation", title: "Request preparation & warming" },
     ],
   },
   {
@@ -40,9 +39,7 @@ export const docGroups = [
     description: "Share compatible replicas through OrbiTE and authoritative grants.",
     items: [
       { slug: "p2p", title: "P2P deployment" },
-      { slug: "peer-control", title: "Peer control & source grants" },
-      { slug: "distributed-cache", title: "Distributed global index" },
-      { slug: "distributed-design", title: "Inventory & recovery design" },
+      { slug: "distributed-cache", title: "Discovery & source grants" },
     ],
   },
   {
@@ -57,7 +54,6 @@ export const docGroups = [
       { slug: "deployment", title: "Deployment requirements & recipes" },
       { slug: "metrics", title: "Metrics & observability" },
       { slug: "fault-qualification", title: "Fault behavior & qualification" },
-      { slug: "shared-cache-qualification", title: "Shared-cache qualification" },
       { slug: "releases", title: "Release artifacts & installation gates" },
     ],
   },
@@ -65,11 +61,7 @@ export const docGroups = [
     title: "Benchmarks",
     description: "Read historical results with their limits and reproduce matched measurements.",
     items: [
-      { slug: "performance", title: "Performance & historical results" },
-      { slug: "benchmark-evidence", title: "Methodology & evidence" },
-      { slug: "kernel-optimization", title: "CUDA kernel measurements" },
-      { slug: "ssd-performance", title: "SSD recovery methodology" },
-      { slug: "distributed-comparison", title: "Distributed cache comparisons" },
+      { slug: "performance", title: "Methodology & evidence" },
     ],
   },
   {
@@ -80,12 +72,8 @@ export const docGroups = [
       { slug: "transport", title: "Transport & completion" },
       { slug: "engine-local-restore", title: "Engine-local restore" },
       { slug: "state-identity", title: "State identity" },
-      { slug: "state-planning", title: "Demand & transfer planning" },
-      { slug: "engine-release-audit", title: "Released interface audit" },
       { slug: "vllm-request-state-machine", title: "vLLM request lifecycle" },
       { slug: "hybrid-recovery", title: "Hybrid recovery contracts" },
-      { slug: "hybrid-cache-design", title: "Hybrid cache design (unexecuted)" },
-      { slug: "design-v2", title: "Design v2: state compiler & agent cache (proposal)" },
       { slug: "contributing", title: "Contributing" },
       { slug: "completion-plan", title: "Completion plan" },
     ],

@@ -72,7 +72,7 @@ permissions; no silent regular-page fallback is promised.
 Keep optional warming, retention and cost-selection experiments off until the
 matching workload qualifies. `ORBITKV_COST_SELECTION=1` requires observations
 and only selects comparable candidates; it is not a general cross-tier optimizer.
-See [planning contracts](state-planning.md#policies-by-deployment-mode).
+See [planning contracts](architecture.md#planning-and-cost-observations).
 
 ## Share one Manager
 
@@ -128,8 +128,8 @@ moves DRAM or source-side SSD-staged bytes. No per-key etcd lookup is required.
 Historical two-H20 RDMA recovery and controlled restarts do not establish
 current OrbiTE qualification. Cache HA, permanent requester loss, independent
 etcd failure domains and broad parallelism need distinct fault evidence. Three etcd processes do not establish
-three independent power/network domains. See [shared-cache qualification](shared-cache-qualification.md)
-and the [metadata gates](completion-plan.md#s2--metadata-reliability-and-measured-capacity).
+three independent power/network domains. See [shared-cache qualification](fault-qualification.md#shared-cache-gates)
+and the [metadata gates](completion-plan.md#milestones).
 
 ## P/D: Mooncake or NIXL
 

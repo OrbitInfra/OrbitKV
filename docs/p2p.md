@@ -105,7 +105,7 @@ not a payload replay or a reset of the read deadline. Lost authorization replies
 use the known-ticket cleanup owner. Source release ACKs may outlive active READs;
 64 per source incarnation / 1,024 globally bound completion records.
 See [peer Restore](transport.md#peer-restore-into-gpu) and
-[peer control](peer-control.md) for retained owners and retirement.
+[peer control](distributed-cache.md#application-and-transport-boundary) for retained owners and retirement.
 
 ## Failure and configuration behavior
 
@@ -181,7 +181,7 @@ and completion measurements.
 
 ## Validation
 
-For independent engine replicas, see [shared-cache qualification](shared-cache-qualification.md).
+For independent engine replicas, see [shared-cache qualification](fault-qualification.md#shared-cache-gates).
 The source reservation budget is `--transfer-budget` (default: half the pinned
 pool), with a maximum of 1024 active or overdue sessions. It charges entire pinned
 allocations, deduplicated within each session, so a small slice cannot retain an
@@ -230,11 +230,7 @@ PYTHONPATH=. ../.venv/vllm-release/bin/python -m pytest -m integration \
 ## OrbiTE TCP development profile
 
 The default `orbite` build uses the same inventory, source grants and
-generation-scoped release RPCs. `--transfer-transport tcp` is an explicit hint.
-The [transport profile](transport.md#experimental-orbite-peer-tcp-profile) records
-its bounded requests and gates. Installed serving remains unqualified at the new pin.
-
-An `orbite-rdma` build can explicitly select the single-rail
-[OrbiTE RDMA staging candidate](transport.md#experimental-orbite-peer-rdma-profile).
-It preserves grant epochs and generation completion; a host component pass does
-not qualify the complete CUDA 13 Manager/serving profile.
+generation-scoped release RPCs. `--transfer-transport tcp` is an explicit hint;
+`orbite-rdma` enables the RDMA hint and configured devices. See the current
+[engine contract](transport.md#transfer-engine) and [peer departure rules](transport.md#peer-departure).
+CPU/TCP controls are CI evidence. GPU, RDMA and installed serving remain unqualified.

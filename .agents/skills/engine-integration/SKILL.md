@@ -5,7 +5,7 @@ description: Implement or review OrbitKV vLLM/SGLang connectors, hybrid recovery
 
 # Released-engine integration
 
-Read `AGENTS.md`, `docs/adapters.md` and S5 in `docs/completion-plan.md` from the
+Read `AGENTS.md`, `docs/adapters.md` and M1 in `docs/completion-plan.md` from the
 Git root. The completion plan is the only work queue. Use its current support
 status; do not treat an upgrade target or upstream feature as qualified behavior.
 
@@ -130,7 +130,7 @@ unknown preparation so its released wrapper cannot drop tree locks. Rust owns
 batch merge and submission; only never-submitted cancellation may release a
 prepared owner. Preserve the same installed CPU/GPU/engine qualification gates.
 
-Audit every remaining Hook against `docs/engine-release-audit.md`. SGLang 0.5.22
+Audit every remaining Hook against `docs/adapters.md`. SGLang 0.5.22
 captures graphs before the tree-cache factory; preserve pre-capture events until
 a safe released callback exists. Its linker lookup lacks pending tickets, so
 pending-query admission remains a guarded internal Hook; queue preparation is
@@ -158,7 +158,7 @@ Its deterministic fixture bytes do not dump model-computed KV. Evaluate the
 consumed model separately with `benches.transfer.kernel_pairs`: freeze fresh independent
 process pairs, exact input/output and installed artifacts, real shutdown receipts
 and the original benefit/regression guards. Keep profiler clocks separate.
-The accepted serial profile and its lifetime limits are recorded in S5.5;
+Historical serial profiles and lifetime limits are linked from `docs/performance.md`;
 neither fixture success nor pair medians select a general backend default.
 
 For upstream delivery, separate baseline registration/configuration/tests/docs,

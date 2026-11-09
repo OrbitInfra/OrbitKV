@@ -12,7 +12,7 @@ P/D does not require the same transport.
 
 Native P/D plus OrbitKV is a **qualification candidate**, not a generally
 supported deployment. The current status and remaining fault gates are in
-[the completion plan](completion-plan.md#s54--official-native-pd-and-independent-cache).
+[the completion plan](completion-plan.md#milestones).
 Ordinary cache serving does not require NIXL, a P/D router, or an engine patch.
 
 | Responsibility | vLLM | SGLang |
@@ -111,11 +111,11 @@ on timeout without a full drain acknowledgement. Therefore in-flight transfer
 cancellation, peer loss and delayed-ACK page reuse remain unsupported by this
 candidate; enabling the flag does not qualify them. The model test cancels an
 already-running decode request and does not claim to exercise this DMA boundary.
-See the [release audit](engine-release-audit.md#upstream-work-and-independent-limits).
+See the [release audit](adapters.md#remaining-internal-hooks).
 
 The ordinary cache has two version-coupled internal Hooks, plus optional queue
 preparation. Their purpose and removal conditions are documented in
-[the adapter audit](engine-release-audit.md#remaining-internal-hooks).
+[the adapter audit](adapters.md#remaining-internal-hooks).
 They are not P/D lifecycle Hooks. Native P/D cancellation/retraction correctness
 must be established against the release itself; the earlier fork's drain/ACK
 fixes are not assumed present.
@@ -144,25 +144,6 @@ fault gates. A successful output test alone does not qualify those failures.
 No cross-host HA, GPUDirect RDMA, heterogeneous rank/GPU, hybrid P/D or native
 GDS claim follows from same-host dense-model evidence.
 
-The 2026-10-07 A100 same-GPU model gates locally pass the vLLM save-only-D
-profile and SGLang native Mooncake/TCP profile, including engine restart and
-cancellation after decode starts; SGLang also observes retraction. Cache uses
-`direct`; installed files remain unchanged. The SGLang test selects BF16 and
-starts P before D readiness to avoid overlapping startup memory profiles.
-Raw passing/failed attempts, runtime pins and hashes remain at
-`/root/orbitkv-artifacts/s5-native-pd-20261007/` and its A100 mirror
-`/workspace/orbitkv-s5-native-pd-20261007/`. Earlier qualification evidence stays
-at `/root/orbitkv-artifacts/release-native-pd-20261001/`. Independent acceptance,
-in-flight transfer faults, other connector orders and broader deployment cells
-remain open; these results do not change the candidate status.
-
-## Preserved upstream contribution material
-
-The former fork profile and its exact patches remain in
-[the immutable pre-retirement guide](https://github.com/OrbitInfra/OrbitKV/blob/9aee895ebe0ae2fb97279a477f00452b32025480/docs/pd.md).
-Its original code/tests remain at that commit; its frozen results remain under
-`/root/orbitkv-artifacts/native-pd-cutover-20260930/HANDOFF.md` and
-`/root/orbitkv-artifacts/native-pd-tent-20260930/HANDOFF.md`.
-These are upstream contribution/reproduction material, not supported runtime
-installation instructions or evidence that official releases passed the same gates.
-The [retired protocol history](https://github.com/OrbitInfra/OrbitKV/blob/0e3668ebca0f7d80a049b834390098de7eaf963b/docs/pd-mooncake-push.md) preserves earlier evidence.
+Historical model/fault attempts, original revisions and unaccepted scopes are
+preserved in the [frozen P/D record](https://github.com/OrbitInfra/OrbitKV/blob/4a36b11c680b9e82f05a663da5cb38c0dc694a9b/docs/pd.md#qualification-and-reproduction).
+They do not qualify current OrbiTE cache composition.
