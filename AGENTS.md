@@ -173,7 +173,7 @@ cargo test
 ```
 
 CUDA 13 and OrbiTE are the default features. Use a CUDA 13 toolkit for native
-builds; CUDA 12 is unsupported. The single Python distribution is `orbitkv-llm`.
+builds; CUDA 12 is unsupported. The single Python distribution is `orbitkv`.
 
 Run Cargo builds/checks/Clippy and runtime tests sequentially in one checkout.
 
@@ -236,6 +236,7 @@ release; there is no standalone directory binary. See `docs/p2p.md`.
 
 ### General
 
+- Before 0.1.0, breaking API changes are allowed: use the cleanest shape without compatibility shims, aliases or parallel entry points, and record each break in `docs/releases.md`.
 - Use English in comments
 - Use `.venv` for the Python virtual environment
 - Keep changes scoped and aligned with the existing module structure

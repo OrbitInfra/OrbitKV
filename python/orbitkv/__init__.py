@@ -32,7 +32,7 @@ _NATIVE_EXPORTS = {
 
 _native = None
 try:
-    __version__ = version("orbitkv-llm")
+    __version__ = version("orbitkv")
 except PackageNotFoundError:
     __version__ = "0.0.0"
 

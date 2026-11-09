@@ -53,7 +53,7 @@ def main() -> None:
     distributions = [
         distribution
         for distribution in importlib.metadata.distributions(path=[str(args.installation)])
-        if distribution.metadata["Name"] == "orbitkv-llm"
+        if distribution.metadata["Name"] == "orbitkv"
     ]
     if len(distributions) != 1:
         raise RuntimeError("The installation must contain exactly one OrbitKV distribution")
