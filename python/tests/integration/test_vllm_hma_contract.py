@@ -251,18 +251,116 @@ def test_allocated_boundary_must_equal_the_atomic_hit(hybrid):
 
 
 @pytest.mark.parametrize("allocation", [HMA], indirect=True)
-def test_save_job_admission_is_bounded(hybrid):
-    from orbitkv.vllm.metadata import SaveIntent
+@pytest.mark.parametrize("free_jobs", [0, 1], ids=["full-cap", "mid-step-cap"])
+def test_save_job_budget_drops_only_unadmitted_intents(hybrid, monkeypatch, free_jobs):
+    from functools import partial
+
+    from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
+    from vllm import SamplingParams
+    from vllm.v1.core.sched.output import (
+        CachedRequestData,
+        NewRequestData,
+        SchedulerOutput,
+    )
+    from vllm.v1.outputs import KVConnectorOutput
+    from vllm.v1.request import Request
+
+    from orbitkv.vllm.metadata import OrbitKVWorkerMetadata, SaveIntent
+    from orbitkv.vllm.metrics import OrbitKVConnectorStats, OrbitKVPromMetrics
 
     h = hybrid
+    pool = h.manager.block_pool
+
+    def output_for(*names):
+        scheduled = []
+        for name in names:
+            request = Request(name, [1] * 16, SamplingParams(max_tokens=16), None)
+            request.block_hashes = [name.encode().ljust(32, b"\0")]
+            blocks = h.manager.allocate_slots(request, 16)
+            assert blocks is not None
+            h.adapter.update_state_after_alloc(request, blocks, 0)
+            scheduled.append(NewRequestData.from_request(request, blocks.get_block_ids()))
+        return SchedulerOutput(
+            scheduled_new_reqs=scheduled,
+            scheduled_cached_reqs=CachedRequestData.make_empty(),
+            num_scheduled_tokens=dict.fromkeys(names, 16),
+            total_num_scheduled_tokens=len(names) * 16,
+            scheduled_spec_decode_tokens={},
+            scheduled_encoder_inputs={},
+            finished_req_ids=set(),
+            free_encoder_mm_hashes=[],
+        )
+
+    output = output_for("first", "over-cap")
     intent = SaveIntent(((h.block.block_id,), ()), (b"hash",))
-    capacity = len(h.manager.block_pool.blocks) - 1
-    jobs = [h.adapter._pin_save_intent(intent) for _ in range(capacity)]
-    with pytest.raises(RuntimeError, match="GPU block budget"):
-        h.adapter._pin_save_intent(intent)
-    assert h.block.ref_cnt == capacity + 1
-    h.adapter._release_boundary_jobs(dict.fromkeys(jobs, 1))
+    capacity = len(pool.blocks) - 1
+    for _ in range(capacity - free_jobs):
+        assert h.adapter._pin_save_intent(intent) is not None
+    previous = dict(h.adapter._pinned_boundary_jobs)
+    refs = [block.ref_cnt for block in pool.blocks]
+    next_job = h.adapter._next_boundary_job_id
+    touch = MagicMock(wraps=pool.touch)
+    monkeypatch.setattr(pool, "touch", touch)
+    warning = MagicMock()
+    monkeypatch.setattr("orbitkv.vllm.scheduler.logger.warning", warning)
+
+    metadata = h.adapter.build_connector_meta(output)
+    assert not metadata.save_intents and not h.adapter._pending_saves
+    assert list(metadata.boundary_save_intents) == list(range(next_job, next_job + free_jobs))
+    assert h.adapter._next_boundary_job_id == next_job + free_jobs
+    assert all(h.adapter._pinned_boundary_jobs[job] == pins for job, pins in previous.items())
+    admitted = set()
+    if free_jobs:
+        admitted = {block for group in output.scheduled_new_reqs[0].block_ids for block in group}
+        assert metadata.boundary_save_intents[next_job].block_ids_by_group == tuple(
+            map(tuple, output.scheduled_new_reqs[0].block_ids)
+        )
+    assert [block.ref_cnt for block in pool.blocks] == [
+        ref + (index in admitted) for index, ref in enumerate(refs)
+    ]
+    assert touch.call_count == free_jobs
+    warning.assert_called_once()
+    assert "job_budget" in warning.call_args.args[0]
+
+    stats = h.adapter.get_stats()
+    assert stats is not None and not stats.is_empty()
+    total = OrbitKVConnectorStats().aggregate(stats)
+    assert total.reduce()["save_dropped_job_budget"] == 2 - free_jobs
+    assert h.adapter.get_stats() is None  # A second poll cannot count the drops twice.
+    registry = CollectorRegistry()
+    metrics = OrbitKVPromMetrics(
+        SimpleNamespace(kv_transfer_config=None),
+        {kind: partial(kind, registry=registry) for kind in (Counter, Gauge, Histogram)},
+        ["engine"],
+        {0: ["test"]},
+    )
+    metrics.observe(total.clone_and_reset().data)
+    assert total.is_empty()
+    assert (
+        registry.get_sample_value(
+            "vllm:orbitkv_save_dropped_total", {"engine": "test", "reason": "job_budget"}
+        )
+        == 2 - free_jobs
+    )
+
+    # Only worker drain receipts release the cap, not a dropped Save or stats poll.
+    assert len(h.adapter._pinned_boundary_jobs) == capacity
+    h.adapter.update_connector_output(
+        KVConnectorOutput(
+            kv_connector_worker_meta=OrbitKVWorkerMetadata(
+                dict.fromkeys(h.adapter._pinned_boundary_jobs, 1)
+            )
+        )
+    )
+    assert not h.adapter._pinned_boundary_jobs
     assert h.block.ref_cnt == 1
+    metadata = h.adapter.build_connector_meta(output_for("after-drain"))
+    assert len(metadata.boundary_save_intents) == 1
+    assert h.adapter.get_stats() is None
+    h.adapter._release_boundary_jobs(dict.fromkeys(metadata.boundary_save_intents, 1))
+    h.adapter.bind_gpu_block_pool(None)
+    with pytest.raises(RuntimeError, match="GPU block pool must be bound"):
+        h.adapter._pin_save_intent(intent)
 
 
 @pytest.mark.parametrize(

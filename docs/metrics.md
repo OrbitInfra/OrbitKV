@@ -23,6 +23,11 @@ non-submission releases charges; reply loss/unknown drain retains them. Logical
 bytes include overlapping requested ranges and are not unique payload residency.
 `orbitkv_save_admission_rejections_total` counts pre-worker budget refusals.
 
+The vLLM exporter reports `vllm:orbitkv_save_dropped_total{reason="job_budget"}`
+when the hybrid GPU Save-job cap drops an optional write before pinning pages.
+The scheduler step continues; existing jobs retain their pins until drain.
+The associated warning is limited to once per minute.
+
 `orbitkv_peer_retained_source_pools_total` and
 `orbitkv_peer_retained_source_pool_bytes_total` accumulate source pools retained
 after failed drain, including partial registration. Full backing remains charged

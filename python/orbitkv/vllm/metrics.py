@@ -98,6 +98,8 @@ class OrbitKVConnectorStats(KVConnectorStats):
     Metrics collected:
     - Scheduler-side (gauge):
         - pending_prefetches: number of requests waiting for SSD prefetch
+    - Scheduler-side (counter):
+        - save_dropped_job_budget: optional saves dropped at the GPU job cap
     - Scheduler-side (histogram):
         - prefetch_duration: prefetch operation duration in milliseconds
         - prefetch_blocks: number of blocks per prefetch operation
@@ -121,6 +123,7 @@ class OrbitKVConnectorStats(KVConnectorStats):
         self.data: dict = {
             # Scheduler-side gauges
             "pending_prefetches": 0,
+            "save_dropped_job_budget": 0,
             # Scheduler-side prefetch histogram data
             "prefetch_duration": [],  # list[float] in ms
             "prefetch_blocks": [],  # list[int]
@@ -163,6 +166,7 @@ class OrbitKVConnectorStats(KVConnectorStats):
 
         # Counter-like metrics: sum them
         for key in [
+            "save_dropped_job_budget",
             "load_success_count",
             "load_failure_count",
             "save_success_count",
@@ -192,6 +196,7 @@ class OrbitKVConnectorStats(KVConnectorStats):
         result: dict[str, int | float | str] = {
             "pending_prefetches": self.data.get("pending_prefetches", 0),
             "pending_save_requests": self.data.get("pending_save_requests", 0),
+            "save_dropped_job_budget": self.data.get("save_dropped_job_budget", 0),
         }
 
         # Prefetch stats (scheduler-side)
@@ -234,6 +239,7 @@ class OrbitKVConnectorStats(KVConnectorStats):
     def is_empty(self) -> bool:
         return (
             self.data.get("pending_prefetches", 0) == 0
+            and self.data.get("save_dropped_job_budget", 0) == 0
             and self.data.get("pending_save_requests", 0) == 0
             and len(self.data.get("prefetch_duration", [])) == 0
             and len(self.data.get("load_duration", [])) == 0
@@ -273,6 +279,16 @@ class OrbitKVPromMetrics(KVConnectorPromMetrics):
         )
         self.gauge_pending_prefetches = create_metric_per_engine(
             gauge_pending_prefetches, self.per_engine_labelvalues
+        )
+
+        counter_save_dropped = self._counter_cls(
+            name="vllm:orbitkv_save_dropped_total",
+            documentation="Number of optional KV saves dropped before admission.",
+            labelnames=[*labelnames, "reason"],
+        )
+        self.counter_save_dropped_job_budget = create_metric_per_engine(
+            counter_save_dropped,
+            {idx: [*values, "job_budget"] for idx, values in per_engine_labelvalues.items()},
         )
 
         # Gauge metrics for worker-side state
@@ -392,6 +408,9 @@ class OrbitKVPromMetrics(KVConnectorPromMetrics):
         # Gauge metrics (scheduler-side)
         self.gauge_pending_prefetches[engine_idx].set(
             transfer_stats_data.get("pending_prefetches", 0)
+        )
+        self.counter_save_dropped_job_budget[engine_idx].inc(
+            transfer_stats_data.get("save_dropped_job_budget", 0)
         )
 
         # Gauge metrics (worker-side)
