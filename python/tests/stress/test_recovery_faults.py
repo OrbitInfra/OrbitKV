@@ -230,7 +230,11 @@ def test_concurrent_model_recovery_faults(engine, request, tmp_path, monkeypatch
         manager_stack.close()
         start_manager()
         start_engine()
+        before = metrics(launch.manager_url)
         assert infer(prompt)["text"] == baseline["text"]
+        assert metrics(launch.manager_url).get("orbitkv_load_bytes_total", 0) == before.get(
+            "orbitkv_load_bytes_total", 0
+        ), "a cold Manager must not return its previous incarnation's state as a hit"
         report.append({"case": "manager_restart", "drained": drain()})
     finally:
         for pause in barriers.glob("*.pause"):

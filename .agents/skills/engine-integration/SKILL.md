@@ -145,6 +145,13 @@ Timeout, process disappearance and metadata expiry cannot prove physical drain.
 
 ## Verify the claimed profile
 
+Use the explicit registry in `python/tests/support/engine_registry.py`. Required
+runs set `ORBITKV_REQUIRE_ENGINE_TESTS=1` with `--engine` and `--engine-evidence`;
+missing prerequisites, empty selections and unreviewed skips fail. The CPU wheel
+leg replays selected adapter contracts against real installed engine classes;
+controlled replies/events are not physical drain or model-serving evidence.
+See `docs/fault-qualification.md` for the case matrix and installed queue.
+
 Run the relevant gates from `AGENTS.md`: source-only tests for local contracts;
 actual engine/GPU tests for changed callbacks, preemption, page reuse and graph
 ordering. Include cold/partial/full hits, native HBM, restart and failure controls.

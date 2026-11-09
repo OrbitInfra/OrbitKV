@@ -368,10 +368,13 @@ def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(
 
 @pytest.mark.parametrize("outcome", ["SUCCESS", "ABORT"])
 def test_native_cache_finish_cancels_aborted_query_without_scheduler_hook(linker, outcome):
+    import queue
+
     from sglang.srt.mem_cache.base_prefix_cache import (
         CacheRequestHandle,
         CacheRequestOutcome,
     )
+    from sglang.srt.mem_cache.unified_cache.unified_cache_linker import _PendingOffload
     from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
 
     from orbitkv.sglang.recovery import RecoveryLinkerWrapper
@@ -382,7 +385,10 @@ def test_native_cache_finish_cancels_aborted_query_without_scheduler_hook(linker
     wrapper.hit_markers = {"queued": object()}
     wrapper.inflight_load_rids = []
     wrapper.private_load_indices = {}
+    wrapper.pending_offloads = [_PendingOffload(7, object(), [7])]
+    linker._completed_offloads = queue.Queue()
     cache.linker = wrapper
+    cache.dec_lock_ref, cache.tree_core = MagicMock(), MagicMock()
     cache.prefetch_loaded_tokens_by_reqid = {}
     cache.prefetch_loaded_storage_start_by_reqid = {}
     cache.storage_prefetch_retries = MagicMock()
@@ -398,6 +404,18 @@ def test_native_cache_finish_cancels_aborted_query_without_scheduler_hook(linker
     else:
         linker.client.cancel_query.assert_not_called()
         assert "queued" in linker._origins
+    # Request finish (including ABORT) is not the Save's physical receipt.
+    assert wrapper.num_completed_offloads() == 0
+    assert len(wrapper.pending_offloads) == 1
+    cache.dec_lock_ref.assert_not_called()
+    linker.client.unregister_context.assert_not_called()
+    # A terminal partial-save failure permits source reuse, but cannot publish
+    # the node as an externally recoverable boundary.
+    linker._completed_offloads.put(False)
+    wrapper.commit_completed_offloads(wrapper.take_completed_offloads(1))
+    cache.tree_core.finish_external_linker_offload.assert_called_once_with([7], 7, False)
+    assert cache.dec_lock_ref.call_args.args[0] == 7
+    assert not wrapper.pending_offloads
 
 
 @pytest.fixture
@@ -863,7 +881,9 @@ def test_hybrid_match_requires_rank_common_materialized_state(
     linker, monkeypatch, consensus, local, peer, ready, expired
 ):
     import torch
-    from sglang.srt.mem_cache.unified_cache.unified_cache_linker import UnifiedCacheLinkerWrapper
+    from sglang.srt.mem_cache.unified_cache.unified_cache_linker import (
+        UnifiedCacheLinkerWrapper,
+    )
 
     from orbitkv.sglang.recovery import RecoveryLinkerWrapper
 

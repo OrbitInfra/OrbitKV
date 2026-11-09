@@ -4,6 +4,61 @@
 > The gates below describe required behavior, not new passing results.
 > CPU/TCP and io_uring controls remain CI evidence.
 
+## Engine conformance matrix
+
+The [test registry](../python/tests/support/engine_registry.py) assigns every
+engine suite (and mixed-suite exceptions) an evidence level, independently of its
+filename: **source**, **installed-CPU** or **installed-GPU**. Source contracts may
+use stubs; installed profiles verify the exact official release, non-editable
+package origins and real native extension before collection, and reject engine
+module stubs before and after each test. CPU controls use released classes with
+narrow CUDA-event/Manager-reply seams; they never claim to have drained DMA.
+
+`ORBITKV_REQUIRE_ENGINE_TESTS=1`, `--engine=vllm|sglang` and
+`--engine-evidence=source|installed-cpu|installed-gpu` select a required run.
+Missing prerequisites, an empty selection, collection skips and unreviewed test
+skips fail. No skip exceptions are approved in the registry. A future exception
+needs an exact node/profile, reason and review link, not merely a `skip` marker.
+Negative controls remove prerequisites, force skips, empty the selection and
+inject a stub in the last test. JSON/JUnit inventory and package freezes go to
+external/CI artifacts. A passing inventory is not hardware qualification.
+
+The following controls run against **installed vLLM 0.33.0 / SGLang 0.5.23**
+without a model, GPU or Manager. Test names below refer to these maintained suites:
+VQ = [pending/identity](../python/tests/integration/test_engine_fault_contracts.py),
+VL = [vLLM load](../python/tests/unit/test_connector_fault_tolerance.py),
+VS = [vLLM save](../python/tests/unit/test_connector_save_lifecycle.py),
+VA = [vLLM admission](../python/tests/unit/test_restore_admission.py),
+SA = [SGLang admission/save](../python/tests/integration/test_sglang_admission.py),
+SL = [SGLang load](../python/tests/integration/test_sglang_direct_transfer.py).
+The selected V* unit assertions are explicitly replayed with installed classes;
+their ordinary source-only run remains a different evidence level.
+
+| Case, both engines | Logical outcome and owners until a physical receipt | CPU-run control / installed-GPU queue |
+| --- | --- | --- |
+| Abort with pending query | Stop demand; never invent a hit or release a lease not received. Manager read reservations and shared readers outlive submitted I/O. | VQ pending abort; SA native `finish(ABORT)`. GPU: SSD query-cancel barrier and model streaming cancellation. |
+| Abort with load in flight | Fail/abort consumption; retain destination pages, tensor registration, source leases/grants and completion handles until drain. | VL submission/enqueue/drain failures; SL cancellation at each boundary. GPU: restore timeout/lost-notification and partial-enqueue barriers. |
+| Abort with save in flight | Request finish cannot finish Save. Hold source pages, producer registration and save tasks/tree locks. | VA pending-save abort; SA native finish with pending offload; VS/SA unknown-wait controls. GPU: Publish-stall controls; real scheduler abort under Save remains unqualified. |
+| Queue-wait timeout / cancellation | Recompute or cancel demand; timeout is not a release receipt. Never-submitted work may cancel without DMA. | VQ miss/cancel replies; SA real admission timeout/expiry; SL pre-forward cancel. GPU: SSD relative-deadline/best-effort controls. VQ injects the native deadline result, not a real Manager timer. |
+| Preemption with Save in flight | Defer source reuse until every Save drains; unknown completion retains all holds. | VS preemption waits for all batches; SA retained FIFO offloads block reset/close. SGLang retraction scheduling is not exercised by that CPU control. GPU: actual pressure/preemption remains unqualified. |
+| Free and reuse a page slot | A stale generation must never identify new bytes. Payload registration IDs are not allocator-slot generations. | VS reuse-before-last-batch negative control and SA captured-registration rejection. GPU: registration replacement/partial enqueue bytes only; full allocator-generation proof is blocked on the issues below. |
+| Engine worker restart, live Manager | New registration may reuse compatible cached state; the dead worker's unfinished grants remain held/quarantined until a real receipt. | CPU tests cover unknown completion, not worker death. GPU-written: model engine restart and native session-watcher/engine-death controls. |
+| Manager restart | Reject old handles/leases; cold miss is valid until M2, stale hit is not. Reconnect with a new incarnation. Process disappearance alone does not revoke submitted GPU work. | VQ/SA connection-loss retention, not process evidence. GPU-written: old-handle/lease rejection, explicit old-key miss and model cold-restart byte counter. |
+| Same token hash, different identity | Revision, layout, computation, representation and scope must produce different namespaces; no cross-identity hit. | VQ for both engines plus content-fingerprint controls. GPU model/layout variants remain unrun. |
+| Partial load: layer / Full-SWA pool fails | No complete-boundary hit or successful completion; keep all submitted destinations and source leases through terminal drain. | VL known/unknown failure; SL layer-ready versus drain; VQ Full/SWA partial failure. GPU: partitioned-restore and partial-enqueue byte controls. |
+| Partial save | Unfinished state stays invisible. Release only terminal batches, never an unknown head or a later FIFO completion in its place. | VS multi-batch and unknown-wait controls; SA FIFO and terminal failed-publication consumer. GPU: Publish/write fault controls; partial serving remains unqualified. |
+
+Every row's physical execution is **unrun and unqualified** for these pins.
+The CPU seams cannot verify remote grant reclamation, CUDA ordering or worker
+termination. The native GPU fixtures and model-serving gates are complementary;
+neither alone proves the whole matrix. Allocator-generation issues
+[vLLM #62810](https://github.com/vllm-project/vllm/issues/62810) and
+[SGLang #45493](https://github.com/sgl-project/sglang/issues/45493) are open as
+checked November 9, 2026. Do not add a private runner, shadow tree, synthetic
+generation or a passing placeholder for that missing proof.
+
+## Native fault boundaries
+
 The deterministic process gate runs a real Cache Manager, retained engine
 tensors, independently imported shared payload arenas, CUDA IPC physical routes,
 and SSD reads. It uses a separate `test-hooks` build; default release
@@ -37,7 +92,68 @@ against claim in separate mappings, and prove a delayed request cannot execute
 after cancellation. They distinguish UDS closure from actual peer process exit
 and cover shared-record capacity, generation reuse, and duplicate claim rejection.
 
-## Reproduce
+## Required installed-GPU runs
+
+Use separate non-editable release environments with matching complete OrbitKV
+wheels. Build a matching test-hooks Manager for the fault commands below. Make
+a tests/benches-only projection so source `orbitkv` cannot shadow the wheel:
+
+```bash
+# From the repository root; choose a fresh external directory for each run.
+HARNESS=/var/tmp/orbitkv-conformance/harness
+mkdir -p "$HARNESS/python"
+cp -R python/tests "$HARNESS/python/"
+cp python/pyproject.toml "$HARNESS/python/"
+cp -R benches "$HARNESS/"
+# Set ENGINE, PYTHON, MODEL and MANAGER to this run's installed artifacts.
+ENGINE=vllm
+PYTHON=/absolute/path/to/vllm-release/bin/python
+MODEL=/absolute/path/to/immutable-model
+MANAGER=/absolute/path/to/test-hooks-manager
+export ORBITKV_REQUIRE_ENGINE_TESTS=1 ORBITKV_FAULT_TESTS=1
+export ORBITKV_CACHE_MANAGER_BINARY="$MANAGER" VLLM_USE_V2_MODEL_RUNNER=0
+cd "$HARNESS/python"
+
+# Real-model faults: repeat with ENGINE=sglang and its interpreter, dense Qwen3.
+"$PYTHON" -m pytest -m '' --engine="$ENGINE" --engine-evidence=installed-gpu \
+  tests/stress/test_recovery_faults.py --model "$MODEL" \
+  --basetemp=/var/tmp/orbitkv-conformance/model-faults \
+  --engine-report=/var/tmp/orbitkv-conformance/model-faults.json
+
+# Native physical boundaries, in each engine environment; no model execution.
+"$PYTHON" -m pytest -m '' --engine="$ENGINE" --engine-evidence=installed-gpu \
+  tests/integration/test_cache_faults.py --model "$MODEL" \
+  -k 'ssd_cancellation_revisions or stopping_submits or restore_timeout_and_lost_notification or publish_stall or manager_restart or local_partial_enqueue or partitioned_restore or engine_death_after_claim' \
+  --basetemp=/var/tmp/orbitkv-conformance/native-faults \
+  --engine-report=/var/tmp/orbitkv-conformance/native-faults.json
+```
+
+Select only the admitted profile; explicit selection is not permission to ignore
+a skip inside it. Run these normal-build recovery gates separately, with the
+same required flag, `--model`, external report and evidence-directory arguments:
+
+```bash
+# vLLM V1 / one attention group; HMA is explicitly outside this profile.
+"$PYTHON" -m pytest -m '' --engine=vllm --engine-evidence=installed-gpu \
+  tests/e2e/test_vllm_e2e_correctness.py -k 'not same_process_hma' \
+  --model "$MODEL" --max-model-len 4096 --vllm-cache-tier ssd
+
+# SGLang: run the model gate for an admitted Full model and a Full/SWA model.
+# Use the SGLang interpreter and each model's immutable path.
+"$PYTHON" -m pytest -m '' --engine=sglang --engine-evidence=installed-gpu \
+  tests/e2e/test_sglang_direct_e2e.py --model "$MODEL"
+"$PYTHON" -m pytest -m '' --engine=sglang --engine-evidence=installed-gpu \
+  tests/integration/test_sglang_recovery.py -k window --model "$MODEL"
+```
+
+Repeat vLLM recovery with `--vllm-cache-tier dram`; SGLang parameterizes DRAM/SSD.
+Its `window` control uses declared Full/SWA pool fixtures, not model-generated
+KV. Recurrent fixtures, V2, multi-group/HMA, Graph and P/D are separate profiles.
+The harness checks CUDA, local model config/weights and an executable Manager;
+missing test-hooks barriers fail by deadline rather than being skipped. These
+commands do not manufacture the still-missing allocator-generation receipt.
+
+### Build the native fault runtime
 
 Build the matching OrbiTE artifacts before starting any native/GPU tests.
 These commands target the current path; historical results do not qualify it.

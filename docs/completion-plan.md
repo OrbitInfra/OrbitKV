@@ -5,7 +5,7 @@ into both upstream mainlines.** OrbiTE is the only byte mover. Engines own
 scheduling, HBM and native P/D; OrbitKV owns cache identity, storage, discovery,
 grants and resource lifetime. This is the only execution queue.
 
-The current delivery is **M1 PR 1: official engine pins and consumed APIs**.
+The current delivery is **M1 PR 2: real-engine conformance/fault harness**.
 Each coherent PR stops for review before dependent work starts. Research designs
 and simulator campaigns are removed from the maintained tree; Git history retains
 them and external artifacts are untouched. DeepInfer/OrbitInfer and an OrbiTE
@@ -115,10 +115,13 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 
 Reviewed in order, one PR at a time:
 
-1. **Pins and consumed APIs (this PR):** vLLM 0.33.0 / SGLang 0.5.23;
+1. **Pins and consumed APIs (reviewed, #337):** vLLM 0.33.0 / SGLang 0.5.23;
    keep V1/one attention group and Full/SWA, with CPU API-contract controls.
-2. **Real-engine conformance/fault harness:** make required prerequisites and
-   unexpected skips fail; distinguish source contracts from installed execution.
+2. **Real-engine conformance/fault harness (this PR):** explicit source,
+   installed-CPU and installed-GPU registry; required runs reject missing
+   prerequisites, empty selections, stubs and unreviewed skips. Run both released
+   boundaries in the Python 3.12 wheel leg. See the
+   [case matrix](fault-qualification.md#engine-conformance-matrix).
 3. **vLLM V2 runner:** consume the official lifecycle and prove page-reuse safety.
 4. **HMA multi-group/hybrid:** complete groups and atomic recovery through the
    official interface, with model/layout-specific rejection controls.
@@ -131,11 +134,27 @@ prerequisites or unexpected skips. Until M2, Manager restart may safely miss;
 it must never return stale state as a hit.
 
 **CPU now:** source-only adapter tests, state/recovery contracts, protocol faults,
-etcd inventory controls, CPU/TCP/file tests and CUDA-shim byte controls. Extend
-these against installed official engine classes where no GPU is required.
+etcd inventory controls, CPU/TCP/file tests and CUDA-shim byte controls. Installed
+0.33.0/0.5.23 controls additionally exercise official request, connector, linker
+and completion classes with controlled CUDA events and Manager replies. They
+prove adapter decisions, not physical drain, real process restart or page reuse.
 **Hardware later:** model outputs/restored bytes for every claimed runner/group/rank,
 allocator reuse, cancellation/preemption, Graph and native P/D composition.
 CPU mocks and shim passes cannot satisfy these gates.
+
+#### M1 installed verification queue
+
+All entries are **unrun and unqualified** on the current OrbiTE path. Exact
+commands and the distinction between fixture bytes and serving are in
+[fault qualification](fault-qualification.md#required-installed-gpu-runs).
+
+| Gate | Scope / acceptance |
+| --- | --- |
+| V1 single-group and SGLang Full/SWA recovery | Installed model outputs, restart hits, actual restored bytes and untouched destinations; DRAM and io_uring separately. |
+| Abort, timeout, cancellation, partial load/save | Native fault barriers plus released adapter controls; no early source/destination/registration/grant release. A normal model-output run alone cannot close these cases. |
+| Engine-worker / Manager restart | Live-Manager engine restart restores bytes; Manager restart starts cold until M2, rejects old handles/leases and never reports stale state as a hit. |
+| Preemption and allocator page reuse | Save holds and registration-replacement controls exist; allocator-slot generation proof remains blocked on vLLM #62810 / SGLang #45493 (open November 9, 2026). No private runner or parallel tree substitutes for the missing contract. |
+| Identity collision | Same-token model revision, layout, computation, representation and scope controls run on CPU; installed model/layout cases must also be tested on the admitted profile. |
 
 ### M2 — A complete node
 
