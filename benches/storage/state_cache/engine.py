@@ -472,6 +472,8 @@ class Simulation:
                 if not self.policy.declared_reuse:
                     continue  # Keep declared knowledge separate from predictor ablations.
                 indices = r.revealed[desc.index_source]
+            elif not self.policy.prefetch:
+                continue
             elif self.policy.oracle:
                 indices = r.selections[step][layer]
             elif self.policy.previous_step:

@@ -119,6 +119,20 @@ def test_predictors_reach_nonresident_pages_and_zero_overlap_wastes_traffic(poli
     assert m["stall_us"] >= demand["stall_us"]
 
 
+@pytest.mark.parametrize("policy", ["previous_step", "previous_layer"])
+def test_prefetch_ablation_disables_new_predictors(policy):
+    sets = tuple(tuple((step * 4 + layer,) for layer in range(4)) for step in range(3))
+    trace = pipeline(selections=sets, sources=(0, 1, 2, 3), pages=16)
+    caps = {"hbm": 300, "dram": 1 << 20, "ssd": 1 << 20}
+    costs = replace(COSTS, layer_compute_us=20, layer_indexer_us=1)
+    disabled = Simulation(trace, replace(POLICIES[policy], prefetch=False), caps, costs).run()
+    demand = Simulation(trace, POLICIES["paging"], caps, costs).run()
+    assert disabled["speculative_bytes"] == 0
+    assert {k: v for k, v in disabled.items() if k != "policy"} == {
+        k: v for k, v in demand.items() if k != "policy"
+    }
+
+
 @pytest.mark.parametrize("policy", ["paging", "reuse", "previous_step", "previous_layer"])
 def test_online_prefix_cannot_see_later_layer_selection(policy):
     snapshots = []
