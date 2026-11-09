@@ -220,13 +220,6 @@ def test_abort_sync_load_keeps_deferred_blocks_until_step_receipt(lifecycle):
     h = lifecycle
     h.scheduler.defer_block_free = True
     h.scheduler.sched_step_seq = h.request.last_sched_seq = 1
-    h.scheduler.finish_requests(["request"], RequestStatus.FINISHED_ABORTED)
-    h.scheduler._drain_deferred_frees()
-    assert h.block.ref_cnt == 1
-    with pytest.raises(ValueError, match="free blocks"):
-        h.manager.block_pool.get_new_blocks(1)
-    # V2 does not return its step output until post_forward waits for Restore.
-    # The GPU event/output path itself remains an installed-GPU gate.
     h.worker._restore = SimpleNamespace(
         handle=object(),
         started=0.0,
@@ -234,6 +227,13 @@ def test_abort_sync_load_keeps_deferred_blocks_until_step_receipt(lifecycle):
         request_ids=["request"],
         control_ids=(),
     )
+    h.scheduler.finish_requests(["request"], RequestStatus.FINISHED_ABORTED)
+    h.scheduler._drain_deferred_frees()
+    assert h.worker._restore is not None and h.block.ref_cnt == 1
+    with pytest.raises(ValueError, match="free blocks"):
+        h.manager.block_pool.get_new_blocks(1)
+    # V2 does not return its step output until post_forward waits for Restore.
+    # The GPU event/output path itself remains an installed-GPU gate.
     h.worker._client.wait_restore.side_effect = TimeoutError("no physical receipt")
     with pytest.raises(RuntimeError, match="pages remain held"):
         h.active.post_forward({"request"})
