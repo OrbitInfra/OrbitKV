@@ -389,6 +389,7 @@ def test_native_cache_finish_cancels_aborted_query_without_scheduler_hook(linker
     cache.buffer_pipeline = None
     cache.discard_storage_prefetch_accounting = MagicMock()
     cache.ongoing_prefetch = {}
+    cache._storage_prefetch_wait = {}
     cache.finish(CacheRequestHandle("queued", 0), CacheRequestOutcome[outcome])
     if outcome == "ABORT":
         linker.client.cancel_query.assert_called_once_with("admission", "queued", group_id=0)
@@ -781,6 +782,7 @@ def test_decode_only_promises_resident_pages_and_never_prepares_external_loads(
 def test_factory_selects_restore_owner_from_pinned_runtime_role(
     monkeypatch, mode, tp_size, cp_size, attn_size, consensus
 ):
+    from sglang.srt.mem_cache.cache_init_params import CacheInitParams
     from sglang.srt.mem_cache.unified_cache.components import ComponentType
 
     from orbitkv.sglang.plugin import create_cache
@@ -804,13 +806,13 @@ def test_factory_selects_restore_owner_from_pinned_runtime_role(
         "sglang.srt.mem_cache.unified_radix_cache.UnifiedRadixCache", lambda _: cache
     )
     linker = MagicMock()
-    monkeypatch.setattr("orbitkv.sglang.linker.OrbitKVLinker", lambda *args, **kwargs: linker)
-    params = SimpleNamespace(
-        is_eagle=False,
-        mtp_draft_device_pools=None,
-        component_registry_override=None,
+    linker_factory = MagicMock(return_value=linker)
+    monkeypatch.setattr("orbitkv.sglang.linker.OrbitKVLinker", linker_factory)
+    params = CacheInitParams(
+        disable=False,
         req_to_token_pool=SimpleNamespace(),
         token_to_kv_pool_allocator=MagicMock(),
+        page_size=64,
     )
     ctx = SimpleNamespace(
         disable_radix_cache=False,
@@ -833,6 +835,9 @@ def test_factory_selects_restore_owner_from_pinned_runtime_role(
     assert cache.linker.restore_from_store == (mode != "decode")
     assert cache.linker.cache_linker is linker
     assert cache.write_through_threshold == 1
+    linker_factory.assert_called_once_with(
+        ctx.server_args, params, forward_stream=ctx.tp_worker.model_runner.forward_stream
+    )
 
 
 @pytest.mark.parametrize(

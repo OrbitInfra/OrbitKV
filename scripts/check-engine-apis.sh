@@ -22,11 +22,7 @@ PY
 )"
   engine_env="$ROOT/.venv/engine-api-$engine"
   uv venv --python 3.12 "$engine_env"
-  torch_backend=cpu
-  # SGLang imports its CUDA-linked kernel library even for these CPU controls.
-  # Installing the matching runtime does not start a model or require a GPU.
-  if [[ "$engine" == sglang ]]; then torch_backend=cu130; fi
-  uv pip install --python "$engine_env/bin/python" --torch-backend "$torch_backend" \
+  uv pip install --python "$engine_env/bin/python" --torch-backend cpu \
     "$engine==$version" pytest requests
   uv pip install --python "$engine_env/bin/python" --no-deps "$WHEEL"
   uv pip freeze --python "$engine_env/bin/python" > "$RUN_DIR/$engine-freeze.txt"
@@ -37,7 +33,8 @@ PY
   fi
   (
     cd "$RUN_DIR"
-    env -u PYTHONPATH VLLM_TARGET_DEVICE=cpu VLLM_PLUGINS='' SGLANG_USE_CPU_ENGINE=1 \
+    # Exercise the GPU adapter's Python contracts, not SGLang's CPU serving backend.
+    env -u PYTHONPATH VLLM_TARGET_DEVICE=cpu VLLM_PLUGINS='' SGLANG_USE_CPU_ENGINE=0 \
       "$engine_env/bin/python" -m pytest --import-mode=importlib -m integration \
       "$test_file" --junitxml="$RUN_DIR/$engine.xml"
   )

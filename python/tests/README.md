@@ -60,8 +60,8 @@ This creates separate environments at the exact release pins, installs the built
 OrbitKV wheel and tests the real official connector/linker classes outside the
 source package. No engine modules are stubbed; events and native completion
 failures are controlled test seams. Missing packages fail rather than skip.
-The SGLang package needs CUDA-linked PyTorch libraries even for these CPU checks;
-no model, GPU or Manager is started. CI runs this with a Python 3.12 wheel in
+CPU PyTorch runs the Python callbacks without selecting SGLang's CPU serving
+backend; no model, GPU or Manager is started. CI runs this with a Python 3.12 wheel in
 addition to the existing Python 3.14 TCP/RDMA wheel legs. Freezes and JUnit reports
 are external artifacts. This is API/ownership evidence, not GPU qualification.
 
