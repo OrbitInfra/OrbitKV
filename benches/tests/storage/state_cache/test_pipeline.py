@@ -203,6 +203,9 @@ def test_field_driven_sources_alias_bytes_and_reject_unsupported_patterns():
         }
     )
     assert route.paging_layers((1,)) == ((0, 0, 0), (1, 0, 1), (2, 2, 2), (3, 2, 3))
+    routed = generate(route, SIZES, w).events[0].data
+    assert sum(n.kind == "indexer" for n in routed["nodes"]) == 16
+    assert len(routed["boundary"].roots) == 48  # 32 independent KV + 16 indexer pages.
     assert describe({"num_hidden_layers": 4}).paging_layers((1,)) == ()
     with pytest.raises(ValueError, match="config-declared"):
         generate(SCHEMA, SIZES, w)

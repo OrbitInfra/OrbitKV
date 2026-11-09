@@ -266,7 +266,11 @@ def generate(schema: Schema, sizes: Sizes, w=None, limits=None) -> Trace:
                         owner = f"doc{session // 2}" if shared else branch
                         if page >= w.pages or c.rule == "checkpoint":
                             owner = f"{branch}:q{turn}"
-                    source = sources.get(layer, (layer, layer))[1]
+                    index_source, source = sources.get(layer, (layer, layer))
+                    if c.kind == "indexer":
+                        # A selection consumer does not own another indexer K cache.
+                        # Reindexing sources may themselves share their KV/K owner.
+                        source = sources.get(index_source, (index_source, index_source))[1]
                     alias = source if c.kind in {"kv", "latent", "compressed", "indexer"} else layer
                     tag = f":l{alias}" if w.layered else ""
                     key = f"{owner}:c{ci}{tag}:p{page}"

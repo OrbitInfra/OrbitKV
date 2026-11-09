@@ -176,7 +176,9 @@ admission increments `prefetch_rejected`, without silently shortening a vector.
 Declared `index_source_layer_ids` and `kv_source_layer_ids` start contiguous
 groups; `indexer_types: shared` uses the preceding full indexer. No declaration
 means no reuse. Index consumers use exactly their source's revealed indices and
-pay no duplicate indexer compute. KV consumers alias their declared source owner.
+pay no duplicate indexer compute or independent indexer-cache charge. The indexer
+cache belongs to the KV/K owner of its indexing source. KV consumers alias their
+declared source owner.
 This follows the [CSA2 modes](https://arxiv.org/html/2609.19969v1#S2.SS3.SSS1);
 it does not infer tensor packing or new replay recipes. Known transfers are
 `declared_reuse_bytes`, separate from speculation. A shared-KV group may need no
