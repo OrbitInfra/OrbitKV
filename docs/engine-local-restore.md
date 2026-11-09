@@ -34,10 +34,10 @@ historical gates below do not carry over. See the [completion plan](completion-p
    permits the shared record to serve a new generation. Source reaping is off the
    successful consumer critical path.
 
-Owners live in [Core preparation](../crates/orbitkv-core/src/engine/restore.rs),
-[local execution](../crates/orbitkv-core/src/transfer/local.rs),
-[the native worker](../python/src/local_restore.rs) and
-[grant retirement](../crates/orbitkv-server/src/endpoint/restore.rs).
+Owners live in [Core preparation](https://github.com/OrbitInfra/OrbitKV/blob/main/crates/orbitkv-core/src/engine/restore.rs),
+[local execution](https://github.com/OrbitInfra/OrbitKV/blob/main/crates/orbitkv-core/src/transfer/local.rs),
+[the native worker](https://github.com/OrbitInfra/OrbitKV/blob/main/python/src/local_restore.rs) and
+[grant retirement](https://github.com/OrbitInfra/OrbitKV/blob/main/crates/orbitkv-server/src/endpoint/restore.rs).
 
 ## DMA and mapped-host copy kernels
 
@@ -88,7 +88,7 @@ allocation-directory lookup appears on the copy path.
 
 Local grants and Manager workers share 128 admitted restores per GPU. The local
 grant keeps its permit through retirement, including quarantine. Unregister cannot
-reset it. Geometry is resolved through the shared [layout owner](../crates/orbitkv-core/src/transfer/layout.rs).
+reset it. Geometry is resolved through the shared [layout owner](https://github.com/OrbitInfra/OrbitKV/blob/main/crates/orbitkv-core/src/transfer/layout.rs).
 Local `engine_local_restore` observations and Manager `cache_restore` have different
 start boundaries and cannot select against each other merely because targets match.
 

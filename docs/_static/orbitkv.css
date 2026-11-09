@@ -1,0 +1,45 @@
+/* OrbitKV's palette; navigation, typography and search use the Awesome theme. */
+:root {
+  --color-background: #f6f5f0;
+  --color-foreground: #202d26;
+  --color-muted-foreground: #60695f;
+  --color-border: #d7dcd2;
+  --color-accent: #e6eae2;
+  --color-primary: #203b30;
+  --color-primary-foreground: #ffffff;
+}
+.dark {
+  --color-background: #18241e;
+  --color-foreground: #f0f1e9;
+  --color-muted-foreground: #bec8bc;
+  --color-border: #405246;
+  --color-accent: #283d31;
+  --color-primary: #c5d9c5;
+  --color-primary-foreground: #18241e;
+}
+#content img.only-dark, .dark #content img.only-light { display: none; }
+.dark #content img.only-dark { display: block; }
+.orbitkv-hero { padding: 2rem 0; }
+.orbitkv-hero img { max-width: 100%; height: auto; margin: 0 0 1.5rem; }
+.orbitkv-hero h1 { margin: 0 0 1rem; }
+.orbitkv-hero p { max-width: 42rem; }
+.hero-links { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1.5rem; }
+.hero-links a {
+  padding: .6rem .9rem;
+  border: 1px solid var(--color-border);
+  border-radius: .35rem;
+  text-decoration: none;
+}
+.hero-links a.primary {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border-color: var(--color-primary);
+}
+.hero-links a:focus-visible { outline: 2px solid #ab4d29; outline-offset: 3px; }
+.architecture-figure img { width: 100%; height: auto; }
+.architecture-figure figcaption { color: var(--color-muted-foreground); font-size: .9rem; }
+/* Long flags and source paths must not push the page outside a phone viewport. */
+#content { min-width: 0; overflow-wrap: anywhere; }
+#content code.docutils, #content code.docutils .pre { white-space: normal; overflow-wrap: anywhere; }
+#content table { display: block; max-width: 100%; overflow-x: auto; }
+pre { overflow-wrap: normal; }

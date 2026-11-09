@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
     paths:
-      - "website/**"
       - "docs/**"
       - "README.md"
       - ".github/workflows/pages.yml"
@@ -29,27 +28,23 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-python@v5
         with:
-          node-version: "24.19.0"
-          cache: npm
-          cache-dependency-path: website/package-lock.json
-      - name: Install
-        working-directory: website
-        run: npm ci
-      - name: Check
-        working-directory: website
-        run: npm run check
-      - name: Build
-        working-directory: website
-        run: npm run build
-      - name: Validate published links
-        working-directory: website
-        run: npm test
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+      - name: Install pinned docs dependencies
+        run: pip install -r docs/requirements.txt
+      - name: Build strict documentation
+        run: sphinx-build -b dirhtml -n -W --keep-going docs "$RUNNER_TEMP/orbitkv-docs"
+      - name: Validate links, fragments and redirects
+        run: |
+          python docs/check_site.py "$RUNNER_TEMP/orbitkv-docs"
+          python -m unittest discover -s docs/tests
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: website/dist
+          path: ${{ runner.temp }}/orbitkv-docs
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4

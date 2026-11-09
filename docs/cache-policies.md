@@ -93,7 +93,7 @@ write-queue drops. The benchmark accepts both Manager flags and checks sampled
 protected bytes against the configured cap.
 
 The [metrics reference](metrics.md) includes protected bytes, promotions,
-demotions and SSD admission skips. The [benchmark guide](../benches/README.md)
+demotions and SSD admission skips. The [benchmark guide](https://github.com/OrbitInfra/OrbitKV/blob/main/benches/README.md)
 describes the serving harness; the [SSD capacity comparison](gds.md)
 provides the preceding allocation and queue controls.
 

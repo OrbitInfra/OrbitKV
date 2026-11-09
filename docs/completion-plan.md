@@ -5,9 +5,9 @@ into both upstream mainlines.** OrbiTE is the only byte mover. Engines own
 scheduling, HBM and native P/D; OrbitKV owns cache identity, storage, discovery,
 grants and resource lifetime. This is the only execution queue.
 
-The current delivery is documentation and scope cleanup. Next comes the README
-and docs-site alignment with [LMCache's structure](https://docs.lmcache.ai/),
-then M1. Each coherent PR stops for review before dependent work starts.
+The current delivery is the README and Sphinx docs-site alignment with
+[LMCache's structure](https://docs.lmcache.ai/). M1 starts after this PR is reviewed
+and merged. Each coherent PR stops for review before dependent work starts.
 Research designs, simulator campaigns and their roadmap are removed from the
 maintained tree; Git history retains them. External artifacts are untouched.
 DeepInfer/OrbitInfer and an OrbiTE NIXL plugin are outside this plan.
@@ -71,7 +71,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 | Latest vLLM, V2 runner, HMA multi-group/hybrid | **Partial:** 0.31.0 V1, one attention group; V2/recurrent/multi-group rejected. `SupportsHMA` inheritance is not serving support. [Adapter contract](adapters.md#vllm-callbacks-and-current-internal-dependencies). | L/F/M thin entries; released V lifecycle |
 | Latest SGLang | **Partial:** 0.5.22 Full/SWA linker; pre-capture and pending-admission hooks remain private. [Contract](adapters.md#sglang-linker-and-current-internal-dependencies). | Released linker and HiCache integrations above |
 | Async load | **Have:** pending queries, bounded admission and completion-owned destinations; installed faults remain unqualified. [Lifecycle](vllm-request-state-machine.md). | L/F/V asynchronous offload |
-| Layerwise load/save | **Partial:** eligible raw Restore has layer readiness; other routes may wait for whole completion. vLLM saves at step end; `save_kv_layer` does not submit. [Restore](engine-local-restore.md#layer-readiness-and-framework-consumption), [connector](../python/orbitkv/vllm/connector.py). | L layerwise transfer, V layer hooks |
+| Layerwise load/save | **Partial:** eligible raw Restore has layer readiness; other routes may wait for whole completion. vLLM saves at step end; `save_kv_layer` does not submit. [Restore](engine-local-restore.md#layer-readiness-and-framework-consumption), [connector](https://github.com/OrbitInfra/OrbitKV/blob/main/python/orbitkv/vllm/connector.py). | L layerwise transfer, V layer hooks |
 | Official P/D composition | **Partial:** NIXL/MultiConnector and SGLang native paths are candidates; full faults unqualified. [P/D](pd.md). | V MultiConnector, L/F native integration |
 | Dense and hybrid models | **Partial:** dense layouts and declared Prefix/Window/Checkpoint validation exist; complete SWA/MLA/recurrent recovery is not qualified. Unsupported layouts are rejected. [Models](models.md), [recovery](hybrid-recovery.md). | V hybrid offload, L recipes, SGLang components |
 | MLA TP deduplication | **Missing:** ordinary TP sharding is not replica deduplication. [TP boundary](adapters.md#tp-shards-and-host-boundary). | SGLang `HiCacheStorageConfig.is_storage_writer` selects MLA writers |
@@ -81,7 +81,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 | Capability | OrbitKV status and evidence | Precedent |
 | --- | --- | --- |
 | Host DRAM | **Have:** bounded pinned pools, replicas and leased restores. [Policies](cache-policies.md). | L/F/V host tiers, M memory objects |
-| SSD surviving Manager restart | **Missing:** SSD I/O exists, but [allocation](../crates/orbitkv-core/src/storage/ssd/files.rs) truncates files at startup; index/extent state is volatile. Engine restart reuse requires a live Manager. | L/F disk and V filesystem tiers; persistence needs a separate crash contract |
+| SSD surviving Manager restart | **Missing:** SSD I/O exists, but [allocation](https://github.com/OrbitInfra/OrbitKV/blob/main/crates/orbitkv-core/src/storage/ssd/files.rs) truncates files at startup; index/extent state is volatile. Engine restart reuse requires a live Manager. | L/F disk and V filesystem tiers; persistence needs a separate crash contract |
 | Peer DRAM/SSD cluster tier | **Partial:** inventory discovery, source-owned SSD preparation and OrbiTE reads exist; durable cluster recovery/node-loss qualification remain open. [Distributed cache](distributed-cache.md). | F distributed reuse, L P2P, M replicas |
 | Shared filesystem / 3FS mount | **Missing:** a local SSD path on a shared mount supplies no shared metadata, locking, GC or safe restart. | L filesystem/HF3FS, V secondary filesystem, F remote storage |
 
@@ -103,7 +103,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 | Capability | OrbitKV status and evidence | Precedent |
 | --- | --- | --- |
 | Full identity | **Have** for admitted layouts: immutable artifacts, computation, representation and recovery identity; unknown auxiliary state rejected. [Identity](state-identity.md). | L/F/V cache keys; no cross-engine byte-equivalence assumption |
-| Read-time checksums | **Partial:** encoded segments validate CRC on decode; raw replicas lack a uniform read-time integrity contract. [CPU validation](../crates/orbitkv-core/src/codec/mod.rs), [GPU decode](../crates/orbitkv-core/src/codec/gpu.rs). | Tier integrity is a requirement to verify, not inferred from advertised disk support |
+| Read-time checksums | **Partial:** encoded segments validate CRC on decode; raw replicas lack a uniform read-time integrity contract. [CPU validation](https://github.com/OrbitInfra/OrbitKV/blob/main/crates/orbitkv-core/src/codec/mod.rs), [GPU decode](https://github.com/OrbitInfra/OrbitKV/blob/main/crates/orbitkv-core/src/codec/gpu.rs). | Tier integrity is a requirement to verify, not inferred from advertised disk support |
 | Abort/preemption/restart safety | **Partial:** conservative ownership and CPU faults exist; current installed faults, allocation reuse and permanent loss unqualified. [Fault gates](fault-qualification.md). | Released engine lifecycle; comparator smoke tests do not prove ours |
 | Per-tier metrics / miss explanations | **Partial:** RAM/SSD/remote attribution and diagnostics; stable user-facing miss reasons and all-tier coverage incomplete. [Metrics](metrics.md). | L observability, F/V tier stats, M monitoring |
 | Configuration / deployment recipes | **Have** for current pins and scoped topologies; recipes are not qualification. [Quickstart](single-node.md), [deployment](deployment.md), [Manager](server.md). | L/F/V/M operating guides |

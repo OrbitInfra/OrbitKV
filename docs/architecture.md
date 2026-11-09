@@ -8,6 +8,7 @@ lifetime. Start with [compatibility](compatibility.md) and [deployment](deployme
 Architecture contracts are not completion claims; the [completion plan](completion-plan.md)
 is the only execution queue.
 
+(topology-title)=
 ## Process topology
 
 Run one independent Cache Manager per inference host. An engine adapter connects
@@ -28,7 +29,7 @@ scoped owner inventory streams install local candidate views with explicit cover
 Queries use those views rather than per-key etcd RPCs. Grants revalidate source
 incarnation, representation and allocation generation. See [distributed design](distributed-cache.md).
 
-![Local recovery, peer OrbiTE READ and native P/D ownership](../website/public/architecture.svg)
+![Local recovery, peer OrbiTE READ and native P/D ownership](_static/architecture-light.svg)
 
 ## API and crate boundaries
 

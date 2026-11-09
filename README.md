@@ -1,12 +1,16 @@
 <p align="center">
-  <img src="website/public/readme-banner.svg" alt="OrbitKV — Compile the lifetime of state" width="100%" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/logo-dark.svg" />
+    <img src="docs/_static/logo-light.svg" alt="OrbitKV" width="320" />
+  </picture>
 </p>
 
+<p align="center"><strong>A distributed KV cache for vLLM and SGLang</strong></p>
+
 <p align="center">
-  <a href="https://orbitinfra.github.io/OrbitKV/">Website</a> ·
-  <a href="https://orbitinfra.github.io/OrbitKV/docs/">Documentation</a> ·
-  <a href="docs/single-node.md">Quickstart</a> ·
-  <a href="docs/compatibility.md">Compatibility</a> ·
+  <a href="https://orbitinfra.github.io/OrbitKV/">Documentation</a> |
+  <a href="docs/single-node.md">Quickstart</a> |
+  <a href="docs/completion-plan.md">Plan</a> |
   <a href="docs/contributing.md">Contributing</a>
 </p>
 
@@ -15,6 +19,10 @@
   <a href="docs/releases.md"><img src="https://img.shields.io/badge/Python_package-v0.1.0%20%28unreleased%29-203b30" alt="Python package v0.1.0 — not yet published" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-203b30" alt="Apache 2.0 license" /></a>
 </p>
+
+## Updates
+
+- **2026-11-07:** [OrbiTE becomes the sole transfer engine](https://github.com/OrbitInfra/OrbitKV/pull/326); hardware re-qualification remains open.
 
 ## About
 
@@ -45,18 +53,10 @@ policies. Live prefill/decode uses the [inference engine's native transport](doc
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    Engine["vLLM / SGLang · scheduling and GPU allocation"]
-    Cache["OrbitKV · Cache Manager and native client<br/>identity · index · placement · leases · layout descriptors"]
-    Transfer["OrbiTE · byte movement<br/>local copy · file I/O · peer READ"]
-    Engine -->|cache operations and tensor layouts| Cache
-    Cache -->|bounded requests and retained owners| Transfer
-    Transfer <--> GPU["Engine-owned GPU pages"]
-    Transfer <--> DRAM["Pinned DRAM"]
-    Transfer <--> SSD["SSD extents"]
-    Transfer <--> Peer["Authorized peer memory"]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/_static/architecture-dark.svg" />
+  <img src="docs/_static/architecture-light.svg" alt="OrbitKV owns cache semantics; OrbiTE moves bytes between GPU, DRAM, SSD and peers." width="960" />
+</picture>
 
 Implemented ownership boundaries; hardware paths remain **unqualified**.
 See [architecture](docs/architecture.md) and [transfer contracts](docs/transport.md).
@@ -105,32 +105,11 @@ multi-block prompt, keep the Manager alive, restart the engine and repeat it.
 Check that `orbitkv_load_bytes_total` increases; a same-process repeat can hit
 only native GPU cache. [Manager options](docs/server.md) explain the example budgets.
 
-## Documentation
-
-| Area | Start here |
-| --- | --- |
-| Getting started | [Overview](docs/goals.md), [installation and quickstarts](docs/single-node.md) |
-| Supported engines and models | [Support matrix](docs/compatibility.md), [model recipes](docs/models.md) |
-| Configuration | [Manager](docs/server.md), [engine adapters](docs/adapters.md) |
-| Storage tiers | [DRAM retention](docs/cache-policies.md), [SSD/io_uring and GDS](docs/gds.md), [formats and compression](docs/storage-formats.md) |
-| Distributed KV cache | [P2P deployment](docs/p2p.md), [peer control](docs/distributed-cache.md#application-and-transport-boundary) |
-| Disaggregated prefill | [Native P/D composition](docs/pd.md) |
-| Production | [Deployment](docs/deployment.md), [observability](docs/metrics.md), [fault behavior](docs/fault-qualification.md), [releases](docs/releases.md) |
-| Benchmarks | [Methodology and evidence](docs/performance.md) |
-| Developer guide | [Architecture](docs/architecture.md), [contributing](docs/contributing.md), [completion plan](docs/completion-plan.md) |
-
-## Supported engines and models
-
-The [pinned engine matrix](docs/compatibility.md#official-engine-releases) selects
-**vLLM 0.31.0** (V1, one attention group) and **SGLang 0.5.22** (Full/SWA external
-linker). Recurrent external recovery remains rejected. Start with the dense
-[Qwen3-8B recipe](docs/models.md); broader layouts have separate limits.
-**All current OrbiTE GPU and installed profiles remain unqualified.** Prior TENT
-measurements retain their original revisions and do not establish current support.
-
-## Updates
-
-- **2026-11-07:** [OrbiTE becomes the sole transfer engine](https://github.com/OrbitInfra/OrbitKV/pull/326); hardware re-qualification remains open.
+The [documentation](https://orbitinfra.github.io/OrbitKV/) covers engine integration,
+storage, distributed cache, deployment, observability and internals. The
+[support matrix](docs/compatibility.md) selects **vLLM 0.31.0** (V1, one attention
+group) and **SGLang 0.5.22** (Full/SWA external linker); recurrent external
+recovery remains rejected. See [model recipes and limits](docs/models.md).
 
 ## Contributing
 
