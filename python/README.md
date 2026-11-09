@@ -12,7 +12,7 @@ and transfer completion.
 
 | CUDA runtime | Distribution | Import |
 | --- | --- | --- |
-| CUDA 13 | `orbitkv-llm` | `orbitkv` |
+| CUDA 13 | `orbitkv` | `orbitkv` |
 
 CUDA 13 is the only supported runtime, with NVIDIA R580 or newer and a driver
 compatible with the selected toolkit's runtime-compiled kernels. Version 0.1.0

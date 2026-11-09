@@ -11,12 +11,14 @@ how to validate a candidate without uploading it to PyPI.
 
 ## Packages
 
-The `orbitkv-llm` PyPI wheel is OrbitKV's only distribution. All Rust crates,
+The `orbitkv` PyPI wheel is OrbitKV's only distribution. All Rust crates,
 including the Python extension crate, are internal and are not published.
+
+On November 9, 2026, the unpublished distribution was renamed from `orbitkv-llm` to `orbitkv`; the import, CLI and plugin names are unchanged, and no alias package is provided.
 
 | Distribution | Runtime | Release targets |
 | --- | --- | --- |
-| `orbitkv-llm` | CUDA 13 | Linux x86_64 and aarch64, CPython 3.10–3.14 |
+| `orbitkv` | CUDA 13 | Linux x86_64 and aarch64, CPython 3.10–3.14 |
 
 One distribution provides the `orbitkv` import and `orbitkv-cache-manager`
 command. CUDA 12 is not a release target. There are ten wheels per release:
@@ -102,7 +104,7 @@ wheel, with separate artifacts and matching Clang/libclang 18 on Ubuntu 24.04.
 Use a wheel matching the target CPython ABI and audited glibc floor; the CI
 Python 3.14 artifact cannot qualify a Python 3.11 execution node.
 
-CI builds on Ubuntu with protoc 27.5, `auditwheel==6.8.2`,
+CI builds on Ubuntu with protoc 27.5 (archive SHA-256 checked before extraction), `auditwheel==6.8.2`,
 `patchelf>=0.14.5`, maturin and wheel. Both release architectures use the same
 protocol compiler; Ubuntu 22.04's system protoc cannot compile the current
 proto3 optional fields without an experimental flag. Dependency copyright files are retained from the Debian/Ubuntu package
@@ -147,7 +149,7 @@ add a GitHub pending publisher under [PyPI account publishing](https://pypi.org/
 
 | Field | Value |
 | --- | --- |
-| PyPI project name | `orbitkv-llm` |
+| PyPI project name | `orbitkv` |
 | GitHub owner | `OrbitInfra` |
 | Repository name | `OrbitKV` |
 | Workflow filename | `release.yml` |
@@ -161,11 +163,11 @@ After candidate acceptance and release approval, pushing the matching `v0.1.0`
 tag runs the build/validation jobs and publishes GitHub assets and the single
 PyPI distribution. Manual workflow runs only build candidates; they do not
 exercise PyPI authorization. Once publication succeeds, install with
-`pip install orbitkv-llm==0.1.0` in the compatible runtime environment.
+`pip install orbitkv==0.1.0` in the compatible runtime environment.
 
 ## Release scope
 
-`orbitkv-llm` remains unpublished. Follow [M4](completion-plan.md#m4--release-and-upstream)
+`orbitkv` remains unpublished. Follow [M4](completion-plan.md#m4--release-and-upstream)
 for official engine targets, upstream contributions and installed qualification.
 Current OrbiTE GPU/RDMA/GDS and installed paths are unqualified; historical TENT
 candidate checks do not carry over. Publication is the maintainer's action.

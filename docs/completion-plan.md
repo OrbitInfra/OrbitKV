@@ -5,7 +5,7 @@ into both upstream mainlines.** OrbiTE is the only byte mover. Engines own
 scheduling, HBM and native P/D; OrbitKV owns cache identity, storage, discovery,
 grants and resource lifetime. This is the only execution queue.
 
-The current delivery is **M1 PR 3: opt-in vLLM V2, uniform Full attention**.
+The current delivery is **the Python distribution rename to `orbitkv` and README slimming**, before M1 PR 4.
 Each coherent PR stops for review before dependent work starts. Research designs
 and simulator campaigns are removed from the maintained tree; Git history retains
 them and external artifacts are untouched. DeepInfer/OrbitInfer and an OrbiTE
@@ -122,7 +122,7 @@ Reviewed in order, one PR at a time:
    prerequisites, empty selections, stubs and unreviewed skips. Run both released
    boundaries in the Python 3.12 wheel leg. See the
    [case matrix](fault-qualification.md#engine-conformance-matrix).
-3. **vLLM V2 runner (this PR):** opt-in uniform Full attention, one group;
+3. **vLLM V2 runner (reviewed, #339):** opt-in uniform Full attention, one group;
    [released ordering](adapters.md#released-v2-lifetime-contract) and installed-CPU
    allocator/completion controls. The early zeroing/CoW and speculative-finalize
    paths remain excluded. GPU byte/model/fault gates are written, unrun and
@@ -196,7 +196,7 @@ process tests do not establish independent failure domains or HA.
 Build the wheel and deployment artifacts, then submit thin vLLM and SGLang
 integrations with upstream tests/docs. Track both upstreams' review and release
 requirements. Publication needs maintainer approval; the sole distribution is
-`orbitkv-llm`, and Rust crates remain unpublished. Before release, consume OrbiTE's
+`orbitkv`, and Rust crates remain unpublished. Before release, consume OrbiTE's
 crates.io release and record resolved provenance.
 
 **CPU now:** wheel contents/loader checks, upstream interface/registration tests,

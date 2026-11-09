@@ -18,7 +18,7 @@ TEST_ROOT = Path(__file__).resolve().parents[1]
 
 
 def installed_package(name: str, version: str | None = None) -> Path:
-    distribution = importlib.metadata.distribution(name if name != "orbitkv" else "orbitkv-llm")
+    distribution = importlib.metadata.distribution(name)
     if version is not None and distribution.version != version:
         raise RuntimeError(f"{name}: expected official {version}, got {distribution.version}")
     direct = json.loads(distribution.read_text("direct_url.json") or "{}")

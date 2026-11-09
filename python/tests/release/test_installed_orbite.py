@@ -41,7 +41,7 @@ def test_installed_orbite_peer_restores_cuda_ipc_bytes(provider, copy_mode, tmp_
 
     native = orbitkv
     package = Path(orbitkv.__file__).resolve().parent
-    before = distribution_snapshot(importlib.metadata.distribution("orbitkv-llm"), "orbitkv")
+    before = distribution_snapshot(importlib.metadata.distribution("orbitkv"), "orbitkv")
     assert Path(before["package_root"]) == package
     assert not (package.parent / "pyproject.toml").exists(), "non-editable installation required"
     assert torch.version.cuda and torch.version.cuda.split(".")[0] == "13", torch.version.cuda
@@ -212,9 +212,7 @@ def test_installed_orbite_peer_restores_cuda_ipc_bytes(provider, copy_mode, tmp_
                 for line in server.read_logs().splitlines()
                 if marker in line
             ]
-            assert len(endpoints) == 1 and endpoints[0].startswith(
-                "orbite+" + provider + "://"
-            )
+            assert len(endpoints) == 1 and endpoints[0].startswith("orbite+" + provider + "://")
             (tmp_path / str(index) / "peer-endpoint.json").write_text(
                 json.dumps({"provider": provider, "endpoint": endpoints[0]}) + "\n"
             )
@@ -241,7 +239,7 @@ def test_installed_orbite_peer_restores_cuda_ipc_bytes(provider, copy_mode, tmp_
             registration_and_publish="cross-process CUDA IPC",
             restore="client-local OrbiTE local copy engine",
         )
-    after = distribution_snapshot(importlib.metadata.distribution("orbitkv-llm"), "orbitkv")
+    after = distribution_snapshot(importlib.metadata.distribution("orbitkv"), "orbitkv")
     assert before == after, "installed package changed during qualification"
     report.update(
         installed_files_unchanged=True,

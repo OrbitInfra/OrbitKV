@@ -49,6 +49,22 @@ def test_aligned_release_inputs_pass(release_checker, layout):
     module.check_engine_releases(root)
 
 
+@pytest.mark.parametrize("name", ["orbitkv", "orbitkv" + "-llm"])
+def test_distribution_name_is_part_of_version_consistency(release_checker, monkeypatch, name):
+    module, root, _, _ = release_checker
+    (root / "Cargo.toml").write_text('[workspace.package]\nversion = "0.1.0"\n')
+    (root / "python/pyproject.toml").write_text(
+        f'[project]\nname = "{name}"\nversion = "0.1.0"\n[tool.commitizen]\nversion = "0.1.0"\n'
+    )
+    monkeypatch.setattr(module, "__file__", str(root / "scripts/check-versions.py"))
+    monkeypatch.setattr(module.sys, "argv", ["check-versions.py"])
+    if name == "orbitkv":
+        module.main()
+    else:
+        with pytest.raises(SystemExit, match="distribution name must be orbitkv"):
+            module.main()
+
+
 @pytest.mark.parametrize(
     "drift",
     [

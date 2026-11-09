@@ -40,7 +40,7 @@ Different engines do not automatically share compatible KV bytes.
 
 | Runtime | Distribution | Import |
 | --- | --- | --- |
-| CUDA 13 | `orbitkv-llm` | `orbitkv` |
+| CUDA 13 | `orbitkv` | `orbitkv` |
 
 CUDA 13 is the only release runtime; normally use NVIDIA R580 or newer with
 toolkit-compatible PTX/NVRTC support. Supported older data-center drivers need

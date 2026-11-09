@@ -14,7 +14,9 @@ from zipfile import ZipFile
 
 
 def check_wheel(path: Path, version: str | None = None) -> None:
-    expected_name = "orbitkv-llm"
+    expected_name = "orbitkv"
+    if not path.name.startswith(f"{expected_name}-"):
+        raise ValueError(f"expected {expected_name}- wheel filename, got {path.name}")
     required_files = {
         "orbitkv/__init__.py",
         "orbitkv/orbitkv.pyi",
@@ -101,7 +103,7 @@ def check_wheel(path: Path, version: str | None = None) -> None:
                 for req in requirements
             ):
                 raise ValueError(f"missing exact {engine} release dependency")
-        if any("orbitkv-llm[test]" in req for req in requirements):
+        if any("orbitkv[test]" in req for req in requirements):
             raise ValueError("wheel has a self-dependency on its test extra")
 
         entry_points = metadata_files[0].replace("METADATA", "entry_points.txt")
@@ -135,17 +137,25 @@ def check_wheel(path: Path, version: str | None = None) -> None:
 
 
 def check_install(path: Path, require_orbite_rdma: bool = False) -> None:
-    distribution = "orbitkv-llm"
+    distribution = "orbitkv"
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
     env.pop("PYTHONHOME", None)
-    import_check = (
-        "import importlib.metadata as metadata; import orbitkv; "
-        "import orbitkv.vllm.plugin; import orbitkv.sglang.plugin; "
-        "from orbitkv.client import CacheManagerClient; "
-        f"assert orbitkv.__version__ == metadata.version({distribution!r}); "
-        "assert orbitkv.ChannelProbeClient and orbitkv.CacheManagerClient is CacheManagerClient"
-    )
+    import_check = f"""
+import importlib.metadata as metadata
+import orbitkv
+import orbitkv.vllm.plugin
+import orbitkv.sglang.plugin
+from orbitkv.client import CacheManagerClient
+assert orbitkv.__version__ == metadata.version({distribution!r})
+assert orbitkv.ChannelProbeClient and orbitkv.CacheManagerClient is CacheManagerClient
+try:
+    metadata.distribution({distribution!r} + "-llm")
+except metadata.PackageNotFoundError:
+    pass
+else:
+    raise AssertionError("the pre-release distribution name must not resolve")
+"""
     with tempfile.TemporaryDirectory(prefix="orbitkv-wheel-") as directory:
         root = Path(directory)
         venv.EnvBuilder(with_pip=True).create(root / "venv")

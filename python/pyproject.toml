@@ -3,7 +3,7 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "orbitkv-llm"
+name = "orbitkv"
 version = "0.1.0"
 description = "Framework adapters and Python bindings for the OrbitKV state cache"
 readme = "README.md"

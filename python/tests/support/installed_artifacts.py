@@ -119,9 +119,9 @@ def distribution_snapshot(distribution, package: str) -> dict:
 def installation_snapshot(engine: str, initialize_native: bool = False) -> dict:
     purelib = Path(sysconfig.get_path("purelib")).resolve()
     owners = metadata.packages_distributions().get("orbitkv", [])
-    assert len(owners) == 1, f"Expected one OrbitKV distribution, got {owners}"
-    distribution = metadata.distribution(owners[0])
-    assert distribution.metadata["Name"] == "orbitkv-llm"
+    assert owners == ["orbitkv"], f"Expected the OrbitKV distribution, got {owners}"
+    distribution = metadata.distribution("orbitkv")
+    assert distribution.metadata["Name"] == "orbitkv"
     engine_distribution = metadata.distribution(engine)
     assert engine_distribution.version == ENGINE_VERSIONS[engine], engine_distribution.version
     snapshots = {}

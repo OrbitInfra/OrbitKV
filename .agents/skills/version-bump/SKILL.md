@@ -14,7 +14,7 @@ different operations. Existing session authorization still applies.
    `[tool.commitizen]` together. Refresh affected workspace entries in `Cargo.lock`
    without upgrading unrelated dependencies.
 2. Run `python3 scripts/check-versions.py --tag vVERSION`. The single
-   `orbitkv-llm` distribution targets CUDA 13 and must retain its documented
+   `orbitkv` distribution targets CUDA 13 and must retain its documented
    engine/runtime constraints. Check the ten-wheel release matrix in `docs/releases.md` and
    `docs/completion-plan.md`; an engine target becomes supported only after its
    upgrade gate passes. Keep license and bundled upstream provenance with artifacts.

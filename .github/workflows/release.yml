@@ -201,7 +201,7 @@ jobs:
         with:
           files: dist/*.whl
 
-      - name: Publish orbitkv-llm to PyPI
+      - name: Publish orbitkv to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/

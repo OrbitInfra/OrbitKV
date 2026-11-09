@@ -89,6 +89,10 @@ def main() -> None:
         )
         if version is None:
             raise SystemExit(f"missing version in {path} [{section}]")
+        if section == "project" and not re.search(
+            r'^name = "orbitkv"$', table[1], re.MULTILINE
+        ):
+            raise SystemExit("Python distribution name must be orbitkv")
         versions[f"{path} [{section}]"] = version[1]
     if len(set(versions.values())) != 1:
         raise SystemExit(f"version mismatch: {versions}")
