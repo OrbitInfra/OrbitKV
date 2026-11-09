@@ -68,11 +68,28 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
                 "OrbitKV on official vLLM 0.33.0 supports one attention cache group; "
                 "hybrid recovery requires an upstream atomic state hand-off."
             )
+        get_option = vllm_config.kv_transfer_config.get_from_extra_config
         if vllm_config.use_v2_model_runner:
-            raise RuntimeError(
-                "OrbitKV on official vLLM 0.33.0 requires VLLM_USE_V2_MODEL_RUNNER=0 "
-                "to drain preempted saves before GPU page reuse."
-            )
+            if get_option("orbitkv.v2", False) is not True:
+                raise RuntimeError(
+                    "OrbitKV V2 is unqualified and opt-in: set orbitkv.v2=true for its "
+                    "installed gate, or keep VLLM_USE_V2_MODEL_RUNNER=0."
+                )
+            from vllm.v1.kv_cache_interface import FullAttentionSpec
+
+            if (
+                len(cache_groups) != 1
+                or type(cache_groups[0].kv_cache_spec) is not FullAttentionSpec
+                or kv_cache_config.needs_kv_cache_zeroing
+                or getattr(vllm_config, "speculative_config", None) is not None
+                or not vllm_config.kv_transfer_config.is_kv_consumer
+            ):
+                raise RuntimeError(
+                    "OrbitKV V2 requires one uniform FullAttention group and a KV "
+                    "consumer role, without KV zeroing or speculative decoding; "
+                    "pre-forward state writes and deferred save finalization are "
+                    "not admitted."
+                )
         collapse_mla_tp = is_mla and len(cache_groups) <= 1
         dcp_world_size = (
             getattr(vllm_config.parallel_config, "decode_context_parallel_size", 1) or 1
@@ -138,7 +155,6 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             if torch.cuda.is_available():
                 device_id = _resolve_device_id()
 
-        get_option = vllm_config.kv_transfer_config.get_from_extra_config
         server_host = os.environ.get("ORBITKV_HOST") or get_option(
             "orbitkv.host", "http://127.0.0.1"
         )
@@ -172,7 +188,8 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
         if tp_shards.shard_count > 1 and not query_control:
             raise ValueError("multiple TP shards require native query control")
         if query_control and (
-            is_mla
+            vllm_config.use_v2_model_runner
+            or is_mla
             or pp_size != 1
             or world_size != tp_size
             or dcp_world_size != 1

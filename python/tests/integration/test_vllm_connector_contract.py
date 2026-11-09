@@ -41,7 +41,11 @@ def test_native_multi_connector_keeps_cache_best_effort_and_handoff_reliable():
 def released_config():
     import torch
     from vllm.config import KVTransferConfig
-    from vllm.v1.kv_cache_interface import FullAttentionSpec, KVCacheConfig, KVCacheGroupSpec
+    from vllm.v1.kv_cache_interface import (
+        FullAttentionSpec,
+        KVCacheConfig,
+        KVCacheGroupSpec,
+    )
 
     config = SimpleNamespace(
         kv_transfer_config=KVTransferConfig(
@@ -52,6 +56,7 @@ def released_config():
         ),
         parallel_config=SimpleNamespace(tensor_parallel_size=1, world_size=1),
         model_config=SimpleNamespace(hf_text_config=SimpleNamespace(), enable_sleep_mode=False),
+        lora_config=None,
         use_v2_model_runner=False,
     )
     spec = FullAttentionSpec(block_size=16, num_kv_heads=2, head_size=64, dtype=torch.float16)
@@ -118,3 +123,59 @@ def test_released_single_group_and_hit_source_defaults(released_config):
     config.cache_config.enable_prefix_caching = True
     with pytest.raises(ValueError, match="prefix_match_unit"):
         resolve_kv_cache_block_sizes(cache, config)
+
+
+@pytest.mark.parametrize("opt_in", [False, "true", True])
+def test_v2_admission_requires_boolean_opt_in(released_config, monkeypatch, opt_in):
+    from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorRole
+
+    from orbitkv.vllm.connector import OrbitKVConnector
+
+    config, cache = released_config
+    config.use_v2_model_runner = True
+    config.kv_transfer_config.kv_connector_extra_config["orbitkv.v2"] = opt_in
+    config.cache_config = SimpleNamespace(block_size=16, prefix_match_unit=None)
+    config.parallel_config.decode_context_parallel_size = 1
+
+    class Admitted(Exception):
+        pass
+
+    # Stop after admission, before identity resolution or any Manager connection.
+    def admitted(*args, **kwargs):
+        raise Admitted
+
+    monkeypatch.setattr("orbitkv.vllm.connector.derive_namespace", admitted)
+    if opt_in is True:
+        with pytest.raises(Admitted):
+            OrbitKVConnector(config, KVConnectorRole.SCHEDULER, cache)
+    else:
+        with pytest.raises(RuntimeError, match="opt-in"):
+            OrbitKVConnector(config, KVConnectorRole.SCHEDULER, cache)
+
+
+@pytest.mark.parametrize("profile", ["missing-group", "mla", "speculation", "producer-only"])
+def test_v2_opt_in_does_not_widen_the_audited_profile(released_config, profile):
+    import torch
+    from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorRole
+    from vllm.v1.kv_cache_interface import MLAAttentionSpec
+
+    from orbitkv.vllm.connector import OrbitKVConnector
+
+    config, cache = released_config
+    config.use_v2_model_runner = True
+    config.kv_transfer_config.kv_connector_extra_config["orbitkv.v2"] = True
+    if profile == "missing-group":
+        cache.kv_cache_groups = []
+    elif profile == "mla":
+        cache.kv_cache_groups[0].kv_cache_spec = MLAAttentionSpec(
+            block_size=16,
+            num_kv_heads=1,
+            head_size=128,
+            dtype=torch.float16,
+        )
+    elif profile == "speculation":
+        config.speculative_config = object()
+    else:
+        config.kv_transfer_config.kv_role = "kv_producer"
+    with pytest.raises(RuntimeError, match="one uniform FullAttention"):
+        OrbitKVConnector(config, KVConnectorRole.SCHEDULER, cache)

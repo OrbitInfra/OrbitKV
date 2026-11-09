@@ -192,6 +192,7 @@ EXECUTION_PLAN: list[tuple[str, str, str]] = [
 
 @pytest.mark.e2e
 @pytest.mark.gpu
+@pytest.mark.vllm_v2
 class TestE2ECorrectness:
     """E2E correctness: baseline vLLM vs OrbitKV-enabled vLLM.
 
@@ -304,6 +305,19 @@ class TestE2ECorrectness:
 
     @pytest.fixture(scope="class")
     def orbitkv_connector_config(self, request, orbitkv_transfer_backend):
+        if request.config.getoption("--vllm-runner") == "v2":
+            assert not request.config.getoption("--vllm-multi-connector"), (
+                "V2 native P/D composition has its own later gate"
+            )
+            return {
+                "kv_connector": "OrbitKVConnector",
+                "kv_connector_module_path": "orbitkv.vllm",
+                "kv_role": "kv_both",
+                "kv_connector_extra_config": {
+                    "orbitkv.v2": True,
+                    "orbitkv.transfer_backend": orbitkv_transfer_backend,
+                },
+            }
         if not request.config.getoption("--vllm-multi-connector"):
             return None
         return {

@@ -5,7 +5,7 @@ into both upstream mainlines.** OrbiTE is the only byte mover. Engines own
 scheduling, HBM and native P/D; OrbitKV owns cache identity, storage, discovery,
 grants and resource lifetime. This is the only execution queue.
 
-The current delivery is **M1 PR 2: real-engine conformance/fault harness**.
+The current delivery is **M1 PR 3: opt-in vLLM V2, uniform Full attention**.
 Each coherent PR stops for review before dependent work starts. Research designs
 and simulator campaigns are removed from the maintained tree; Git history retains
 them and external artifacts are untouched. DeepInfer/OrbitInfer and an OrbiTE
@@ -67,7 +67,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 
 | Capability | OrbitKV status and evidence | Precedent |
 | --- | --- | --- |
-| Latest vLLM, V2 runner, HMA multi-group/hybrid | **Partial:** 0.33.0 V1, one attention group; V2/recurrent/multi-group rejected. `SupportsHMA` inheritance is not serving support. [Adapter contract](adapters.md#vllm-callbacks-and-current-internal-dependencies). | L/F/M thin entries; released V lifecycle |
+| Latest vLLM, V2 runner, HMA multi-group/hybrid | **Partial:** 0.33.0 V1 with one group; V2 is opt-in for uniform Full attention and unqualified. Recurrent/multi-group remain rejected. `SupportsHMA` inheritance is not serving support. [Adapter contract](adapters.md#vllm-callbacks-and-current-internal-dependencies). | L/F/M thin entries; released V lifecycle |
 | Latest SGLang | **Partial:** 0.5.23 Full/SWA linker; pre-capture and pending-admission hooks remain private. [Contract](adapters.md#sglang-linker-and-current-internal-dependencies). | Released linker and HiCache integrations above |
 | Async load | **Have:** pending queries, bounded admission and completion-owned destinations; installed faults remain unqualified. [Lifecycle](vllm-request-state-machine.md). | L/F/V asynchronous offload |
 | Layerwise load/save | **Partial:** eligible raw Restore has layer readiness; other routes may wait for whole completion. vLLM saves at step end; `save_kv_layer` does not submit. [Restore](engine-local-restore.md#layer-readiness-and-framework-consumption), [connector](https://github.com/OrbitInfra/OrbitKV/blob/main/python/orbitkv/vllm/connector.py). | L layerwise transfer, V layer hooks |
@@ -117,12 +117,16 @@ Reviewed in order, one PR at a time:
 
 1. **Pins and consumed APIs (reviewed, #337):** vLLM 0.33.0 / SGLang 0.5.23;
    keep V1/one attention group and Full/SWA, with CPU API-contract controls.
-2. **Real-engine conformance/fault harness (this PR):** explicit source,
+2. **Real-engine conformance/fault harness (reviewed, #338):** explicit source,
    installed-CPU and installed-GPU registry; required runs reject missing
    prerequisites, empty selections, stubs and unreviewed skips. Run both released
    boundaries in the Python 3.12 wheel leg. See the
    [case matrix](fault-qualification.md#engine-conformance-matrix).
-3. **vLLM V2 runner:** consume the official lifecycle and prove page-reuse safety.
+3. **vLLM V2 runner (this PR):** opt-in uniform Full attention, one group;
+   [released ordering](adapters.md#released-v2-lifetime-contract) and installed-CPU
+   allocator/completion controls. The early zeroing/CoW and speculative-finalize
+   paths remain excluded. GPU byte/model/fault gates are written, unrun and
+   unqualified; physical page generations remain an upstream gap.
 4. **HMA multi-group/hybrid:** complete groups and atomic recovery through the
    official interface, with model/layout-specific rejection controls.
 5. **SGLang 0.5.23 components:** integrate additional released components only
@@ -151,6 +155,7 @@ commands and the distinction between fixture bytes and serving are in
 | Gate | Scope / acceptance |
 | --- | --- |
 | V1 single-group and SGLang Full/SWA recovery | Installed model outputs, restart hits, actual restored bytes and untouched destinations; DRAM and io_uring separately. |
+| V2 opt-in, uniform Full attention | [Exact commands](fault-qualification.md#v2-opt-in-gates): model outputs/restart restore metrics plus native fixture bytes for save preemption, abort during load, finish before save drain and reallocation. The fixture invokes released scheduler/dispatcher classes; it does not substitute for an end-to-end model fault run or allocator-generation proof. |
 | Abort, timeout, cancellation, partial load/save | Native fault barriers plus released adapter controls; no early source/destination/registration/grant release. A normal model-output run alone cannot close these cases. |
 | Engine-worker / Manager restart | Live-Manager engine restart restores bytes; Manager restart starts cold until M2, rejects old handles/leases and never reports stale state as a hit. |
 | Preemption and allocator page reuse | Save holds and registration-replacement controls exist; allocator-slot generation proof remains blocked on vLLM #62810 / SGLang #45493 (open November 9, 2026). No private runner or parallel tree substitutes for the missing contract. |

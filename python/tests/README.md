@@ -77,6 +77,12 @@ skips, an empty selection and last-test module injection to fail. The registry
 audit catches missing engine-import classifications and stale selectors. New
 tests must join the registry before serving as engine evidence.
 
+Exact selectors include class paths (`module.py::TestClass::test_name`), and the
+audit accepts both synchronous and async definitions. V1 remains the required
+GPU default. Only the [written V2 gates](../../docs/fault-qualification.md#v2-opt-in-gates)
+set `--vllm-runner=v2` with `VLLM_USE_V2_MODEL_RUNNER=1`; that mode excludes
+unmarked GPU tests and fails on an empty selection. All V2 GPU evidence is unrun.
+
 ### Released engine controls (CPU)
 
 Use uv 0.13.7 or newer. After building a complete Python 3.12 wheel, run from

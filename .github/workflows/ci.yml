@@ -161,10 +161,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev liburing-dev patchelf
       - name: Install protocol compiler
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
-        with:
-          version: "27.5"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/install-protoc.sh
 
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
@@ -249,10 +246,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev liburing-dev patchelf
       - name: Install protocol compiler
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
-        with:
-          version: "27.5"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/install-protoc.sh
 
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
@@ -414,10 +408,7 @@ jobs:
           sudo apt-get install -y clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libcli11-dev liburing-dev libboost-dev patchelf
 
       - name: Install protocol compiler
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
-        with:
-          version: "27.5"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/install-protoc.sh
 
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1

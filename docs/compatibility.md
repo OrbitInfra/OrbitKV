@@ -9,7 +9,7 @@ none carries over to the current data path.
 
 | Engine | Current package/source pin | Implemented boundary |
 | --- | --- | --- |
-| vLLM | 0.33.0 | KV Connector, V1 model runner (`VLLM_USE_V2_MODEL_RUNNER=0`), one attention cache group; V2/recurrent/multi-group rejected |
+| vLLM | 0.33.0 | KV Connector, V1 runner by default, one attention group; [V2 opt-in](adapters.md#released-v2-lifetime-contract) admits uniform Full attention only and remains unqualified; recurrent/multi-group rejected |
 | SGLang | 0.5.23 | UnifiedRadixCache external linker, Full/SWA components; recurrent/SSM rejected; private pre-capture and admission hooks remain |
 
 The pins select adapter source contracts; installed GPU conformance remains

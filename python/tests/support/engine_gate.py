@@ -31,7 +31,9 @@ def installed_package(name: str, version: str | None = None) -> Path:
     return root
 
 
-def prerequisites(engine: str, evidence: str, model: str) -> dict[str, Path]:
+def prerequisites(
+    engine: str, evidence: str, model: str, vllm_runner: str = "v1"
+) -> dict[str, Path]:
     if evidence == "source":
         return {}
     if sys.platform != "linux":
@@ -67,8 +69,11 @@ def prerequisites(engine: str, evidence: str, model: str) -> dict[str, Path]:
         )
         if not manager.is_file() or not os.access(manager, os.X_OK):
             raise RuntimeError("installed-GPU gate requires an executable Cache Manager")
-        if engine == "vllm" and os.environ.get("VLLM_USE_V2_MODEL_RUNNER") != "0":
-            raise RuntimeError("this gate requires explicit VLLM_USE_V2_MODEL_RUNNER=0")
+        expected_runner = "1" if vllm_runner == "v2" else "0"
+        if engine == "vllm" and os.environ.get("VLLM_USE_V2_MODEL_RUNNER") != expected_runner:
+            raise RuntimeError(
+                f"this gate requires explicit VLLM_USE_V2_MODEL_RUNNER={expected_runner}"
+            )
     return roots
 
 
@@ -77,9 +82,13 @@ def pytest_addoption(parser):
     group.addoption("--engine", choices=tuple(ENGINE_VERSIONS))
     group.addoption("--engine-evidence", choices=tuple(registry.REGISTRY))
     group.addoption("--engine-report", type=Path, help="external JSON evidence inventory")
+    group.addoption("--vllm-runner", choices=("v1", "v2"), default="v1")
 
 
 def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "vllm_v2(only=False): admitted in V2; only=True excludes the ordinary V1 gate"
+    )
     required = os.environ.get("ORBITKV_REQUIRE_ENGINE_TESTS") == "1"
     engine, evidence = config.getoption("engine"), config.getoption("engine_evidence")
     if required or engine or evidence:
@@ -102,7 +111,10 @@ class EngineGate:
             raise pytest.UsageError("engine controls require assertions enabled (no -O)")
         try:
             self.roots = prerequisites(
-                self.engine, self.evidence, self.config.getoption("model", default="")
+                self.engine,
+                self.evidence,
+                self.config.getoption("model", default=""),
+                self.config.getoption("vllm_runner"),
             )
         except (ImportError, OSError, RuntimeError, ValueError) as error:
             raise pytest.UsageError(f"engine gate prerequisite failed: {error}") from error
@@ -118,15 +130,32 @@ class EngineGate:
     def pytest_collection_modifyitems(self, config, items):
         selected, deselected = [], []
         for item in items:
-            node = item.path.relative_to(TEST_ROOT).as_posix() + "::" + item.originalname
+            classes = [
+                parent.name for parent in item.listchain() if isinstance(parent, pytest.Class)
+            ]
+            node = "::".join(
+                [item.path.relative_to(TEST_ROOT).as_posix(), *classes, item.originalname]
+            )
             entry = registry.classify(node, self.evidence)
             parameter = getattr(item, "callspec", None)
             parameter_engine = parameter.params.get("engine") if parameter else None
+            v2 = item.get_closest_marker("vllm_v2")
             if (
                 entry is None
                 or entry[0] != self.evidence
                 or self.engine not in entry[1]
                 or parameter_engine not in (None, self.engine)
+                or (
+                    self.config.getoption("vllm_runner") == "v2"
+                    and self.evidence == "installed-gpu"
+                    and (self.engine != "vllm" or v2 is None)
+                )
+                or (
+                    self.config.getoption("vllm_runner") == "v1"
+                    and self.evidence == "installed-gpu"
+                    and v2 is not None
+                    and v2.kwargs.get("only", False)
+                )
             ):
                 deselected.append(item)
             else:
@@ -204,6 +233,9 @@ class EngineGate:
                         "engine": self.engine,
                         "version": ENGINE_VERSIONS[self.engine],
                         "evidence": self.evidence,
+                        "vllm_runner": self.config.getoption("vllm_runner")
+                        if self.engine == "vllm"
+                        else None,
                         "required": self.required,
                         "selected": self.selected,
                         "results": self.reports,
