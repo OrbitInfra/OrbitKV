@@ -96,6 +96,14 @@ and overhead guards remain [frozen here](https://github.com/OrbitInfra/OrbitKV/b
 
 ### Storage encoding
 
+Persistent SSD startup logs parsed bytes, live metadata charge, entry count,
+verified bytes, elapsed seconds and bounded drop reasons.
+`orbitkv_ssd_recovery_drops_total{reason=...}` counts rejected metadata sets or
+individual extents; a whole cold-start count is not a count of lost entries.
+`orbitkv_ssd_recovery_seconds` includes metadata parsing and the background CRC
+pass. Recovery reads also enter ordinary engine I/O observations. See the
+[recovery bounds and integrity limits](storage-persistence.md).
+
 | Instrument | Meaning |
 | --- | --- |
 | `orbitkv_storage_codec_bytes_total` | `logical` / `stored` publication bytes; stored includes alignment and raw siblings |

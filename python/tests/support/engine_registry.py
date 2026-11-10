@@ -67,6 +67,7 @@ GPU = {
     "e2e/test_sglang_direct_e2e.py": SGLANG,
     "e2e/test_sglang_pd_e2e.py": SGLANG,
     "e2e/test_shared_cache.py": BOTH,
+    "e2e/test_ssd_persistence.py": BOTH,
     "integration/test_explicit_registration.py": BOTH,
     "integration/test_gpu_identity.py": BOTH,
     "integration/test_mla_replica_registration.py": VLLM,

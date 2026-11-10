@@ -6,9 +6,8 @@ The default still discards SSD state when the Manager starts. With
 the same storage namespace and state key. OrbiTE remains the only payload byte
 mover. OrbitKV owns the journal, extent allocation and durability ordering.
 
-This design precedes its implementation in M2 PR 1. CPU process-crash tests can
-exercise the protocol on ext4 and tmpfs; real NVMe serving and power-loss behavior
-remain unqualified.
+The implementation is opt-in. Required CPU process-crash controls exercise
+ext4 and tmpfs; real NVMe serving and power-loss behavior remain unqualified.
 
 ## Commit and overwrite protocol
 
@@ -90,9 +89,10 @@ this PR's integrity contract.
 ## Bounds, GC and changed capacity
 
 The initial format caps one record at 256 KiB, the live metadata set at 16 MiB
-and 16,384 entries, and the journal at 64 MiB. These are additional limits on
-cache admission, never reasons to truncate a record. Metadata parsing and
-verification have explicit time budgets; verification uses one 1 MiB pinned
+and 16,384 entries, and the journal at 64 MiB. The ring index and bounded
+verification list also retain metadata; the 16 MiB charge is not whole-process RSS. These are additional limits on
+cache admission, never reasons to truncate a record. Metadata parsing has a 30-second budget and verification a 180-second budget
+between operations (a kernel-blocked sync cannot be forcibly timed out); verification uses one 1 MiB pinned
 scratch allocation from the existing host budget. Recovered data is charged to
 the same shard capacities as new writes. Recovery reports parsed bytes, entries,
 metadata charge, verified bytes, drops and elapsed time.

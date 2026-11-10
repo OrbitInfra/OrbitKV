@@ -173,7 +173,7 @@ pub fn spawn(engine: Arc<crate::OrbitKVEngine>) {
                     store.ingest_batch(std::iter::once((&key, &block)), false);
                     store.flush().await;
                     drop(block);
-                    json!({"present": store.discover(&[key.clone()])[0].is_some()})
+                    json!({"present": store.discover(std::slice::from_ref(&key))[0].is_some()})
                 }
                 "read" => match pin(&store, &key) {
                     Some(lease) => read(store.clone(), lease).await,

@@ -43,7 +43,8 @@ orbitkv-cache-manager
 - `POST /cache/sync`: Wait for already submitted saves and return a source
   `inventory_fence` in distributed mode. Standalone mode returns
   `{"local_flush_complete":true}` after the same local save barrier without
-  inventing a distributed fence. Neither result makes SSD payloads restart-durable.
+  inventing a distributed fence. Neither result alone makes SSD payloads restart-durable; persistence requires
+  the separate synced SSD commit below.
 - `POST /cache/metadata/await`: Controlled-test/operation barrier. Supply an
   `inventory_fence`, this requester's exact `scope_digest`, and `timeout_ms` no
   greater than 30,000. Success means the matching owner view is installed through
@@ -58,7 +59,8 @@ OrbiTE owns its file segments. cuFile is an
 optional engine dependency, not a service to deploy. See [deployment examples](deployment.md#configure-capacity-then-connect-engines).
 
 - `--ssd-cache-path`: Enable SSD cache by providing cache file path (optional)
-- `--ssd-cache-capacity`: SSD cache capacity (default: `512gb`, supports: `kb`, `mb`, `gb`, `tb`). Enabling GPU file transfers reserves this physical space before serving; allocation errors fail startup. Host-only io_uring uses logical sizing without upfront reservation.
+- `--ssd-cache-capacity`: SSD cache capacity (default: `512gb`, supports: `kb`, `mb`, `gb`, `tb`). Enabling GPU file transfers reserves this physical space before serving; allocation errors fail startup. Nonpersistent host-only io_uring uses logical sizing; persistent mode reserves physical capacity too.
+- `--ssd-persistent`: opt in to durable commits and checksum-gated recovery (default: `false`; requires `--ssd-cache-path`). The data files and their `.index` sidecar must stay together on private local storage. A second Manager is rejected by an inode lock. Recovery misses until verification; unknown keys/flags fail. Shrinking capacity drops out-of-range entries before serving. Metadata uses at most 64 MiB plus one bounded temporary checkpoint; one 1 MiB verifier is charged to the host pool. Durability errors fence writes until restart. See [persistent SSD](storage-persistence.md) for ordering, limits and qualification.
 - `--ssd-write-queue-depth`: SSD write queue depth, max pending write batches (default: `8`)
 - `--ssd-write-policy`: `all` writes newly saved pages; `reuse` admits foreground-returned pages or repeated publications within a bounded history (default: `all`). Selective admission can require recomputation on the first reuse after DRAM eviction.
 - `--ssd-backend`: `uring` uses pinned DRAM; `auto` (default) additionally uses

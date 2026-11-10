@@ -260,6 +260,7 @@ jobs:
       - name: Run cargo check
         run: |
           cargo check -p orbitkv-core
+          cargo check --locked -p orbitkv-server --all-targets --features test-hooks
           cargo check -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbite
           CC=gcc CXX=g++ cargo clippy --locked -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbite-rdma -- -D warnings
           CC=gcc CXX=g++ cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-rdma --lib peer::orbite::tests

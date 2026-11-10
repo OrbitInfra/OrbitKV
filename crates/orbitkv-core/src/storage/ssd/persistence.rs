@@ -295,17 +295,17 @@ impl Journal {
         let current = journal.header.clone();
         let length = journal.file.metadata()?.len();
         journal.report.lock().parsed_bytes = length;
-        if length != 0 {
-            if let Err(error) = journal.replay(&current, started) {
-                if error.kind() != io::ErrorKind::InvalidData {
-                    return Err(error);
-                }
-                journal.report.lock().drop_entry(&error.to_string());
-                log::warn!("SSD persistence cold start: {error}");
-                journal.header = current.clone();
-                journal.records.clear();
-                journal.metadata_bytes = 0;
+        if length != 0
+            && let Err(error) = journal.replay(&current, started)
+        {
+            if error.kind() != io::ErrorKind::InvalidData {
+                return Err(error);
             }
+            journal.report.lock().drop_entry(&error.to_string());
+            log::warn!("SSD persistence cold start: {error}");
+            journal.header = current.clone();
+            journal.records.clear();
+            journal.metadata_bytes = 0;
         }
         let changed_geometry = journal.header.alignment != alignment
             || journal

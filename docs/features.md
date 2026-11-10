@@ -12,7 +12,7 @@ re-qualification; earlier acceptances remain historical. See [compatibility](com
 | Feature | Behavior | Current boundary |
 | --- | --- | --- |
 | Host DRAM | Save reusable KV outside HBM and restore after eviction | Dense single-rank profiles on both selected engines |
-| Local SSD | Extend host cache through OrbiTE file segments | SSD file is recreated on Manager startup |
+| Local SSD | Extend host cache through OrbiTE file segments | Default is ephemeral; [opt-in persistence](storage-persistence.md) has CPU crash controls, with installed NVMe serving unqualified |
 | Engine restart reuse | Reconnect the engine to the existing cache | Keep the Manager and matching model/computation identity alive |
 | Shared Manager | Multiple local engines share DRAM/SSD capacity | Scoped pressure acceptance; fairness/tail isolation remain open |
 | Peer cache | Discover compatible replicas locally and fetch through OrbiTE TCP/RDMA | CPU/TCP CI evidence; GPU/RDMA and installed recovery require re-qualification |

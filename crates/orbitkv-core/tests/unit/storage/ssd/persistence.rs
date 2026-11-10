@@ -178,3 +178,44 @@ fn namespace_and_representation_are_not_inferred_or_aliased() {
     assert_eq!(recovered[1].key, other);
     assert!(matches!(recovered[1].entry.encoding, Encoding::Encoded));
 }
+
+#[test]
+fn metadata_admission_rejects_without_appending_and_fences_only_durability_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let capacity = (MAX_ENTRIES as u64 + 1) * 512;
+    let files = files(dir.path(), capacity);
+    let (mut journal, _) = Journal::open(dir.path().join("index"), &files, capacity, 512).unwrap();
+    journal
+        .append(&key(1), &entry(0, capacity), Some(1))
+        .unwrap();
+    let template = journal.records[&key(1)].clone();
+    journal.records = (0..MAX_ENTRIES)
+        .map(|index| {
+            let mut record = template.clone();
+            record.key.hash = orbitkv_state::group_hash(&index.to_le_bytes(), 0);
+            record.begin = index as u64 * 512;
+            record.offset = record.begin;
+            (record.key.clone(), record)
+        })
+        .collect();
+    let length = journal.file.metadata().unwrap().len();
+    let sequence = journal.header.sequence;
+    assert_eq!(
+        journal
+            .append(&key(2), &entry(MAX_ENTRIES as u64 * 512, capacity), None)
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::WouldBlock
+    );
+    assert_eq!(journal.file.metadata().unwrap().len(), length);
+    assert_eq!(journal.header.sequence, sequence);
+    assert!(!journal.is_fenced());
+    assert!(frame(&"x".repeat(MAX_RECORD)).is_err());
+    journal.fence();
+    assert!(
+        journal
+            .append(&key(2), &entry(512, capacity), None)
+            .is_err()
+    );
+    assert_eq!(journal.file.metadata().unwrap().len(), length);
+}

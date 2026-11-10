@@ -3,6 +3,36 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 
 #[test]
+fn existing_files_are_locked_before_mutation_and_preserved_on_allocation_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cache");
+    fs::write(&path, vec![0x5a; 4096]).unwrap();
+    let files = open_cache_files(
+        std::slice::from_ref(&path),
+        1,
+        512,
+        &mut fs::OpenOptions::new(),
+        true,
+    )
+    .unwrap();
+    assert_eq!(files[0].metadata().unwrap().len(), 4096);
+    assert!(
+        open_cache_files(
+            std::slice::from_ref(&path),
+            1,
+            512,
+            &mut fs::OpenOptions::new(),
+            false
+        )
+        .is_err()
+    );
+    assert_eq!(fs::read(&path).unwrap(), vec![0x5a; 4096]);
+    let readonly = fs::File::open(&path).unwrap();
+    assert!(reserve_cache_space(&[readonly], 8192, true).is_err());
+    assert_eq!(fs::read(path).unwrap(), vec![0x5a; 4096]);
+}
+
+#[test]
 fn gpu_capacity_is_physically_reserved_for_every_shard() {
     let dir = tempfile::tempdir().unwrap();
     let capacity = 1024 * 1024;

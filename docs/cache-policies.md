@@ -60,8 +60,13 @@ recomputation under `reuse`, because no SSD replica was written on the first
 publication. Selective writes can therefore reduce write traffic while making
 latency or throughput worse. With io_uring, save completion confirms GPU-to-DRAM
 copy completion, not an SSD replica. Complete-group cuFile writes also hold
-Publish until their SSD writes complete. Neither path provides durability
-across Manager restart; see [GPU storage ownership](gds.md#demand-routes-and-ownership).
+Publish until their SSD writes complete. With `--ssd-persistent`, an SSD replica
+is published only after data and journal sync. Ordinary host Publish still may
+precede asynchronous write-back. Default SSD state is ephemeral; opt-in recovery
+verifies every extent before exposing it. Reservations durably fence ring reuse,
+and readers/native transfers retain their extents through drain. See
+[persistence and GC](storage-persistence.md) and
+[GPU storage ownership](gds.md#demand-routes-and-ownership).
 
 ## Configure and measure
 
