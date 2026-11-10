@@ -489,7 +489,6 @@ impl SsdStore {
             .as_ref()
             .map_or(serde_json::Value::Null, |journal| {
                 let report = journal.lock().report.clone();
-                let verification_budget = journal.lock().verification_budget();
                 serde_json::to_value(&*report.lock()).unwrap_or(serde_json::Value::Null)
             })
     }

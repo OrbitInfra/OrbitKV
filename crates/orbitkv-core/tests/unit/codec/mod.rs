@@ -27,10 +27,9 @@ fn raw_device_checksum_is_bounded_and_detects_corruption() {
         let changed = stream.clone_htod(&input).unwrap();
         let (address, _read) = changed.device_ptr(&stream);
         // SAFETY: changed owns this complete input until checksum returns.
-        assert_ne!(
-            unsafe { codec.device_checksum(&stream, address, bytes, 8192) }.unwrap(),
-            checksum
-        );
+        let changed_checksum =
+            unsafe { codec.device_checksum(&stream, address, bytes, 8192) }.unwrap();
+        assert_ne!(changed_checksum, checksum);
         // SAFETY: valid retained source; rejection occurs before an over-budget allocation.
         assert!(unsafe { codec.device_checksum(&stream, address, bytes, 1) }.is_err());
     }

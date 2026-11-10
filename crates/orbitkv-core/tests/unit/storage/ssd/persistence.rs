@@ -172,7 +172,7 @@ fn malformed_metadata_cold_starts_the_whole_set() {
             }
             "checksum" => body[4] ^= 1,
             "record_limit" => {
-                body[..4].copy_from_slice(&((journal.limits.record + 1) as u32).to_le_bytes())
+                body[..4].copy_from_slice(&((journal.limits.record + 1) as u32).to_le_bytes());
             }
             _ => {}
         }
