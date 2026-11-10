@@ -53,7 +53,9 @@ def port():
 
 
 class Manager:
-    def __init__(self, gate, path, *, capacity=4096, persistent=True, pauses=()):
+    def __init__(
+        self, gate, path, *, capacity=4096, persistent=True, pauses=(), rejected=False
+    ):
         self.gate, self.sequence = gate, 0
         self.root = Path(tempfile.mkdtemp(prefix="okv-ssd-"))
         self.prefix = f"ssd_{uuid.uuid4().hex}_"
@@ -104,6 +106,10 @@ class Manager:
             },
         )
         gate.children.append(self)
+        if rejected:
+            assert self.process.wait(timeout=30) != 0
+            assert "drained prior file users" in self.log_path.read_text()
+            return
         self.wait(lambda: (self.control / "ready").exists())
         self.wait(lambda: "Standalone Cache Manager ready" in self.log_path.read_text())
         if "ssd_before_verification" not in pauses:
@@ -272,6 +278,22 @@ class Gate:
         child.read()
         child.close()
 
+    def old_file_user(self, path):
+        child = self.manager(path)
+        assert child.call("write", id=1)["present"]
+        # Independent file description stands in for a kernel-retained file
+        # user after the Manager's own flock is gone. No receipt is invented.
+        with path.open("rb") as outstanding:
+            child.close(kill=True)
+            before = Path(str(path) + ".index").read_bytes()
+            rejected = self.manager(path, rejected=True)
+            rejected.close()
+            assert Path(str(path) + ".index").read_bytes() == before
+            assert outstanding.read(137) == bytes([1]) * 137
+        child = self.manager(path)
+        child.read()
+        child.close()
+
     def corrupt(self, path, kind):
         child = self.manager(path)
         assert child.call("write", id=1)["present"]
@@ -428,6 +450,7 @@ def main():
     gate.case("clean-restart", gate.clean)
     gate.case("default-truncates", lambda path: gate.clean(path, False))
     gate.case("verify-before-first-hit", gate.verify)
+    gate.case("prior-file-user-blocks-restart", gate.old_file_user)
     for kind in ["data", "torn", "checksum", "version", "namespace"]:
         gate.case(f"corrupt-{kind}", lambda path, k=kind: gate.corrupt(path, k))
     for point in ["ssd_reserved", "ssd_data_written"]:

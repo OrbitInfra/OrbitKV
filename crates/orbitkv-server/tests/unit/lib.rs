@@ -316,6 +316,15 @@ fn orbite_rdma_cli_requires_explicit_device_and_valid_port() {
 fn ssd_uses_selected_engine_and_rejects_removed_legacy_switch() {
     use orbitkv_core::SsdCacheConfig;
     assert!(!SsdCacheConfig::default().persistent);
+    assert!(
+        SsdCacheConfig {
+            persistent: true,
+            backend: orbitkv_core::SsdBackend::Cufile,
+            ..Default::default()
+        }
+        .validate_transfer_engine()
+        .is_err()
+    );
     assert!(!Cli::try_parse_from(["manager"]).unwrap().ssd_persistent);
     assert!(Cli::try_parse_from(["manager", "--ssd-persistent"]).is_err());
     assert!(

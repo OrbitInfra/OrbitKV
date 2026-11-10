@@ -137,8 +137,13 @@ pub(super) fn open_cache_files(
         }
         files.push(file);
     }
+    let metadata = journal_path(cache_paths, shards_per_path)?;
+    if preserve || metadata.exists() {
+        for file in &files {
+            previous_file_users_drained(file)?;
+        }
+    }
     if !preserve {
-        let metadata = journal_path(cache_paths, shards_per_path)?;
         match fs::remove_file(&metadata) {
             Ok(()) => super::persistence::sync_parent(&metadata)?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -159,6 +164,37 @@ pub(super) fn open_cache_files(
     }
 
     Ok(files)
+}
+
+fn previous_file_users_drained(file: &std::fs::File) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let fd = file.as_raw_fd();
+    // F_SETSIG is Linux UAPI 10 on the supported x86_64/aarch64 targets;
+    // libc exposes F_SETLEASE but not F_SETSIG on those GNU targets.
+    const F_SETSIG: libc::c_int = 10;
+    // SAFETY: fd is owned. Change only this fresh description's lease signal
+    // to ignored-by-default SIGURG; no process-wide signal handler is changed.
+    if unsafe { libc::fcntl(fd, F_SETSIG, libc::SIGURG) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: this fresh owned description is not yet used by OrbiTE. Linux
+    // grants a write lease only when its inode has no other read/write opens,
+    // including file descriptions retained by old kernel io_uring requests.
+    if unsafe { libc::fcntl(fd, libc::F_SETLEASE, libc::F_WRLCK) } < 0 {
+        let error = std::io::Error::last_os_error();
+        return Err(std::io::Error::new(
+            error.kind(),
+            format!(
+                "SSD restart requires exclusive file-lease support and drained prior file users; retry startup after cleanup: {error}"
+            ),
+        ));
+    }
+    // SAFETY: release only the lease just acquired on this owned description.
+    // The separate lifetime flock still excludes another cooperating Manager.
+    if unsafe { libc::fcntl(fd, libc::F_SETLEASE, libc::F_UNLCK) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 pub(super) fn journal_path(paths: &[PathBuf], shards: usize) -> std::io::Result<PathBuf> {

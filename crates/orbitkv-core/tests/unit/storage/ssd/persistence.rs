@@ -67,6 +67,7 @@ fn durable_reservations_prevent_wrap_resurrection_and_reclaim_orphans() {
 #[test]
 fn malformed_metadata_cold_starts_the_whole_set() {
     for fault in [
+        "missing",
         "torn",
         "checksum",
         "version",
@@ -105,6 +106,9 @@ fn malformed_metadata_cold_starts_the_whole_set() {
             _ => {}
         }
         bytes.extend(body);
+        if fault == "missing" {
+            bytes.clear();
+        }
         drop(journal);
         std::fs::write(&path, bytes).unwrap();
         if fault == "journal_limit" {

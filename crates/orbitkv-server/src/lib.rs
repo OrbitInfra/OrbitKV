@@ -653,6 +653,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     if !cli.ssd_cache_path.is_empty() {
         orbitkv_core::SsdCacheConfig {
             backend: cli.ssd_backend,
+            persistent: cli.ssd_persistent,
             ..Default::default()
         }
         .validate_transfer_engine()?;

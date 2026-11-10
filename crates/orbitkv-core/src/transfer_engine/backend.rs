@@ -170,6 +170,9 @@ impl crate::SsdCacheConfig {
         if self.backend == crate::SsdBackend::Cufile && !cfg!(feature = "orbite-gds") {
             return Err("OrbiTE cuFile requires the orbite-gds build feature".into());
         }
+        if self.persistent && self.backend == crate::SsdBackend::Cufile {
+            return Err("persistent SSD requires io_uring (uring or auto); GDS process-exit lifetime is not admitted".into());
+        }
         Ok(())
     }
 }

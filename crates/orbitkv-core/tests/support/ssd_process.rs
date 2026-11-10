@@ -77,7 +77,7 @@ fn fixture(
                     allocation.as_non_null().as_ptr(),
                     id.wrapping_add(index as u8),
                     bytes as usize,
-                )
+                );
             };
             let mut raw = RawBlock::single_segment(
                 Segment::new(allocation.as_non_null(), bytes as usize, allocation).unwrap(),

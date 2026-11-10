@@ -33,6 +33,32 @@ fn existing_files_are_locked_before_mutation_and_preserved_on_allocation_error()
 }
 
 #[test]
+fn another_file_description_blocks_recovery_even_without_a_manager_flock() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("data");
+    fs::write(&path, vec![0x5a; 4096]).unwrap();
+    let outstanding = fs::File::open(&path).unwrap();
+    let open = || {
+        open_cache_files(
+            std::slice::from_ref(&path),
+            1,
+            512,
+            &mut fs::OpenOptions::new(),
+            true,
+        )
+    };
+    assert!(
+        open()
+            .unwrap_err()
+            .to_string()
+            .contains("drained prior file users")
+    );
+    assert_eq!(fs::read(&path).unwrap(), vec![0x5a; 4096]);
+    drop(outstanding);
+    assert_eq!(open().unwrap()[0].metadata().unwrap().len(), 4096);
+}
+
+#[test]
 fn gpu_capacity_is_physically_reserved_for_every_shard() {
     let dir = tempfile::tempdir().unwrap();
     let capacity = 1024 * 1024;

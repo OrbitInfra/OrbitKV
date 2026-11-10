@@ -202,6 +202,14 @@ fn invalid(reason: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, reason)
 }
 
+fn truncated_record(error: io::Error) -> io::Error {
+    if error.kind() == io::ErrorKind::UnexpectedEof {
+        invalid("metadata_torn")
+    } else {
+        error
+    }
+}
+
 fn read_frame<T: for<'a> Deserialize<'a>>(file: &mut File) -> io::Result<Option<T>> {
     let mut prefix = [0; 8];
     match file.read(&mut prefix[..1])? {
@@ -210,15 +218,14 @@ fn read_frame<T: for<'a> Deserialize<'a>>(file: &mut File) -> io::Result<Option<
         _ => return Err(invalid("metadata_framing")),
     }
     file.read_exact(&mut prefix[1..])
-        .map_err(|_| invalid("metadata_torn"))?;
+        .map_err(truncated_record)?;
     let length = u32::from_le_bytes([prefix[0], prefix[1], prefix[2], prefix[3]]) as usize;
     let checksum = u32::from_le_bytes([prefix[4], prefix[5], prefix[6], prefix[7]]);
     if length == 0 || length > MAX_RECORD {
         return Err(invalid("metadata_record_limit"));
     }
     let mut bytes = vec![0; length];
-    file.read_exact(&mut bytes)
-        .map_err(|_| invalid("metadata_torn"))?;
+    file.read_exact(&mut bytes).map_err(truncated_record)?;
     if crc32c::crc32c(&bytes) != checksum {
         return Err(invalid("metadata_checksum"));
     }
@@ -295,6 +302,14 @@ impl Journal {
         let current = journal.header.clone();
         let length = journal.file.metadata()?.len();
         journal.report.lock().parsed_bytes = length;
+        if length == 0
+            && files
+                .iter()
+                .any(|file| file.metadata().is_ok_and(|m| m.len() != 0))
+        {
+            journal.report.lock().drop_entry("metadata_missing");
+            log::warn!("SSD persistence cold start: metadata_missing");
+        }
         if length != 0
             && let Err(error) = journal.replay(&current, started)
         {

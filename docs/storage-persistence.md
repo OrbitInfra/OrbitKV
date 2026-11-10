@@ -17,6 +17,22 @@ resize or reuse; a second Manager cannot open the same files. The journal binds
 the shard ordering and inode identities to a stable cache UUID. Each record also
 names the writing Manager incarnation, independently of peer epochs.
 
+Before parsing or resizing, acquire and immediately release an exclusive Linux
+file lease on each shard. A Manager flock alone is insufficient: older kernels
+can leave io_uring file users alive after process exit (see the
+[kernel exit fix](https://github.com/torvalds/linux/commit/044e5f30b3e0efe96dac1b75e15621bfbdb0a767)).
+Linux [write leases](https://man7.org/linux/man-pages/man2/F_SETLEASE.2const.html)
+reject other read/write opens, including descriptions still retained by kernel
+requests. A busy or unsupported lease fails startup before modifying metadata
+or payloads; retry after cleanup. Data files must belong to the Manager user
+(or it needs CAP_LEASE). The private-filesystem/cooperating-writer requirement
+still applies; a lease is not authorization against arbitrary external writes.
+
+This persistence profile admits `uring` and `auto` (engine io_uring, with optional
+engine CUDA staging). Explicit `cufile` persistence is rejected: this PR does not
+establish the GDS driver's process-exit/file-reference lifetime contract. It
+does not silently switch transports. Nonpersistent GDS remains unchanged.
+
 For one extent:
 
 1. Reserve through the existing ring allocator. A reader, active writer or
@@ -123,7 +139,9 @@ data-sync, partial-record, unsynced-record and post-publication boundaries.
 Restarts require correct bytes or a counted miss. Controls also corrupt metadata
 and data, change namespace/version, wrap during overwrite, hold readers and
 native completion, shrink capacity, exhaust disk space and force checkpoint
-replacement. Required io_uring runs set `ORBITE_REQUIRE_IO_URING=1` and fail if
+replacement. An independent retained file description also blocks restart until
+released, even after the Manager's flock disappears. Required io_uring runs set
+`ORBITE_REQUIRE_IO_URING=1` and fail if
 the engine cannot use it.
 
 ext4 tests exercise local filesystem ordering and O_DIRECT. tmpfs exercises

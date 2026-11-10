@@ -109,6 +109,7 @@ Required cases fail on missing prerequisites; they never substitute a filesystem
 | Data bit flip; verification held | Bad CRC drops the entry; even healthy recovery is a miss until verification drains |
 | Wrap killed after reservation or overwrite; orphan reuse | Old generation never resurrects; orphan capacity is reusable |
 | Reader held; file receipt withheld | Eviction pressure cannot reuse the leased extent; releasing the receipt restores admission |
+| Prior file user survives Manager SIGKILL | Startup fails without changing data/metadata; only releasing that description permits recovery |
 | Capacity shrink; checkpoint replacement killed | Only fitting entries survive; old or new complete checkpoint remains usable |
 | Real ENOSPC during commit | No published entry, no pending writer/reader leak; writes remain fenced until restart |
 | Default restart; clean persistent restart | Default truncates; opt-in recovers exact bytes and isolates namespaces |
