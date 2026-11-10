@@ -5,6 +5,7 @@ external --basetemp on a direct NVMe/ext4 mount. This is not a power-loss test.
 """
 
 import contextlib
+import hashlib
 import json
 import os
 import subprocess
@@ -64,7 +65,13 @@ def test_nvme_manager_restart_under_serving_load(engine, model, tmp_path):
     command, options = engine_command(engine, sys.executable, model, engine_port)
     url, manager_url = f"http://127.0.0.1:{engine_port}", f"http://127.0.0.1:{http_port}"
     manager_stack, engine_stack = contextlib.ExitStack(), contextlib.ExitStack()
-    results = {"power_loss": "unqualified", "filesystem": filesystem, "source": source}
+    results = {
+        "power_loss": "unqualified",
+        "filesystem": filesystem,
+        "source": source,
+        "manager": str(manager_binary),
+        "manager_sha256": hashlib.file_digest(manager_binary.open("rb"), "sha256").hexdigest(),
+    }
 
     def start_manager(name):
         return manager_stack.enter_context(service(args, manager_url, env, tmp_path, name))
@@ -95,9 +102,11 @@ def test_nvme_manager_restart_under_serving_load(engine, model, tmp_path):
         (barriers / "ssd.pause").touch()
         with ThreadPoolExecutor(max_workers=2) as executor:
             request = executor.submit(complete, engine, url, model, prompt)
-            until(lambda: (barriers / "ssd.reached").exists())
-            shutdown = executor.submit(manager_stack.close)
-            (barriers / "ssd.pause").unlink()
+            try:
+                until(lambda: (barriers / "ssd.reached").exists())
+                shutdown = executor.submit(manager_stack.close)
+            finally:
+                (barriers / "ssd.pause").unlink()
             shutdown.result(timeout=100)
             try:
                 response = request.result(timeout=100)
@@ -114,7 +123,9 @@ def test_nvme_manager_restart_under_serving_load(engine, model, tmp_path):
         compare_output(engine, recovered, baseline)
         assert cached_tokens(engine, recovered) > 0, recovered
         after = wait_for_drain(http_port)
-        assert after["orbitkv_ssd_prefetch_bytes_total"] > before.get("orbitkv_ssd_prefetch_bytes_total", 0)
+        assert after["orbitkv_ssd_prefetch_bytes_total"] > before.get(
+            "orbitkv_ssd_prefetch_bytes_total", 0
+        )
         assert after["orbitkv_load_bytes_total"] > before.get("orbitkv_load_bytes_total", 0)
         results.update(recovered=recovered, before=before, after=after)
         engine_stack.close()

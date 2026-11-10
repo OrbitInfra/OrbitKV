@@ -146,6 +146,10 @@ class Manager:
             return None
 
         result = self.wait(receive)
+        status = Path(f"/proc/{self.process.pid}/status").read_text().splitlines()
+        result["state"]["process_peak_rss_kib"] = int(
+            next(line for line in status if line.startswith("VmHWM:")).split()[1]
+        )
         self.gate.observations.append(result["state"])
         return result
 

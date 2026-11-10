@@ -342,7 +342,7 @@ jobs:
         run: |
           cargo clippy --locked -p orbitkv-server --features test-hooks --all-targets -- -D warnings
           cargo build --locked -p orbitkv-server --features test-hooks --bin orbitkv-cache-manager
-          export LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control"
+          export LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-local-copy-control:$RUNNER_TEMP/orbitkv-cpu-host-control"
           export ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITE_REQUIRE_IO_URING=1
           mkdir -p "$RUNNER_TEMP/ssd-process-mount" "$RUNNER_TEMP/ssd-process-results"
           truncate -s 32M "$RUNNER_TEMP/ssd-process.ext4"

@@ -76,7 +76,6 @@ released scheduler/connector methods with real CUDA and a Manager, but no model
 forward; the separate model-output/restart gate does not prove injected model
 preemption. End-to-end model fault qualification remains in the M1 queue.
 
-(persistent-ssd-gates)=
 ## Persistent SSD recovery
 
 The CPU gate runs the **actual test-hooks Manager**, bypassing only CUDA/Python
@@ -88,7 +87,8 @@ complete reproduction, including its dedicated 32 MiB ext4 and tmpfs mounts:
 
 ```bash
 cargo build --locked -p orbitkv-server --features test-hooks --bin orbitkv-cache-manager
-# CPU_SHIM contains the source_owner_host_shim.cu host-only libcudart.so.
+# CPU_SHIM includes the existing local_copy_cuda_shim.cpp driver and
+# source_owner_host_shim.cu host-registration library directories (no real CUDA).
 # SSD_MOUNT is an empty, dedicated <=64 MiB ext4/tmpfs mount: ENOSPC fills it.
 LD_LIBRARY_PATH="$CPU_SHIM" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITE_REQUIRE_IO_URING=1 \
   python3 crates/orbitkv-server/tests/process/ssd_persistence.py \

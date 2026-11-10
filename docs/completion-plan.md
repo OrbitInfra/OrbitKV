@@ -197,7 +197,7 @@ corruption, wrap, retained readers, shrink, checkpoint replacement and ENOSPC.
 CPU host registration is a shim; OrbiTE and filesystem I/O are real.
 **Hardware later:** installed recovery across Manager restart, layer readiness
 under compute, raw/encoded GPU bytes and matched DRAM/SSD serving. The
-[NVMe Manager-restart gate](fault-qualification.md#persistent-ssd-gates) for both
+[NVMe Manager-restart gate](fault-qualification.md#persistent-ssd-recovery) for both
 engines is **written, unrun and unqualified**; no power-loss claim follows from
 SIGKILL or clean restart.
 
