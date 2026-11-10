@@ -11,7 +11,8 @@ use crate::memory::numa::NumaNode;
 /// Per-slot metadata (one slot = one layer's KV cache).
 ///
 /// Layout-agnostic: uses per-segment sizes instead of `is_split` boolean.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SlotMeta {
     /// Per-segment sizes. SmallVec inlines up to 2 elements on the stack
     /// (covers K-only MLA and K+V layouts; spills to heap for 3+ segments).

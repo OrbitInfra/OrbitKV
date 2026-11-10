@@ -22,6 +22,10 @@ pub(crate) mod index;
 pub(crate) mod io;
 pub(crate) mod layout;
 pub(crate) mod metadata;
+mod persistence;
+#[cfg(feature = "test-hooks")]
+#[path = "../../../tests/support/ssd_process.rs"]
+pub(crate) mod process_test;
 mod reader;
 mod writer;
 
@@ -141,6 +145,7 @@ pub(crate) struct WriteLease {
     pub(crate) entry: SsdIndexEntry,
     key: StateKey,
     committed: AtomicBool,
+    prepared: AtomicBool,
     gpu: bool,
     store: Arc<SsdStore>,
 }
@@ -150,13 +155,57 @@ impl WriteLease {
         &self.store.cufile_files[self.entry.shard_id]
     }
 
-    pub(crate) fn commit(&self) {
+    pub(crate) fn prepare(&self) -> bool {
+        if self.prepared.load(Ordering::Acquire) {
+            return true;
+        }
+        if let Some(journal) = &self.store.journal
+            && let Err(error) = journal.lock().append(&self.key, &self.entry, None)
+        {
+            warn!("SSD reservation was not durable; dropping write: {error}");
+            return false;
+        }
+        self.prepared.store(true, Ordering::Release);
+        persistence::fault("ssd_reserved");
+        true
+    }
+
+    pub(crate) fn commit(self: &Arc<Self>) -> bool {
+        if self.store.journal.is_some() {
+            if !self.prepared.load(Ordering::Acquire) {
+                log::error!("SSD persistent commit lacks a durable reservation");
+                return false;
+            }
+            persistence::fault("ssd_data_written");
+            let result = (|| {
+                self.store._files[self.entry.shard_id].sync_data()?;
+                persistence::fault("ssd_data_synced");
+                let checksum =
+                    self.store
+                        .checksum(&self.entry, self.clone(), self.options.deadline)?;
+                if let Some(journal) = &self.store.journal {
+                    journal
+                        .lock()
+                        .append(&self.key, &self.entry, Some(checksum))?;
+                }
+                Ok::<(), std::io::Error>(())
+            })();
+            if let Err(error) = result {
+                if let Some(journal) = &self.store.journal {
+                    journal.lock().fence();
+                }
+                warn!("SSD commit failed; no replica published: {error}");
+                return false;
+            }
+        }
         if !self.committed.swap(true, Ordering::AcqRel) {
             self.store.commit_write(&self.key, true);
             if self.gpu {
                 core_metrics().ssd_write_bytes.add(self.entry.len, &[]);
             }
         }
+        persistence::fault("ssd_published");
+        true
     }
 }
 
@@ -164,6 +213,9 @@ impl Drop for WriteLease {
     fn drop(&mut self) {
         if !self.committed.load(Ordering::Acquire) {
             self.store.commit_write(&self.key, false);
+            if let Some(journal) = &self.store.journal {
+                journal.lock().abandon(&self.key, &self.entry);
+            }
             if self.gpu {
                 core_metrics().ssd_write_failures.add(1, &[]);
             }
@@ -240,9 +292,156 @@ pub(crate) struct SsdStore {
     allocation_footprint_fn: AllocationFootprintFn,
     is_numa: bool,
     inventory: Option<Arc<crate::storage::inventory::ResidencyInventory>>,
+    journal: Option<Mutex<persistence::Journal>>,
+    verification_scratch: Mutex<Option<Arc<PinnedAllocation>>>,
+    recovered: Mutex<Vec<persistence::Recovered>>,
 }
 
 impl SsdStore {
+    fn checksum(
+        &self,
+        entry: &SsdIndexEntry,
+        owner: Arc<dyn Send + Sync>,
+        deadline: std::time::Instant,
+    ) -> std::io::Result<u32> {
+        let mut scratch = self.verification_scratch.lock();
+        if self.journal.as_ref().is_some_and(|j| j.lock().is_fenced()) {
+            return Err(std::io::Error::other("SSD persistence is fenced"));
+        }
+        if scratch.is_none() {
+            *scratch = (self.allocate_fn)(persistence::VERIFY_CHUNK as u64, None);
+        }
+        let buffer = scratch
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("SSD checksum host budget exhausted"))?;
+        let file = self
+            .io
+            .engine_file(entry.shard_id)
+            .ok_or_else(|| std::io::Error::other("missing SSD checksum file"))?;
+        let result = file.checksum(entry.file_offset, entry.len, buffer, owner, deadline);
+        if matches!(&result, Err(error) if error.kind == crate::transfer_engine::ErrorKind::Unquiesced)
+        {
+            // The native retention owner still holds this actual allocation and
+            // extent. Never return the scratch to a later checksum operation.
+            *scratch = None;
+            if let Some(journal) = &self.journal {
+                journal.lock().fence();
+            }
+        }
+        result.map_err(std::io::Error::other)
+    }
+
+    pub(crate) fn start_recovery(self: &Arc<Self>) {
+        let Some(journal) = &self.journal else {
+            return;
+        };
+        let report = journal.lock().report.clone();
+        let recovered = std::mem::take(&mut *self.recovered.lock());
+        let store = Arc::clone(self);
+        // Storage's allocation closure has been installed before this call.
+        // One blocking verifier owns at most one physical read at a time.
+        tokio::task::spawn_blocking(move || {
+            let started = std::time::Instant::now();
+            for recovered in recovered {
+                if started.elapsed() > persistence::VERIFY_BUDGET {
+                    report.lock().drop_entry("verification_time_limit");
+                    store
+                        .inner
+                        .lock()
+                        .ring
+                        .invalidate(&recovered.key, &recovered.entry);
+                    continue;
+                }
+                let lease = {
+                    let inner = store.inner.lock();
+                    if !inner.ring.unverified(&recovered.key, &recovered.entry) {
+                        report.lock().drop_entry("evicted_before_verification");
+                        continue;
+                    }
+                    recovered.entry.readers.fetch_add(1, Ordering::Relaxed);
+                    core_metrics()
+                        .ssd_read_pinned_bytes
+                        .add(recovered.entry.len as i64, &[]);
+                    Arc::new(SsdReadLease {
+                        options: crate::transfer_engine::TransferOptions::checkpoint(
+                            std::time::Instant::now() + io::DEADLINE,
+                        ),
+                        entry: recovered.entry.clone(),
+                        key: recovered.key.clone(),
+                        store: store.clone(),
+                    })
+                };
+                persistence::fault("ssd_before_verification");
+                let result =
+                    store.checksum(&recovered.entry, lease.clone(), lease.options.deadline);
+                if matches!(result, Ok(checksum) if checksum == recovered.checksum) {
+                    let visible = store
+                        .inner
+                        .lock()
+                        .ring
+                        .verify(&recovered.key, &recovered.entry);
+                    if visible {
+                        report.lock().verified_bytes += recovered.entry.len;
+                        if let Some(inventory) = &store.inventory
+                            && let Err(error) = inventory.change(
+                                &recovered.key,
+                                orbitkv_state::ReplicaMedium::Ssd,
+                                Some(recovered.entry.replica_metadata()),
+                            )
+                        {
+                            log::error!("Recovered SSD inventory mutation rejected: {error:?}");
+                        }
+                    }
+                } else {
+                    let reason = if result.is_ok() {
+                        "data_checksum"
+                    } else {
+                        "verification_io"
+                    };
+                    report.lock().drop_entry(reason);
+                    log::warn!("Recovered SSD extent dropped: {reason}");
+                    if let Some(journal) = &store.journal {
+                        let mut journal = journal.lock();
+                        if let Err(error) = journal.invalidate(&recovered.key, &recovered.entry) {
+                            journal.fence();
+                            log::warn!("SSD recovery invalidation could not be persisted: {error}");
+                        }
+                    }
+                    store
+                        .inner
+                        .lock()
+                        .ring
+                        .invalidate(&recovered.key, &recovered.entry);
+                }
+            }
+            let mut report = report.lock();
+            report.elapsed_seconds += started.elapsed().as_secs_f64();
+            report.finished = true;
+            core_metrics()
+                .ssd_recovery_seconds
+                .record(report.elapsed_seconds, &[]);
+            log::info!(
+                "SSD recovery complete: parsed_bytes={} metadata_bytes={} entries={} verified_bytes={} elapsed_seconds={} drops={:?}",
+                report.parsed_bytes,
+                report.metadata_bytes,
+                report.entries,
+                report.verified_bytes,
+                report.elapsed_seconds,
+                report.drops
+            );
+        });
+    }
+
+    #[cfg(feature = "test-hooks")]
+    pub(crate) fn recovery_report(&self) -> serde_json::Value {
+        self.journal
+            .as_ref()
+            .map_or(serde_json::Value::Null, |journal| {
+                let report = journal.lock().report.clone();
+                serde_json::to_value(&*report.lock()).unwrap_or(serde_json::Value::Null)
+            })
+    }
+
     fn cufile_eligible(&self, entry: &SsdIndexEntry, codec_budget: usize) -> bool {
         self.gpu_io.available()
             && self.cufile_files.get(entry.shard_id).is_some()
@@ -284,6 +483,7 @@ impl SsdStore {
             entry,
             key,
             committed: AtomicBool::new(false),
+            prepared: AtomicBool::new(false),
             gpu: true,
             store: Arc::clone(self),
         }))
@@ -338,8 +538,25 @@ impl SsdStore {
             shards_per_path,
             shard_capacity,
             &mut OpenOptions::new(),
+            config.persistent,
         )?;
         let files = files.into_iter().map(Arc::new).collect::<Vec<_>>();
+        let (journal, recovered) = if config.persistent {
+            let (journal, recovered) = persistence::Journal::open(
+                files::journal_path(&config.cache_paths, shards_per_path)?,
+                &files,
+                shard_capacity,
+                alignment as u64,
+            )?;
+            // The rebased metadata is durable before a shrink can discard bytes.
+            for file in &files {
+                file.set_len(shard_capacity)?;
+                file.sync_all()?;
+            }
+            (Some(Mutex::new(journal)), recovered)
+        } else {
+            (None, Vec::new())
+        };
         let io = Arc::new(SsdIo::new(
             &files,
             transfer,
@@ -370,8 +587,8 @@ impl SsdStore {
         } else {
             Vec::new()
         };
-        if !cufile_files.is_empty() {
-            files::reserve_cache_space(&files, shard_capacity)?;
+        if !cufile_files.is_empty() || config.persistent {
+            files::reserve_cache_space(&files, shard_capacity, config.persistent)?;
         }
         let ring_alignment = if gpu_io.available() {
             layout::ALIGNMENT
@@ -408,6 +625,11 @@ impl SsdStore {
             },
         );
 
+        let mut ring =
+            SsdRingBuffer::new_sharded(vec![shard_capacity; total_shards], ring_alignment as u64);
+        if let Some(journal) = &journal {
+            ring.recover(&journal.lock().heads(), &recovered);
+        }
         let store = Arc::new(Self {
             gpu_io,
             read_path: config.read_path,
@@ -418,10 +640,7 @@ impl SsdStore {
             write_policy: config.write_policy,
             prefetch_tx,
             inner: Mutex::new(SsdInner {
-                ring: SsdRingBuffer::new_sharded(
-                    vec![shard_capacity; total_shards],
-                    ring_alignment as u64,
-                ),
+                ring,
                 pending_writes: HashSet::new(),
                 reuse_history: LruCache::new(REUSE_HISTORY_BLOCKS),
             }),
@@ -429,6 +648,9 @@ impl SsdStore {
             allocation_footprint_fn,
             is_numa,
             inventory,
+            journal,
+            verification_scratch: Mutex::new(None),
+            recovered: Mutex::new(recovered),
         });
 
         Self::spawn_workers(
@@ -556,6 +778,13 @@ impl SsdStore {
 
     pub(super) fn invalidate_encoded_entry(&self, key: &StateKey, entry: &SsdIndexEntry) {
         let invalidated = self.inner.lock().ring.invalidate_encoded(key, entry);
+        if invalidated && let Some(journal) = &self.journal {
+            let mut journal = journal.lock();
+            if let Err(error) = journal.invalidate(key, entry) {
+                journal.fence();
+                warn!("SSD corrupt-entry invalidation could not be persisted: {error}");
+            }
+        }
         if invalidated
             && let Some(inventory) = &self.inventory
             && let Err(error) = inventory.change(key, orbitkv_state::ReplicaMedium::Ssd, None)

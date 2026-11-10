@@ -68,6 +68,57 @@ pub(crate) struct EngineFile {
 }
 
 impl EngineFile {
+    /// The caller serializes scratch access and holds the immutable extent.
+    /// Even an unsuccessful checksum keeps submitted owners until native drain.
+    pub(super) fn checksum(
+        self: &Arc<Self>,
+        offset: u64,
+        length: u64,
+        scratch: &Arc<PinnedAllocation>,
+        lease: Arc<dyn Send + Sync>,
+        deadline: Instant,
+    ) -> Result<u32, TransferError> {
+        let mut read = 0u64;
+        let mut checksum = 0;
+        while read < length {
+            let bytes = (length - read).min(super::persistence::VERIFY_CHUNK as u64) as usize;
+            let extent = FileExtent {
+                offset: offset + read,
+                elements: vec![FileIoElement::Range {
+                    address: scratch.as_non_null().as_ptr() as u64,
+                    length: bytes,
+                }],
+            };
+            validate(&extent)?;
+            if bytes as u64 > scratch.size_bytes() {
+                return Err(TransferError::new(
+                    ErrorKind::InvalidRequest,
+                    "SSD checksum scratch is too small",
+                ));
+            }
+            let permit = admit(&self.admission)?;
+            let owner = DrainOwner::new(Arc::new(FileTransfer {
+                extent,
+                memory: FileMemory::Pinned(vec![Arc::clone(scratch)]),
+                _lease: Arc::new((Arc::clone(self), Arc::clone(&lease), permit)),
+            }));
+            self.execute(
+                TransferOp::Read,
+                FileTransport::IoUring,
+                owner,
+                TransferOptions::checkpoint(deadline),
+            )?;
+            // SAFETY: this range is in the retained scratch allocation. The
+            // checksum caller holds its exclusive mutex; the successful native
+            // read receipt initialized all bytes and ended every device access.
+            let payload =
+                unsafe { std::slice::from_raw_parts(scratch.as_non_null().as_ptr(), bytes) };
+            checksum = crc32c::crc32c_append(checksum, payload);
+            read += bytes as u64;
+        }
+        Ok(checksum)
+    }
+
     pub(crate) fn submit(
         self: &Arc<Self>,
         operation: TransferOp,
@@ -255,6 +306,9 @@ impl EngineFile {
                 "Retaining SSD file, registration, backing, extent and admission after unknown drain"
             );
         } else {
+            if operation == TransferOp::Read {
+                super::persistence::fault("ssd_read_receipt");
+            }
             owners.drain();
         }
         result

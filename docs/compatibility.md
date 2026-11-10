@@ -21,7 +21,7 @@ model support alone, when selecting a layout.
 
 | Profile | Implementation and limit |
 | --- | --- |
-| Local DRAM / SSD | Implemented; engine restart reuse needs a live Manager. SSD is recreated at Manager startup |
+| Local DRAM / SSD | Implemented; default SSD is recreated at startup. Opt-in persistent SSD has CPU crash controls; installed NVMe restart serving is unqualified |
 | Shared Manager | Local engines can share capacity; fairness and tail isolation remain open |
 | Peer cache | Inventory, grants and OrbiTE TCP/RDMA; current hardware recovery and cache HA unqualified |
 | Metadata scaling | Four-owner scope; historical isolation FAIL and sixteen-owner UNQUALIFIED remain unchanged |
@@ -50,4 +50,6 @@ Upgrade native clients and Manager together. The wheel supplies native binaries;
 the host supplies compatible Python, CUDA and selected RDMA libraries, and the
 Manager also requires compatible PyTorch. See [release artifact requirements](releases.md).
 
-The SSD file is recreated on Manager startup. Engine-restart reuse is implemented; Manager restart does not preserve this disk cache.
+By default, SSD files are recreated on Manager startup. `--ssd-persistent` enables
+[durable commits and verified recovery](storage-persistence.md). CPU process-crash
+controls do not qualify real NVMe serving or power-loss durability.

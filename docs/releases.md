@@ -11,6 +11,12 @@ how to validate a candidate without uploading it to PyPI.
 
 ## Packages
 
+`--ssd-persistent` introduces local SSD format version 1 as an opt-in cache.
+Keep data files and the checksummed sidecar together. Unknown or untrusted
+metadata starts cold; there is no migration or compatibility alias before 0.1.0.
+The default still truncates. Installed NVMe serving remains unqualified; see
+[the persistence contract](storage-persistence.md).
+
 The `orbitkv` PyPI wheel is OrbitKV's only distribution. All Rust crates,
 including the Python extension crate, are internal and are not published.
 

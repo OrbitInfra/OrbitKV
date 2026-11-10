@@ -29,7 +29,8 @@ owns DRAM, SSD and peer cache state; OrbiTE moves the bytes.
 ## Key features
 
 - **Retain prefixes beyond HBM.** Reuse DRAM and optional SSD state across engine
-  restarts while the Manager stays alive. SSD is recreated on Manager restart.
+  restarts while the Manager stays alive; opt-in SSD persistence adds verified
+  Manager-restart recovery. Installed NVMe serving remains unqualified.
 - **Share compatible state.** Discover peer replicas through bounded inventories
   and fetch them through authoritative source grants.
 - **Keep ownership explicit.** Sources, destinations and registrations stay owned
@@ -100,6 +101,7 @@ Prefill/decode composition <pd>
 
 DRAM retention and SSD admission <cache-policies>
 SSD, io_uring and GDS <gds>
+Persistent SSD recovery <storage-persistence>
 Formats and compression <storage-formats>
 P2P deployment <p2p>
 Discovery and source grants <distributed-cache>

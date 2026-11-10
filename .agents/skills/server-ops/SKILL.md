@@ -72,6 +72,12 @@ auto uses engine policy. Missing features return Unavailable before CUDA setup.
 SSD always uses engine file segments and padded vectors. No legacy I/O or copy
 fallback exists. Explicit GDS rejects padding; compiling GDS does not load cuFile
 unless configured. Unknown drain retains backing, extents and admission.
+SSD is ephemeral unless `--ssd-persistent` is selected. Preserve every data file
+and its `.index` sidecar on private local storage; recovery verifies full extents
+before hits. A durability error fences writes until restart, and shrink drops
+out-of-range entries. Check the bounded recovery log/counters before diagnosing
+a startup miss. `docs/storage-persistence.md` defines the commit and GC contract;
+CPU SIGKILL controls do not qualify installed NVMe serving or power loss.
 Read deadlines survive queues/grants. Demand maps to foreground/high,
 Prepare/Warmup to background/low and write-back to checkpoint/low. Lifecycle 13
 requires matching clients and Managers; no selected-engine field remains.

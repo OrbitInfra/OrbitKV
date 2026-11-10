@@ -121,8 +121,10 @@ and CRC32. The Manager validates checksums before cache admission or GPU decode.
 A damaged SSD object becomes a miss; only that generation is invalidated, so
 republication can repair it. Allocation, budget and destination errors fail the
 restore without invalidating healthy SSD data. Peer transfers carry the same
-metadata and verify received bytes. SSD files and indexes remain ephemeral
-across Manager restarts.
+metadata and verify received bytes. SSD files and indexes are ephemeral by default.
+[Opt-in persistence](storage-persistence.md) verifies the complete stored extent,
+including encoded metadata and padding, before the first recovered hit.
+This does not yet add a checksum to every raw read.
 
 Encoded segments are kept only when their aligned footprint saves at least
 12.5%. Oversized, unsupported, nonfinite or insufficient-budget segments use the

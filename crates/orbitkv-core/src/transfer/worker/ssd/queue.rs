@@ -136,6 +136,13 @@ impl Job {
                     }
                 }
                 Task::Save(task) => {
+                    for write in &task.ssd_writes {
+                        if !write.lease.prepare() {
+                            return Err(EngineError::Storage(
+                                "SSD reservation was not durable".into(),
+                            ));
+                        }
+                    }
                     for (index, write) in
                         std::mem::take(&mut task.ssd_writes).into_iter().enumerate()
                     {
@@ -271,7 +278,9 @@ impl Job {
             write.remaining -= 1;
             if write.remaining == 0 && publish {
                 if let Some(lease) = write.lease.take() {
-                    lease.commit();
+                    if !lease.commit() {
+                        self.fail("SSD extent was not durably committed".into());
+                    }
                 } else {
                     self.fail("completed extent has no publication lease".into());
                 }

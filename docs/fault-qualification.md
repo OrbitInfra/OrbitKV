@@ -43,7 +43,7 @@ their ordinary source-only run remains a different evidence level.
 | Preemption with Save in flight | Defer source reuse until every Save drains; unknown completion retains all holds. | VS preemption waits for all batches; SA retained FIFO offloads block reset/close. SGLang retraction scheduling is not exercised by that CPU control. GPU: actual pressure/preemption remains unqualified. |
 | Free and reuse a page slot | A stale generation must never identify new bytes. Payload registration IDs are not allocator-slot generations. | VS reuse-before-last-batch negative control and SA captured-registration rejection. GPU: registration replacement/partial enqueue bytes only; full allocator-generation proof is blocked on the issues below. |
 | Engine worker restart, live Manager | New registration may reuse compatible cached state; the dead worker's unfinished grants remain held/quarantined until a real receipt. | CPU tests cover unknown completion, not worker death. GPU-written: model engine restart and native session-watcher/engine-death controls. |
-| Manager restart | Reject old handles/leases; cold miss is valid until M2, stale hit is not. Reconnect with a new incarnation. Process disappearance alone does not revoke submitted GPU work. | VQ/SA connection-loss retention, not process evidence. GPU-written: old-handle/lease rejection, explicit old-key miss and model cold-restart byte counter. |
+| Manager restart | Reject old handles/leases; default cold miss or opt-in checksum-verified SSD recovery is valid; stale hit is not. Reconnect with a new incarnation. Process disappearance alone does not revoke submitted GPU work. | VQ/SA connection-loss retention, not process evidence. GPU-written: old-handle/lease rejection, explicit old-key miss and model cold-restart byte counter. |
 | Same token hash, different identity | Revision, layout, computation, representation and scope must produce different namespaces; no cross-identity hit. | VQ for both engines plus content-fingerprint controls. GPU model/layout variants remain unrun. |
 | Partial load: layer / Full-SWA pool fails | No complete-boundary hit or successful completion; keep all submitted destinations and source leases through terminal drain. | VL known/unknown failure; SL layer-ready versus drain; VQ Full/SWA partial failure. GPU: partitioned-restore and partial-enqueue byte controls. |
 | Partial save | Unfinished state stays invisible. Release only terminal batches, never an unknown head or a later FIFO completion in its place. | VS multi-batch and unknown-wait controls; SA FIFO and terminal failed-publication consumer. GPU: Publish/write fault controls; partial serving remains unqualified. |
@@ -75,6 +75,72 @@ All GPU entries remain **unrun and unqualified**. The native fixture drives
 released scheduler/connector methods with real CUDA and a Manager, but no model
 forward; the separate model-output/restart gate does not prove injected model
 preemption. End-to-end model fault qualification remains in the M1 queue.
+
+## Persistent SSD recovery
+
+The CPU gate runs the **actual test-hooks Manager**, bypassing only CUDA/Python
+registry initialization and using the existing CPU host-registration shim.
+OrbiTE, io_uring, file bytes, journal syncs and SIGKILL are real. It injects sealed
+host fixtures through the storage owner, not a model or a client registration.
+Run the `Persistent SSD Manager SIGKILL and recovery gates` CI step for the
+complete reproduction, including its dedicated 32 MiB ext4 and tmpfs mounts:
+
+```bash
+cargo build --locked -p orbitkv-server --features test-hooks --bin orbitkv-cache-manager
+# CPU_SHIM includes the existing local_copy_cuda_shim.cpp driver and
+# source_owner_host_shim.cu host-registration library directories (no real CUDA).
+# SSD_MOUNT is an empty, dedicated <=64 MiB ext4/tmpfs mount: ENOSPC fills it.
+LD_LIBRARY_PATH="$CPU_SHIM" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITE_REQUIRE_IO_URING=1 \
+  python3 crates/orbitkv-server/tests/process/ssd_persistence.py \
+  --binary target/debug/orbitkv-cache-manager --root "$SSD_MOUNT" \
+  --filesystem ext4 --artifacts /var/tmp/orbitkv-persistence/ext4
+```
+
+Repeat with `--filesystem tmpfs` on its own mount and artifact directory.
+Required cases fail on missing prerequisites; they never substitute a filesystem.
+
+| CPU process case | Required result |
+| --- | --- |
+| SIGKILL after payload write or data sync | No commit: counted orphan miss, no stale bytes |
+| SIGKILL mid-record | Counted cold start; no partial salvage across an overwrite fence |
+| SIGKILL after full record, before sync | Correct verified bytes or counted miss; the caller had no durable acknowledgement |
+| SIGKILL after publication | Correct verified raw/encoded bytes after restart |
+| Torn/bit-flipped metadata, wrong version or namespace | Counted drop/cold start, never a hit |
+| Data bit flip; verification held | Bad CRC drops the entry; even healthy recovery is a miss until verification drains |
+| Wrap killed after reservation or overwrite; orphan reuse | Old generation never resurrects; orphan capacity is reusable |
+| Reader held; file receipt withheld | Eviction pressure cannot reuse the leased extent; releasing the receipt restores admission |
+| Prior file user survives Manager SIGKILL | Startup fails without changing data/metadata; only releasing that description permits recovery |
+| Capacity shrink; checkpoint replacement killed | Only fitting entries survive; old or new complete checkpoint remains usable |
+| Real ENOSPC during commit | No published entry, no pending writer/reader leak; writes remain fenced until restart |
+| Default restart; clean persistent restart | Default truncates; opt-in recovers exact bytes and isolates namespaces |
+
+The receipt barrier is after native completion but before the storage owner
+receives its physical receipt. The existing Unquiesced control separately proves
+indefinite retention; a timer or cancellation never releases that owner.
+CI uploads logs and bounded recovery counters/timing as `ssd-process-crash`.
+SIGKILL tests process failure, **not power loss**; tmpfs has no persistent medium.
+
+The installed NVMe gate is **written, unrun and unqualified**. Use the installed
+harness projection described below, a matching test-hooks Manager, an immutable
+dense Qwen3 model and a fresh external basetemp on a direct NVMe/ext4 mount:
+
+```bash
+export ORBITKV_REQUIRE_ENGINE_TESTS=1 ORBITE_REQUIRE_IO_URING=1
+export ORBITKV_CACHE_MANAGER_BINARY=/absolute/path/to/test-hooks-manager
+export VLLM_USE_V2_MODEL_RUNNER=0
+# Repeat with ENGINE=sglang and its 0.5.23 interpreter; vLLM is 0.33.0 V1/one group.
+ENGINE=vllm
+PYTHON=/absolute/path/to/vllm-release/bin/python
+"$PYTHON" -m pytest -m '' --engine="$ENGINE" --engine-evidence=installed-gpu \
+  tests/e2e/test_ssd_persistence.py --model /absolute/path/to/immutable-Qwen3 \
+  --basetemp=/mnt/nvme/orbitkv-persistence-vllm \
+  --engine-report=/var/tmp/orbitkv-persistence/vllm-installed.json
+```
+
+It begins Manager shutdown with a real model SSD load pending, drains before
+restarting, then requires native-baseline outputs, restored-byte counters,
+restart hits and a cold namespace control. It does not qualify power-loss
+durability, GPU codecs, GDS, RDMA or every hybrid layout.
 
 ## Native fault boundaries
 
@@ -310,7 +376,7 @@ restart, hits and cold identity controls. The third covers real component
 buffers and drain barriers, separately on DRAM and io_uring. End-to-end model
 abort/retraction under serving load and physical multi-rank operation remain
 hardware queue items; neither model parity nor a fixture closes them. Manager
-restart may miss until M2. No allocator-generation proof is claimed.
+restart may miss in default ephemeral mode. No allocator-generation proof is claimed.
 
 ### Build the native fault runtime
 

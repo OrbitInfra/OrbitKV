@@ -3,6 +3,10 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+pub use crate::storage::ssd::process_test::{
+    enabled as ssd_process_enabled, spawn as spawn_ssd_process,
+};
+
 pub fn active(name: &str) -> bool {
     let Some(dir) = std::env::var_os("ORBITKV_TEST_FAULTS") else {
         return false;

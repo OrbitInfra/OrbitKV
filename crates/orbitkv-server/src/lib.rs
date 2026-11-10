@@ -158,6 +158,10 @@ pub struct Cli {
     #[arg(long, default_value = "512gb", value_parser = parse_memory_size)]
     pub ssd_cache_capacity: usize,
 
+    /// Opt in to durable SSD commits and checksum-gated recovery after restart.
+    #[arg(long, requires = "ssd_cache_path")]
+    pub ssd_persistent: bool,
+
     /// SSD cache file shards per path. Use >1 for parallel filesystems such as GPFS.
     /// When multiple --ssd-cache-path values are given each path receives this many
     /// shards so that every device is utilised. Default: 1
@@ -600,26 +604,11 @@ fn init_metrics(
     })
 }
 
-/// Main entry point for the Cache Manager.
-pub fn run() -> Result<(), Box<dyn Error>> {
-    let cli = Cli::parse();
-    cli.transfer_transport.validate_compiled()?;
-    if !cli.ssd_cache_path.is_empty() {
-        orbitkv_core::SsdCacheConfig {
-            backend: cli.ssd_backend,
-            ..Default::default()
-        }
-        .validate_transfer_engine()?;
+fn initialize_registry(cli: &Cli) -> Result<CudaTensorRegistry, Box<dyn Error>> {
+    #[cfg(feature = "test-hooks")]
+    if orbitkv_core::test_faults::ssd_process_enabled() {
+        return Ok(CudaTensorRegistry::empty());
     }
-    let query_control_address = cli.query_control_address()?;
-    orbitkv_common::logging::init_stdout_colored(&cli.log_level);
-    info!(
-        "Starting orbitkv-cache-manager v{}",
-        env!("CARGO_PKG_VERSION")
-    );
-    trace::init();
-    orbitkv_core::set_trace_sample_rate(cli.trace_sample_rate);
-
     // Initialize CUDA in the main thread before starting Tokio runtime
     init_cuda_driver()?;
     check_cuda_version::preflight()?;
@@ -654,6 +643,31 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         let msg = format_py_err(err);
         std::io::Error::other(format!("failed to initialize torch CUDA context: {msg}"))
     })?;
+    Ok(registry)
+}
+
+/// Main entry point for the Cache Manager.
+pub fn run() -> Result<(), Box<dyn Error>> {
+    let cli = Cli::parse();
+    cli.transfer_transport.validate_compiled()?;
+    if !cli.ssd_cache_path.is_empty() {
+        orbitkv_core::SsdCacheConfig {
+            backend: cli.ssd_backend,
+            persistent: cli.ssd_persistent,
+            ..Default::default()
+        }
+        .validate_transfer_engine()?;
+    }
+    let query_control_address = cli.query_control_address()?;
+    orbitkv_common::logging::init_stdout_colored(&cli.log_level);
+    info!(
+        "Starting orbitkv-cache-manager v{}",
+        env!("CARGO_PKG_VERSION")
+    );
+    trace::init();
+    orbitkv_core::set_trace_sample_rate(cli.trace_sample_rate);
+
+    let registry = initialize_registry(&cli)?;
     // Confine the registry to its own thread: GIL + CUDA work now happens off
     // the async runtime, so a wedged `empty_cache` can't starve tokio workers.
     let registry = RegistryHandle::spawn(registry)?;
@@ -688,6 +702,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         Some(orbitkv_core::SsdCacheConfig {
             cache_paths: cli.ssd_cache_path.iter().map(|p| p.into()).collect(),
             capacity_bytes: cli.ssd_cache_capacity as u64,
+            persistent: cli.ssd_persistent,
             shards: cli.ssd_cache_shards,
             write_queue_depth: cli.ssd_write_queue_depth,
             write_policy: cli.ssd_write_policy,
@@ -858,6 +873,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             cli.use_hugepages,
             storage_config,
         )?);
+        #[cfg(feature = "test-hooks")]
+        orbitkv_core::test_faults::spawn_ssd_process(Arc::clone(&engine));
         let lifecycle = cache::lifecycle::LifecycleService::new(Arc::clone(&engine), registry);
         let (service_name, session_epoch, bootstrap_socket, arena_size, slot_size) = channel_config;
         let query_control = query_control_address.map(|address| {

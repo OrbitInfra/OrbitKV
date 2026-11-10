@@ -102,6 +102,9 @@ fn queued_read_store_with_inventory(
         allocation_footprint_fn: Arc::new(|bytes, _| Some(bytes)),
         is_numa: false,
         inventory,
+        journal: None,
+        verification_scratch: Mutex::new(None),
+        recovered: Mutex::new(Vec::new()),
     });
     let key = StateKey::new("queued-lease".into(), vec![0]);
     let mut inner = store.inner.lock();

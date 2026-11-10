@@ -303,10 +303,20 @@ async fn execute_write(task: WriteTask, store: Weak<SsdStore>, io: Arc<SsdIo>) -
         entry: entry.clone(),
         key: key.clone(),
         committed: std::sync::atomic::AtomicBool::new(false),
+        prepared: std::sync::atomic::AtomicBool::new(false),
         gpu: false,
         store: Arc::clone(&store),
     });
     let bytes = entry.len;
+    if store.journal.is_some() {
+        let preparing = lease.clone();
+        if !tokio::task::spawn_blocking(move || preparing.prepare())
+            .await
+            .unwrap_or(false)
+        {
+            return (key, false, start.elapsed().as_secs_f64(), bytes);
+        }
+    }
     let rx = {
         let mut offset = entry.file_offset;
         let slices = task
@@ -340,12 +350,18 @@ async fn execute_write(task: WriteTask, store: Weak<SsdStore>, io: Arc<SsdIo>) -
             )
         })
     };
-    let success = match rx {
+    let mut success = match rx {
         Ok(rx) => matches!(rx.await, Ok(Ok(written)) if written as u64 == bytes),
         Err(_) => false,
     };
     if success {
-        lease.commit();
+        success = if store.journal.is_some() {
+            tokio::task::spawn_blocking(move || lease.commit())
+                .await
+                .unwrap_or(false)
+        } else {
+            lease.commit()
+        };
     }
     let duration = start.elapsed().as_secs_f64();
     core_metrics()

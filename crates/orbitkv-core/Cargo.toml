@@ -40,6 +40,7 @@ half = "2.7"
 serde.workspace = true
 serde_json.workspace = true
 crc32fast = "1.5"
+crc32c = "0.6.8"
 futures.workspace = true
 parking_lot.workspace = true
 fastrace = { workspace = true, optional = true }

@@ -5,7 +5,7 @@ into both upstream mainlines.** OrbiTE is the only byte mover. Engines own
 scheduling, HBM and native P/D; OrbitKV owns cache identity, storage, discovery,
 grants and resource lifetime. This is the only execution queue.
 
-The current delivery is **M1 PR 5: SGLang 0.5.23 component handoff**.
+The current delivery is **M2 PR 1: opt-in persistent SSD recovery**.
 Each coherent PR stops for review before dependent work starts. Research designs
 and simulator campaigns are removed from the maintained tree; Git history retains
 them and external artifacts are untouched. DeepInfer/OrbitInfer and an OrbiTE
@@ -80,7 +80,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 | Capability | OrbitKV status and evidence | Precedent |
 | --- | --- | --- |
 | Host DRAM | **Have:** bounded pinned pools, replicas and leased restores. [Policies](cache-policies.md). | L/F/V host tiers, M memory objects |
-| SSD surviving Manager restart | **Missing:** SSD I/O exists, but [allocation](https://github.com/OrbitInfra/OrbitKV/blob/main/crates/orbitkv-core/src/storage/ssd/files.rs) truncates files at startup; index/extent state is volatile. Engine restart reuse requires a live Manager. | L/F disk and V filesystem tiers; persistence needs a separate crash contract |
+| SSD surviving Manager restart | **Partial:** opt-in [durable journal and checksum-gated recovery](storage-persistence.md); default still truncates. CPU process-crash controls are required on ext4/tmpfs; installed NVMe serving and power-loss behavior remain unqualified. | L/F disk and V filesystem tiers; persistence needs a separate crash contract |
 | Peer DRAM/SSD cluster tier | **Partial:** inventory discovery, source-owned SSD preparation and OrbiTE reads exist; durable cluster recovery/node-loss qualification remain open. [Distributed cache](distributed-cache.md). | F distributed reuse, L P2P, M replicas |
 | Shared filesystem / 3FS mount | **Missing:** a local SSD path on a shared mount supplies no shared metadata, locking, GC or safe restart. | L filesystem/HF3FS, V secondary filesystem, F remote storage |
 
@@ -132,7 +132,7 @@ Reviewed in order, one PR at a time:
    [Released contract](adapters.md#released-hma-contract) and installed-CPU
    allocator controls cover window retirement, abort and preemption. Recurrent,
    zeroing and V2 multi-group profiles remain rejected; GPU gates are unrun.
-5. **SGLang 0.5.23 components (implemented, awaiting review):** static Mamba
+5. **SGLang 0.5.23 components (reviewed, #342):** static Mamba
    conv/SSM checkpoints use the released component, an atomic boundary and native
    drain; MLA remains per-rank with explicit latent/RoPE identity. Installed-CPU
    controls cover real pool allocation, tree locks, scheduler completion and
@@ -140,7 +140,7 @@ Reviewed in order, one PR at a time:
    delimit the scope. Worker-preparation/pending-admission Hooks remain required;
    #44856, #44873 and #45493 are open on November 10, 2026.
 
-After this review, M1's code items are complete for the admitted profiles. Only
+M1's code items are complete for the admitted profiles. Only
 its installed-GPU queue remains; unsupported layouts, MLA TP deduplication (M3)
 and upstream Hook replacement are not silently promoted into this scope.
 
@@ -171,23 +171,35 @@ commands and the distinction between fixture bytes and serving are in
 | SGLang components | [Exact commands](fault-qualification.md#sglang-component-gates): Qwen3-Next Full+checkpoint and DeepSeek-V2-Lite MLA model output/restart; each conv/SSM/latent buffer, untouched slots, abort during Save/Load and retraction after drain on DRAM/io_uring. Fixture fault controls do not establish end-to-end model fault qualification. |
 | V2 opt-in, uniform Full attention | [Exact commands](fault-qualification.md#v2-opt-in-gates): model outputs/restart restore metrics plus native fixture bytes for save preemption, abort during load, finish before save drain and reallocation. The fixture invokes released scheduler/dispatcher classes; it does not substitute for an end-to-end model fault run or allocator-generation proof. |
 | Abort, timeout, cancellation, partial load/save | Native fault barriers plus released adapter controls; no early source/destination/registration/grant release. A normal model-output run alone cannot close these cases. |
-| Engine-worker / Manager restart | Live-Manager engine restart restores bytes; Manager restart starts cold until M2, rejects old handles/leases and never reports stale state as a hit. |
+| Engine-worker / Manager restart | Live-Manager engine restart restores bytes; Default Manager restart starts cold; opt-in SSD recovery is covered by the M2 queue. Both reject old handles/leases and never report stale state as a hit. |
 | Preemption and allocator page reuse | Save holds and registration-replacement controls exist; allocator-slot generation proof remains blocked on vLLM #62810 / SGLang #45493 (open November 9, 2026). No private runner or parallel tree substitutes for the missing contract. |
 | Identity collision | Same-token model revision, layout, computation, representation and scope controls run on CPU; installed model/layout cases must also be tested on the admitted profile. |
 
 ### M2 — A complete node
 
-Separate PRs for a crash-consistent persistent SSD index/extent allocator and GC;
-layerwise load/save; read-time checksums for every stored representation;
-TTL/watermark eviction. Reuse storage/lease owners and OrbiTE file I/O. Document
+1. **Persistent SSD (implemented, awaiting review):** opt-in journal, durable
+   overwrite fences, bounded recovery/GC and full-extent checksum verification
+   before the first recovered hit. Default behavior stays cold. See the
+   [protocol and crash controls](storage-persistence.md).
+2. **Layerwise load/save.**
+3. **Read-time checksums for every stored representation.** Persistence verifies
+   once before recovery publication; this does not replace checking every read.
+4. **TTL/watermark eviction.**
+
+Reuse storage/lease owners and OrbiTE file I/O. Document
 commit/recovery ordering, orphan reclamation and corrupt-data misses. Never reuse
 bytes still held by a reader or undrained transfer.
 
 **CPU now:** real io_uring files on ext4, crash/reopen boundaries, short reads,
 corruption, orphan GC, disk-full behavior and concurrent leases are CI-qualifiable.
-Existing file-byte tests are a starting point, not persistence evidence.
+The required child-Manager SIGKILL gate covers commit boundaries, metadata/data
+corruption, wrap, retained readers, shrink, checkpoint replacement and ENOSPC.
+CPU host registration is a shim; OrbiTE and filesystem I/O are real.
 **Hardware later:** installed recovery across Manager restart, layer readiness
-under compute, raw/encoded GPU bytes and matched DRAM/SSD serving.
+under compute, raw/encoded GPU bytes and matched DRAM/SSD serving. The
+[NVMe Manager-restart gate](fault-qualification.md#persistent-ssd-recovery) for both
+engines is **written, unrun and unqualified**; no power-loss claim follows from
+SIGKILL or clean restart.
 
 ### M3 — A complete cluster
 
