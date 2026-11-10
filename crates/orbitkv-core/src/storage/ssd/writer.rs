@@ -381,9 +381,13 @@ async fn execute_write(task: WriteTask, store: Weak<SsdStore>, io: Arc<SsdIo>) -
         Err(_) => false,
     };
     if success {
-        success = tokio::task::spawn_blocking(move || lease.commit())
-            .await
-            .unwrap_or(false);
+        success = if store.journal.is_some() {
+            tokio::task::spawn_blocking(move || lease.commit())
+                .await
+                .unwrap_or(false)
+        } else {
+            lease.commit()
+        };
     }
     let duration = start.elapsed().as_secs_f64();
     core_metrics()
