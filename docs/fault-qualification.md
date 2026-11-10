@@ -126,7 +126,10 @@ The source-owner CPU controls also flip raw/encoded DRAM and peer-export bytes:
 no corrupt query result or new peer grant may escape, and no registration or
 source budget is acquired on rejection. A CUDA-shim control checks the production
 CRC descriptor/receipt path against a CPU CRC, including ranges larger than one
-16 MiB launch and insufficient workspace. It does not execute GPU kernels.
+16 MiB launch and insufficient workspace. A real-file/shim control also corrupts
+the destination after source verification, requires a failed Restore completion,
+and checks that invalidation retains the extent reader through drain. These
+controls do not execute GPU kernels.
 
 Installed integrity remains **unrun and unqualified**: on the selected GPU/NVMe
 host, run the existing dense vLLM/SGLang SSD restart gates below with raw and

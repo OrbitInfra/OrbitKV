@@ -259,30 +259,24 @@ fn metadata_admission_rejects_without_appending_and_fences_only_durability_error
     let dir = tempfile::tempdir().unwrap();
     let capacity = 20_000 * 512;
     let files = files(dir.path(), capacity);
-    let (mut journal, _) = Journal::open(dir.path().join("index"), &files, capacity, 512).unwrap();
-    journal
-        .append(&key(1), &entry(0, capacity), Some(1))
-        .unwrap();
-    let template = journal.records[&key(1)].clone();
+    let path = dir.path().join("index");
+    let (mut journal, _) = Journal::open(path.clone(), &files, capacity, 512).unwrap();
     let limit = journal.limits.entries;
     assert_eq!(limit, 20_000);
-    journal.records = (0..limit - 1)
-        .map(|index| {
-            let mut record = template.clone();
-            record.key.hash = orbitkv_state::group_hash(&index.to_le_bytes(), 0);
-            record.begin = index as u64 * 512;
-            record.offset = record.begin;
-            (record.key.clone(), record)
-        })
-        .collect();
-    journal.metadata_bytes = journal.records.values().map(Record::charge).sum();
-    journal
-        .append(
-            &key(2),
-            &entry((limit as u64 - 1) * 512, capacity),
-            Some(22),
-        )
-        .unwrap();
+    for index in 0..limit {
+        let mut next = key(1);
+        next.hash = orbitkv_state::group_hash(&index.to_le_bytes(), 0);
+        journal
+            .append(&next, &entry(index as u64 * 512, capacity), Some(22))
+            .unwrap();
+    }
+    drop(journal);
+    let (mut journal, recovered) = Journal::open(path, &files, capacity, 512).unwrap();
+    assert_eq!(
+        recovered.len(),
+        limit,
+        "all admitted records survive replay"
+    );
     assert_eq!(journal.records.len(), limit);
     let length = journal.file.metadata().unwrap().len();
     let sequence = journal.header.sequence;
