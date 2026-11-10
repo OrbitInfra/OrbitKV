@@ -18,7 +18,9 @@ use cudarc::driver::result;
 use uuid::Uuid;
 
 /// Represents a NUMA node identifier
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct NumaNode(pub u32);
 
 impl NumaNode {

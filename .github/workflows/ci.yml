@@ -337,6 +337,42 @@ jobs:
           LIBCLANG_PATH: /usr/lib/llvm-18/lib
           CLANG_PATH: /usr/bin/clang-18
 
+      - name: Persistent SSD Manager SIGKILL and recovery gates
+        run: |
+          cargo clippy --locked -p orbitkv-server --features test-hooks --all-targets -- -D warnings
+          cargo build --locked -p orbitkv-server --features test-hooks --bin orbitkv-cache-manager
+          export LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control"
+          export ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITE_REQUIRE_IO_URING=1
+          mkdir -p "$RUNNER_TEMP/ssd-process-mount" "$RUNNER_TEMP/ssd-process-results"
+          truncate -s 32M "$RUNNER_TEMP/ssd-process.ext4"
+          mkfs.ext4 -F -m 0 "$RUNNER_TEMP/ssd-process.ext4"
+          for fs in ext4 tmpfs; do
+            if [[ "$fs" == ext4 ]]; then
+              sudo mount -o loop "$RUNNER_TEMP/ssd-process.ext4" "$RUNNER_TEMP/ssd-process-mount"
+            else
+              sudo mount -t tmpfs -o size=32m tmpfs "$RUNNER_TEMP/ssd-process-mount"
+            fi
+            trap 'sudo umount "$RUNNER_TEMP/ssd-process-mount"' EXIT
+            sudo chown "$USER" "$RUNNER_TEMP/ssd-process-mount"
+            python3 crates/orbitkv-server/tests/process/ssd_persistence.py \
+              --binary target/debug/orbitkv-cache-manager \
+              --root "$RUNNER_TEMP/ssd-process-mount" --filesystem "$fs" \
+              --artifacts "$RUNNER_TEMP/ssd-process-results/$fs"
+            sudo umount "$RUNNER_TEMP/ssd-process-mount"
+            trap - EXIT
+          done
+        env:
+          CUDA_PATH: /usr/local/cuda
+          LIBCLANG_PATH: /usr/lib/llvm-18/lib
+          CLANG_PATH: /usr/bin/clang-18
+      - name: Upload SSD process-crash evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssd-process-crash
+          path: ${{ runner.temp }}/ssd-process-results
+          if-no-files-found: ignore
+
   cargo-check:
     name: cargo check
     if: always()

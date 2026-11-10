@@ -231,6 +231,9 @@ impl Storage {
         });
 
         let _ = storage_ref.set(Arc::downgrade(&engine));
+        if let Some(ssd) = &engine.ssd_store {
+            ssd.start_recovery();
+        }
 
         Ok(engine)
     }

@@ -694,6 +694,7 @@ pub(super) mod engine {
                 entry,
                 key: key.clone(),
                 committed: AtomicBool::new(false),
+                prepared: AtomicBool::new(false),
                 gpu: false,
                 store: Arc::clone(store),
             });

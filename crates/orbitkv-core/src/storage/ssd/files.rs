@@ -5,6 +5,7 @@ use std::path::PathBuf;
 pub(super) fn reserve_cache_space<F: std::borrow::Borrow<std::fs::File>>(
     files: &[F],
     capacity: u64,
+    preserve: bool,
 ) -> std::io::Result<()> {
     use std::os::fd::AsRawFd;
 
@@ -22,11 +23,13 @@ pub(super) fn reserve_cache_space<F: std::borrow::Borrow<std::fs::File>>(
             let error = std::io::Error::last_os_error();
             // These files were just truncated for this startup. Release even a
             // partially allocated failing shard before returning the error.
-            for (index, file) in files.iter().enumerate() {
-                if let Err(cleanup) = file.borrow().set_len(0) {
-                    log::warn!(
-                        "Failed to release SSD shard {index} after allocation failure: {cleanup}"
-                    );
+            if !preserve {
+                for (index, file) in files.iter().enumerate() {
+                    if let Err(cleanup) = file.borrow().set_len(0) {
+                        log::warn!(
+                            "Failed to release SSD shard {index} after allocation failure: {cleanup}"
+                        );
+                    }
                 }
             }
             return Err(std::io::Error::new(
@@ -68,16 +71,17 @@ pub(super) fn open_cache_files(
     shards_per_path: usize,
     shard_capacity: u64,
     options: &mut std::fs::OpenOptions,
+    preserve: bool,
 ) -> std::io::Result<Vec<std::fs::File>> {
     use std::fs;
     use std::os::unix::fs::OpenOptionsExt;
 
     options
         .create(true)
-        .truncate(true)
+        .truncate(false)
         .read(true)
         .write(true)
-        .custom_flags(libc::O_DIRECT);
+        .custom_flags(libc::O_DIRECT | libc::O_NOFOLLOW | libc::O_CLOEXEC);
 
     if cache_paths.is_empty() {
         return Err(std::io::Error::new(
@@ -88,42 +92,87 @@ pub(super) fn open_cache_files(
 
     let total_shards = cache_paths.len() * shards_per_path;
 
-    // A single shard uses a file path; multiple shards use directories.
+    // Open and lock every inode before modifying any of them.
+    let mut paths = Vec::with_capacity(total_shards);
     if total_shards == 1 {
         if let Some(parent) = cache_paths[0].parent() {
             fs::create_dir_all(parent)?;
         }
-        let file = options.open(&cache_paths[0])?;
-        file.set_len(shard_capacity)?;
-        return Ok(vec![file]);
-    }
-
-    // Multi-path or multi-shard: each path must be a directory.
-    for path in cache_paths {
-        if path.exists() && !path.is_dir() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!(
-                    "SSD cache path {} must be a directory when using multiple paths or shards",
-                    path.display()
-                ),
-            ));
+        paths.push(cache_paths[0].clone());
+    } else {
+        // Multi-path or multi-shard: each path must be a directory.
+        for path in cache_paths {
+            if path.exists() && !path.is_dir() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "SSD cache path {} must be a directory with multiple shards",
+                        path.display()
+                    ),
+                ));
+            }
+            fs::create_dir_all(path)?;
         }
-        fs::create_dir_all(path)?;
+        for (path_id, path) in cache_paths.iter().enumerate() {
+            for local_shard in 0..shards_per_path {
+                paths.push(path.join(format!(
+                    "shard-{:06}.dat",
+                    path_id * shards_per_path + local_shard
+                )));
+            }
+        }
     }
-
     let mut files = Vec::with_capacity(total_shards);
-    for (path_id, path) in cache_paths.iter().enumerate() {
-        for local_shard in 0..shards_per_path {
-            let global_shard_id = path_id * shards_per_path + local_shard;
-            let file_path = path.join(format!("shard-{global_shard_id:06}.dat"));
-            let file = options.open(&file_path)?;
+    for path in &paths {
+        use std::os::fd::AsRawFd;
+        let file = options.open(path)?;
+        // SAFETY: the owned fd remains live in `files` through all data-plane
+        // owners; flock only acquires an advisory lock on this open description.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            return Err(std::io::Error::other(format!(
+                "SSD shard is already owned: {}: {}",
+                path.display(),
+                std::io::Error::last_os_error()
+            )));
+        }
+        files.push(file);
+    }
+    if !preserve {
+        let metadata = journal_path(cache_paths, shards_per_path)?;
+        match fs::remove_file(&metadata) {
+            Ok(()) => super::persistence::sync_parent(&metadata)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        for file in &files {
+            file.set_len(0)?;
             file.set_len(shard_capacity)?;
-            files.push(file);
+        }
+    }
+    if preserve {
+        for path in &paths {
+            // Persist newly created names and their ancestor directory entries.
+            for ancestor in path.ancestors().take_while(|p| !p.as_os_str().is_empty()) {
+                super::persistence::sync_parent(ancestor)?;
+            }
         }
     }
 
     Ok(files)
+}
+
+pub(super) fn journal_path(paths: &[PathBuf], shards: usize) -> std::io::Result<PathBuf> {
+    let first = paths
+        .first()
+        .ok_or_else(|| std::io::Error::other("missing SSD path"))?;
+    let data = if paths.len() == 1 && shards == 1 {
+        first.clone()
+    } else {
+        first.join("shard-000000.dat")
+    };
+    let mut name = data.into_os_string();
+    name.push(".index");
+    Ok(PathBuf::from(name))
 }
 
 #[cfg(test)]

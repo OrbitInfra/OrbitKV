@@ -96,6 +96,8 @@ pub struct SsdCacheConfig {
     pub cache_paths: Vec<PathBuf>,
     /// Total logical capacity of the cache (bytes).
     pub capacity_bytes: u64,
+    /// Recover committed, checksum-verified SSD entries after Manager restart.
+    pub persistent: bool,
     /// Number of cache files per path. 1 keeps the existing single-file SSD layout
     /// when only one path is configured. With multiple paths each path receives this
     /// many shards so that every device is utilised.
@@ -120,6 +122,7 @@ impl Default for SsdCacheConfig {
         Self {
             cache_paths: vec![PathBuf::from("/tmp/orbitkv-ssd-cache/cache.bin")],
             capacity_bytes: 512 * 1024 * 1024 * 1024, // 512GB
+            persistent: false,
             shards: NonZeroUsize::MIN,
             write_queue_depth: DEFAULT_SSD_WRITE_QUEUE_DEPTH,
             write_policy: SsdWritePolicy::All,

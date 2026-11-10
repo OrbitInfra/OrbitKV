@@ -6,7 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-#[derive(Clone)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Encoding {
     Raw,
     Encoded,
@@ -84,6 +84,8 @@ impl SsdIndexEntry {
 pub(super) enum SsdEntryState {
     /// IO in progress, not yet readable
     Writing(SsdIndexEntry),
+    /// Recovered metadata is not a hit until its full stored-byte CRC verifies.
+    Unverified(SsdIndexEntry),
     /// IO completed, readable
     Committed(SsdIndexEntry),
     /// Corruption hides this generation immediately, but active readers still
@@ -95,7 +97,7 @@ impl SsdEntryState {
     #[inline]
     fn entry(&self) -> &SsdIndexEntry {
         match self {
-            Self::Writing(e) | Self::Committed(e) | Self::Invalid(e) => e,
+            Self::Writing(e) | Self::Unverified(e) | Self::Committed(e) | Self::Invalid(e) => e,
         }
     }
 }
@@ -126,6 +128,61 @@ pub(super) struct SsdRingBuffer {
 }
 
 impl SsdRingBuffer {
+    #[cfg(feature = "test-hooks")]
+    pub(super) fn process_report(&self) -> serde_json::Value {
+        serde_json::json!({
+            "entries": self.entries.len(),
+            "readers": self.entries.values().map(|s| s.entry().readers.load(Ordering::Acquire)).sum::<usize>(),
+            "writing": self.entries.values().filter(|s| matches!(s, SsdEntryState::Writing(_))).count(),
+            "bytes": self.entries.values().map(|s| s.entry().len).sum::<u64>(),
+        })
+    }
+    pub(super) fn recover(&mut self, heads: &[u64], entries: &[super::persistence::Recovered]) {
+        for (shard, &head) in self.shards.iter_mut().zip(heads) {
+            shard.head = head;
+            shard.tail = head.saturating_sub(shard.capacity);
+        }
+        for recovered in entries {
+            let entry = recovered.entry.clone();
+            self.shards[entry.shard_id]
+                .order
+                .push_back((recovered.key.clone(), entry.begin));
+            self.entries
+                .insert(recovered.key.clone(), SsdEntryState::Unverified(entry));
+        }
+    }
+
+    pub(super) fn unverified(&self, key: &StateKey, entry: &SsdIndexEntry) -> bool {
+        matches!(self.entries.get(key), Some(SsdEntryState::Unverified(current))
+            if Arc::ptr_eq(&current.readers, &entry.readers))
+    }
+
+    pub(super) fn verify(&mut self, key: &StateKey, entry: &SsdIndexEntry) -> bool {
+        if !self.unverified(key, entry) || !self.is_offset_valid(entry) {
+            return false;
+        }
+        self.entries
+            .insert(key.clone(), SsdEntryState::Committed(entry.clone()));
+        true
+    }
+
+    pub(super) fn invalidate(&mut self, key: &StateKey, failed: &SsdIndexEntry) -> bool {
+        if self
+            .entries
+            .get(key)
+            .is_none_or(|state| !Arc::ptr_eq(&state.entry().readers, &failed.readers))
+        {
+            return false;
+        }
+        if failed.readers.load(Ordering::Acquire) == 0 {
+            self.entries.remove(key);
+        } else {
+            self.entries
+                .insert(key.clone(), SsdEntryState::Invalid(failed.clone()));
+        }
+        true
+    }
+
     pub(super) fn new_sharded(shard_capacities: Vec<u64>, alignment: u64) -> Self {
         assert!(
             !shard_capacities.is_empty(),
@@ -275,7 +332,7 @@ impl SsdRingBuffer {
                 warn!("SSD commit: key already committed, ignoring");
                 return true;
             }
-            SsdEntryState::Invalid(_) => return false,
+            SsdEntryState::Invalid(_) | SsdEntryState::Unverified(_) => return false,
         };
 
         // Check if expired (eviction faster than write)

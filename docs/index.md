@@ -100,6 +100,7 @@ Prefill/decode composition <pd>
 
 DRAM retention and SSD admission <cache-policies>
 SSD, io_uring and GDS <gds>
+Persistent SSD recovery <storage-persistence>
 Formats and compression <storage-formats>
 P2P deployment <p2p>
 Discovery and source grants <distributed-cache>
