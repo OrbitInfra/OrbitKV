@@ -1,5 +1,156 @@
 use super::*;
 
+#[test]
+#[ignore = "explicit CPU CUDA shim and real OrbiTE local-copy engine"]
+fn sealed_host_decode_trusts_ecc_and_rejects_unsealed_or_poisoned_sources() {
+    use std::num::NonZeroU64;
+
+    use cudarc::driver::{CudaContext, DevicePtr};
+    use orbitkv_state::StorageFormat;
+
+    use crate::block::Segment;
+    use crate::codec::EncodedSegment;
+    use crate::transfer::layout::KVCacheGeometry;
+
+    let Some(metrics) = crate::integrity::tests::isolate(
+        "transfer::worker::drain_tests::sealed_host_decode_trusts_ecc_and_rejects_unsealed_or_poisoned_sources",
+    ) else {
+        return;
+    };
+    assert_eq!(
+        std::env::var("ORBITKV_REQUIRE_LOCAL_COPY_SHIM").as_deref(),
+        Ok("1")
+    );
+    let storage = crate::storage::Storage::new_with_config(
+        16 << 20,
+        false,
+        crate::EngineConfig {
+            transfer_transport: crate::TransportHint::Tcp,
+            ..Default::default()
+        },
+        &[],
+    )
+    .unwrap();
+    let context = CudaContext::new(0).unwrap();
+    let stream = context.new_stream().unwrap();
+    let destination = Arc::new(stream.alloc_zeros::<u8>(1024).unwrap());
+    let (address, ready) = destination.device_ptr(&stream);
+    drop(ready);
+    stream.synchronize().unwrap();
+    // SAFETY: destination is initialized and retained until worker transfers drain.
+    let anchor = unsafe {
+        crate::transfer_engine::CudaRegistration::new(
+            storage.peer_transport().cloned(),
+            address,
+            1024,
+            0,
+            destination.clone(),
+        )
+    }
+    .unwrap();
+    let runtime = init_worker(
+        0,
+        crate::TransferMode::Direct,
+        Some(anchor.clone()),
+        storage.peer_transport().cloned(),
+    )
+    .unwrap();
+    let read_destination = || {
+        let bytes = stream.clone_dtoh(destination.as_ref()).unwrap();
+        // The driver shim queues even pageable-host copies; keep the Vec alive
+        // until its explicit receipt instead of relying on real CUDA's blocking copy.
+        stream.synchronize().unwrap();
+        bytes
+    };
+    for format in [StorageFormat::Exact, StorageFormat::Fp8FromBf16] {
+        let logical = if format == StorageFormat::Exact {
+            512
+        } else {
+            1024
+        };
+        let allocation = storage
+            .allocate(NonZeroU64::new(512).unwrap(), None)
+            .unwrap();
+        let pointer = allocation.as_non_null();
+        // SAFETY: this allocation is exclusively owned and has no submitted transfers.
+        unsafe { std::ptr::write_bytes(pointer.as_ptr(), 0x35, 512) };
+        let mut raw = RawBlock::single_segment(Segment::new(pointer, 512, allocation).unwrap());
+        raw.encoding = Some(vec![EncodedSegment {
+            version: 1,
+            format,
+            logical_bytes: logical,
+            stored_bytes: 512,
+            checksum: crc32fast::hash(&[0x35; 512]),
+        }]);
+        let mut layout = KVCacheLayout::bind(
+            address,
+            1024,
+            KVCacheGeometry::new(1, logical, 0, 1, None, 1).unwrap(),
+        )
+        .unwrap();
+        layout.storage_format = format;
+        let mut layers = [LayerTransferData {
+            layer_name: "sealed".into(),
+            layout,
+            blocks: vec![TransferBlock {
+                block_idx: 0,
+                block: TransferPayload::Owned(raw),
+            }],
+        }];
+        let before = read_destination();
+        let error = codec::restore(&runtime, &layers, 0, &mut Observation::disabled()).unwrap_err();
+        assert!(error.to_string().contains("verified sealed replica"));
+        assert_eq!(read_destination(), before);
+        let TransferPayload::Owned(raw) =
+            std::mem::replace(&mut layers[0].blocks[0].block, TransferPayload::Pending)
+        else {
+            panic!("fixture owns its input")
+        };
+        let seal_before = crate::integrity::tests::bytes(&metrics, "seal");
+        let sealed = Arc::new(SealedBlock::from_slots(vec![(raw, NumaNode::UNKNOWN)]));
+        assert_eq!(
+            crate::integrity::tests::bytes(&metrics, "seal") - seal_before,
+            512
+        );
+        // SAFETY: no transfer is in flight. Deliberately violate ECC after seal:
+        // a redundant host CRC would reject this fixture instead of trusting DRAM.
+        unsafe { *pointer.as_ptr().add(17) ^= 1 };
+        layers[0].blocks[0].block = TransferPayload::Cached {
+            sealed: sealed.clone(),
+            slot_id: 0,
+            offset: 0,
+        };
+        assert_eq!(
+            codec::restore(&runtime, &layers, 0, &mut Observation::disabled()).unwrap(),
+            logical
+        );
+        let mut source = vec![0x35; 512];
+        source[17] ^= 1;
+        let expected = if format == StorageFormat::Exact {
+            source
+        } else {
+            let mut decoded = vec![0; logical];
+            assert!(crate::codec::cpu::decode(format, &source, &mut decoded));
+            decoded
+        };
+        assert_eq!(&read_destination()[..logical], &expected);
+        assert_eq!(
+            crate::integrity::tests::bytes(&metrics, "seal") - seal_before,
+            512
+        );
+        for tier in ["dram", "ssd", "peer", "ssd_gpu", "peer_gpu"] {
+            assert_eq!(crate::integrity::tests::bytes(&metrics, tier), 0, "{tier}");
+        }
+        sealed.poison();
+        let error = codec::restore(&runtime, &layers, 0, &mut Observation::disabled()).unwrap_err();
+        assert!(error.to_string().contains("verified sealed replica"));
+        assert_eq!(&read_destination()[..logical], &expected);
+    }
+    runtime.drain_transfers().unwrap();
+    drop(runtime);
+    anchor.close().unwrap();
+}
+
 fn empty_save_instance() -> Arc<InstanceContext> {
     Arc::new(InstanceContext::new("cpu-save".into(), "cpu-save".into(), 1, 1, false, None).unwrap())
 }

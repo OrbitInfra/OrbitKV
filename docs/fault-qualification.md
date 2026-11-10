@@ -126,7 +126,10 @@ CPU controls cover raw/encoded peer TCP receive corruption and exact-generation
 reports, including a stale report after replacement. Sealed immutable DRAM trusts
 ECC and is not rescanned on lookup/export. Scan-count controls require one source
 pass for SSD writes, one seal/verification pass for SSD→DRAM, one device pass for
-SSD→GPU, zero extra raw DRAM-hit passes, and one peer receiver pass. There is no
+SSD→GPU, zero raw or encoded DRAM-hit CRC passes, and one peer receiver pass. A
+sealed-host decode control rejects unsealed or poisoned inputs and deliberately
+breaks ECC after sealing to detect an accidental return of host CRC rescanning.
+There is no
 SSD write read-back or GPU-restore source pre-read. Device controls use the
 existing codec owner, including a range larger than 16 MiB and insufficient
 workspace. A real-file/CPU-CUDA-shim control checks source CRC/padding and flips

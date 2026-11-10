@@ -576,6 +576,12 @@ pub(super) fn restore(
             let Some(metadata) = &raw.encoding else {
                 continue;
             };
+            if !matches!(&block.block, TransferPayload::Cached { sealed, .. } if sealed.is_verified())
+            {
+                return Err(EngineError::Storage(
+                    "encoded host restore requires a verified sealed replica".into(),
+                ));
+            }
             let copies = ranges(
                 layer
                     .layout
@@ -663,10 +669,6 @@ pub(super) fn restore(
     while offset < inputs.len() {
         let input = &inputs[offset];
         if cpu[offset] {
-            input
-                .meta
-                .validate(input.source)
-                .map_err(EngineError::Storage)?;
             let source_owner = hosts
                 .iter()
                 .find_map(|host| match host {
@@ -711,7 +713,8 @@ pub(super) fn restore(
                 .position(|&fallback| fallback)
                 .map_or(inputs.len(), |n| offset + n);
             observation.submitted();
-            // SAFETY: source host allocations and destination pages are owned by this task.
+            // SAFETY: sources passed the sealed-replica guard and stay immutable;
+            // this task owns their allocations and all disjoint destination pages through drain.
             let count = unsafe {
                 codec.decode_host_batch(
                     stream,

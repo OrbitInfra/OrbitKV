@@ -120,14 +120,6 @@ impl EncodedSegment {
         }
         Ok(())
     }
-
-    pub(crate) fn validate(&self, bytes: &[u8]) -> Result<(), String> {
-        self.validate_metadata(bytes.len())?;
-        if crc32fast::hash(&bytes[..self.stored_bytes]) != self.checksum {
-            return Err("encoded segment checksum/size mismatch".into());
-        }
-        Ok(())
-    }
 }
 
 pub(crate) fn turboquant_bytes(

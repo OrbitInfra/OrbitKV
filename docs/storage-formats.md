@@ -117,7 +117,8 @@ flowchart LR
 ```
 
 Each encoded segment carries a version, original length, format, stored length
-and CRC32. The Manager validates checksums before cache admission or GPU decode.
+and CRC32. The Manager validates checksums when bytes arrive from SSD or a peer,
+before cache admission or GPU decode. Sealed immutable DRAM relies on ECC.
 A damaged SSD object becomes a miss; only that generation is invalidated, so
 republication can repair it. Allocation, budget and destination errors fail the
 restore without invalidating healthy SSD data. Peer transfers carry the same
@@ -141,7 +142,7 @@ collision.
 | SSD → DRAM | One CPU pass over the drained receive buffers seals and verifies together, including the physical tail. | Exact bad generation evicted; no returned slots or engine destination |
 | SSD → GPU, raw | One device pass over the actual destination ranges after physical drain; no source pre-read | Failed Restore invalidates the destination; no successful readiness |
 | SSD → GPU, encoded | Existing codec input CRC before decode; no source pre-read | Decode failure invalidates the Restore and bad replica |
-| Sealed DRAM → GPU | Zero extra integrity passes; encoded decode retains its existing codec validation | Previously poisoned replicas cannot be granted |
+| Sealed DRAM → GPU | Zero CRC passes, raw or encoded; decode still checks geometry and output status | Previously poisoned replicas cannot be granted |
 | Peer → DRAM/GPU | Source seal/fill only; receiver verifies once when bytes land (host sealing or device CRC/codec validation) | No host hit or successful GPU completion; existing drained ticket reports the exact corrupt source generation |
 
 A failed GPU restore may already have written destination bytes. The adapter

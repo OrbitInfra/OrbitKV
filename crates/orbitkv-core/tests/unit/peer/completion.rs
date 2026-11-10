@@ -572,6 +572,13 @@ async fn lost_setup_reply_and_idle_eviction_recover_without_payload_leaks() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cancellation_keeps_buffers_and_source_pin_until_blocking_transfer_finishes() {
+    #[derive(Debug)]
+    struct Buffer(Option<tokio::sync::oneshot::Sender<()>>);
+    impl Drop for Buffer {
+        fn drop(&mut self) {
+            self.0.take().unwrap().send(()).unwrap();
+        }
+    }
     let fixture = Fixture::new().await;
     let budget = TransferCompletions::default();
     let (guard, _) = budget
@@ -582,7 +589,8 @@ async fn cancellation_keeps_buffers_and_source_pin_until_blocking_transfer_finis
         )
         .await
         .unwrap();
-    let buffer = Arc::new(());
+    let (dropped, drop_receipt) = tokio::sync::oneshot::channel();
+    let buffer = Arc::new(Buffer(Some(dropped)));
     let observed = Arc::downgrade(&buffer);
     let (started, ready) = tokio::sync::oneshot::channel();
     let (finish, finished) = std::sync::mpsc::channel();
@@ -604,6 +612,12 @@ async fn cancellation_keeps_buffers_and_source_pin_until_blocking_transfer_finis
     assert_eq!(fixture.source.locks.expire(), 1);
     finish.send(()).unwrap();
     settled(&budget).await;
+    // Source ACK and destruction of a cancelled JoinHandle's returned buffer
+    // are independent post-drain events; admission alone is not a drop receipt.
+    tokio::time::timeout(Duration::from_secs(2), drop_receipt)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(observed.upgrade().is_none());
     assert_eq!(fixture.source.released_blocks.load(Ordering::SeqCst), 1);
     // Unwind before READ also closes its single-use ticket.

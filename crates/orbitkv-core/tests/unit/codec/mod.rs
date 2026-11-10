@@ -4,6 +4,17 @@ use std::sync::Arc;
 use cudarc::driver::{CudaContext, CudaSlice, CudaStream, DevicePtr, result};
 use half::{bf16, f16};
 
+impl EncodedSegment {
+    // Qualification controls independently check codec-produced output bytes.
+    pub(crate) fn validate(&self, bytes: &[u8]) -> Result<(), String> {
+        self.validate_metadata(bytes.len())?;
+        if crc32fast::hash(&bytes[..self.stored_bytes]) != self.checksum {
+            return Err("encoded segment checksum/size mismatch".into());
+        }
+        Ok(())
+    }
+}
+
 #[test]
 #[ignore = "explicit CPU CUDA shim, or installed GPU integrity gate"]
 fn raw_device_checksum_is_bounded_and_detects_corruption() {

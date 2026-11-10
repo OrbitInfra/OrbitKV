@@ -810,7 +810,9 @@ impl GpuCodec {
     ///
     /// # Safety
     /// Target ranges must be writable on this stream until return, mutually
-    /// disjoint and disjoint from this codec's arena.
+    /// disjoint and disjoint from this codec's arena. Sources must be sealed,
+    /// immutable host replicas, verified when filled from an untrusted tier.
+    /// Host DRAM relies on ECC; this path validates geometry, not payload CRC.
     pub(crate) unsafe fn decode_host_batch(
         &mut self,
         stream: &Arc<CudaStream>,
@@ -858,11 +860,6 @@ impl GpuCodec {
             plan = self.decode_plan(&device_inputs, true)?;
         }
         let (mut entries, groups, layout) = plan;
-        // Only checksum the consumed prefix. Rehashing deferred siblings on
-        // every budget-limited call would make host restore quadratic.
-        for input in inputs {
-            input.meta.validate(input.source)?;
-        }
         let base = if entries.is_empty() {
             0
         } else {
