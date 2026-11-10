@@ -50,6 +50,8 @@ void orbitkv_test_cuda_query_delay(int value) { query_delay = value; }
 void orbitkv_test_cuda_fail_after(int value) { fail_after = value; }
 unsigned long orbitkv_test_cuda_count(unsigned index) { return index < 6 ? counters[index] : 0; }
 int cuInit(unsigned) { return 0; }
+// NVRTC probes driver-owned cache tables; the CPU shim has no such tables.
+int cuGetExportTable(const void **table, const void *) { *table = nullptr; return 801; }
 int cuDriverGetVersion(int *version) { *version = 13000; return 0; }
 int cuDeviceGet(int *device, int ordinal) { *device = ordinal; return ordinal == 0 ? 0 : 101; }
 int cuDeviceGetCount(int *count) { *count = 1; return 0; }
