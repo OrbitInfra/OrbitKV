@@ -9,9 +9,9 @@ from pathlib import Path
 
 import requests
 
-
 ALL_NAMESPACE_PROTOCOL = "orbitkv/inventory-stream/v3"
 SCOPED_PROTOCOL = "orbitkv/inventory-stream/v4"
+INTEGRITY_PROTOCOL = "orbitkv/inventory-stream/v5"
 
 
 def encode(value: bytes) -> str:
@@ -51,7 +51,9 @@ def main() -> None:
     parser.add_argument("--endpoint", required=True)
     parser.add_argument("--cluster", required=True)
     parser.add_argument(
-        "--direction", choices=("to-scoped", "to-all-namespaces"), required=True
+        "--from-protocol",
+        choices=(ALL_NAMESPACE_PROTOCOL, SCOPED_PROTOCOL),
+        required=True,
     )
     parser.add_argument("--cluster-uuid", type=uuid.UUID)
     parser.add_argument("--archive", type=Path, required=True)
@@ -75,11 +77,8 @@ def main() -> None:
     current_value = decoded(current, "value")
     if args.cluster_uuid is None:
         raise SystemExit("--cluster-uuid is required for a reproducible cutover")
-    current_protocol, replacement_protocol = (
-        (ALL_NAMESPACE_PROTOCOL, SCOPED_PROTOCOL)
-        if args.direction == "to-scoped"
-        else (SCOPED_PROTOCOL, ALL_NAMESPACE_PROTOCOL)
-    )
+    current_protocol = args.from_protocol
+    replacement_protocol = INTEGRITY_PROTOCOL
     try:
         current_stream = json.loads(current_value)
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -96,13 +95,13 @@ def main() -> None:
     retired = sorted(
         key
         for key in by_key
-        if key.startswith(prefix + b"blocks/")
-        or key.startswith(prefix + b"publishers/")
+        if key.startswith((prefix + b"blocks/", prefix + b"publishers/"))
     )
     archive = {
         "endpoint": args.endpoint,
         "cluster": args.cluster,
-        "direction": args.direction,
+        "from_protocol": current_protocol,
+        "to_protocol": replacement_protocol,
         "format_mod_revision": int(current["mod_revision"]),
         "current_format_base64": encode(current_value),
         "replacement_format_base64": encode(replacement),
@@ -164,8 +163,7 @@ def main() -> None:
     forbidden = [
         key.decode()
         for key in final
-        if key.startswith(prefix + b"blocks/")
-        or key.startswith(prefix + b"publishers/")
+        if key.startswith((prefix + b"blocks/", prefix + b"publishers/"))
     ]
     if forbidden:
         raise SystemExit(f"retired metadata remains: {forbidden[:10]}")

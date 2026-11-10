@@ -679,6 +679,7 @@ async fn peer_remote_fetch_roundtrip(backend: TransportHint) {
         tonic::Code::ResourceExhausted
     );
     peer.release_transfer_lock(ReleaseTransferLockRequest {
+        corrupt_block_hashes: vec![],
         ticket: Some(ticket.clone()),
     })
     .await
@@ -689,6 +690,7 @@ async fn peer_remote_fetch_roundtrip(backend: TransportHint) {
         ..ticket.clone()
     };
     peer.release_transfer_lock(ReleaseTransferLockRequest {
+        corrupt_block_hashes: vec![],
         ticket: Some(cancelled.clone()),
     })
     .await
@@ -727,10 +729,13 @@ async fn peer_remote_fetch_roundtrip(backend: TransportHint) {
             tonic::Code::InvalidArgument
         );
         assert_eq!(
-            peer.release_transfer_lock(ReleaseTransferLockRequest { ticket: invalid })
-                .await
-                .unwrap_err()
-                .code(),
+            peer.release_transfer_lock(ReleaseTransferLockRequest {
+                corrupt_block_hashes: vec![],
+                ticket: invalid
+            })
+            .await
+            .unwrap_err()
+            .code(),
             tonic::Code::InvalidArgument
         );
     }
@@ -1012,6 +1017,7 @@ async fn peer_remote_fetch_roundtrip(backend: TransportHint) {
         tonic::Code::FailedPrecondition
     );
     peer.release_transfer_lock(ReleaseTransferLockRequest {
+        corrupt_block_hashes: vec![],
         ticket: Some(TransferTicket {
             generation: 3,
             ..ticket

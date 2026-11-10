@@ -77,6 +77,7 @@ fn valid_transfer_authorization(
             .native_source_epoch
             .bytes()
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        && records.len() <= orbitkv_state::DISCOVERY_MAX_KEYS
         && response.blocks.len() == records.len()
         && response
             .blocks
@@ -412,11 +413,7 @@ impl PeerReader {
 
 /// One fetched slot: its peer-staged segments plus the NUMA node they sit on.
 /// The NUMA travels with the slot so a re-served block advertises real topology.
-type StagedSlot = (
-    Vec<SegmentAlloc>,
-    NumaNode,
-    Option<Vec<crate::codec::EncodedSegment>>,
-);
+type StagedSlot = (RawBlock, NumaNode, Vec<crate::integrity::Checksum>);
 /// A staged block awaiting SealedBlock rebuild: its hash and per-slot allocations.
 type StagedBlock = (Vec<u8>, Vec<StagedSlot>);
 
@@ -518,7 +515,21 @@ async fn fetch_blocks_via_peer(
                             .map_err(|e| format!("remote codec metadata: {e}"))?,
                     )
                 };
-                slot_allocs.push((segments, numa, encoding));
+                let segments = segments
+                    .into_iter()
+                    .map(|allocation| {
+                        let ptr = NonNull::new(allocation.ptr_addr as *mut u8)
+                            .ok_or("null peer destination")?;
+                        Segment::new(ptr, allocation.size, allocation.alloc)
+                            .map_err(|error| error.to_string())
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                let mut raw = RawBlock::new(segments);
+                raw.encoding = encoding;
+                raw.validate_encoding_metadata()?;
+                let checksums =
+                    crate::integrity::from_wire(&slot.checksums, raw.memory_footprint())?;
+                slot_allocs.push((raw, numa, checksums));
             }
 
             block_allocs.push((block_info.block_hash.clone(), slot_allocs));
@@ -568,14 +579,29 @@ async fn fetch_blocks_via_peer(
         logical_bytes,
     );
     let transfer = Arc::clone(transfer);
+    let corrupt = Arc::clone(&lock_guard.corrupt);
     let (block_allocs, transferred) = lock_guard
-        .run_with_buffers(block_allocs, move || {
+        .run_with_buffers(block_allocs, move |blocks| {
             observation.admitted();
             observation.submitted();
             let result = peer
                 .open(options.deadline)
                 .map_err(PeerTransferError::from)
-                .and_then(|operation| transfer.read(operation, &all_descs, options));
+                .and_then(|operation| transfer.read(operation, &all_descs, options))
+                .and_then(|bytes| {
+                    for (hash, slots) in blocks {
+                        for (raw, _, expected) in slots {
+                            if let Err(error) = raw.verify_fill(expected, "peer") {
+                                let mut bad = corrupt.lock();
+                                if !bad.contains(hash) {
+                                    bad.push(hash.clone());
+                                }
+                                return Err(PeerTransferError::Failed(error));
+                            }
+                        }
+                    }
+                    Ok(bytes)
+                });
             let (outcome, actual_bytes) = match &result {
                 Ok(bytes) if *bytes as u64 == stored_bytes => {
                     (Outcome::Completed, Some(*bytes as u64))
@@ -600,26 +626,10 @@ async fn fetch_blocks_via_peer(
     let mut result: MaterializedBlocks = Vec::with_capacity(block_allocs.len());
     for (hash, slot_allocs) in block_allocs {
         let key = StateKey::new(namespace.to_string(), hash);
-        let slots: Vec<(RawBlock, NumaNode)> = slot_allocs
+        let slots = slot_allocs
             .into_iter()
-            .map(|(segs, numa, encoding)| {
-                let segments: Vec<Segment> = segs
-                    .into_iter()
-                    .map(|sa| {
-                        let ptr = NonNull::new(sa.ptr_addr as *mut u8)
-                            .ok_or("null slab segment pointer")?;
-                        Segment::new(ptr, sa.size, sa.alloc).map_err(|error| error.to_string())
-                    })
-                    .collect::<Result<_, String>>()?;
-                let mut raw = RawBlock::new(segments);
-                raw.encoding = encoding;
-                Ok((raw, numa))
-            })
-            .collect::<Result<_, String>>()?;
-        for (slot, _) in &slots {
-            slot.validate_encoding()
-                .inspect_err(|_| core_metrics().storage_codec_decode_failures.add(1, &[]))?;
-        }
+            .map(|(raw, numa, _)| (raw, numa))
+            .collect();
         let sealed = Arc::new(SealedBlock::from_slots(slots));
         result.push((key, sealed));
     }
@@ -632,10 +642,10 @@ fn transfer_shape(blocks: &[StagedBlock]) -> (Option<u64>, Representation) {
     let mut logical_bytes = Some(0u64);
     let mut representation = None;
     for (_, slots) in blocks {
-        for (segments, _, encoding) in slots {
-            match encoding {
+        for (raw, _, _) in slots {
+            match &raw.encoding {
                 Some(metadata) => {
-                    if metadata.len() != segments.len() {
+                    if metadata.len() != raw.num_segments() {
                         logical_bytes = None;
                     }
                     for meta in metadata {

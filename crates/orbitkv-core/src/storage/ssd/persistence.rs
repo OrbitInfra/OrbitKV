@@ -16,7 +16,7 @@ use uuid::Uuid;
 use super::index::{Encoding, SsdIndexEntry};
 use crate::{SlotMeta, StateKey};
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const MAX_JOURNAL: u64 = 4 * 1024 * 1024 * 1024;
 pub(super) const VERIFY_CHUNK: usize = 1024 * 1024;
 
@@ -107,12 +107,14 @@ struct Record {
     encoding: Encoding,
     // None is a durable reservation/invalidation, never a readable replica.
     checksum: Option<u32>,
+    checksums: Vec<crate::integrity::Checksum>,
 }
 
 impl Record {
     fn charge(&self) -> usize {
         std::mem::size_of::<Self>()
             + 128 // BTree node and index bookkeeping, conservatively per entry.
+            + self.checksums.capacity() * std::mem::size_of::<crate::integrity::Checksum>()
             + self.key.namespace.capacity()
             + self.key.hash.capacity()
             + self.slots.capacity() * std::mem::size_of::<SlotMeta>()
@@ -133,6 +135,7 @@ impl Record {
             slots: self.slots.clone(),
             encoding: self.encoding.clone(),
             readers: Arc::new(AtomicUsize::new(0)),
+            checksums: Arc::new(std::sync::OnceLock::from(self.checksums.clone())),
             checksum: Arc::new(
                 self.checksum
                     .map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from),
@@ -203,6 +206,17 @@ impl Record {
             || encoded != matches!(self.encoding, Encoding::Encoded)
         {
             return Err(invalid("slot_bounds"));
+        }
+        if !self.checksums.is_empty() || self.checksum.is_some() {
+            crate::integrity::validate(&self.checksums, self.length)
+                .map_err(|_| invalid("integrity_metadata"))?;
+            if let Some(expected) = self.checksum
+                && crate::integrity::range(&self.checksums, 0, self.length)
+                    .map_err(|_| invalid("integrity_metadata"))?
+                    != expected
+            {
+                return Err(invalid("integrity_metadata"));
+            }
         }
         Ok(())
     }
@@ -648,6 +662,7 @@ impl Journal {
             length: entry.len,
             slots: entry.slots.clone(),
             encoding: entry.encoding.clone(),
+            checksums: entry.checksums.get().cloned().unwrap_or_default(),
             checksum,
         };
         record.validate(&self.header)?;

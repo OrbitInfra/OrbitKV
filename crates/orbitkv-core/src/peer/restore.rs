@@ -26,12 +26,14 @@ use crate::{SlotMeta, block::StateKey, memory::numa::NumaNode};
 pub struct PeerRestoreBlock {
     grant: Arc<Grant>,
     pub(crate) slots: Arc<[PeerSlot]>,
+    hash: Vec<u8>,
 }
 
 #[derive(Clone)]
 pub(crate) struct PeerSlot {
     pub(crate) meta: SlotMeta,
     addresses: Vec<u64>,
+    pub(crate) checksums: Vec<crate::integrity::Checksum>,
 }
 
 struct Grant {
@@ -42,6 +44,15 @@ struct Grant {
 }
 
 impl PeerSlot {
+    pub(crate) fn checksum(
+        &self,
+        segment: usize,
+        offset: usize,
+        bytes: usize,
+    ) -> Result<u32, String> {
+        let base: u64 = self.meta.segment_sizes[..segment].iter().sum();
+        crate::integrity::range(&self.checksums, base + offset as u64, bytes as u64)
+    }
     pub(crate) fn range(
         &self,
         segment: usize,
@@ -64,6 +75,13 @@ impl PeerSlot {
 }
 
 impl PeerRestoreBlock {
+    pub(crate) fn invalidate_corrupt(&self) {
+        let mut bad = self.grant._lock.corrupt.lock();
+        // Each grant contains at most DISCOVERY_MAX_KEYS distinct hashes.
+        if !bad.contains(&self.hash) {
+            bad.push(self.hash.clone());
+        }
+    }
     pub(crate) fn bytes(&self) -> u64 {
         self.slots.iter().map(|slot| slot.meta.total_size()).sum()
     }
@@ -216,6 +234,7 @@ impl SegmentFetcher for RestoreReader<'_> {
                     PeerRestoreBlock {
                         grant: Arc::clone(&owner),
                         slots: slots.into(),
+                        hash: record.key.hash.clone(),
                     },
                 )
             })
@@ -269,7 +288,12 @@ fn validate_slots(
                 }
                 meta.encoding = Some(encoding);
             }
-            Ok(PeerSlot { meta, addresses })
+            let checksums = crate::integrity::from_wire(&slot.checksums, meta.total_size())?;
+            Ok(PeerSlot {
+                meta,
+                addresses,
+                checksums,
+            })
         })
         .collect()
 }

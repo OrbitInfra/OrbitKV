@@ -20,6 +20,7 @@ struct Copy<'a> {
     target: u64,
     bytes: usize,
     encoded: Option<&'a EncodedSegment>,
+    checksum: u32,
     owner: Arc<CudaRegistration>,
 }
 
@@ -69,6 +70,7 @@ fn plan(layers: &[LayerTransferData], budget: usize) -> Result<Vec<Copy<'_>>, St
                         bytes: copy.bytes,
                         encoded: (meta.format != orbitkv_state::StorageFormat::Exact)
                             .then_some(meta),
+                        checksum: slot.checksum(index, 0, meta.stored_bytes)?,
                         owner: Arc::clone(owner),
                     });
                 }
@@ -86,6 +88,7 @@ fn plan(layers: &[LayerTransferData], budget: usize) -> Result<Vec<Copy<'_>>, St
                         target: copy.addr,
                         bytes: copy.bytes,
                         encoded: None,
+                        checksum: slot.checksum(segment, relative, copy.bytes)?,
                         owner: Arc::clone(owner),
                     });
                     packed_offset = packed_offset
@@ -237,6 +240,11 @@ pub(super) fn restore(
             "codec budget is below the persistent input pool".into(),
         ));
     }
+    let checks: Vec<_> = copies
+        .iter()
+        .filter(|copy| copy.encoded.is_none())
+        .cloned()
+        .collect();
     let mut pending = VecDeque::from(copies);
     let mut bytes = 0;
     while !pending.is_empty() {
@@ -260,10 +268,50 @@ pub(super) fn restore(
                         .ok_or_else(|| fail("codec was not initialized".into()))?
                         .decode_batch(&runtime.stream, std::slice::from_ref(decode), budget / 2)
                 }
-                .map_err(|e| fail(e.to_string()))?;
+                .map_err(|e| {
+                    if matches!(&e, crate::codec::gpu::DecodeError::Corrupt(_)) {
+                        batch.source.invalidate_corrupt();
+                        crate::integrity::failed("peer_gpu", "encoding");
+                    }
+                    fail(e.to_string())
+                })?;
             }
         }
         bytes += batch.bytes;
+    }
+    if !checks.is_empty() {
+        let mut codec = runtime.codec.borrow_mut();
+        if codec.is_none() {
+            *codec = Some(GpuCodec::new(runtime.stream.context()).map_err(fail)?);
+        }
+        for copy in checks {
+            let started = std::time::Instant::now();
+            // SAFETY: every batch has physically drained; layers still own the
+            // registered tensor and grant while this stream hashes its bytes.
+            let actual = unsafe {
+                codec
+                    .as_mut()
+                    .ok_or_else(|| fail("missing checksum owner".into()))?
+                    .device_checksum(
+                        &runtime.stream,
+                        copy.target,
+                        copy.bytes,
+                        runtime.codec_budget(budget),
+                    )
+            }
+            .map_err(fail)?;
+            if !crate::integrity::checked(
+                "peer_gpu",
+                copy.bytes as u64,
+                started,
+                actual == copy.checksum,
+            ) {
+                copy.source.invalidate_corrupt();
+                return Err(fail(
+                    "peer GPU checksum mismatch; restore invalidated".into(),
+                ));
+            }
+        }
     }
     Ok(bytes)
 }

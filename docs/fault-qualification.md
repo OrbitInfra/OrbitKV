@@ -122,14 +122,16 @@ indefinite retention; a timer or cancellation never releases that owner.
 CI uploads logs and bounded recovery counters/timing as `ssd-process-crash`.
 SIGKILL tests process failure, **not power loss**; tmpfs has no persistent medium.
 
-The source-owner CPU controls also flip raw/encoded DRAM and peer-export bytes:
-no corrupt query result or new peer grant may escape, and no registration or
-source budget is acquired on rejection. A CUDA-shim control checks the production
-CRC descriptor/receipt path against a CPU CRC, including ranges larger than one
-16 MiB launch and insufficient workspace. A real-file/shim control also corrupts
-the destination after source verification, requires a failed Restore completion,
-and checks that invalidation retains the extent reader through drain. These
-controls do not execute GPU kernels.
+CPU controls cover raw/encoded peer TCP receive corruption and exact-generation
+reports, including a stale report after replacement. Sealed immutable DRAM trusts
+ECC and is not rescanned on lookup/export. Scan-count controls require one source
+pass for SSD writes, one seal/verification pass for SSD→DRAM, one device pass for
+SSD→GPU, zero extra raw DRAM-hit passes, and one peer receiver pass. There is no
+SSD write read-back or GPU-restore source pre-read. Device controls use the
+existing codec owner, including a range larger than 16 MiB and insufficient
+workspace. A real-file/CPU-CUDA-shim control checks source CRC/padding and flips
+the destination after a simulated drained file transfer: Restore fails and the
+extent remains pinned until drain. These controls do not qualify GPU kernels.
 
 Installed integrity remains **unrun and unqualified**: on the selected GPU/NVMe
 host, run the existing dense vLLM/SGLang SSD restart gates below with raw and

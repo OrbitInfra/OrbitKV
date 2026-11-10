@@ -141,6 +141,7 @@ message TransferSlotInfo {
   uint64 v_ptr = 3;      // OrbiTE target address for V segment (0 if contiguous)
   uint64 v_size = 4;     // Size of the V segment in bytes (0 if contiguous)
   bytes encoding = 6; // Versioned storage representation, empty for raw slots
+  bytes checksums = 7; // Required bounded range CRC references from source sealing
   uint32 numa_node = 5;  // NUMA node where this slot's memory resides (for RDMA NIC affinity)
 }
 
@@ -185,6 +186,7 @@ message QueryBlocksForTransferResponse {
 
 message ReleaseTransferLockRequest {
   TransferTicket ticket = 1;
+  repeated bytes corrupt_block_hashes = 2; // Only this ticket's exact generations
 }
 
 message ReleaseTransferLockResponse {

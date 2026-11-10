@@ -465,7 +465,7 @@ async fn ssd_prefetch_worker(
 }
 
 /// Execute a single prefetch operation.
-async fn execute_prefetch(task: PrefetchTask, io: Arc<SsdIo>) -> SingleMaterializedBlocks {
+async fn execute_prefetch(mut task: PrefetchTask, io: Arc<SsdIo>) -> SingleMaterializedBlocks {
     let start = Instant::now();
     let duration_secs = || start.elapsed().as_secs_f64();
 
@@ -539,30 +539,36 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<SsdIo>) -> SingleMateriali
         ctx.unquiesced.store(true, Ordering::Release);
     }
     let read_ok = matches!(result, Ok(bytes) if bytes == expected_len);
-    let slots = if !read_ok {
-        warn!("SSD prefetch: failed or short read for {key:?}");
-        None
-    } else if !crate::integrity::checked(
-        "ssd",
-        task.entry.len,
-        std::time::Instant::now(),
-        task.entry.checksum.get()
-            == Some(&crate::integrity::checksum(
-                task.slots.iter().chain(task.padding.iter()),
-            )),
-    ) {
-        task.store.invalidate_corrupt_entry(&key, &task.entry);
-        warn!("SSD prefetch: checksum mismatch for {key:?}");
-        None
-    } else if task
-        .slots
-        .iter()
-        .any(|slot| slot.validate_encoding().is_err())
-    {
-        core_metrics().storage_codec_decode_failures.add(1, &[]);
-        crate::integrity::failed("ssd", "encoding");
-        task.store.invalidate_corrupt_entry(&key, &task.entry);
-        warn!("SSD prefetch: corrupt object {key:?}");
+    let verified = if read_ok {
+        let mut offset = 0;
+        let checksums = task.entry.checksums.get();
+        task.slots
+            .iter_mut()
+            .chain(task.padding.iter_mut())
+            .try_for_each(|slot| {
+                let end = offset + slot.memory_footprint();
+                let expected: Vec<_> = checksums
+                    .ok_or("missing SSD checksum references")?
+                    .iter()
+                    .filter(|part| part.end > offset && part.end <= end)
+                    .map(|part| crate::integrity::Checksum {
+                        end: part.end - offset,
+                        crc: part.crc,
+                    })
+                    .collect();
+                slot.verify_fill(&expected, "ssd")?;
+                slot.validate_encoding_metadata()?;
+                offset = end;
+                Ok::<(), String>(())
+            })
+    } else {
+        Err("failed or short SSD read".into())
+    };
+    let slots = if let Err(error) = verified {
+        if read_ok {
+            task.store.invalidate_corrupt_entry(&key, &task.entry);
+        }
+        warn!("SSD prefetch rejected {key:?}: {error}");
         None
     } else {
         Some(task.slots)

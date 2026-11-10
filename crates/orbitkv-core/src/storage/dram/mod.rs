@@ -139,7 +139,7 @@ impl DramStore {
             .iter()
             .zip(keys)
             .take_while(|(block, key)| {
-                if block.verify("dram") {
+                if block.is_verified() {
                     true
                 } else {
                     self.invalidate(key, block);
@@ -214,7 +214,7 @@ impl DramStore {
         }
         drop(inner);
         for (key, block) in &found {
-            if !block.verify("peer") {
+            if !block.is_verified() {
                 self.invalidate(key, block);
                 return None;
             }
@@ -243,7 +243,7 @@ impl DramStore {
             .zip(keys)
             .map(|(block, key)| {
                 block.filter(|block| {
-                    if block.verify("dram") {
+                    if block.is_verified() {
                         true
                     } else {
                         self.invalidate(key, block);

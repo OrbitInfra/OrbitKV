@@ -219,7 +219,7 @@ impl OrbitKVEngine {
         // engine-local copies or handing sources to the Manager's GPU worker.
         for source in &prepared.sources {
             if let RestoreSource::Memory(block) = source
-                && !block.verify("dram")
+                && !block.is_verified()
             {
                 self.storage.dram.invalidate_owner(block);
                 return Err(EngineError::Storage(

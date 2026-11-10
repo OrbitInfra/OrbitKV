@@ -28,9 +28,22 @@ pub(crate) struct SsdIndexEntry {
     pub encoding: Encoding,
     pub readers: Arc<AtomicUsize>,
     pub checksum: Arc<std::sync::OnceLock<u32>>,
+    pub checksums: Arc<std::sync::OnceLock<Vec<crate::integrity::Checksum>>>,
 }
 
 impl SsdIndexEntry {
+    pub(crate) fn segment_ends(&self) -> Vec<u64> {
+        let mut end = 0;
+        self.slots
+            .iter()
+            .flat_map(|slot| slot.segment_sizes.iter())
+            .map(|bytes| {
+                end += bytes;
+                end
+            })
+            .collect()
+    }
+
     pub(super) fn padding_bytes(&self) -> Option<u64> {
         let payload = self
             .slots
@@ -383,6 +396,7 @@ impl SsdRingBuffer {
             encoding,
             readers: Arc::new(AtomicUsize::new(0)),
             checksum: Arc::default(),
+            checksums: Arc::default(),
         };
         self.entries
             .insert(key.clone(), SsdEntryState::Writing(entry.clone()));

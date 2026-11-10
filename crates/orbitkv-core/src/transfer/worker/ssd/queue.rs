@@ -153,13 +153,6 @@ impl Job {
                     }
                 }
                 Task::Save(task) => {
-                    for write in &task.ssd_writes {
-                        if !write.lease.prepare() {
-                            return Err(EngineError::Storage(
-                                "SSD reservation was not durable".into(),
-                            ));
-                        }
-                    }
                     for (index, write) in
                         std::mem::take(&mut task.ssd_writes).into_iter().enumerate()
                     {
@@ -200,32 +193,88 @@ impl Job {
         // The route estimate starts before staging/codec work and ends only
         // at engine-visible completion, just like the io_uring host route.
         self.observation.submitted();
-        // Verify before any engine destination is touched. The expected per-copy
-        // CRCs are derived only from a complete, checksum-valid immutable extent.
         for (source, copies) in &mut self.checks {
-            let ranges: Vec<_> = copies
-                .iter()
-                .map(|(copy, _)| (copy.file_offset, copy.bytes))
-                .collect();
-            for ((_, expected), checksum) in copies.iter_mut().zip(source.verify_ranges(&ranges)?) {
-                *expected = checksum;
+            for (copy, expected) in copies {
+                *expected = source.checksum_range(copy.file_offset, copy.bytes)?;
             }
         }
-        // Encoded reads still validate the actual GPU input before decode. Also
-        // validate the committed extent so raw siblings and padding stay bound.
-        let mut previous = None;
-        for read in &self.encoded {
-            let identity = Arc::as_ptr(&read.source.entry.readers);
-            if previous != Some(identity)
-                && self
-                    .checks
-                    .binary_search_by_key(&identity, |(source, _)| {
-                        Arc::as_ptr(&source.entry.readers)
-                    })
-                    .is_err()
-            {
-                read.source.verify_ranges(&[])?;
-                previous = Some(identity);
+        if let Task::Save(task) = &self.task {
+            for (index, write) in self.writes.iter().enumerate() {
+                let lease = write
+                    .lease
+                    .as_ref()
+                    .ok_or_else(|| EngineError::Storage("missing SSD write lease".into()))?;
+                let mut ranges: Vec<_> = self
+                    .work
+                    .iter()
+                    .filter(|work| work.write == Some(index))
+                    .flat_map(|work| work.batch.copies.iter().copied())
+                    .collect();
+                ranges.sort_unstable_by_key(|range| range.file_offset);
+                let mut checksums = Vec::new();
+                let mut end = lease.entry.file_offset;
+                let mut owner = runtime.codec.borrow_mut();
+                if owner.is_none() {
+                    *owner = Some(
+                        crate::codec::gpu::GpuCodec::new(runtime.stream.context())
+                            .map_err(EngineError::Storage)?,
+                    );
+                }
+                let codec = owner
+                    .as_mut()
+                    .ok_or_else(|| EngineError::Storage("missing checksum owner".into()))?;
+                for copy in ranges {
+                    if copy.file_offset < end {
+                        return Err(EngineError::Storage(
+                            "overlapping SSD checksum sources".into(),
+                        ));
+                    }
+                    if copy.file_offset > end {
+                        crate::integrity::append_zeros(
+                            &mut checksums,
+                            copy.file_offset - lease.entry.file_offset,
+                            &lease.entry.segment_ends(),
+                        );
+                    }
+                    let started = Instant::now();
+                    // SAFETY: the Save task holds the immutable imported tensor on
+                    // this producer-ordered stream until checksum and file drain.
+                    let crc = unsafe {
+                        codec.device_checksum(
+                            &runtime.stream,
+                            copy.device,
+                            copy.bytes,
+                            runtime.codec_budget(
+                                task.storage
+                                    .as_ref()
+                                    .map_or(0, |storage| storage.codec_budget),
+                            ),
+                        )
+                    }
+                    .map_err(EngineError::Storage)?;
+                    crate::integrity::checked("ssd_write", copy.bytes as u64, started, true);
+                    end = copy.file_offset + copy.bytes as u64;
+                    checksums.push(crate::integrity::Checksum {
+                        end: end - lease.entry.file_offset,
+                        crc,
+                    });
+                }
+                let limit = lease.entry.file_offset + lease.entry.len;
+                if end < limit {
+                    crate::integrity::append_zeros(
+                        &mut checksums,
+                        lease.entry.len,
+                        &lease.entry.segment_ends(),
+                    );
+                }
+                lease
+                    .set_checksums(checksums)
+                    .map_err(EngineError::Storage)?;
+                if !lease.prepare() {
+                    return Err(EngineError::Storage(
+                        "SSD reservation was not durable".into(),
+                    ));
+                }
             }
         }
         let layers = match &self.task {

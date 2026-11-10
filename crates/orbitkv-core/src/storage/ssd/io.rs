@@ -70,10 +70,6 @@ pub(crate) struct EngineFile {
 impl EngineFile {
     /// The caller serializes scratch access and holds the immutable extent.
     /// Even an unsuccessful checksum keeps submitted owners until native drain.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "checksum retains the file, scratch, lease, deadline and exact requested ranges"
-    )]
     pub(super) fn checksum(
         self: &Arc<Self>,
         offset: u64,
@@ -81,25 +77,9 @@ impl EngineFile {
         scratch: &Arc<PinnedAllocation>,
         lease: Arc<dyn Send + Sync>,
         options: TransferOptions,
-        ranges: &[(u64, usize)],
-    ) -> Result<(u32, Vec<u32>), TransferError> {
-        if ranges.len() > MAX_FILE_ELEMENTS
-            || ranges.iter().any(|&(start, bytes)| {
-                start < offset
-                    || bytes == 0
-                    || start
-                        .checked_add(bytes as u64)
-                        .is_none_or(|end| end > offset.saturating_add(length))
-            })
-        {
-            return Err(TransferError::new(
-                ErrorKind::InvalidRequest,
-                "checksum ranges exceed extent or descriptor budget",
-            ));
-        }
-        let mut hashes = vec![crc32fast::Hasher::new(); ranges.len()];
+    ) -> Result<u32, TransferError> {
         let mut read = 0u64;
-        let mut checksum = 0;
+        let mut checksum = crc32fast::Hasher::new();
         while read < length {
             let bytes = (length - read).min(super::persistence::VERIFY_CHUNK as u64) as usize;
             let extent = FileExtent {
@@ -128,25 +108,10 @@ impl EngineFile {
             // read receipt initialized all bytes and ended every device access.
             let payload =
                 unsafe { std::slice::from_raw_parts(scratch.as_non_null().as_ptr(), bytes) };
-            checksum = crc32c::crc32c_append(checksum, payload);
-            for (&(start, length), hash) in ranges.iter().zip(&mut hashes) {
-                let begin = start.max(offset + read);
-                let end = (start + length as u64).min(offset + read + bytes as u64);
-                if begin < end {
-                    hash.update(
-                        &payload[(begin - offset - read) as usize..(end - offset - read) as usize],
-                    );
-                }
-            }
+            checksum.update(payload);
             read += bytes as u64;
         }
-        Ok((
-            checksum,
-            hashes
-                .into_iter()
-                .map(crc32fast::Hasher::finalize)
-                .collect(),
-        ))
+        Ok(checksum.finalize())
     }
 
     pub(crate) fn submit(

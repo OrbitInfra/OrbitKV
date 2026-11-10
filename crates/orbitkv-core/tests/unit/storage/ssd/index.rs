@@ -140,6 +140,7 @@ impl SsdRingBuffer {
             encoding: Encoding::Raw,
             readers: Arc::new(AtomicUsize::new(0)),
             checksum: Arc::default(),
+            checksums: Arc::default(),
         }
     }
 

@@ -44,12 +44,20 @@ For one extent:
 3. Write all stored bytes and alignment padding through OrbiTE. Wait for its
    physical receipt; timeout, cancellation and Unquiesced are not receipts.
 4. `fdatasync` the retained shard inode. O_DIRECT alone is not durability.
-5. Read back the complete aligned extent through OrbiTE in bounded host chunks
-   and compute CRC32C, including padding. This deliberately pays read amplification
-   to cover raw, encoded and GPU-originated bytes. This read-back is retained
-   for durability binding; nonpersistent SSD commits now use it as well.
-6. Append the complete checksummed commit record and `fdatasync` the journal.
-7. Publish the SSD replica in the in-memory index and inventory.
+5. Append the complete commit record, with the **source** CRC references, and
+   `fdatasync` the journal.
+6. Publish the SSD replica in the in-memory index and inventory.
+
+The immutable source is checksummed before submission: host sealing computes
+one CRC pass, or an already sealed source supplies its reference; a GPU source
+uses the existing codec CRC owner once. Padding CRCs describe zeros emitted by
+OrbiTE. The source, registration and extent stay owned until the write drains,
+so the reference binds to the submitted bytes. Neither persistent nor ephemeral
+writes read the file back. Data sync precedes commit sync: a committed record
+cannot intentionally precede its data. A silent device miswrite is detected by
+verification of the subsequent read, including the first recovered hit, and
+becomes a counted miss. This removes read-back I/O without treating a source CRC
+as proof that the device stored the bytes correctly.
 
 Host Save completion may precede asynchronous SSD write-back, as before. Only
 the SSD commit establishes persistence. An explicit flush waits for prior SSD
@@ -70,7 +78,8 @@ heads and sequence watermark. Every extent record contains:
 - complete `StateKey`: storage namespace and the full group-framed content hash;
 - shard, logical begin, aligned length and physical offset;
 - every slot's segment sizes, NUMA hint and encoding metadata;
-- reservation/commit/invalidation kind, stored-byte CRC32C for commits, and a
+- reservation/commit/invalidation kind, stored-byte IEEE CRC32 plus bounded
+  layer/segment CRC references for commits, and a
   frame checksum covering the record.
 
 The namespace binds model revision, layout, computation scope and representation;
@@ -104,7 +113,7 @@ generation and verifies the entire stored-byte CRC through OrbiTE. Only a
 successful, drained read makes that entry visible. Failure counts a drop;
 unknown drain keeps the pin and verification backing. Concurrent eviction may
 drop an unverified entry; verification cannot publish a different generation.
-[Every subsequent read](storage-formats.md#read-time-integrity) is also verified. The recovery pass controls visibility;
+[Every subsequent SSD read](storage-formats.md#read-time-integrity) is also verified. The recovery pass controls visibility;
 it does not replace read-time integrity.
 
 ## Bounds, GC and changed capacity

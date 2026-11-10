@@ -127,41 +127,43 @@ including encoded metadata and padding, before the first recovered hit.
 
 ### Read-time integrity
 
-Every sealed DRAM object has a CRC32C over its immutable raw or encoded slots.
-Every SSD extent has a CRC32C established by a drained, full-extent OrbiTE
-read-back before commit/publication, including zero padding. Persistence keeps
-this checksum in its checksummed record; nonpersistent entries retain it in
-memory. Encoded segments additionally keep their existing IEEE CRC32. These
-checks detect accidental corruption, not malicious writes or a hash collision.
+Integrity is verified once at an untrusted tier crossing, before a hit becomes
+visible. Sealed immutable DRAM relies on ECC; a normal DRAM hit or peer export
+does not scan again. Raw and encoded slots retain IEEE CRC32 references at their
+layer/segment boundaries. CRC combination covers requested subranges and engine
+zero padding without another payload pass. Encoded sources reuse the codec's
+CRC. These checks detect accidental corruption, not malicious writes or a hash
+collision.
 
-| Read path | Verification and failure boundary | Added work and bound |
+| Path | Checksum work | Failure boundary |
 | --- | --- | --- |
-| DRAM → engine | Check at lookup and again before the Restore grant; remove the exact bad owner from residency/inventory. No engine destination is submitted on failure. | Two full CPU CRC32C scans per restore; one scan at sealing, no payload scratch |
-| SSD → host | Check the actual drained host bytes, including the physical tail, before materialization/publication, then seal the new DRAM owner. | CPU CRC32C scan; existing payload buffers plus less than 4 KiB tail space per extent from the pinned pool; subsequent DRAM handoff still checks |
-| SSD → GPU, raw | Verify the complete immutable source through OrbiTE; derive expected CRCs for the requested layer ranges. Read directly into GPU destinations and hash the actual ranges before publishing completion. | One extra full-extent file read; CPU extent/range CRCs; existing codec CRC kernels read up to 16 MiB per launch, requesting at most 8 KiB in the existing arena |
-| SSD → GPU, encoded | Verify the source extent; existing input-owner CRC validation precedes decode. | One extra extent read, then existing codec checks/workspace |
-| Peer → engine/DRAM | Verify the retained source before issuing a grant. Grants keep it immutable through physical drain; OrbiTE's TCP/RDMA transport supplies wire integrity. Encoded receives also validate on decode. | One source-side CPU scan, no new transport staging or registration |
+| Source → SSD | One source pass at host seal or through the existing GPU codec CRC owner; previously sealed host/encoded sources reuse their reference. No file read-back, persistent or ephemeral. | No publish until write/drain and, for persistence, data and metadata sync |
+| SSD → DRAM | One CPU pass over the drained receive buffers seals and verifies together, including the physical tail. | Exact bad generation evicted; no returned slots or engine destination |
+| SSD → GPU, raw | One device pass over the actual destination ranges after physical drain; no source pre-read | Failed Restore invalidates the destination; no successful readiness |
+| SSD → GPU, encoded | Existing codec input CRC before decode; no source pre-read | Decode failure invalidates the Restore and bad replica |
+| Sealed DRAM → GPU | Zero extra integrity passes; encoded decode retains its existing codec validation | Previously poisoned replicas cannot be granted |
+| Peer → DRAM/GPU | Source seal/fill only; receiver verifies once when bytes land (host sealing or device CRC/codec validation) | No host hit or successful GPU completion; existing drained ticket reports the exact corrupt source generation |
 
-A mismatch is an integrity miss, never successful readiness. DRAM and host SSD
-checks leave engine destinations untouched. A GPU file read may already have
-written its destination: the failed Restore completion explicitly invalidates
-that load, and the engine must recompute; no layer-ready or successful hit is
-published. Invalidation removes only the bad generation, while existing readers,
-registrations and grants remain alive until their physical receipt. Budget,
-allocation and device failures fail the load without declaring healthy data
-corrupt. Timeout/cancel/Unquiesced never become release receipts.
+A failed GPU restore may already have written destination bytes. The adapter
+must recompute the invalid load; OrbitKV publishes no layer-ready or successful
+hit. An invalidation removes residency, not physical owners. Readers,
+registrations and grants survive until drain; timeout/cancel/Unquiesced never
+release them. A stale corruption report cannot evict a replacement generation.
 
-One serialized 1 MiB checksum scratch per SSD store comes from the existing
-pinned-host pool. Host-read tails also use that pool and count toward export
-staging admission; the bounded read queue owns them until drain. All checksum READs use OrbiTE with the operation's deadline
-and intent; an uncertain receipt retains its scratch and extent. Per-copy
-expectations are capped by the engine descriptor bound; GPU CRC reuses the
-worker's codec owner and budget, preserving an already larger charged arena.
-Mixed raw/encoded extents share the source verification pass. There is no new coordinator or GPU payload
-staging buffer. This conservative path adds read amplification and CPU/GPU work;
-[paired CPU controls](https://github.com/OrbitInfra/OrbitKV/blob/main/benches/storage/README.md#cpu-integrity-overhead) isolate
-scan/copy overhead. They do not measure serving, NVMe/GDS or GPU throughput.
-Hardware profiles remain unqualified.
+Checksum metadata is bounded at 65,536 ranges per slot/extent and 1 MiB per
+peer slot on the wire, with natural layout boundaries rather than byte-sized
+entries. Save admission charges range metadata; persistent records charge its
+actual allocation to the metadata budget. Host fills use the existing pinned buffers; tails use less than 4 KiB
+of that pool per extent. Only startup recovery keeps a serialized 1 MiB
+verification scratch. Device CRC reuses the existing codec owner and budget,
+with at most 8 KiB of requested scratch and 16 MiB per launch; no payload staging
+or second coordinator is added. Codec raw/mixed fallback uses its existing DRAM
+write-back when it lacks a complete checksummed GPU output.
+
+[Paired CPU path benchmarks](https://github.com/OrbitInfra/OrbitKV/blob/main/benches/storage/README.md#cpu-integrity-overhead)
+include DRAM lookup, real io_uring SSD read/write and peer TCP receive, including
+remaining source-seal and receiver-CRC cost. They are CPU evidence, not serving,
+NVMe, RDMA or GPU qualification.
 
 
 Encoded segments are kept only when their aligned footprint saves at least

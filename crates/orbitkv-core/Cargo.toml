@@ -79,11 +79,6 @@ name = "cpu_codec"
 path = "../../benches/storage/native/cpu_codec.rs"
 harness = false
 
-[[bench]]
-name = "read_integrity"
-path = "../../benches/storage/native/read_integrity.rs"
-harness = false
-
 [[example]]
 name = "pinned_alloc"
 

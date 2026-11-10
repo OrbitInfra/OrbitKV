@@ -231,13 +231,13 @@ windows reject startup. This estimate is not observed finite-cache service succe
 - **orbitkv_ssd_cufile_read_seconds** (Histogram) - Async submission-to-completion latency, including engine-owned scatter and polling; excludes waiting for a slot.
 - **orbitkv_ssd_cufile_read_failures_total** (Counter) - Failed or short GPU file-route reads.
 - **orbitkv_integrity_failures_total** (Counter) - Integrity misses with bounded
-  `tier=dram|ssd|ssd_gpu|peer` and `reason=checksum|encoding`; invalidation never
+  `tier=seal|ssd|ssd_write|ssd_gpu|peer|peer_gpu` and `reason=checksum|encoding`; invalidation never
   releases active physical owners.
-- **orbitkv_integrity_bytes_total** (Counter) - Bytes checked by tier, including
-  repeated query/restore verification; not bytes served or unique cache size.
+- **orbitkv_integrity_bytes_total** (Counter) - Bytes actually scanned by tier; metadata-only
+  CRC combination and trusted DRAM hits do not increment it. Not bytes served
+  or unique cache size.
 - **orbitkv_integrity_seconds** (Histogram) - Verification span by tier: CPU scan
-  for DRAM/host reads, inclusive file-read/mutex time for source preverification,
-  and inclusive GPU reduction/drain time for device checks. Do not add these to
+  for sealing/host fills, and inclusive GPU reduction/drain time for device checks. Do not add these to
   overlapping read/restore timers.
 - **orbitkv_ssd_recovery_tail_bytes_total** (Counter) - Journal bytes durably
   discarded from an invalid append tail, labeled by framing/checksum reason.

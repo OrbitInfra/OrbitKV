@@ -18,6 +18,9 @@ fn entry(begin: u64, capacity: u64) -> SsdIndexEntry {
         encoding: Encoding::Raw,
         readers: Arc::new(AtomicUsize::new(0)),
         checksum: Arc::default(),
+        checksums: Arc::new(std::sync::OnceLock::from(vec![
+            crate::integrity::Checksum { end: 512, crc: 42 },
+        ])),
     }
 }
 
@@ -57,7 +60,7 @@ fn durable_reservations_prevent_wrap_resurrection_and_reclaim_orphans() {
     assert_eq!(journal.report.lock().drops["orphan"], 1);
     journal.append(&key(4), &entry(1536, 1024), None).unwrap();
     journal
-        .append(&key(4), &entry(1536, 1024), Some(43))
+        .append(&key(4), &entry(1536, 1024), Some(42))
         .unwrap();
     drop(journal);
     let (_, recovered) = Journal::open(path, &files, 1024, 512).unwrap();
@@ -72,7 +75,7 @@ fn tails_keep_the_prefix_but_valid_frames_after_corruption_cold_start() {
         let files = files(dir.path(), 4096);
         let path = dir.path().join("index");
         let (mut journal, _) = Journal::open(path.clone(), &files, 4096, 512).unwrap();
-        journal.append(&key(1), &entry(0, 4096), Some(1)).unwrap();
+        journal.append(&key(1), &entry(0, 4096), Some(42)).unwrap();
         journal.checkpoint().unwrap();
         let prefix = std::fs::read(&path).unwrap();
         let mut record = journal.records[&key(1)].clone();
@@ -110,7 +113,7 @@ fn tails_keep_the_prefix_but_valid_frames_after_corruption_cold_start() {
         }
         // New appends start at the durable clean prefix, never after garbage.
         journal
-            .append(&key(3), &entry(1024, 4096), Some(3))
+            .append(&key(3), &entry(1024, 4096), Some(42))
             .unwrap();
         drop(journal);
         let (journal, recovered) = Journal::open(path, &files, 4096, 512).unwrap();
@@ -151,7 +154,7 @@ fn malformed_metadata_cold_starts_the_whole_set() {
         let path = dir.path().join("index");
         let (mut journal, _) = Journal::open(path.clone(), &files, 1024, 512).unwrap();
         journal.append(&key(1), &entry(0, 1024), None).unwrap();
-        journal.append(&key(1), &entry(0, 1024), Some(10)).unwrap();
+        journal.append(&key(1), &entry(0, 1024), Some(42)).unwrap();
         journal.checkpoint().unwrap();
         let mut header = journal.header.clone();
         let mut record = journal.records[&key(1)].clone();
@@ -209,7 +212,7 @@ fn capacity_shrink_rebases_only_fitting_extents_before_data_resize() {
     for (id, begin) in [(1, 2048), (2, 2560), (3, 3072)] {
         journal.append(&key(id), &entry(begin, 2048), None).unwrap();
         journal
-            .append(&key(id), &entry(begin, 2048), Some(17))
+            .append(&key(id), &entry(begin, 2048), Some(42))
             .unwrap();
     }
     drop(journal);
@@ -237,9 +240,9 @@ fn capacity_shrink_drops_records_above_the_new_frame_budget_before_checkpoint() 
     let (mut journal, _) = Journal::open(path.clone(), &files, 65536, 512).unwrap();
     let mut large = entry(0, 65536);
     large.slots = vec![SlotMeta::new(smallvec::smallvec![1], NumaNode::UNKNOWN); 300];
-    journal.append(&key(1), &large, Some(17)).unwrap();
+    journal.append(&key(1), &large, Some(42)).unwrap();
     journal
-        .append(&key(2), &entry(512, 65536), Some(18))
+        .append(&key(2), &entry(512, 65536), Some(42))
         .unwrap();
     let smaller = Limits::new(1024, 1, 512);
     assert!(journal.records[&key(1)].charge() < smaller.metadata);
@@ -273,8 +276,8 @@ fn namespace_and_representation_are_not_inferred_or_aliased() {
         stored_bytes: 137,
         checksum: 3,
     }]);
-    journal.append(&key(1), &entry(0, 1024), Some(1)).unwrap();
-    journal.append(&other, &encoded, Some(2)).unwrap();
+    journal.append(&key(1), &entry(0, 1024), Some(42)).unwrap();
+    journal.append(&other, &encoded, Some(42)).unwrap();
     drop(journal);
     let (_, recovered) = Journal::open(path, &files, 1024, 512).unwrap();
     assert_eq!(recovered.len(), 2);
@@ -296,7 +299,7 @@ fn metadata_admission_rejects_without_appending_and_fences_only_durability_error
         let mut next = key(1);
         next.hash = orbitkv_state::group_hash(&index.to_le_bytes(), 0);
         journal
-            .append(&next, &entry(index as u64 * 512, capacity), Some(22))
+            .append(&next, &entry(index as u64 * 512, capacity), Some(42))
             .unwrap();
     }
     drop(journal);

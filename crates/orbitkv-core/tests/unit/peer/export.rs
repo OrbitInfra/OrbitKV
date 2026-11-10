@@ -314,29 +314,9 @@ fn exports() -> (
 }
 
 #[tokio::test]
-async fn corrupt_raw_and_encoded_sources_never_receive_peer_grants_or_dram_hits() {
-    if std::env::var("ORBITKV_INTEGRITY_CHILD").as_deref() != Ok("1") {
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "peer::export::tests::corrupt_raw_and_encoded_sources_never_receive_peer_grants_or_dram_hits", "--nocapture"])
-            .env("ORBITKV_INTEGRITY_CHILD", "1").output().unwrap();
-        assert!(
-            output.status.success(),
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        return;
-    }
-    let registry = prometheus::Registry::new();
-    let reader = opentelemetry_prometheus::exporter()
-        .with_registry(registry.clone())
-        .build()
-        .unwrap();
-    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-        .with_reader(reader)
-        .build();
-    opentelemetry::global::set_meter_provider(provider.clone());
-    for (encoded, peer) in [(false, false), (false, true), (true, false), (true, true)] {
+async fn sealed_sources_are_not_rescanned_and_receiver_reports_poison_only_the_granted_generation()
+{
+    for encoded in [false, true] {
         let (exports, membership, inventory) = exports();
         let owner = membership.owner().incarnation;
         let pool = PinnedAllocator::new_global(1 << 20, 1, false, None).unwrap();
@@ -344,28 +324,44 @@ async fn corrupt_raw_and_encoded_sources_never_receive_peer_grants_or_dram_hits(
             .allocate(NonZeroU64::new(4096).unwrap(), NumaNode::UNKNOWN)
             .unwrap();
         let pointer = allocation.as_non_null();
-        // SAFETY: fresh exclusive fixture, before any reader or publication.
+        // SAFETY: exclusive initialized fixture before publication or any transfer.
         unsafe { pointer.as_ptr().write_bytes(0x35, 64) };
-        let mut raw =
-            RawBlock::single_segment(Segment::new(pointer, 64, allocation.clone()).unwrap());
-        if encoded {
-            raw.encoding = Some(vec![crate::EncodedSegment {
-                version: 1,
-                format: orbitkv_state::StorageFormat::Fp8FromBf16,
-                logical_bytes: 128,
-                stored_bytes: 64,
-                checksum: crc32fast::hash(&[0x35; 64]),
-            }]);
-        }
+        let make_raw = || {
+            let mut raw =
+                RawBlock::single_segment(Segment::new(pointer, 64, allocation.clone()).unwrap());
+            if encoded {
+                raw.encoding = Some(vec![crate::EncodedSegment {
+                    version: 1,
+                    format: orbitkv_state::StorageFormat::Fp8FromBf16,
+                    logical_bytes: 128,
+                    stored_bytes: 64,
+                    checksum: crc32fast::hash(&[0x35; 64]),
+                }]);
+            }
+            raw
+        };
         let key = StateKey::new("ns".into(), vec![1]);
-        let block = Arc::new(SealedBlock::from_slots(vec![(raw, NumaNode::UNKNOWN)]));
+        let block = Arc::new(SealedBlock::from_slots(vec![(
+            make_raw(),
+            NumaNode::UNKNOWN,
+        )]));
         exports
             .dram
             .batch_insert(vec![(key.clone(), block.clone())]);
         let records = inventory.page(None).unwrap();
         let ticket =
             TransferTicket::new(exports.open(owner, Uuid::new_v4()).unwrap(), 0, 1).unwrap();
-        let good = exports
+        // SAFETY: deliberate corruption with no concurrent I/O. DRAM trusts ECC;
+        // only a receiver crossing tiers verifies these bytes against the seal.
+        unsafe { *pointer.as_ptr().add(17) ^= 1 };
+        assert_eq!(
+            exports
+                .dram
+                .get_prefix_blocks(std::slice::from_ref(&key), false)
+                .0,
+            1
+        );
+        let grant = exports
             .authorize(
                 owner,
                 ticket,
@@ -374,44 +370,13 @@ async fn corrupt_raw_and_encoded_sources_never_receive_peer_grants_or_dram_hits(
             )
             .await
             .unwrap();
-        assert_eq!(good.len(), 1);
-        drop(good);
-        exports.release(ticket).unwrap();
-        assert_eq!(
-            exports
-                .dram
-                .get_prefix_blocks(std::slice::from_ref(&key), false)
-                .0,
-            1
-        );
-        // SAFETY: deliberate corruption after the grant drained; no concurrent I/O.
-        unsafe { *pointer.as_ptr().add(17) ^= 1 };
-        let next = TransferTicket {
-            generation: 2,
-            ..ticket
-        };
-        if peer {
-            assert!(matches!(
-                exports
-                    .authorize(
-                        owner,
-                        next,
-                        &records,
-                        crate::transfer_engine::tests::demand()
-                    )
-                    .await,
-                Err(PeerError::StaleReplica)
-            ));
-        } else {
-            assert_eq!(
-                exports
-                    .dram
-                    .get_prefix_blocks(std::slice::from_ref(&key), false)
-                    .0,
-                0
-            );
-        }
-        assert_eq!(exports.locks.inner.lock().reserved_bytes, 0);
+        assert_eq!(grant.len(), 1);
+        let expected = block.slots()[0].checksums();
+        assert!(make_raw().verify_fill(expected, "peer").is_err());
+        exports
+            .release(ticket, std::slice::from_ref(&key.hash))
+            .unwrap();
+        assert!(!block.is_verified());
         assert_eq!(
             exports
                 .dram
@@ -421,29 +386,27 @@ async fn corrupt_raw_and_encoded_sources_never_receive_peer_grants_or_dram_hits(
         );
         assert!(exports.dram.get_blocks_aligned(std::slice::from_ref(&key))[0].is_none());
         assert!(!exports.dram.contains_keys(std::slice::from_ref(&key))[0]);
-        assert!(
-            !block.verify("dram"),
-            "existing grants cannot bless a corrupt owner"
+        // A repeated old report cannot evict a newly sealed generation of this key.
+        let replacement = Arc::new(SealedBlock::from_slots(vec![(
+            make_raw(),
+            NumaNode::UNKNOWN,
+        )]));
+        exports
+            .dram
+            .batch_insert(vec![(key.clone(), replacement.clone())]);
+        exports
+            .release(ticket, std::slice::from_ref(&key.hash))
+            .unwrap();
+        assert!(replacement.is_verified());
+        assert_eq!(
+            exports
+                .dram
+                .get_prefix_blocks(std::slice::from_ref(&key), false)
+                .0,
+            1
         );
-    }
-    let families = registry.gather();
-    let family = families
-        .iter()
-        .find(|f| f.name() == "orbitkv_integrity_failures_total")
-        .unwrap();
-    for (tier, count) in [("dram", 6.0), ("peer", 2.0)] {
-        let observed: f64 = family
-            .get_metric()
-            .iter()
-            .filter(|metric| {
-                metric
-                    .get_label()
-                    .iter()
-                    .any(|label| label.name() == "tier" && label.value() == tier)
-            })
-            .map(|metric| metric.get_counter().value())
-            .sum();
-        assert_eq!(observed, count, "{tier}");
+        drop(grant);
+        assert_eq!(exports.locks.inner.lock().reserved_bytes, 0);
     }
 }
 
@@ -508,8 +471,8 @@ async fn export_revalidates_residency_and_drains_after_fencing() {
         memory.upgrade().is_some(),
         "fencing/expiry must preserve the DMA source"
     );
-    assert_eq!(exports.release(ticket), Ok(records.len()));
-    assert_eq!(exports.release(ticket), Ok(0));
+    assert_eq!(exports.release(ticket, &[]), Ok(records.len()));
+    assert_eq!(exports.release(ticket, &[]), Ok(0));
     assert!(memory.upgrade().is_none());
     assert_eq!(exports.locks.inner.lock().reserved_bytes, 0);
 }
@@ -665,7 +628,7 @@ async fn orbite_grant_registrations_share_backing_and_fence_old_completion_gener
             .len(),
         1
     );
-    assert_eq!(exports.release(first), Ok(2));
+    assert_eq!(exports.release(first, &[]), Ok(2));
     let current = TransferTicket {
         generation: 2,
         ..first
@@ -681,8 +644,8 @@ async fn orbite_grant_registrations_share_backing_and_fence_old_completion_gener
             .await
             .unwrap(),
     );
-    assert_eq!(exports.release(first), Ok(0));
-    assert_eq!(exports.release(second), Ok(2));
+    assert_eq!(exports.release(first, &[]), Ok(0));
+    assert_eq!(exports.release(second, &[]), Ok(2));
     drop(exports.dram.remove_all());
     drop(allocation);
     assert!(weak.upgrade().is_some());
@@ -710,7 +673,7 @@ async fn orbite_grant_registrations_share_backing_and_fence_old_completion_gener
     let mut bytes = [0; 64];
     local.read(0, &mut bytes).unwrap();
     assert_eq!(bytes, [0x42; 64]);
-    assert_eq!(exports.release(current), Ok(2));
+    assert_eq!(exports.release(current, &[]), Ok(2));
     assert!(
         client
             .open_segment(endpoint, epoch, Duration::from_secs(2))

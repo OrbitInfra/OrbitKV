@@ -175,7 +175,9 @@ impl TransferCompletions {
             (index, slot.generation, Arc::clone(&state.window))
         };
         core_metrics().transfer_completion_outstanding.add(1, &[]);
+        let corrupt = Arc::new(Mutex::new(Vec::new()));
         let guard = TransferLockGuard {
+            corrupt: Arc::clone(&corrupt),
             completion: Some(Completion {
                 peer: Arc::clone(&peer),
                 window: Arc::clone(&window),
@@ -183,6 +185,7 @@ impl TransferCompletions {
                 generation,
                 remote: owner.endpoint.clone(),
                 permit: Some(permit),
+                corrupt,
             }),
             handle: tokio::runtime::Handle::current(),
         };
@@ -323,6 +326,7 @@ struct Completion {
     generation: u64,
     remote: String,
     permit: Option<OwnedSemaphorePermit>,
+    corrupt: Arc<Mutex<Vec<Vec<u8>>>>,
 }
 
 impl Completion {
@@ -340,6 +344,7 @@ impl Completion {
         loop {
             let request = ReleaseTransferLockRequest {
                 ticket: self.ticket(),
+                corrupt_block_hashes: self.corrupt.lock().clone(),
             };
             let response = tokio::time::timeout(
                 RPC_TIMEOUT,
@@ -388,6 +393,7 @@ impl Drop for Completion {
 /// Moves with destination buffers into the native READ task. Cancellation of
 /// authorization closes the ticket; cancellation of READ waits for native drain.
 pub(super) struct TransferLockGuard {
+    pub(super) corrupt: Arc<Mutex<Vec<Vec<u8>>>>,
     completion: Option<Completion>,
     handle: tokio::runtime::Handle,
 }
@@ -396,6 +402,7 @@ impl TransferLockGuard {
     #[cfg(test)]
     pub(crate) fn test_detached() -> Self {
         Self {
+            corrupt: Arc::default(),
             completion: None,
             handle: tokio::runtime::Handle::current(),
         }
@@ -406,11 +413,11 @@ impl TransferLockGuard {
     )]
     pub(super) async fn run_with_buffers<B: Send + 'static>(
         self,
-        buffers: B,
-        transfer: impl FnOnce() -> Result<usize, PeerTransferError> + Send + 'static,
+        mut buffers: B,
+        transfer: impl FnOnce(&mut B) -> Result<usize, PeerTransferError> + Send + 'static,
     ) -> Result<(Option<B>, Result<usize, PeerTransferError>), tokio::task::JoinError> {
         tokio::task::spawn_blocking(move || {
-            let result = transfer();
+            let result = transfer(&mut buffers);
             if matches!(result, Err(PeerTransferError::Unquiesced)) {
                 warn!("Retaining source ticket and destination buffers after unquiesced peer READ");
                 std::mem::forget((self, buffers));

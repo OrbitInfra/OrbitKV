@@ -11,11 +11,20 @@ how to validate a candidate without uploading it to PyPI.
 
 ## Packages
 
-`--ssd-persistent` introduces local SSD format version 1 as an opt-in cache.
+`--ssd-persistent` uses local SSD format version 2 as an opt-in cache.
 Keep data files and the checksummed sidecar together. Unknown or untrusted
 metadata starts cold; there is no migration or compatibility alias before 0.1.0.
 The default still truncates. Installed NVMe serving remains unqualified; see
 [the persistence contract](storage-persistence.md).
+
+The integrity revision changes the unpublished SSD format from 1 to 2 (IEEE
+CRC32 source/range references; metadata frames still use CRC32C). Version 1
+starts cold. Peer protocol `orbitkv/inventory-stream/v5` requires checksum
+references and binds corruption reports to drained grant tickets. Upgrade all
+Managers together and replace the old cluster format marker only after stopping
+them; there is no compatibility alias. The migration tool now takes
+`--from-protocol orbitkv/inventory-stream/v4` (or v3), replacing `--direction`,
+and cuts over to v5. Client lifecycle 13 is unchanged.
 
 The `orbitkv` PyPI wheel is OrbitKV's only distribution. All Rust crates,
 including the Python extension crate, are internal and are not published.

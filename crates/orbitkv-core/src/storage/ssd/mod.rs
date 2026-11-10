@@ -103,27 +103,23 @@ impl SsdReadCandidate {
 }
 
 impl SsdReadLease {
-    pub(crate) fn verify_ranges(
-        self: &Arc<Self>,
-        ranges: &[(u64, usize)],
-    ) -> Result<Vec<u32>, crate::EngineError> {
-        let started = std::time::Instant::now();
-        let (checksum, hashes) = self
-            .store
-            .checksums(&self.entry, self.clone(), self.options, ranges)
-            .map_err(|error| crate::EngineError::Storage(error.to_string()))?;
-        if !crate::integrity::checked(
-            "ssd",
-            self.entry.len,
-            started,
-            self.entry.checksum.get() == Some(&checksum),
-        ) {
-            self.invalidate_corrupt();
-            return Err(crate::EngineError::Storage(
-                "SSD checksum mismatch; replica evicted".into(),
-            ));
-        }
-        Ok(hashes)
+    pub(crate) fn checksum_range(
+        &self,
+        offset: u64,
+        bytes: usize,
+    ) -> Result<u32, crate::EngineError> {
+        let checksums =
+            self.entry.checksums.get().ok_or_else(|| {
+                crate::EngineError::Storage("missing SSD checksum references".into())
+            })?;
+        crate::integrity::range(
+            checksums,
+            offset.checked_sub(self.entry.file_offset).ok_or_else(|| {
+                crate::EngineError::Storage("SSD checksum offset underflow".into())
+            })?,
+            bytes as u64,
+        )
+        .map_err(crate::EngineError::Storage)
     }
 
     pub(crate) fn cufile_eligible(&self, codec_budget: usize) -> bool {
@@ -178,6 +174,25 @@ impl WriteLease {
         &self.store.cufile_files[self.entry.shard_id]
     }
 
+    pub(crate) fn set_checksums(
+        &self,
+        checksums: Vec<crate::integrity::Checksum>,
+    ) -> Result<(), String> {
+        crate::integrity::validate(&checksums, self.entry.len)?;
+        let checksum = crate::integrity::range(&checksums, 0, self.entry.len)?;
+        if let Err(checksums) = self.entry.checksums.set(checksums)
+            && self.entry.checksums.get() != Some(&checksums)
+        {
+            return Err("SSD source checksum references changed".into());
+        }
+        if self.entry.checksum.set(checksum).is_err()
+            && self.entry.checksum.get() != Some(&checksum)
+        {
+            return Err("SSD source checksum changed".into());
+        }
+        Ok(())
+    }
+
     pub(crate) fn prepare(&self) -> bool {
         if self.prepared.load(Ordering::Acquire) {
             return true;
@@ -208,16 +223,11 @@ impl WriteLease {
                 self.store._files[self.entry.shard_id].sync_data()?;
                 persistence::fault("ssd_data_synced");
             }
-            // All representations, including nonpersistent GPU-originated writes,
-            // get their stored-byte checksum before publication.
-            let checksum = self
-                .store
-                .checksum(&self.entry, self.clone(), self.options.deadline)?;
-            if self.entry.checksum.set(checksum).is_err()
-                && self.entry.checksum.get() != Some(&checksum)
-            {
-                return Err(std::io::Error::other("SSD commit checksum changed"));
-            }
+            let checksum = *self
+                .entry
+                .checksum
+                .get()
+                .ok_or_else(|| std::io::Error::other("SSD commit lacks source checksum"))?;
             if let Some(journal) = &self.store.journal {
                 journal
                     .lock()
@@ -338,22 +348,7 @@ impl SsdStore {
         owner: Arc<dyn Send + Sync>,
         deadline: std::time::Instant,
     ) -> std::io::Result<u32> {
-        self.checksums(
-            entry,
-            owner,
-            crate::transfer_engine::TransferOptions::checkpoint(deadline),
-            &[],
-        )
-        .map(|(checksum, _)| checksum)
-    }
-
-    fn checksums(
-        &self,
-        entry: &SsdIndexEntry,
-        owner: Arc<dyn Send + Sync>,
-        options: crate::transfer_engine::TransferOptions,
-        ranges: &[(u64, usize)],
-    ) -> std::io::Result<(u32, Vec<u32>)> {
+        let options = crate::transfer_engine::TransferOptions::checkpoint(deadline);
         let mut scratch = self.verification_scratch.lock();
         if self.journal.as_ref().is_some_and(|j| j.lock().is_fenced()) {
             return Err(std::io::Error::other("SSD persistence is fenced"));
@@ -368,7 +363,7 @@ impl SsdStore {
             .io
             .engine_file(entry.shard_id)
             .ok_or_else(|| std::io::Error::other("missing SSD checksum file"))?;
-        let result = file.checksum(entry.file_offset, entry.len, buffer, owner, options, ranges);
+        let result = file.checksum(entry.file_offset, entry.len, buffer, owner, options);
         if matches!(&result, Err(error) if error.kind == crate::transfer_engine::ErrorKind::Unquiesced)
         {
             // The native retention owner still holds this actual allocation and

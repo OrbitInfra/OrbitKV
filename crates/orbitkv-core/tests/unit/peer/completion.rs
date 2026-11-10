@@ -588,7 +588,7 @@ async fn cancellation_keeps_buffers_and_source_pin_until_blocking_transfer_finis
     let (finish, finished) = std::sync::mpsc::channel();
     let task = tokio::spawn(async move {
         guard
-            .run_with_buffers(buffer, move || {
+            .run_with_buffers(buffer, move |_| {
                 started.send(()).unwrap();
                 finished.recv_timeout(Duration::from_secs(5)).unwrap();
                 Ok(0)
@@ -861,7 +861,7 @@ impl crate::peer::execute::SegmentFetcher for PipelineReader {
         let finished = self.finish_read.lock().take().unwrap();
         let started = self.read_started.clone();
         grant
-            .run_with_buffers(buffer, move || {
+            .run_with_buffers(buffer, move |_| {
                 started.notify_one();
                 finished.recv_timeout(Duration::from_secs(10)).unwrap();
                 Ok(0)
@@ -1028,7 +1028,7 @@ async fn unquiesced_transfer_retains_source_ticket_and_actual_buffer_owner() {
     let buffer = Arc::new(vec![0x5au8; 4096]);
     let observed = Arc::downgrade(&buffer);
     let (returned, result) = guard
-        .run_with_buffers(buffer, || Err(PeerTransferError::Unquiesced))
+        .run_with_buffers(buffer, |_| Err(PeerTransferError::Unquiesced))
         .await
         .unwrap();
     assert!(returned.is_none());
