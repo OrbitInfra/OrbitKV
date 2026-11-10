@@ -514,14 +514,31 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<SsdIo>) -> SingleMateriali
     let slots = if !read_ok {
         warn!("SSD prefetch: failed or short read for {key:?}");
         None
+    } else if !crate::integrity::checked("ssd", task.entry.len, std::time::Instant::now(), {
+        let payload: usize = task
+            .slots
+            .iter()
+            .map(|slot| slot.memory_footprint() as usize)
+            .sum();
+        payload <= expected_len
+            && task.entry.checksum.get()
+                == Some(&crate::integrity::checksum(
+                    &task.slots,
+                    expected_len - payload,
+                ))
+    }) {
+        task.store.invalidate_corrupt_entry(&key, &task.entry);
+        warn!("SSD prefetch: checksum mismatch for {key:?}");
+        None
     } else if task
         .slots
         .iter()
         .any(|slot| slot.validate_encoding().is_err())
     {
         core_metrics().storage_codec_decode_failures.add(1, &[]);
-        task.store.invalidate_encoded_entry(&key, &task.entry);
-        warn!("SSD prefetch: corrupt encoded object {key:?}");
+        crate::integrity::failed("ssd", "encoding");
+        task.store.invalidate_corrupt_entry(&key, &task.entry);
+        warn!("SSD prefetch: corrupt object {key:?}");
         None
     } else {
         Some(task.slots)

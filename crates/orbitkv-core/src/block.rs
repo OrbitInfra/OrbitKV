@@ -366,6 +366,8 @@ impl<'a> LayerBlock<'a> {
 
 /// Immutable block after all slots are filled. Exposed to callers.
 pub struct SealedBlock {
+    checksum: u32,
+    corrupt: AtomicBool,
     slots: Box<[RawBlock]>,
     footprint: u64,
     /// Per-slot NUMA affinity; always covers every slot (`len == slots.len()`).
@@ -408,6 +410,16 @@ impl Drop for Warmup {
 }
 
 impl SealedBlock {
+    pub(crate) fn verify(&self, tier: &'static str) -> bool {
+        let started = Instant::now();
+        let valid = !self.corrupt.load(Ordering::Acquire)
+            && crate::integrity::checksum(&self.slots, 0) == self.checksum;
+        if !valid {
+            self.corrupt.store(true, Ordering::Release);
+        }
+        crate::integrity::checked(tier, self.footprint, started, valid)
+    }
+
     pub(crate) fn mark_warmed(&self) {
         self.warmup.get_or_init(|| {
             let metrics = crate::metrics::core_metrics();
@@ -502,21 +514,19 @@ impl SealedBlock {
             blocks.push(block);
             slot_numas.push(numa);
         }
-        Self {
-            slots: blocks.into_boxed_slice(),
-            footprint,
-            slot_numas,
-            warmup: OnceLock::new(),
-        }
+        Self::from_slots_with_footprint(blocks.into_boxed_slice(), footprint, slot_numas)
     }
 
-    /// Create from slots with pre-computed footprint (internal use)
+    /// Create from slots with pre-computed footprint (internal use).
+    /// Called only once the publish DMA or verified backing read has drained.
     fn from_slots_with_footprint(
         slots: Box<[RawBlock]>,
         footprint: u64,
         slot_numas: Vec<NumaNode>,
     ) -> Self {
         Self {
+            checksum: crate::integrity::checksum(&slots, 0),
+            corrupt: AtomicBool::new(false),
             slots,
             footprint,
             slot_numas,

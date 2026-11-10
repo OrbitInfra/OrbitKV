@@ -5,7 +5,7 @@ into both upstream mainlines.** OrbiTE is the only byte mover. Engines own
 scheduling, HBM and native P/D; OrbitKV owns cache identity, storage, discovery,
 grants and resource lifetime. This is the only execution queue.
 
-The current delivery is **M2 PR 1: opt-in persistent SSD recovery**.
+The current delivery is **M2 PR 2: read-time integrity and persistence recovery bounds**.
 Each coherent PR stops for review before dependent work starts. Research designs
 and simulator campaigns are removed from the maintained tree; Git history retains
 them and external artifacts are untouched. DeepInfer/OrbitInfer and an OrbiTE
@@ -80,7 +80,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 | Capability | OrbitKV status and evidence | Precedent |
 | --- | --- | --- |
 | Host DRAM | **Have:** bounded pinned pools, replicas and leased restores. [Policies](cache-policies.md). | L/F/V host tiers, M memory objects |
-| SSD surviving Manager restart | **Partial:** opt-in [durable journal and checksum-gated recovery](storage-persistence.md); default still truncates. CPU process-crash controls are required on ext4/tmpfs; installed NVMe serving and power-loss behavior remain unqualified. | L/F disk and V filesystem tiers; persistence needs a separate crash contract |
+| SSD surviving Manager restart | **Partial:** opt-in [durable journal and checksum-gated recovery](storage-persistence.md); default still truncates. Tail recovery preserves a verified prefix; capacity-derived metadata admission stays bounded. CPU process-crash controls run on ext4/tmpfs; installed NVMe serving and power-loss behavior remain unqualified. | L/F disk and V filesystem tiers; persistence needs a separate crash contract |
 | Peer DRAM/SSD cluster tier | **Partial:** inventory discovery, source-owned SSD preparation and OrbiTE reads exist; durable cluster recovery/node-loss qualification remain open. [Distributed cache](distributed-cache.md). | F distributed reuse, L P2P, M replicas |
 | Shared filesystem / 3FS mount | **Missing:** a local SSD path on a shared mount supplies no shared metadata, locking, GC or safe restart. | L filesystem/HF3FS, V secondary filesystem, F remote storage |
 
@@ -102,7 +102,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 | Capability | OrbitKV status and evidence | Precedent |
 | --- | --- | --- |
 | Full identity | **Have** for admitted layouts: immutable artifacts, computation, representation and recovery identity; unknown auxiliary state rejected. [Identity](state-identity.md). | L/F/V cache keys; no cross-engine byte-equivalence assumption |
-| Read-time checksums | **Partial:** encoded segments validate CRC on decode; raw replicas lack a uniform read-time integrity contract. [CPU validation](https://github.com/OrbitInfra/OrbitKV/blob/main/crates/orbitkv-core/src/codec/mod.rs), [GPU decode](https://github.com/OrbitInfra/OrbitKV/blob/main/crates/orbitkv-core/src/codec/gpu.rs). | Tier integrity is a requirement to verify, not inferred from advertised disk support |
+| Read-time checksums | **Partial:** raw/encoded DRAM, SSD and peer exports have [read-time integrity](storage-formats.md#read-time-integrity); CPU and CUDA-shim controls do not qualify GPU/RDMA/GDS serving. [CPU validation](https://github.com/OrbitInfra/OrbitKV/blob/main/crates/orbitkv-core/src/codec/mod.rs), [GPU decode](https://github.com/OrbitInfra/OrbitKV/blob/main/crates/orbitkv-core/src/codec/gpu.rs). | Tier integrity is a requirement to verify, not inferred from advertised disk support |
 | Abort/preemption/restart safety | **Partial:** conservative ownership and CPU faults exist; current installed faults, allocation reuse and permanent loss unqualified. [Fault gates](fault-qualification.md). | Released engine lifecycle; comparator smoke tests do not prove ours |
 | Per-tier metrics / miss explanations | **Partial:** RAM/SSD/remote attribution and diagnostics; stable user-facing miss reasons and all-tier coverage incomplete. [Metrics](metrics.md). | L observability, F/V tier stats, M monitoring |
 | Configuration / deployment recipes | **Have** for current pins and scoped topologies; recipes are not qualification. [Quickstart](single-node.md), [deployment](deployment.md), [Manager](server.md). | L/F/V/M operating guides |
@@ -177,13 +177,14 @@ commands and the distinction between fixture bytes and serving are in
 
 ### M2 — A complete node
 
-1. **Persistent SSD (implemented, awaiting review):** opt-in journal, durable
+1. **Persistent SSD (implemented):** opt-in journal, durable
    overwrite fences, bounded recovery/GC and full-extent checksum verification
    before the first recovered hit. Default behavior stays cold. See the
    [protocol and crash controls](storage-persistence.md).
-2. **Layerwise load/save.**
-3. **Read-time checksums for every stored representation.** Persistence verifies
-   once before recovery publication; this does not replace checking every read.
+2. **Read-time integrity (current review):** all stored representations, exact-generation
+   invalidation, torn-tail prefix recovery and capacity-derived metadata limits.
+   Recovery verification remains in addition to every-read checks.
+3. **Layerwise load/save.**
 4. **TTL/watermark eviction.**
 
 Reuse storage/lease owners and OrbiTE file I/O. Document

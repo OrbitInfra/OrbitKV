@@ -113,7 +113,6 @@ impl DramStore {
         keys: &[StateKey],
         warming: bool,
     ) -> (usize, Vec<Arc<SealedBlock>>) {
-        let mut hit = 0usize;
         let mut blocks = Vec::with_capacity(keys.len());
         {
             let mut inner = self.inner.lock();
@@ -130,14 +129,26 @@ impl DramStore {
                         }
                         refresh_recency(&mut inner, key);
                     }
-                    hit += 1;
                     blocks.push(block);
                 } else {
                     break;
                 }
             }
         }
-        (hit, blocks)
+        let valid = blocks
+            .iter()
+            .zip(keys)
+            .take_while(|(block, key)| {
+                if block.verify("dram") {
+                    true
+                } else {
+                    self.invalidate(key, block);
+                    false
+                }
+            })
+            .count();
+        blocks.truncate(valid);
+        (valid, blocks)
     }
 
     pub(crate) fn retain_demand(&self, keys: &[StateKey], blocks: &[Arc<SealedBlock>]) {
@@ -201,6 +212,13 @@ impl DramStore {
             refresh_recency(&mut inner, &record.key);
             found.push((record.key.clone(), block));
         }
+        drop(inner);
+        for (key, block) in &found {
+            if !block.verify("peer") {
+                self.invalidate(key, block);
+                return None;
+            }
+        }
         Some(found)
     }
 
@@ -211,13 +229,92 @@ impl DramStore {
     /// hit instead of a prefix.
     pub(crate) fn get_blocks_aligned(&self, keys: &[StateKey]) -> Vec<Option<Arc<SealedBlock>>> {
         let mut inner = self.inner.lock();
-        keys.iter()
+        let found: Vec<_> = keys
+            .iter()
             .map(|key| {
                 inner.cache.get(key).inspect(|_| {
                     refresh_recency(&mut inner, key);
                 })
             })
+            .collect();
+        drop(inner);
+        found
+            .into_iter()
+            .zip(keys)
+            .map(|(block, key)| {
+                block.filter(|block| {
+                    if block.verify("dram") {
+                        true
+                    } else {
+                        self.invalidate(key, block);
+                        false
+                    }
+                })
+            })
             .collect()
+    }
+
+    pub(crate) fn invalidate(&self, key: &StateKey, failed: &Arc<SealedBlock>) {
+        let mut inner = self.inner.lock();
+        if !inner
+            .cache
+            .peek(key)
+            .is_some_and(|current| Arc::ptr_eq(&current, failed))
+        {
+            return;
+        }
+        inner.cache.remove(key);
+        for class in [
+            ResidentClass::Retained,
+            ResidentClass::Probationary,
+            ResidentClass::Reclaimable,
+        ] {
+            if let Some(meta) = class_lru(&mut inner, class).remove(key) {
+                if class == ResidentClass::Retained {
+                    inner.retained_bytes -= meta.bytes;
+                    if inner.protected_limit > 0 {
+                        core_metrics()
+                            .cache_protected_bytes
+                            .add(-(meta.bytes as i64), &[]);
+                    }
+                }
+                core_metrics()
+                    .cache_resident_blocks
+                    .add(-1, class.attributes());
+                core_metrics()
+                    .cache_resident_bytes
+                    .add(-(meta.bytes as i64), &[]);
+            }
+        }
+        if let Some(inventory) = &inner.inventory
+            && let Err(error) = inventory.change(key, orbitkv_state::ReplicaMedium::Dram, None)
+        {
+            log::error!("Corrupt DRAM inventory invalidation failed: {error:?}");
+        }
+    }
+
+    /// A restore grant carries owners rather than lookup keys. Only the rare
+    /// corruption path scans the bounded replacement metadata for that owner.
+    pub(crate) fn invalidate_owner(&self, failed: &Arc<SealedBlock>) {
+        let keys: Vec<_> = {
+            let inner = self.inner.lock();
+            inner
+                .retained
+                .iter()
+                .chain(inner.probationary.iter())
+                .chain(inner.reclaimable.iter())
+                .filter(|(key, _)| {
+                    inner
+                        .cache
+                        .peek(key)
+                        .is_some_and(|current| Arc::ptr_eq(&current, failed))
+                })
+                .map(|(key, _)| key.clone())
+                .collect()
+        };
+        for key in keys {
+            self.invalidate(&key, failed);
+        }
     }
 
     pub(crate) fn remove_lru_batch(

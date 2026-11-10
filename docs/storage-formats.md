@@ -124,7 +124,43 @@ restore without invalidating healthy SSD data. Peer transfers carry the same
 metadata and verify received bytes. SSD files and indexes are ephemeral by default.
 [Opt-in persistence](storage-persistence.md) verifies the complete stored extent,
 including encoded metadata and padding, before the first recovered hit.
-This does not yet add a checksum to every raw read.
+
+### Read-time integrity
+
+Every sealed DRAM object has a CRC32C over its immutable raw or encoded slots.
+Every SSD extent has a CRC32C established by a drained, full-extent OrbiTE
+read-back before commit/publication, including zero padding. Persistence keeps
+this checksum in its checksummed record; nonpersistent entries retain it in
+memory. Encoded segments additionally keep their existing IEEE CRC32. These
+checks detect accidental corruption, not malicious writes or a hash collision.
+
+| Read path | Verification and failure boundary | Added work and bound |
+| --- | --- | --- |
+| DRAM → engine | Check at lookup and again before the Restore grant; remove the exact bad owner from residency/inventory. No engine destination is submitted on failure. | Two full CPU CRC32C scans per restore; one scan at sealing, no payload scratch |
+| SSD → host | Check the actual drained host bytes before materialization/publication, then seal the new DRAM owner. Tail padding is not model state. | CPU CRC32C scan; existing read buffers, no extra payload buffer; subsequent DRAM handoff still checks |
+| SSD → GPU, raw | Verify the complete immutable source through OrbiTE; derive expected CRCs for the requested layer ranges. Read directly into GPU destinations and hash the actual ranges before publishing completion. | One extra full-extent file read; CPU extent/range CRCs; existing codec CRC kernels read up to 16 MiB per launch with at most 8 KiB arena space |
+| SSD → GPU, encoded | Verify the source extent; existing input-owner CRC validation precedes decode. | One extra extent read, then existing codec checks/workspace |
+| Peer → engine/DRAM | Verify the retained source before issuing a grant. Grants keep it immutable through physical drain; OrbiTE's TCP/RDMA transport supplies wire integrity. Encoded receives also validate on decode. | One source-side CPU scan, no new transport staging or registration |
+
+A mismatch is an integrity miss, never successful readiness. DRAM and host SSD
+checks leave engine destinations untouched. A GPU file read may already have
+written its destination: the failed Restore completion explicitly invalidates
+that load, and the engine must recompute; no layer-ready or successful hit is
+published. Invalidation removes only the bad generation, while existing readers,
+registrations and grants remain alive until their physical receipt. Budget,
+allocation and device failures fail the load without declaring healthy data
+corrupt. Timeout/cancel/Unquiesced never become release receipts.
+
+One serialized 1 MiB checksum scratch per SSD store comes from the existing
+pinned-host pool. All checksum READs use OrbiTE with the operation's deadline
+and intent; an uncertain receipt retains its scratch and extent. Per-copy
+expectations are capped by the engine descriptor bound; GPU CRC reuses the
+worker's codec owner and budget. There is no new coordinator or GPU payload
+staging buffer. This conservative path adds read amplification and CPU/GPU work;
+[paired CPU controls](https://github.com/OrbitInfra/OrbitKV/blob/main/benches/storage/README.md#cpu-integrity-overhead) isolate
+scan/copy overhead. They do not measure serving, NVMe/GDS or GPU throughput.
+Hardware profiles remain unqualified.
+
 
 Encoded segments are kept only when their aligned footprint saves at least
 12.5%. Oversized, unsupported, nonfinite or insufficient-budget segments use the

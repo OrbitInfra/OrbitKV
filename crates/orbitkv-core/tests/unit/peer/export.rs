@@ -314,6 +314,140 @@ fn exports() -> (
 }
 
 #[tokio::test]
+async fn corrupt_raw_and_encoded_sources_never_receive_peer_grants_or_dram_hits() {
+    if std::env::var("ORBITKV_INTEGRITY_CHILD").as_deref() != Ok("1") {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "peer::export::tests::corrupt_raw_and_encoded_sources_never_receive_peer_grants_or_dram_hits", "--nocapture"])
+            .env("ORBITKV_INTEGRITY_CHILD", "1").output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let registry = prometheus::Registry::new();
+    let reader = opentelemetry_prometheus::exporter()
+        .with_registry(registry.clone())
+        .build()
+        .unwrap();
+    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+        .with_reader(reader)
+        .build();
+    opentelemetry::global::set_meter_provider(provider.clone());
+    for (encoded, peer) in [(false, false), (false, true), (true, false), (true, true)] {
+        let (exports, membership, inventory) = exports();
+        let owner = membership.owner().incarnation;
+        let pool = PinnedAllocator::new_global(1 << 20, 1, false, None).unwrap();
+        let allocation = pool
+            .allocate(NonZeroU64::new(4096).unwrap(), NumaNode::UNKNOWN)
+            .unwrap();
+        let pointer = allocation.as_non_null();
+        // SAFETY: fresh exclusive fixture, before any reader or publication.
+        unsafe { pointer.as_ptr().write_bytes(0x35, 64) };
+        let mut raw =
+            RawBlock::single_segment(Segment::new(pointer, 64, allocation.clone()).unwrap());
+        if encoded {
+            raw.encoding = Some(vec![crate::EncodedSegment {
+                version: 1,
+                format: orbitkv_state::StorageFormat::Exact,
+                logical_bytes: 64,
+                stored_bytes: 64,
+                checksum: crc32fast::hash(&[0x35; 64]),
+            }]);
+        }
+        let key = StateKey::new("ns".into(), vec![1]);
+        let block = Arc::new(SealedBlock::from_slots(vec![(raw, NumaNode::UNKNOWN)]));
+        exports
+            .dram
+            .batch_insert(vec![(key.clone(), block.clone())]);
+        let records = inventory.page(None).unwrap();
+        let ticket =
+            TransferTicket::new(exports.open(owner, Uuid::new_v4()).unwrap(), 0, 1).unwrap();
+        let good = exports
+            .authorize(
+                owner,
+                ticket,
+                &records,
+                crate::transfer_engine::tests::demand(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(good.len(), 1);
+        drop(good);
+        exports.release(ticket).unwrap();
+        assert_eq!(
+            exports
+                .dram
+                .get_prefix_blocks(std::slice::from_ref(&key), false)
+                .0,
+            1
+        );
+        // SAFETY: deliberate corruption after the grant drained; no concurrent I/O.
+        unsafe { *pointer.as_ptr().add(17) ^= 1 };
+        let next = TransferTicket {
+            generation: 2,
+            ..ticket
+        };
+        if peer {
+            assert!(matches!(
+                exports
+                    .authorize(
+                        owner,
+                        next,
+                        &records,
+                        crate::transfer_engine::tests::demand()
+                    )
+                    .await,
+                Err(PeerError::StaleReplica)
+            ));
+        } else {
+            assert_eq!(
+                exports
+                    .dram
+                    .get_prefix_blocks(std::slice::from_ref(&key), false)
+                    .0,
+                0
+            );
+        }
+        assert_eq!(exports.locks.inner.lock().reserved_bytes, 0);
+        assert_eq!(
+            exports
+                .dram
+                .get_prefix_blocks(std::slice::from_ref(&key), false)
+                .0,
+            0
+        );
+        assert!(exports.dram.get_blocks_aligned(std::slice::from_ref(&key))[0].is_none());
+        assert!(!exports.dram.contains_keys(std::slice::from_ref(&key))[0]);
+        assert!(
+            !block.verify("dram"),
+            "existing grants cannot bless a corrupt owner"
+        );
+    }
+    let families = registry.gather();
+    let family = families
+        .iter()
+        .find(|f| f.name() == "orbitkv_integrity_failures_total")
+        .unwrap();
+    for (tier, count) in [("dram", 6.0), ("peer", 2.0)] {
+        let observed: f64 = family
+            .get_metric()
+            .iter()
+            .filter(|metric| {
+                metric
+                    .get_label()
+                    .iter()
+                    .any(|label| label.name() == "tier" && label.value() == tier)
+            })
+            .map(|metric| metric.get_counter().value())
+            .sum();
+        assert_eq!(observed, count, "{tier}");
+    }
+}
+
+#[tokio::test]
 async fn export_revalidates_residency_and_drains_after_fencing() {
     let (exports, membership, inventory) = exports();
     let owner = membership.owner().incarnation;

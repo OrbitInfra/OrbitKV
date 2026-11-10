@@ -70,14 +70,34 @@ pub(crate) struct EngineFile {
 impl EngineFile {
     /// The caller serializes scratch access and holds the immutable extent.
     /// Even an unsuccessful checksum keeps submitted owners until native drain.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "checksum retains the file, scratch, lease, deadline and exact requested ranges"
+    )]
     pub(super) fn checksum(
         self: &Arc<Self>,
         offset: u64,
         length: u64,
         scratch: &Arc<PinnedAllocation>,
         lease: Arc<dyn Send + Sync>,
-        deadline: Instant,
-    ) -> Result<u32, TransferError> {
+        options: TransferOptions,
+        ranges: &[(u64, usize)],
+    ) -> Result<(u32, Vec<u32>), TransferError> {
+        if ranges.len() > MAX_FILE_ELEMENTS
+            || ranges.iter().any(|&(start, bytes)| {
+                start < offset
+                    || bytes == 0
+                    || start
+                        .checked_add(bytes as u64)
+                        .is_none_or(|end| end > offset.saturating_add(length))
+            })
+        {
+            return Err(TransferError::new(
+                ErrorKind::InvalidRequest,
+                "checksum ranges exceed extent or descriptor budget",
+            ));
+        }
+        let mut hashes = vec![crc32fast::Hasher::new(); ranges.len()];
         let mut read = 0u64;
         let mut checksum = 0;
         while read < length {
@@ -102,21 +122,31 @@ impl EngineFile {
                 memory: FileMemory::Pinned(vec![Arc::clone(scratch)]),
                 _lease: Arc::new((Arc::clone(self), Arc::clone(&lease), permit)),
             }));
-            self.execute(
-                TransferOp::Read,
-                FileTransport::IoUring,
-                owner,
-                TransferOptions::checkpoint(deadline),
-            )?;
+            self.execute(TransferOp::Read, FileTransport::IoUring, owner, options)?;
             // SAFETY: this range is in the retained scratch allocation. The
             // checksum caller holds its exclusive mutex; the successful native
             // read receipt initialized all bytes and ended every device access.
             let payload =
                 unsafe { std::slice::from_raw_parts(scratch.as_non_null().as_ptr(), bytes) };
             checksum = crc32c::crc32c_append(checksum, payload);
+            for (&(start, length), hash) in ranges.iter().zip(&mut hashes) {
+                let begin = start.max(offset + read);
+                let end = (start + length as u64).min(offset + read + bytes as u64);
+                if begin < end {
+                    hash.update(
+                        &payload[(begin - offset - read) as usize..(end - offset - read) as usize],
+                    );
+                }
+            }
             read += bytes as u64;
         }
-        Ok(checksum)
+        Ok((
+            checksum,
+            hashes
+                .into_iter()
+                .map(crc32fast::Hasher::finalize)
+                .collect(),
+        ))
     }
 
     pub(crate) fn submit(

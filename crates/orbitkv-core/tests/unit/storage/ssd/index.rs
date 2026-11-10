@@ -13,14 +13,14 @@ fn failed_decode_hides_pinned_generation_until_drain_and_preserves_replacements(
     };
     let first = ring.reserve(&key, slots(), encoding()).unwrap();
     assert!(ring.commit(&key, true));
-    ring.invalidate_encoded(&key, &first);
+    ring.invalidate_corrupt(&key, &first);
     assert!(ring.get(&key).is_none());
     let repaired = ring.reserve(&key, slots(), encoding()).unwrap();
     assert!(ring.commit(&key, true));
-    ring.invalidate_encoded(&key, &first);
+    ring.invalidate_corrupt(&key, &first);
     assert!(ring.get(&key).is_some());
     repaired.readers.store(2, Ordering::Release);
-    ring.invalidate_encoded(&key, &repaired);
+    ring.invalidate_corrupt(&key, &repaired);
     assert!(ring.get(&key).is_none());
     assert!(ring.reserve(&key, slots(), encoding()).is_none());
     assert!(matches!(
@@ -36,7 +36,7 @@ fn failed_decode_hides_pinned_generation_until_drain_and_preserves_replacements(
     let next = ring.reserve(&key, slots(), encoding()).unwrap();
     assert!(ring.commit(&key, true));
     assert_eq!(next.shard_id, first.shard_id);
-    ring.invalidate_encoded(&key, &first);
+    ring.invalidate_corrupt(&key, &first);
     ring.release_invalid(&key, &repaired);
     assert!(ring.get(&key).is_some());
 }
@@ -54,7 +54,7 @@ fn invalidated_extent_cannot_be_overwritten_until_gpu_leases_drain() {
     let entry = ring.reserve(&key, slots(), Encoding::Encoded).unwrap();
     ring.commit(&key, true);
     entry.readers.store(1, Ordering::Release);
-    ring.invalidate_encoded(&key, &entry);
+    ring.invalidate_corrupt(&key, &entry);
     assert!(ring.get(&key).is_none());
     assert!(ring.reserve(&make_key(2), slots(), Encoding::Raw).is_none());
     assert_eq!((ring.shards[0].head, ring.shards[0].tail), (4096, 0));
@@ -63,7 +63,7 @@ fn invalidated_extent_cannot_be_overwritten_until_gpu_leases_drain() {
     let repaired = ring.reserve(&key, slots(), Encoding::Encoded).unwrap();
     ring.commit(&key, true);
     assert_ne!(repaired.begin, entry.begin);
-    ring.invalidate_encoded(&key, &entry);
+    ring.invalidate_corrupt(&key, &entry);
     ring.release_invalid(&key, &entry);
     assert!(ring.get(&key).is_some());
 }
@@ -139,6 +139,7 @@ impl SsdRingBuffer {
             slots: vec![],
             encoding: Encoding::Raw,
             readers: Arc::new(AtomicUsize::new(0)),
+            checksum: Arc::default(),
         }
     }
 

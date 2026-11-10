@@ -27,6 +27,7 @@ pub(crate) struct SsdIndexEntry {
     pub slots: Vec<SlotMeta>,
     pub encoding: Encoding,
     pub readers: Arc<AtomicUsize>,
+    pub checksum: Arc<std::sync::OnceLock<u32>>,
 }
 
 impl SsdIndexEntry {
@@ -214,7 +215,7 @@ impl SsdRingBuffer {
     }
 
     /// Hide exactly the failed generation, retaining its extent while leased.
-    pub(super) fn invalidate_encoded(&mut self, key: &StateKey, failed: &SsdIndexEntry) -> bool {
+    pub(super) fn invalidate_corrupt(&mut self, key: &StateKey, failed: &SsdIndexEntry) -> bool {
         if matches!(self.entries.get(key), Some(SsdEntryState::Committed(entry) | SsdEntryState::Invalid(entry))
             if entry.shard_id == failed.shard_id && entry.begin == failed.begin
                 && matches!(entry.encoding, Encoding::Encoded))
@@ -387,6 +388,7 @@ impl SsdRingBuffer {
             slots,
             encoding,
             readers: Arc::new(AtomicUsize::new(0)),
+            checksum: Arc::default(),
         };
         self.entries
             .insert(key.clone(), SsdEntryState::Writing(entry.clone()));

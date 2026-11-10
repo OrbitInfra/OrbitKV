@@ -46,7 +46,8 @@ For one extent:
 4. `fdatasync` the retained shard inode. O_DIRECT alone is not durability.
 5. Read back the complete aligned extent through OrbiTE in bounded host chunks
    and compute CRC32C, including padding. This deliberately pays read amplification
-   to cover raw, encoded and GPU-originated bytes with one initial contract.
+   to cover raw, encoded and GPU-originated bytes. This read-back is retained
+   for durability binding; nonpersistent SSD commits now use it as well.
 6. Append the complete checksummed commit record and `fdatasync` the journal.
 7. Publish the SSD replica in the in-memory index and inventory.
 
@@ -86,11 +87,16 @@ Uncommitted reservations are orphans, not hits. A complete record that survived
 a process kill before its sync may be recovered if data and metadata validate;
 the caller received no durable acknowledgement for that write.
 
-Torn framing, a bad record/header checksum, unknown format, impossible sequence
-or inconsistent shard identity makes the metadata set untrustworthy. Count the
-reason, log a clear **cold start**, and atomically replace it with an empty
-journal before reusing data. Do not salvage a prefix that may omit an overwrite
-fence. Invalid extent geometry or encoding cannot enter the index.
+A damaged append tail retains the valid prefix. Recovery scans the bounded
+remainder for a valid frame: finding one means mid-journal corruption and a
+**cold start**, never resynchronization. Only one invalid/incomplete frame ending
+at EOF or followed by zeros is discarded. Truncate to the prefix and `fdatasync`
+before any append or checkpoint. Count both the reason and the discarded bytes.
+An unsynced fence never admitted its write; an unsynced commit is an orphan.
+Recovered payload verification below additionally catches ambiguous overlap.
+A bad header, unknown version, invalid identity, impossible sequence, geometry
+or encoding still cold-starts the set. Recovery never trusts later records after
+corruption.
 
 Valid metadata initially creates **unverified** entries. They are invisible to
 queries and peer inventory. A bounded background pass pins each current
@@ -98,20 +104,29 @@ generation and verifies the entire stored-byte CRC through OrbiTE. Only a
 successful, drained read makes that entry visible. Failure counts a drop;
 unknown drain keeps the pin and verification backing. Concurrent eviction may
 drop an unverified entry; verification cannot publish a different generation.
-This avoids synchronous first-hit work and keeps startup's safety independent
-of the later all-read checksum feature. Corruption after verification is outside
-this PR's integrity contract.
+[Every subsequent read](storage-formats.md#read-time-integrity) is also verified. The recovery pass controls visibility;
+it does not replace read-time integrity.
 
 ## Bounds, GC and changed capacity
 
-The initial format caps one record at 256 KiB, the live metadata set at 16 MiB
-and 16,384 entries, and the journal at 64 MiB. The ring index and bounded
-verification list also retain metadata; the 16 MiB charge is not whole-process RSS. These are additional limits on
-cache admission, never reasons to truncate a record. Metadata parsing has a 30-second budget and verification a 180-second budget
-between operations (a kernel-blocked sync cannot be forcibly timed out); verification uses one 1 MiB pinned
-scratch allocation from the existing host budget. Recovered data is charged to
-the same shard capacities as new writes. Recovery reports parsed bytes, entries,
-metadata charge, verified bytes, drops and elapsed time.
+Let `E = min(total configured shard capacity / alignment, 1,048,576)`;
+alignment is the minimum legal extent. Entry admission is capped at `E`, metadata
+at `clamp(E * 8192, 64 KiB, 1 GiB)`, the journal at four times that metadata
+budget (at most 4 GiB), and a frame at one quarter of the metadata budget,
+clamped to 16 KiB–1 MiB. Actual allocations are charged on use, not preallocated.
+Large records can exhaust the byte budget before the entry budget: admission
+returns `WouldBlock`, never truncates. These are limits on cache availability.
+
+Parsing gets 30 seconds plus one second per 16 MiB of journal budget. Background
+verification gets 180 seconds plus one second per 64 MiB of payload capacity,
+capped at 24 hours. Checks occur between operations; a blocked kernel sync cannot
+be forcibly timed out. The journal record charge excludes the duplicated ring
+index and recovery list; those have the same finite entry/slot bounds. Tail
+scanning uses at most one maximum frame plus 64 KiB and separately bounds CRC
+work. One 1 MiB pinned scratch allocation is charged to the existing host pool
+and serialized across file verification. Unknown drain retains it and its extent;
+it cannot be reused. Recovery reports the derived limits, metadata charge,
+parsed/verified/discarded bytes, entries, drops and elapsed time.
 
 Before journal growth reaches its limit, serialize the current bounded live
 records and durable heads to a temporary checkpoint, sync it, rename it over

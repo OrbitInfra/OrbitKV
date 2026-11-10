@@ -17,13 +17,36 @@ use super::index::{Encoding, SsdIndexEntry};
 use crate::{SlotMeta, StateKey};
 
 const VERSION: u32 = 1;
-pub(super) const MAX_RECORD: usize = 256 * 1024;
-pub(super) const MAX_ENTRIES: usize = 16_384;
-pub(super) const MAX_METADATA: usize = 16 * 1024 * 1024;
-const MAX_JOURNAL: u64 = 64 * 1024 * 1024;
-const PARSE_BUDGET: Duration = Duration::from_secs(30);
-pub(super) const VERIFY_BUDGET: Duration = Duration::from_secs(180);
+const MAX_JOURNAL: u64 = 4 * 1024 * 1024 * 1024;
 pub(super) const VERIFY_CHUNK: usize = 1024 * 1024;
+
+/// Additional metadata admission, not a payload reservation. Allocate on use.
+#[derive(Clone, Copy, Serialize)]
+pub(super) struct Limits {
+    entries: usize,
+    metadata: usize,
+    journal: u64,
+    record: usize,
+    parse_seconds: u64,
+    verify_seconds: u64,
+}
+
+impl Limits {
+    fn new(capacity: u64, shards: usize, minimum_extent: u64) -> Self {
+        let capacity = capacity.saturating_mul(shards as u64);
+        let entries = (capacity / minimum_extent).clamp(1, 1_048_576) as usize;
+        let metadata = entries.saturating_mul(8192).clamp(64 << 10, 1 << 30);
+        let journal = (metadata as u64 * 4).min(MAX_JOURNAL);
+        Self {
+            entries,
+            metadata,
+            journal,
+            record: (metadata / 4).clamp(16 << 10, 1 << 20),
+            parse_seconds: 30 + journal / (16 << 20),
+            verify_seconds: (180 + capacity / (64 << 20)).min(86_400),
+        }
+    }
+}
 
 #[derive(Default, Serialize)]
 pub(crate) struct RecoveryReport {
@@ -33,6 +56,8 @@ pub(crate) struct RecoveryReport {
     pub verified_bytes: u64,
     pub elapsed_seconds: f64,
     pub finished: bool,
+    pub tail_dropped_bytes: u64,
+    pub(super) limits: Option<Limits>,
     pub drops: BTreeMap<String, u64>,
 }
 
@@ -107,6 +132,10 @@ impl Record {
             slots: self.slots.clone(),
             encoding: self.encoding.clone(),
             readers: Arc::new(AtomicUsize::new(0)),
+            checksum: Arc::new(
+                self.checksum
+                    .map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from),
+            ),
         }
     }
 
@@ -166,9 +195,6 @@ impl Record {
                     let bytes = usize::try_from(bytes).map_err(|_| invalid("encoding"))?;
                     meta.validate_metadata(bytes)
                         .map_err(|_| invalid("encoding"))?;
-                    if meta.stored_bytes != bytes {
-                        return Err(invalid("encoding"));
-                    }
                 }
             }
         }
@@ -188,6 +214,7 @@ pub(super) struct Recovered {
 }
 
 pub(super) struct Journal {
+    limits: Limits,
     header: Header,
     manager: Uuid,
     records: BTreeMap<StateKey, Record>,
@@ -210,7 +237,7 @@ fn truncated_record(error: io::Error) -> io::Error {
     }
 }
 
-fn read_frame<T: for<'a> Deserialize<'a>>(file: &mut File) -> io::Result<Option<T>> {
+fn read_frame<T: for<'a> Deserialize<'a>>(file: &mut File, limit: usize) -> io::Result<Option<T>> {
     let mut prefix = [0; 8];
     match file.read(&mut prefix[..1])? {
         0 => return Ok(None),
@@ -221,7 +248,7 @@ fn read_frame<T: for<'a> Deserialize<'a>>(file: &mut File) -> io::Result<Option<
         .map_err(truncated_record)?;
     let length = u32::from_le_bytes([prefix[0], prefix[1], prefix[2], prefix[3]]) as usize;
     let checksum = u32::from_le_bytes([prefix[4], prefix[5], prefix[6], prefix[7]]);
-    if length == 0 || length > MAX_RECORD {
+    if length == 0 || length > limit {
         return Err(invalid("metadata_record_limit"));
     }
     let mut bytes = vec![0; length];
@@ -234,9 +261,9 @@ fn read_frame<T: for<'a> Deserialize<'a>>(file: &mut File) -> io::Result<Option<
         .map_err(|_| invalid("metadata_schema"))
 }
 
-fn frame(value: &impl Serialize) -> io::Result<Vec<u8>> {
+fn frame(value: &impl Serialize, limit: usize) -> io::Result<Vec<u8>> {
     let bytes = serde_json::to_vec(value).map_err(io::Error::other)?;
-    if bytes.is_empty() || bytes.len() > MAX_RECORD {
+    if bytes.is_empty() || bytes.len() > limit {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "SSD metadata record limit",
@@ -284,6 +311,7 @@ impl Journal {
             .truncate(false)
             .open(&path)?;
         let mut journal = Self {
+            limits: Limits::new(capacity, files.len(), alignment),
             header: Header {
                 version: VERSION,
                 cache: Uuid::new_v4(),
@@ -300,6 +328,7 @@ impl Journal {
             report,
         };
         let current = journal.header.clone();
+        journal.report.lock().limits = Some(journal.limits);
         let length = journal.file.metadata()?.len();
         journal.report.lock().parsed_bytes = length;
         if length == 0
@@ -388,11 +417,11 @@ impl Journal {
     }
 
     fn replay(&mut self, current: &Header, started: Instant) -> io::Result<()> {
-        if self.file.metadata()?.len() > MAX_JOURNAL {
+        if self.file.metadata()?.len() > self.limits.journal {
             return Err(invalid("metadata_journal_limit"));
         }
-        let header: Header =
-            read_frame(&mut self.file)?.ok_or_else(|| invalid("metadata_header"))?;
+        let header: Header = read_frame(&mut self.file, self.limits.record)?
+            .ok_or_else(|| invalid("metadata_header"))?;
         if header.version != VERSION {
             return Err(invalid("metadata_version"));
         }
@@ -410,8 +439,21 @@ impl Journal {
         }
         self.header = header;
         let mut last = 0;
-        while let Some(record) = read_frame::<Record>(&mut self.file)? {
-            if started.elapsed() > PARSE_BUDGET {
+        loop {
+            let prefix_end = self.file.stream_position()?;
+            let record = match read_frame::<Record>(&mut self.file, self.limits.record) {
+                Ok(Some(record)) => record,
+                Ok(None) => break,
+                Err(error)
+                    if error.kind() == io::ErrorKind::InvalidData
+                        && error.to_string() != "metadata_schema" =>
+                {
+                    self.recover_tail(prefix_end, started, &error.to_string())?;
+                    break;
+                }
+                Err(error) => return Err(error),
+            };
+            if started.elapsed() > Duration::from_secs(self.limits.parse_seconds) {
                 return Err(invalid("metadata_time_limit"));
             }
             if record.sequence <= last {
@@ -425,19 +467,114 @@ impl Journal {
         Ok(())
     }
 
+    /// Resynchronize only to reject corruption, never to salvage later records.
+    /// At most one bounded frame plus a 64 KiB scan window is resident.
+    fn recover_tail(&mut self, start: u64, started: Instant, reason: &str) -> io::Result<()> {
+        let end = self.file.metadata()?.len();
+        let mut position = start;
+        let mut window = vec![0; self.limits.record + 8 + (64 << 10)];
+        let mut hash_work = 0u64;
+        let mut trailing_nonzero = false;
+        let mut frame_end = end;
+        while position < end {
+            if started.elapsed() > Duration::from_secs(self.limits.parse_seconds) {
+                return Err(invalid("metadata_time_limit"));
+            }
+            self.file.seek(io::SeekFrom::Start(position))?;
+            let count = (end - position).min(window.len() as u64) as usize;
+            self.file.read_exact(&mut window[..count])?;
+            if position == start && count >= 4 {
+                let length = u32::from_le_bytes(
+                    window[..4]
+                        .try_into()
+                        .map_err(|_| invalid("metadata_framing"))?,
+                ) as u64;
+                frame_end = start.saturating_add(8).saturating_add(length).min(end);
+            }
+            let step = count.min(64 << 10);
+            for i in 0..step {
+                if position + i as u64 >= frame_end && window[i] != 0 {
+                    trailing_nonzero = true;
+                }
+                if i + 9 > count || window[i + 8] != b'{' {
+                    continue;
+                }
+                let length = u32::from_le_bytes(
+                    window[i..i + 4]
+                        .try_into()
+                        .map_err(|_| invalid("metadata_framing"))?,
+                ) as usize;
+                if length == 0 || length > self.limits.record || i + 8 + length > count {
+                    continue;
+                }
+                hash_work += length as u64;
+                if hash_work > self.limits.journal.saturating_mul(2) {
+                    return Err(invalid("metadata_scan_limit"));
+                }
+                let checksum = u32::from_le_bytes(
+                    window[i + 4..i + 8]
+                        .try_into()
+                        .map_err(|_| invalid("metadata_framing"))?,
+                );
+                let payload = &window[i + 8..i + 8 + length];
+                if crc32c::crc32c(payload) == checksum
+                    && serde_json::from_slice::<Record>(payload)
+                        .is_ok_and(|r| r.validate(&self.header).is_ok())
+                {
+                    return Err(invalid("metadata_mid_journal"));
+                }
+            }
+            position += step as u64;
+        }
+        // Multiple damaged frames or arbitrary trailing bytes are ambiguous.
+        // One damaged/incomplete frame followed by EOF/zeros is an append tail.
+        if trailing_nonzero {
+            return Err(invalid("metadata_mid_journal"));
+        }
+        self.file.set_len(start)?;
+        self.file.sync_data()?;
+        self.file.seek(io::SeekFrom::Start(start))?;
+        let mut report = self.report.lock();
+        report.drop_entry(reason);
+        report.tail_dropped_bytes += end - start;
+        crate::metrics::core_metrics().ssd_recovery_tail_bytes.add(
+            end - start,
+            &[opentelemetry::KeyValue::new("reason", reason.to_owned())],
+        );
+        log::warn!(
+            "SSD recovery discarded {} tail bytes: {reason}",
+            end - start
+        );
+        Ok(())
+    }
+
+    pub(super) fn verification_budget(&self) -> Duration {
+        Duration::from_secs(self.limits.verify_seconds)
+    }
+
     fn apply(&mut self, record: Record) -> io::Result<()> {
         let shard = &mut self.header.shards[record.shard];
+        let old_tail = shard.head.saturating_sub(shard.capacity);
         shard.head = shard.head.max(record.begin + record.length);
         let tail = shard.head.saturating_sub(shard.capacity);
-        self.records
-            .retain(|_, old| old.shard != record.shard || old.begin >= tail);
+        if tail > old_tail {
+            self.records.retain(|_, old| {
+                let keep = old.shard != record.shard || old.begin >= tail;
+                if !keep {
+                    self.metadata_bytes -= old.charge();
+                }
+                keep
+            });
+        }
         // A checkpoint can contain records older than its durable head. Never
         // resurrect them even if their frame survived a later overwrite.
         if record.begin >= tail {
-            self.records.insert(record.key.clone(), record);
+            self.metadata_bytes += record.charge();
+            if let Some(old) = self.records.insert(record.key.clone(), record) {
+                self.metadata_bytes -= old.charge();
+            }
         }
-        self.metadata_bytes = self.records.values().map(Record::charge).sum();
-        if self.records.len() > MAX_ENTRIES || self.metadata_bytes > MAX_METADATA {
+        if self.records.len() > self.limits.entries || self.metadata_bytes > self.limits.metadata {
             return Err(invalid("metadata_index_limit"));
         }
         Ok(())
@@ -480,23 +617,30 @@ impl Journal {
         record.validate(&self.header)?;
         let tail =
             (entry.begin + entry.len).saturating_sub(self.header.shards[entry.shard_id].capacity);
-        let mut count = 1;
-        let mut bytes = record.charge();
-        for (old_key, old) in &self.records {
-            if old_key != key && (old.shard != entry.shard_id || old.begin >= tail) {
-                count += 1;
-                bytes += old.charge();
+        let mut count = self.records.len() + 1;
+        let mut bytes = self.metadata_bytes + record.charge();
+        if let Some(old) = self.records.get(key) {
+            count -= 1;
+            bytes -= old.charge();
+        }
+        let shard = &self.header.shards[entry.shard_id];
+        if tail > shard.head.saturating_sub(shard.capacity) {
+            for (old_key, old) in &self.records {
+                if old_key != key && old.shard == entry.shard_id && old.begin < tail {
+                    count -= 1;
+                    bytes -= old.charge();
+                }
             }
         }
-        if count > MAX_ENTRIES || bytes > MAX_METADATA {
+        if count > self.limits.entries || bytes > self.limits.metadata {
             return Err(io::Error::new(
                 io::ErrorKind::WouldBlock,
                 "SSD persistence metadata budget exhausted",
             ));
         }
-        let bytes = frame(&record)?;
+        let bytes = frame(&record, self.limits.record)?;
         let result = (|| {
-            let compact = self.file.metadata()?.len() + bytes.len() as u64 > MAX_JOURNAL;
+            let compact = self.file.metadata()?.len() + bytes.len() as u64 > self.limits.journal;
             #[cfg(feature = "test-hooks")]
             let compact = compact || crate::test_faults::active("ssd_force_checkpoint");
             if compact {
@@ -562,12 +706,12 @@ impl Journal {
                 .create(true)
                 .truncate(true)
                 .open(&temporary)?;
-            file.write_all(&frame(&self.header)?)?;
+            file.write_all(&frame(&self.header, self.limits.record)?)?;
             let mut records: Vec<_> = self.records.values().collect();
             records.sort_by_key(|record| record.sequence);
             for record in records {
-                let bytes = frame(record)?;
-                if file.stream_position()? + bytes.len() as u64 > MAX_JOURNAL {
+                let bytes = frame(record, self.limits.record)?;
+                if file.stream_position()? + bytes.len() as u64 > self.limits.journal {
                     return Err(invalid("metadata_journal_limit"));
                 }
                 file.write_all(&bytes)?;

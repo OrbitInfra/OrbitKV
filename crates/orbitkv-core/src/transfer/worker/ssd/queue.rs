@@ -58,6 +58,10 @@ struct Pending {
 }
 
 struct Job {
+    checks: Vec<(
+        Arc<crate::storage::ssd::SsdReadLease>,
+        Vec<(crate::storage::ssd::layout::CopyRange, u32)>,
+    )>,
     id: u64,
     task: Task,
     work: VecDeque<Work>,
@@ -87,6 +91,7 @@ impl Job {
             }
         };
         let mut job = Self {
+            checks: Vec::new(),
             id,
             task,
             work: VecDeque::new(),
@@ -114,7 +119,17 @@ impl Job {
                     let plans = super::plan(layers)?;
                     job.encoded = plans.encoded.into();
                     let extents = Arc::new(plans.owners);
-                    for (file, batches) in plans.raw {
+                    for (source, batches) in plans.raw {
+                        let file = Arc::clone(source.file()?);
+                        job.checks.push((
+                            source,
+                            batches
+                                .iter()
+                                .flat_map(|batch| {
+                                    batch.copies.iter().copied().map(|copy| (copy, 0))
+                                })
+                                .collect(),
+                        ));
                         for batch in batches {
                             job.bytes += batch.copies.iter().map(|copy| copy.bytes).sum::<usize>();
                             job.work.push_back(Work {
@@ -181,6 +196,27 @@ impl Job {
         // The route estimate starts before staging/codec work and ends only
         // at engine-visible completion, just like the io_uring host route.
         self.observation.submitted();
+        // Verify before any engine destination is touched. The expected per-copy
+        // CRCs are derived only from a complete, checksum-valid immutable extent.
+        for (source, copies) in &mut self.checks {
+            let ranges: Vec<_> = copies
+                .iter()
+                .map(|(copy, _)| (copy.file_offset, copy.bytes))
+                .collect();
+            for ((_, expected), checksum) in copies.iter_mut().zip(source.verify_ranges(&ranges)?) {
+                *expected = checksum;
+            }
+        }
+        // Encoded reads still validate the actual GPU input before decode. Also
+        // validate the committed extent so raw siblings and padding stay bound.
+        let mut previous = None;
+        for read in &self.encoded {
+            let identity = Arc::as_ptr(&read.source.entry.readers);
+            if previous != Some(identity) {
+                read.source.verify_ranges(&[])?;
+                previous = Some(identity);
+            }
+        }
         let layers = match &self.task {
             Task::Load(task) => {
                 let layers = &task.layers;
@@ -297,6 +333,50 @@ impl Job {
             && self.encoded.is_empty()
             && !self.decoding
             && self.host_completion.is_none()
+    }
+
+    fn verify_destinations(&self, runtime: &WorkerRuntime) -> Result<(), String> {
+        if let Task::Load(task) = &self.task {
+            return (|| {
+                if self.checks.is_empty() {
+                    return Ok(());
+                }
+                let mut owner = runtime.codec.borrow_mut();
+                if owner.is_none() {
+                    *owner = Some(crate::codec::gpu::GpuCodec::new(runtime.stream.context())?);
+                }
+                let codec = owner.as_mut().ok_or("missing integrity codec")?;
+                for (source, copies) in &self.checks {
+                    for (copy, expected) in copies {
+                        let started = Instant::now();
+                        // SAFETY: all file requests have physically drained and the
+                        // job still owns every imported destination tensor/registration.
+                        let actual = unsafe {
+                            codec.device_checksum(
+                                &runtime.stream,
+                                copy.device,
+                                copy.bytes,
+                                runtime.codec_budget(task.codec_budget).min(8192),
+                            )
+                        }?;
+                        if !crate::integrity::checked(
+                            "ssd_gpu",
+                            copy.bytes as u64,
+                            started,
+                            actual == *expected,
+                        ) {
+                            source.invalidate_corrupt();
+                            return Err(
+                                "SSD GPU destination checksum mismatch; restore invalidated"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
+                Ok::<(), String>(())
+            })();
+        }
+        Ok(())
     }
 
     #[allow(
@@ -542,7 +622,8 @@ fn poll_decode(decoder: &Decoder, active: &mut Option<Decode>, jobs: &mut VecDeq
                     let message = match error {
                         DecodeError::Corrupt(message) => {
                             // Every input belongs to this exact generation.
-                            decode.reads[0].source.invalidate_encoded();
+                            crate::integrity::failed("ssd_gpu", "encoding");
+                            decode.reads[0].source.invalidate_corrupt();
                             message
                         }
                         DecodeError::Runtime(message) => message,
@@ -720,7 +801,13 @@ pub(in crate::transfer::worker) fn run(
         let mut index = 0;
         while index < jobs.len() {
             if jobs[index].is_complete() {
-                if let Some(job) = jobs.remove(index) {
+                if let Some(mut job) = jobs.remove(index) {
+                    if job.error.is_none()
+                        && !job.uncertain
+                        && let Err(error) = job.verify_destinations(&runtime)
+                    {
+                        job.fail(error);
+                    }
                     job.finish();
                 }
             } else {

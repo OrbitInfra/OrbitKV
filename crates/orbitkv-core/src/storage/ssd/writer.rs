@@ -267,6 +267,10 @@ async fn execute_write(task: WriteTask, store: Weak<SsdStore>, io: Arc<SsdIo>) -
     let Some(store) = store.upgrade() else {
         return (key, false, 0.0, 0);
     };
+    if !task.block.verify("dram") {
+        store.commit_write(&key, false);
+        return (key, false, start.elapsed().as_secs_f64(), 0);
+    }
     let encoded = task.block.slots().iter().any(|s| s.encoding.is_some());
     let slots = task
         .block
@@ -355,13 +359,9 @@ async fn execute_write(task: WriteTask, store: Weak<SsdStore>, io: Arc<SsdIo>) -
         Err(_) => false,
     };
     if success {
-        success = if store.journal.is_some() {
-            tokio::task::spawn_blocking(move || lease.commit())
-                .await
-                .unwrap_or(false)
-        } else {
-            lease.commit()
-        };
+        success = tokio::task::spawn_blocking(move || lease.commit())
+            .await
+            .unwrap_or(false);
     }
     let duration = start.elapsed().as_secs_f64();
     core_metrics()

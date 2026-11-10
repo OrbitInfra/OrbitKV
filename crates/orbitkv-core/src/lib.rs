@@ -17,6 +17,7 @@ pub use codec::{EncodedSegment, StorageCodec};
 mod block;
 mod completion;
 mod engine;
+mod integrity;
 mod memory;
 mod metrics;
 mod peer;

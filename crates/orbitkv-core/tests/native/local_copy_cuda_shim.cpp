@@ -159,11 +159,36 @@ int cuMemHostGetDevicePointer_v2(Address *out, void *host, unsigned) {
 }
 int cuModuleLoadData(void **module, const void *) { *module = reinterpret_cast<void *>(0x4567); return 0; }
 int cuModuleGetFunction(void **function, void *, const char *name) {
-  if (std::strcmp(name, "orbite_batch_copy")) return 500;
-  *function = reinterpret_cast<void *>(0x5678); return 0;
+  if (!std::strcmp(name, "orbite_batch_copy")) { *function = reinterpret_cast<void *>(0x5678); return 0; }
+  const char *codec[] = {"fp8_encode_batch", "fp8_decode_batch", "turbo_encode_batch",
+                        "turbo_decode_batch", "copy_batch", "crc32_parts", "crc32_finish"};
+  for (size_t i = 0; i < 7; ++i) if (!std::strcmp(name, codec[i])) {
+    *function = reinterpret_cast<void *>(0x6000 + i); return 0;
+  }
+  return 500;
 }
 int cuModuleUnload(void *) { return 0; }
-int cuLaunchKernel(void *, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned, Stream *stream, void **args, void **) {
+int cuLaunchKernel(void *function, unsigned grid_x, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned, Stream *stream, void **args, void **) {
+  // CRC fixture checks descriptor/receipt plumbing, not CUDA kernel execution.
+  if (function == reinterpret_cast<void *>(0x6005)) return enqueue(stream, [] {});
+  if (function == reinterpret_cast<void *>(0x6006)) {
+    Address desc = *static_cast<Address *>(args[0]), out = *static_cast<Address *>(args[3]);
+    int encode = *static_cast<int *>(args[4]);
+    if (encode) return 801;
+    return enqueue(stream, [=] {
+      for (unsigned i = 0; i < grid_x; ++i) {
+        const auto *words = reinterpret_cast<const Address *>(desc + i * 80);
+        const auto *bytes = reinterpret_cast<const unsigned char *>(words[0]);
+        std::uint32_t crc = 0xffffffff;
+        for (Address j = 0; j < words[3]; ++j) {
+          crc ^= bytes[j];
+          for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+        }
+        reinterpret_cast<std::uint32_t *>(out)[i] = crc ^ 0xffffffff;
+      }
+    });
+  }
+  if (function != reinterpret_cast<void *>(0x5678)) return 801;
   Address desc = *static_cast<Address *>(args[0]); int count = *static_cast<int *>(args[1]); ++counters[4];
   return enqueue(stream, [=] {
     auto p = reinterpret_cast<const Address *>(desc);

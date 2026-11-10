@@ -41,6 +41,26 @@ describe CPU conversion only and do not measure GPU kernels, SSD transfer,
 end-to-end cache recovery, TTFT or serving throughput.
 
 
+## CPU integrity overhead
+
+`cargo bench -p orbitkv-core --bench read_integrity --no-default-features
+--features cuda-13` runs five alternating before/after pairs for 4 KiB, 1 MiB
+and 16 MiB stored buffers. Redirect stdout to an external CSV artifact. Both
+arms copy identical initialized bytes; encoded arms retain the existing IEEE
+CRC32 check. The after arm adds the production CRC32C primitive. Set
+`ORBITKV_BENCH_CHECKS=1`, `2` or `3` to measure one scan or repeated verification
+at query, sealing and handoff boundaries; the default is one. Corruption
+and exact-copy controls run before interpreting timings. Report every size,
+pair ratio and spread, including regressions. This isolates CPU scan/copy cost;
+it does not measure codec compute, allocator contention, OrbiTE I/O, GPU CRC,
+network transfer or serving latency. The file-read amplification is documented
+in [storage formats](../../docs/storage-formats.md#read-time-integrity).
+
+For a CPU-only host without the Linux/CUDA build prerequisites, compile this
+same source as a standalone Rust binary against the `crc32c` and `crc32fast`
+versions in `Cargo.lock`, using an external manifest/target directory. Record
+that command, CPU, compiler and raw samples with the result.
+
 ## SSD restoration
 
 Choose `--ssd-backend uring`, `auto`, or `cufile` for both engines. This benchmark

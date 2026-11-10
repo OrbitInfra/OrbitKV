@@ -17,6 +17,7 @@ fn entry(begin: u64, capacity: u64) -> SsdIndexEntry {
         slots: vec![SlotMeta::new(smallvec::smallvec![512], NumaNode::UNKNOWN)],
         encoding: Encoding::Raw,
         readers: Arc::new(AtomicUsize::new(0)),
+        checksum: Arc::default(),
     }
 }
 
@@ -65,6 +66,74 @@ fn durable_reservations_prevent_wrap_resurrection_and_reclaim_orphans() {
 }
 
 #[test]
+fn tails_keep_the_prefix_but_valid_frames_after_corruption_cold_start() {
+    for kind in ["incomplete", "crc", "zeros", "mid", "misaligned_mid"] {
+        let dir = tempfile::tempdir().unwrap();
+        let files = files(dir.path(), 4096);
+        let path = dir.path().join("index");
+        let (mut journal, _) = Journal::open(path.clone(), &files, 4096, 512).unwrap();
+        journal.append(&key(1), &entry(0, 4096), Some(1)).unwrap();
+        journal.checkpoint().unwrap();
+        let prefix = std::fs::read(&path).unwrap();
+        let mut record = journal.records[&key(1)].clone();
+        record.sequence += 1;
+        record.key = key(2);
+        record.begin = 512;
+        record.offset = 512;
+        let valid = frame(&record, journal.limits.record).unwrap();
+        let mut tail = valid.clone();
+        match kind {
+            "incomplete" => {
+                tail.truncate(tail.len() / 2);
+            }
+            "zeros" => tail = vec![0; 16384],
+            _ => tail[4] ^= 1,
+        }
+        if kind.ends_with("mid") {
+            if kind == "misaligned_mid" {
+                tail.extend_from_slice(&[0; 17]);
+            }
+            tail.extend_from_slice(&valid);
+        }
+        drop(journal);
+        let mut bytes = prefix;
+        bytes.extend_from_slice(&tail);
+        std::fs::write(&path, bytes).unwrap();
+        let (mut journal, recovered) = Journal::open(path.clone(), &files, 4096, 512).unwrap();
+        if kind.ends_with("mid") {
+            assert!(recovered.is_empty());
+            assert_eq!(journal.report.lock().drops["metadata_mid_journal"], 1);
+        } else {
+            assert_eq!(recovered.len(), 1, "{kind}");
+            assert_eq!(recovered[0].key, key(1));
+            assert_eq!(journal.report.lock().tail_dropped_bytes, tail.len() as u64);
+        }
+        // New appends start at the durable clean prefix, never after garbage.
+        journal
+            .append(&key(3), &entry(1024, 4096), Some(3))
+            .unwrap();
+        drop(journal);
+        let (journal, recovered) = Journal::open(path, &files, 4096, 512).unwrap();
+        assert_eq!(recovered.len(), if kind.ends_with("mid") { 1 } else { 2 });
+        assert!(journal.report.lock().drops.is_empty());
+    }
+}
+
+#[test]
+fn recovery_limits_scale_and_remain_finite() {
+    let small = Limits::new(1 << 20, 1, 4096);
+    let large = Limits::new(4 << 40, 4, 4096);
+    assert_eq!(small.entries, 256);
+    assert_eq!(large.entries, 1_048_576);
+    assert_eq!(large.metadata, 1 << 30);
+    assert_eq!(large.journal, 4 << 30);
+    assert_eq!(large.record, 1 << 20);
+    assert!(large.parse_seconds > small.parse_seconds);
+    assert!(large.verify_seconds > small.verify_seconds);
+    assert!(Limits::new(u64::MAX, usize::MAX, 512).verify_seconds <= 86_400);
+}
+
+#[test]
 fn malformed_metadata_cold_starts_the_whole_set() {
     for fault in [
         "missing",
@@ -95,14 +164,16 @@ fn malformed_metadata_cold_starts_the_whole_set() {
         }
         // Preserve the second current entry only if the complete log is trusted.
         header.sequence = record.sequence;
-        let mut bytes = frame(&header).unwrap();
-        let mut body = frame(&record).unwrap();
+        let mut bytes = frame(&header, journal.limits.record).unwrap();
+        let mut body = frame(&record, journal.limits.record).unwrap();
         match fault {
             "torn" => {
                 body.pop();
             }
             "checksum" => body[4] ^= 1,
-            "record_limit" => body[..4].copy_from_slice(&((MAX_RECORD + 1) as u32).to_le_bytes()),
+            "record_limit" => {
+                body[..4].copy_from_slice(&((journal.limits.record + 1) as u32).to_le_bytes())
+            }
             _ => {}
         }
         bytes.extend(body);
@@ -169,8 +240,8 @@ fn namespace_and_representation_are_not_inferred_or_aliased() {
     encoded.slots[0].encoding = Some(vec![crate::EncodedSegment {
         version: 1,
         format: orbitkv_state::StorageFormat::Exact,
-        logical_bytes: 512,
-        stored_bytes: 512,
+        logical_bytes: 137,
+        stored_bytes: 137,
         checksum: 3,
     }]);
     journal.append(&key(1), &entry(0, 1024), Some(1)).unwrap();
@@ -186,14 +257,16 @@ fn namespace_and_representation_are_not_inferred_or_aliased() {
 #[test]
 fn metadata_admission_rejects_without_appending_and_fences_only_durability_errors() {
     let dir = tempfile::tempdir().unwrap();
-    let capacity = (MAX_ENTRIES as u64 + 1) * 512;
+    let capacity = 20_000 * 512;
     let files = files(dir.path(), capacity);
     let (mut journal, _) = Journal::open(dir.path().join("index"), &files, capacity, 512).unwrap();
     journal
         .append(&key(1), &entry(0, capacity), Some(1))
         .unwrap();
     let template = journal.records[&key(1)].clone();
-    journal.records = (0..MAX_ENTRIES)
+    let limit = journal.limits.entries;
+    assert_eq!(limit, 20_000);
+    journal.records = (0..limit - 1)
         .map(|index| {
             let mut record = template.clone();
             record.key.hash = orbitkv_state::group_hash(&index.to_le_bytes(), 0);
@@ -202,11 +275,20 @@ fn metadata_admission_rejects_without_appending_and_fences_only_durability_error
             (record.key.clone(), record)
         })
         .collect();
+    journal.metadata_bytes = journal.records.values().map(Record::charge).sum();
+    journal
+        .append(
+            &key(2),
+            &entry((limit as u64 - 1) * 512, capacity),
+            Some(22),
+        )
+        .unwrap();
+    assert_eq!(journal.records.len(), limit);
     let length = journal.file.metadata().unwrap().len();
     let sequence = journal.header.sequence;
     assert_eq!(
         journal
-            .append(&key(2), &entry(MAX_ENTRIES as u64 * 512, capacity), None)
+            .append(&key(3), &entry(0, capacity), None)
             .unwrap_err()
             .kind(),
         io::ErrorKind::WouldBlock
@@ -214,7 +296,7 @@ fn metadata_admission_rejects_without_appending_and_fences_only_durability_error
     assert_eq!(journal.file.metadata().unwrap().len(), length);
     assert_eq!(journal.header.sequence, sequence);
     assert!(!journal.is_fenced());
-    assert!(frame(&"x".repeat(MAX_RECORD)).is_err());
+    assert!(frame(&"x".repeat(journal.limits.record), journal.limits.record).is_err());
     journal.fence();
     assert!(
         journal
