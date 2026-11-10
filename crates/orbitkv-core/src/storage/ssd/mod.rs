@@ -833,7 +833,7 @@ impl SsdStore {
     }
 
     pub(super) fn invalidate_corrupt_entry(&self, key: &StateKey, entry: &SsdIndexEntry) {
-        let invalidated = self.inner.lock().ring.invalidate_corrupt(key, entry);
+        let invalidated = self.inner.lock().ring.invalidate(key, entry);
         if invalidated && let Some(journal) = &self.journal {
             let mut journal = journal.lock();
             if let Err(error) = journal.invalidate(key, entry) {

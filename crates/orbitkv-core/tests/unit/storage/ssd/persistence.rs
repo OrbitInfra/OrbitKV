@@ -217,6 +217,8 @@ fn capacity_shrink_rebases_only_fitting_extents_before_data_resize() {
     assert_eq!(recovered.len(), 2);
     assert_eq!(journal.heads(), vec![1024]);
     assert_eq!(journal.report.lock().drops["capacity"], 1);
+    assert_eq!(journal.report.lock().limits.unwrap().entries, 2);
+    assert_eq!(journal.report.lock().replay_limits.unwrap().entries, 4);
     assert_eq!(
         recovered.iter().map(|r| r.entry.begin).collect::<Vec<_>>(),
         [0, 512]
@@ -225,6 +227,33 @@ fn capacity_shrink_rebases_only_fitting_extents_before_data_resize() {
     files[0].set_len(1024).unwrap();
     let (_, recovered) = Journal::open(path, &files, 1024, 512).unwrap();
     assert_eq!(recovered.len(), 2);
+}
+
+#[test]
+fn capacity_shrink_drops_records_above_the_new_frame_budget_before_checkpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let files = files(dir.path(), 65536);
+    let path = dir.path().join("index");
+    let (mut journal, _) = Journal::open(path.clone(), &files, 65536, 512).unwrap();
+    let mut large = entry(0, 65536);
+    large.slots = vec![SlotMeta::new(smallvec::smallvec![1], NumaNode::UNKNOWN); 300];
+    journal.append(&key(1), &large, Some(17)).unwrap();
+    journal
+        .append(&key(2), &entry(512, 65536), Some(18))
+        .unwrap();
+    let smaller = Limits::new(1024, 1, 512);
+    assert!(journal.records[&key(1)].charge() < smaller.metadata);
+    assert!(frame(&journal.records[&key(1)], smaller.record).is_err());
+    drop(journal);
+    let (journal, recovered) = Journal::open(path.clone(), &files, 1024, 512).unwrap();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].key, key(2));
+    assert_eq!(journal.report.lock().drops["capacity_metadata"], 1);
+    drop(journal);
+    files[0].set_len(1024).unwrap();
+    let (_, recovered) = Journal::open(path, &files, 1024, 512).unwrap();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].key, key(2));
 }
 
 #[test]

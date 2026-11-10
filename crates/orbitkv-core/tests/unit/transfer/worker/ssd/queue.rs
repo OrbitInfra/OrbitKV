@@ -8,7 +8,7 @@ async fn raw_gpu_corruption_invalidates_completion_and_retains_the_extent_until_
         Storage,
         ssd::{SsdBackend, SsdCacheConfig},
     };
-    use cudarc::driver::DevicePtr;
+    use cudarc::driver::{CudaContext, DevicePtr};
     use std::num::{NonZeroU64, NonZeroUsize};
 
     for name in [
@@ -25,7 +25,7 @@ async fn raw_gpu_corruption_invalidates_completion_and_retains_the_extent_until_
         crate::EngineConfig {
             transfer_transport: crate::TransportHint::Tcp,
             ssd_cache_config: Some(SsdCacheConfig {
-                cache_paths: vec![directory.path().into()],
+                cache_paths: vec![directory.path().join("ssd.data")],
                 capacity_bytes: 4096,
                 shards: NonZeroUsize::new(1).unwrap(),
                 backend: SsdBackend::Uring,
@@ -59,15 +59,32 @@ async fn raw_gpu_corruption_invalidates_completion_and_retains_the_extent_until_
         .verify_ranges(&[(lease.entry.file_offset, 512)])
         .unwrap()[0];
     let readers = Arc::clone(&lease.entry.readers);
+    let context = CudaContext::new(0).unwrap();
+    let anchor = Arc::new(context.new_stream().unwrap().alloc_zeros::<u8>(1).unwrap());
+    let (address, ready) = anchor.device_ptr(anchor.stream());
+    drop(ready);
+    anchor.stream().synchronize().unwrap();
+    // SAFETY: the retained allocation/context is initialized before registration
+    // and remains owned until the worker and all of its transfers drain.
+    let registered = unsafe {
+        crate::transfer_engine::CudaRegistration::new(
+            storage.peer_transport().cloned(),
+            address,
+            1,
+            0,
+            anchor.clone(),
+        )
+    }
+    .unwrap();
     let runtime = super::super::super::init_worker(
         0,
         crate::TransferMode::Direct,
-        None,
+        Some(registered.clone()),
         storage.peer_transport().cloned(),
     )
     .unwrap();
     for corrupt in [false, true] {
-        let mut bytes = vec![0x35; 512];
+        let mut bytes = vec![0x35u8; 512];
         if corrupt {
             bytes[17] ^= 1;
         }
@@ -92,7 +109,7 @@ async fn raw_gpu_corruption_invalidates_completion_and_retains_the_extent_until_
         job.complete(None, Ok(()));
         assert!(job.is_complete());
         let verified = job.verify_destinations(&runtime);
-        assert_eq!(verified.is_err(), corrupt);
+        assert_eq!(verified.is_err(), corrupt, "{verified:?}");
         if let Err(error) = verified {
             job.fail(error);
         }
@@ -109,6 +126,8 @@ async fn raw_gpu_corruption_invalidates_completion_and_retains_the_extent_until_
     drop(lease);
     assert_eq!(readers.load(std::sync::atomic::Ordering::Acquire), 0);
     runtime.drain_transfers().unwrap();
+    drop(runtime);
+    registered.close().unwrap();
 }
 
 fn load_job() -> (Job, oneshot::Receiver<super::super::super::LoadOutcome>) {

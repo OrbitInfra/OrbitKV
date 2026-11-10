@@ -58,6 +58,7 @@ pub(crate) struct RecoveryReport {
     pub finished: bool,
     pub tail_dropped_bytes: u64,
     pub(super) limits: Option<Limits>,
+    pub(super) replay_limits: Option<Limits>,
     pub drops: BTreeMap<String, u64>,
 }
 
@@ -328,6 +329,7 @@ impl Journal {
             report,
         };
         let current = journal.header.clone();
+        let active_limits = journal.limits;
         journal.report.lock().limits = Some(journal.limits);
         let length = journal.file.metadata()?.len();
         journal.report.lock().parsed_bytes = length;
@@ -351,6 +353,7 @@ impl Journal {
             journal.records.clear();
             journal.metadata_bytes = 0;
         }
+        journal.limits = active_limits;
         let changed_geometry = journal.header.alignment != alignment
             || journal
                 .header
@@ -393,7 +396,26 @@ impl Journal {
                 shard.head = shard.head.max(record.begin + record.length);
             }
         }
-        journal.metadata_bytes = journal.records.values().map(Record::charge).sum();
+        let smaller_frames = journal
+            .report
+            .lock()
+            .replay_limits
+            .is_some_and(|prior| prior.record > active_limits.record);
+        let mut entries = 0;
+        journal.metadata_bytes = 0;
+        journal.records.retain(|_, record| {
+            let charge = record.charge();
+            if entries == active_limits.entries
+                || charge > active_limits.metadata - journal.metadata_bytes
+                || (smaller_frames && frame(record, active_limits.record).is_err())
+            {
+                journal.report.lock().drop_entry("capacity_metadata");
+                return false;
+            }
+            entries += 1;
+            journal.metadata_bytes += charge;
+            true
+        });
         // Rewrite before any resize or new payload submission. Orphans no longer
         // consume metadata, but the durable heads retain their overwrite fences.
         journal.checkpoint()?;
@@ -417,11 +439,11 @@ impl Journal {
     }
 
     fn replay(&mut self, current: &Header, started: Instant) -> io::Result<()> {
-        if self.file.metadata()?.len() > self.limits.journal {
+        if self.file.metadata()?.len() > MAX_JOURNAL {
             return Err(invalid("metadata_journal_limit"));
         }
-        let header: Header = read_frame(&mut self.file, self.limits.record)?
-            .ok_or_else(|| invalid("metadata_header"))?;
+        let header: Header =
+            read_frame(&mut self.file, 1 << 20)?.ok_or_else(|| invalid("metadata_header"))?;
         if header.version != VERSION {
             return Err(invalid("metadata_version"));
         }
@@ -436,6 +458,20 @@ impl Journal {
             })
         {
             return Err(invalid("metadata_identity"));
+        }
+        // A shrink must first replay the old geometry's bounded journal, then
+        // discard excess before checkpoint/publication under the new budget.
+        let prior_capacity = header
+            .shards
+            .iter()
+            .fold(0u64, |total, shard| total.saturating_add(shard.capacity));
+        let prior_limits = Limits::new(prior_capacity, 1, header.alignment);
+        if prior_limits.entries > self.limits.entries {
+            self.limits = prior_limits;
+        }
+        self.report.lock().replay_limits = Some(self.limits);
+        if self.file.metadata()?.len() > self.limits.journal {
+            return Err(invalid("metadata_journal_limit"));
         }
         self.header = header;
         let mut last = 0;

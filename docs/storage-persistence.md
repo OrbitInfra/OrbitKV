@@ -117,6 +117,13 @@ clamped to 16 KiB–1 MiB. Actual allocations are charged on use, not preallocat
 Large records can exhaust the byte budget before the entry budget: admission
 returns `WouldBlock`, never truncates. These are limits on cache availability.
 
+On a capacity shrink, replay uses the larger of the recorded and current
+geometry's finite metadata budgets; `replay_limits` reports that startup cost.
+Before checkpoint or publication, drop extents outside the new capacity and any
+remaining metadata excess (`capacity_metadata`), then use the new admission
+bounds. This preserves fitting entries without exceeding the configured live
+cache budget. The global maxima above also bound replay of the old geometry.
+
 Parsing gets 30 seconds plus one second per 16 MiB of journal budget. Background
 verification gets 180 seconds plus one second per 64 MiB of payload capacity,
 capped at 24 hours. Checks occur between operations; a blocked kernel sync cannot

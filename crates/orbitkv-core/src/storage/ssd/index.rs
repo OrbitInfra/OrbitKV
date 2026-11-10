@@ -177,6 +177,7 @@ impl SsdRingBuffer {
         true
     }
 
+    /// Hide exactly the failed generation, retaining its extent while leased.
     pub(super) fn invalidate(&mut self, key: &StateKey, failed: &SsdIndexEntry) -> bool {
         if self
             .entries
@@ -222,23 +223,6 @@ impl SsdRingBuffer {
             Some(SsdEntryState::Committed(e)) if self.is_offset_valid(e) => Some(e),
             _ => None,
         }
-    }
-
-    /// Hide exactly the failed generation, retaining its extent while leased.
-    pub(super) fn invalidate_corrupt(&mut self, key: &StateKey, failed: &SsdIndexEntry) -> bool {
-        if matches!(self.entries.get(key), Some(SsdEntryState::Committed(entry) | SsdEntryState::Invalid(entry))
-            if entry.shard_id == failed.shard_id && entry.begin == failed.begin
-                && matches!(entry.encoding, Encoding::Encoded))
-        {
-            if failed.readers.load(Ordering::Acquire) == 0 {
-                self.entries.remove(key);
-            } else {
-                self.entries
-                    .insert(key.clone(), SsdEntryState::Invalid(failed.clone()));
-            }
-            return true;
-        }
-        false
     }
 
     pub(super) fn release_invalid(&mut self, key: &StateKey, released: &SsdIndexEntry) {
