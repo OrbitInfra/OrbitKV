@@ -76,10 +76,10 @@ impl EngineFile {
         length: u64,
         scratch: &Arc<PinnedAllocation>,
         lease: Arc<dyn Send + Sync>,
-        deadline: Instant,
+        options: TransferOptions,
     ) -> Result<u32, TransferError> {
         let mut read = 0u64;
-        let mut checksum = 0;
+        let mut checksum = crc32fast::Hasher::new();
         while read < length {
             let bytes = (length - read).min(super::persistence::VERIFY_CHUNK as u64) as usize;
             let extent = FileExtent {
@@ -102,21 +102,16 @@ impl EngineFile {
                 memory: FileMemory::Pinned(vec![Arc::clone(scratch)]),
                 _lease: Arc::new((Arc::clone(self), Arc::clone(&lease), permit)),
             }));
-            self.execute(
-                TransferOp::Read,
-                FileTransport::IoUring,
-                owner,
-                TransferOptions::checkpoint(deadline),
-            )?;
+            self.execute(TransferOp::Read, FileTransport::IoUring, owner, options)?;
             // SAFETY: this range is in the retained scratch allocation. The
             // checksum caller holds its exclusive mutex; the successful native
             // read receipt initialized all bytes and ended every device access.
             let payload =
                 unsafe { std::slice::from_raw_parts(scratch.as_non_null().as_ptr(), bytes) };
-            checksum = crc32c::crc32c_append(checksum, payload);
+            checksum.update(payload);
             read += bytes as u64;
         }
-        Ok(checksum)
+        Ok(checksum.finalize())
     }
 
     pub(crate) fn submit(

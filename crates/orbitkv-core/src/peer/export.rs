@@ -196,7 +196,40 @@ impl PeerExports {
         result
     }
 
-    pub fn release(&self, ticket: TransferTicket) -> Result<usize, PeerError> {
+    pub fn release(&self, ticket: TransferTicket, corrupt: &[Vec<u8>]) -> Result<usize, PeerError> {
+        if corrupt.len() > orbitkv_state::DISCOVERY_MAX_KEYS
+            || corrupt.iter().map(Vec::len).sum::<usize>() > orbitkv_state::DISCOVERY_MAX_BYTES
+        {
+            return Err(PeerError::InvalidRequest(
+                "excessive corruption report".into(),
+            ));
+        }
+        if !corrupt.is_empty() {
+            let victims = {
+                let inner = self.locks.inner.lock();
+                inner
+                    .windows
+                    .get(&ticket.window)
+                    .and_then(|window| window.slots.get(ticket.slot))
+                    .filter(|slot| slot.generation == ticket.generation)
+                    .and_then(|slot| slot.transfer.as_ref())
+                    .and_then(|session| match &session.state {
+                        TransferState::Ready(blocks) => Some(
+                            blocks
+                                .iter()
+                                .filter(|(key, _)| corrupt.contains(&key.hash))
+                                .cloned()
+                                .collect::<Vec<_>>(),
+                        ),
+                        TransferState::Staging { .. } => None,
+                    })
+                    .unwrap_or_default()
+            };
+            for (key, block) in victims {
+                block.poison();
+                self.dram.invalidate(&key, &block);
+            }
+        }
         // Fencing prevents new grants, but terminal completion must still drain.
         self.locks.release(ticket)
     }

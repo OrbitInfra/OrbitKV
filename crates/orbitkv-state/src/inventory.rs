@@ -7,7 +7,7 @@ pub const INVENTORY_BATCH_BYTES: usize = 512 * 1024;
 pub const INVENTORY_BATCH_RECORDS: usize = 1024;
 pub const INVENTORY_OPEN_MAX_BYTES: usize = 64 * 1024;
 pub const INVENTORY_SCOPE_MAX_NAMESPACES: usize = 256;
-pub const INVENTORY_STREAM_PROTOCOL: &str = "orbitkv/inventory-stream/v4";
+pub const INVENTORY_STREAM_PROTOCOL: &str = "orbitkv/inventory-stream/v5";
 const INVENTORY_SCOPE_DOMAIN: &[u8] = b"orbitkv/inventory-scope/v1\0";
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

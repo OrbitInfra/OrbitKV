@@ -8,7 +8,6 @@ pub(super) use queue::{MAX_WRITES, run};
 use orbitkv_state::StorageFormat;
 
 use crate::codec::{EncodedSegment, segment_format};
-use crate::storage::ssd::GpuFile;
 use crate::storage::ssd::layout::{CopyRange, IoBatch, plan_reads};
 use crate::storage::ssd::{SsdReadLease, WriteLease};
 use crate::transfer::layout::BlockCopies;
@@ -16,7 +15,7 @@ use crate::{EngineError, SlotMeta};
 
 use super::{LayerTransferData, TransferPayload};
 
-type FileReads = (Arc<GpuFile>, Vec<IoBatch>);
+type FileReads = (Arc<SsdReadLease>, Vec<IoBatch>);
 
 pub(super) struct EncodedRead {
     source: Arc<SsdReadLease>,
@@ -41,7 +40,7 @@ pub(crate) struct GpuWrite {
 /// extent lease separately until all submitted reads and scatters complete.
 pub(super) fn plan(layers: &[LayerTransferData]) -> Result<ReadPlan, EngineError> {
     let mut plan = ReadPlan::default();
-    let mut sources: HashMap<usize, (Arc<GpuFile>, Vec<CopyRange>)> = HashMap::new();
+    let mut sources: HashMap<usize, (Arc<SsdReadLease>, Vec<CopyRange>)> = HashMap::new();
     for layer in layers {
         for block in &layer.blocks {
             let TransferPayload::Ssd {
@@ -72,10 +71,10 @@ pub(super) fn plan(layers: &[LayerTransferData]) -> Result<ReadPlan, EngineError
                 }
                 continue;
             }
-            let file = source.file()?;
+            source.file()?;
             let reads = &mut sources
                 .entry(Arc::as_ptr(&source.entry.readers) as usize)
-                .or_insert_with(|| (Arc::clone(file), Vec::new()))
+                .or_insert_with(|| (Arc::clone(source), Vec::new()))
                 .1;
             let (first, second) = raw_copies(slot, base, *offset, copies)?;
             reads.push(first);
@@ -125,7 +124,7 @@ fn source_slot(source: &SsdReadLease, slot_id: usize) -> Result<(&SlotMeta, u64)
             }
             Ok(())
         })
-        .inspect_err(|_| source.invalidate_encoded())
+        .inspect_err(|_| source.invalidate_corrupt())
         .map_err(EngineError::Storage)?;
     Ok((slot, base))
 }

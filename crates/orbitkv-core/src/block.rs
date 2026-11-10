@@ -143,6 +143,8 @@ pub struct RawBlock {
     pub(crate) storage_format: orbitkv_state::StorageFormat,
     pub(crate) encoding: Option<Vec<crate::codec::EncodedSegment>>,
     segments: BlockSegments,
+    checksum_boundaries: Vec<u64>,
+    checksums: Vec<crate::integrity::Checksum>,
     /// Total size across all segments (for footprint tracking).
     total_size: usize,
 }
@@ -183,6 +185,8 @@ impl RawBlock {
             segments: BlockSegments::from_vec(segments),
             storage_format: Default::default(),
             encoding: None,
+            checksum_boundaries: Vec::new(),
+            checksums: Vec::new(),
             total_size,
         }
     }
@@ -193,6 +197,8 @@ impl RawBlock {
             segments: BlockSegments::One(segment),
             storage_format: Default::default(),
             encoding: None,
+            checksum_boundaries: Vec::new(),
+            checksums: Vec::new(),
             total_size,
         }
     }
@@ -203,8 +209,132 @@ impl RawBlock {
             segments: BlockSegments::Two([k_segment, v_segment]),
             storage_format: Default::default(),
             encoding: None,
+            checksum_boundaries: Vec::new(),
+            checksums: Vec::new(),
             total_size,
         }
+    }
+
+    /// Layer boundaries allow a receiver to verify a partial restore without
+    /// rereading unrelated bytes. Segment ends are added during sealing.
+    pub(crate) fn set_checksum_boundaries(&mut self, mut ends: Vec<u64>) -> Result<(), String> {
+        ends.sort_unstable();
+        ends.dedup();
+        if ends.len() > crate::integrity::MAX_CHECKSUMS / 2
+            || ends.first() == Some(&0)
+            || ends.last().is_some_and(|end| *end > self.total_size as u64)
+        {
+            return Err("invalid checksum layout".into());
+        }
+        self.checksum_boundaries = ends;
+        self.checksums.clear();
+        Ok(())
+    }
+
+    /// Reuse checksums produced by this worker's codec, after its D2H receipt.
+    /// The codec initializes the stored body and zeroes each physical tail.
+    pub(crate) fn seal_codec(&mut self) -> Result<(), String> {
+        let metadata = self.encoding.as_ref().ok_or("missing codec metadata")?;
+        if metadata.len() != self.num_segments() {
+            return Err("codec segment count mismatch".into());
+        }
+        let mut base = 0;
+        let mut checksums = Vec::with_capacity(metadata.len() * 2);
+        for (meta, (_, size)) in metadata.iter().zip(self.segment_iovecs()) {
+            meta.validate_metadata(size)?;
+            checksums.push(crate::integrity::Checksum {
+                end: base + meta.stored_bytes as u64,
+                crc: meta.checksum,
+            });
+            base += size as u64;
+            crate::integrity::append_zeros(&mut checksums, base, &[]);
+        }
+        crate::integrity::validate(&checksums, self.total_size as u64)?;
+        self.checksums = checksums;
+        self.checksum_boundaries.clear();
+        Ok(())
+    }
+
+    pub fn checksums(&self) -> &[crate::integrity::Checksum] {
+        &self.checksums
+    }
+
+    fn hash_ranges(&self, ends: &[u64]) -> Vec<crate::integrity::Checksum> {
+        let mut result = Vec::with_capacity(ends.len());
+        let mut offset = 0;
+        let mut index = 0;
+        let mut hasher = crc32fast::Hasher::new();
+        for (pointer, length) in self.segment_iovecs() {
+            // SAFETY: the immutable source or drained destination owns all
+            // initialized segments for this sealing pass.
+            let bytes = unsafe { std::slice::from_raw_parts(pointer.as_ptr(), length) };
+            let mut cursor = 0;
+            while index < ends.len() && ends[index] <= offset + length as u64 {
+                let end = (ends[index] - offset) as usize;
+                hasher.update(&bytes[cursor..end]);
+                result.push(crate::integrity::Checksum {
+                    end: ends[index],
+                    crc: hasher.finalize(),
+                });
+                hasher = crc32fast::Hasher::new();
+                cursor = end;
+                index += 1;
+            }
+            hasher.update(&bytes[cursor..]);
+            offset += length as u64;
+        }
+        result
+    }
+
+    fn seal_integrity(&mut self) {
+        if !self.checksums.is_empty() {
+            return;
+        }
+        let started = Instant::now();
+        let mut ends = std::mem::take(&mut self.checksum_boundaries);
+        let mut offset = 0;
+        for (index, (_, length)) in self.segment_iovecs().enumerate() {
+            if let Some(meta) = self.encoding.as_ref().and_then(|metas| metas.get(index))
+                && meta.stored_bytes > 0
+                && meta.stored_bytes <= length
+            {
+                ends.push(offset + meta.stored_bytes as u64);
+            }
+            offset += length as u64;
+            ends.push(offset);
+        }
+        ends.sort_unstable();
+        ends.dedup();
+        self.checksums = self.hash_ranges(&ends);
+        crate::integrity::checked("seal", self.total_size as u64, started, true);
+    }
+
+    pub(crate) fn verify_fill(
+        &mut self,
+        expected: &[crate::integrity::Checksum],
+        tier: &'static str,
+    ) -> Result<(), String> {
+        crate::integrity::validate(expected, self.total_size as u64)?;
+        let started = Instant::now();
+        let actual = self.hash_ranges(&expected.iter().map(|part| part.end).collect::<Vec<_>>());
+        if !crate::integrity::checked(tier, self.total_size as u64, started, actual == expected) {
+            return Err("received replica checksum mismatch".into());
+        }
+        if let Some(metadata) = &self.encoding {
+            let mut base = 0;
+            for (meta, (_, length)) in metadata.iter().zip(self.segment_iovecs()) {
+                if crate::integrity::range(&actual, base, meta.stored_bytes as u64)?
+                    != meta.checksum
+                {
+                    crate::integrity::failed(tier, "encoding");
+                    return Err("received codec checksum mismatch".into());
+                }
+                base += length as u64;
+            }
+        }
+        self.checksums = actual;
+        self.checksum_boundaries.clear();
+        Ok(())
     }
 
     /// Stored representation metadata for wire adapters; absence means raw data.
@@ -212,14 +342,13 @@ impl RawBlock {
         self.encoding.as_deref()
     }
 
-    pub(crate) fn validate_encoding(&self) -> Result<(), String> {
+    pub(crate) fn validate_encoding_metadata(&self) -> Result<(), String> {
         if let Some(metadata) = &self.encoding {
             if metadata.len() != self.num_segments() {
                 return Err("encoded segment count mismatch".into());
             }
-            for (meta, (ptr, len)) in metadata.iter().zip(self.segment_iovecs()) {
-                // SAFETY: sealed or freshly read segments are initialized and owned by this block.
-                meta.validate(unsafe { std::slice::from_raw_parts(ptr.as_ptr(), len) })?;
+            for (meta, (_, len)) in metadata.iter().zip(self.segment_iovecs()) {
+                meta.validate_metadata(len)?;
             }
         }
         Ok(())
@@ -366,6 +495,7 @@ impl<'a> LayerBlock<'a> {
 
 /// Immutable block after all slots are filled. Exposed to callers.
 pub struct SealedBlock {
+    corrupt: AtomicBool,
     slots: Box<[RawBlock]>,
     footprint: u64,
     /// Per-slot NUMA affinity; always covers every slot (`len == slots.len()`).
@@ -408,6 +538,14 @@ impl Drop for Warmup {
 }
 
 impl SealedBlock {
+    pub(crate) fn is_verified(&self) -> bool {
+        !self.corrupt.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn poison(&self) {
+        self.corrupt.store(true, Ordering::Release);
+    }
+
     pub(crate) fn mark_warmed(&self) {
         self.warmup.get_or_init(|| {
             let metrics = crate::metrics::core_metrics();
@@ -502,21 +640,21 @@ impl SealedBlock {
             blocks.push(block);
             slot_numas.push(numa);
         }
-        Self {
-            slots: blocks.into_boxed_slice(),
-            footprint,
-            slot_numas,
-            warmup: OnceLock::new(),
-        }
+        Self::from_slots_with_footprint(blocks.into_boxed_slice(), footprint, slot_numas)
     }
 
-    /// Create from slots with pre-computed footprint (internal use)
+    /// Create from slots with pre-computed footprint (internal use).
+    /// Called only once the publish DMA or verified backing read has drained.
     fn from_slots_with_footprint(
-        slots: Box<[RawBlock]>,
+        mut slots: Box<[RawBlock]>,
         footprint: u64,
         slot_numas: Vec<NumaNode>,
     ) -> Self {
+        for slot in &mut slots {
+            slot.seal_integrity();
+        }
         Self {
+            corrupt: AtomicBool::new(false),
             slots,
             footprint,
             slot_numas,

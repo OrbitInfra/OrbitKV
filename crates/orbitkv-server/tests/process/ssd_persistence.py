@@ -72,6 +72,7 @@ class Manager:
         self.log_path = gate.artifacts / f"{len(gate.logs):03d}-manager.log"
         gate.logs.append(str(self.log_path))
         self.log = self.log_path.open("wb")
+        self.http = f"127.0.0.1:{port()}"
         command = [
             str(gate.binary),
             "--ssd-cache-path",
@@ -88,7 +89,7 @@ class Manager:
             "--addr",
             f"127.0.0.1:{port()}",
             "--http-addr",
-            f"127.0.0.1:{port()}",
+            self.http,
             "--bootstrap-socket",
             str(self.root / "m.sock"),
         ]
@@ -323,6 +324,83 @@ class Gate:
         assert sum(result["state"]["recovery"]["drops"].values()) > 0, result
         child.close()
 
+    def tail_prefix(self, path, kind):
+        child = self.manager(path)
+        assert child.call("write", id=1)["present"]
+        if kind == "kill":
+            child.pause("ssd_mid_record")
+            child.send("write", id=2, encoded=True)
+            child.reached("ssd_mid_record")
+            child.close(kill=True)
+        else:
+            assert child.call("write", id=2, encoded=True)["present"]
+            child.close()
+            journal = Path(str(path) + ".index")
+            data = bytearray(journal.read_bytes())
+            if kind == "truncate":
+                data = data[:-1]
+            else:
+                # Header, first fence, first commit, then a valid fence/commit.
+                offset = 0
+                for _ in range(2):
+                    length = int.from_bytes(data[offset : offset + 4], "little")
+                    offset += 8 + length
+                data[offset + 4] ^= 1
+            journal.write_bytes(data)
+        child = self.manager(path)
+        result = child.read(1, present=kind != "mid")
+        child.read(2, present=False)
+        report = result["state"]["recovery"]
+        if kind == "mid":
+            assert report["drops"]["metadata_mid_journal"] == 1, report
+        else:
+            assert report["tail_dropped_bytes"] > 0, report
+        assert child.call("write", id=3)["present"]
+        child.close()
+        child = self.manager(path)
+        child.read(1, present=kind != "mid")
+        child.read(3)
+        assert not child.call("report")["state"]["recovery"]["drops"]
+        child.close()
+
+    def read_integrity(self, path, persistent):
+        from urllib.request import urlopen
+
+        child = self.manager(path, persistent=persistent)
+        for id, (encoded, padding) in enumerate(
+            [(False, False), (True, False), (False, True), (True, True)], start=1
+        ):
+            assert child.call("write", id=id, encoded=encoded)["present"]
+            child.read(id, encoded=encoded)
+            if persistent:
+                child.close()
+                child = self.manager(path)
+                child.read(
+                    id, encoded=encoded
+                )  # Recovery verified this extent already.
+            with path.open("r+b") as file:
+                file.seek((id - 1) * 1024 + (900 if padding else 17))
+                file.write(b"\xff")
+                os.fsync(file.fileno())
+            missed = child.read(id, present=False)
+            assert "slots" not in missed, "corrupt bytes must not reach a consumer"
+            assert not child.call("read", id=id)["present"], (
+                "bad generation must be evicted"
+            )
+            with urlopen(f"http://{child.http}/metrics", timeout=10) as response:
+                metrics = response.read().decode()
+            failures = [
+                line
+                for line in metrics.splitlines()
+                if line.startswith("orbitkv_integrity_failures_total{")
+                and 'tier="ssd"' in line
+                and 'reason="checksum"' in line
+            ]
+            assert failures and sum(float(line.split()[-1]) for line in failures) == (
+                1 if persistent else id
+            ), metrics
+        child.close()
+
     def wrap(self, path, point):
         child = self.manager(path, capacity=1024)
         assert child.call("write", id=1)["present"]
@@ -453,6 +531,13 @@ def main():
     gate.case("prior-file-user-blocks-restart", gate.old_file_user)
     for kind in ["data", "torn", "checksum", "version", "namespace"]:
         gate.case(f"corrupt-{kind}", lambda path, k=kind: gate.corrupt(path, k))
+    for kind in ["kill", "truncate", "mid"]:
+        gate.case(f"prefix-{kind}", lambda path, k=kind: gate.tail_prefix(path, k))
+    for persistent in [False, True]:
+        gate.case(
+            f"read-integrity-{persistent}",
+            lambda path, p=persistent: gate.read_integrity(path, p),
+        )
     for point in ["ssd_reserved", "ssd_data_written"]:
         gate.case(f"wrap-{point}", lambda path, p=point: gate.wrap(path, p))
     gate.case("reader-protects-reuse", lambda path: gate.owners(path, False))

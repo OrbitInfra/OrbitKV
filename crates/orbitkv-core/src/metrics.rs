@@ -131,6 +131,10 @@ pub(crate) struct CoreMetrics {
     pub ssd_write_failures: Counter<u64>,
     pub ssd_engine_retained_operations: Counter<u64>,
     pub ssd_recovery_drops: Counter<u64>,
+    pub ssd_recovery_tail_bytes: Counter<u64>,
+    pub integrity_failures: Counter<u64>,
+    pub integrity_bytes: Counter<u64>,
+    pub integrity_seconds: Histogram<f64>,
     pub ssd_recovery_seconds: Histogram<f64>,
     pub ssd_write_throughput_bytes_per_second: Histogram<f64>,
     pub ssd_write_queue_pending: UpDownCounter<i64>,
@@ -574,6 +578,10 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .with_boundaries(duration_seconds_boundaries())
                 .build(),
             ssd_engine_retained_operations: meter.u64_counter("orbitkv_ssd_engine_retained_operations").with_description("File operations retaining backing, extents and admission after unknown drain or cleanup").build(),
+            ssd_recovery_tail_bytes: meter.u64_counter("orbitkv_ssd_recovery_tail_bytes").with_description("Durably discarded journal tail bytes by reason").build(),
+            integrity_failures: meter.u64_counter("orbitkv_integrity_failures").with_description("Replica integrity misses by tier and reason").build(),
+            integrity_bytes: meter.u64_counter("orbitkv_integrity_bytes").with_description("Stored bytes checked by tier").build(),
+            integrity_seconds: meter.f64_histogram("orbitkv_integrity_seconds").with_description("Replica integrity verification CPU or inclusive device seconds").build(),
             ssd_recovery_drops: meter.u64_counter("orbitkv_ssd_recovery_drops").with_description("Persistent SSD recovery drops or cold starts by bounded reason").build(),
             ssd_recovery_seconds: meter.f64_histogram("orbitkv_ssd_recovery_seconds").with_description("Metadata replay and bounded stored-byte verification time").with_unit("s").build(),
             ssd_write_failures: meter

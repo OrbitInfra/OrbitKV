@@ -292,6 +292,9 @@ fn save_shape(
             std::mem::size_of::<TransferBlock>(),
         )?;
         for block in &layer.blocks {
+            // One body/tail reference per physical segment; charge the source
+            // seal metadata to the existing bounded Save admission.
+            charge(4, std::mem::size_of::<crate::integrity::Checksum>())?;
             let bytes = match layer
                 .layout
                 .block_copies(block.block_idx)
@@ -310,6 +313,14 @@ fn save_shape(
             std::mem::size_of::<crate::storage::ssd::layout::IoBatch>(),
         )?;
         for batch in &write.batches {
+            charge(
+                batch
+                    .copies
+                    .capacity()
+                    .checked_mul(2)
+                    .ok_or_else(overflow)?,
+                std::mem::size_of::<crate::integrity::Checksum>(),
+            )?;
             charge(
                 batch.copies.capacity(),
                 std::mem::size_of::<crate::storage::ssd::layout::CopyRange>(),

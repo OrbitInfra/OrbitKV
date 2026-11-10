@@ -215,6 +215,18 @@ impl OrbitKVEngine {
             &layouts,
         )?;
         drop(instances);
+        // A query lease can outlive lookup. Recheck immediately before granting
+        // engine-local copies or handing sources to the Manager's GPU worker.
+        for source in &prepared.sources {
+            if let RestoreSource::Memory(block) = source
+                && !block.is_verified()
+            {
+                self.storage.dram.invalidate_owner(block);
+                return Err(EngineError::Storage(
+                    "DRAM checksum mismatch; restore not submitted".into(),
+                ));
+            }
+        }
         trace_drop!(lookup);
         trace_scope!("load.build_tasks");
         if let Some((plans, bytes, fragments)) = prepared.raw {

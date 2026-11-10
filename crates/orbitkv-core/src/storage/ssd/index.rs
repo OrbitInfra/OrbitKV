@@ -27,9 +27,33 @@ pub(crate) struct SsdIndexEntry {
     pub slots: Vec<SlotMeta>,
     pub encoding: Encoding,
     pub readers: Arc<AtomicUsize>,
+    pub checksum: Arc<std::sync::OnceLock<u32>>,
+    pub checksums: Arc<std::sync::OnceLock<Vec<crate::integrity::Checksum>>>,
 }
 
 impl SsdIndexEntry {
+    pub(crate) fn segment_ends(&self) -> Vec<u64> {
+        let mut end = 0;
+        self.slots
+            .iter()
+            .flat_map(|slot| slot.segment_sizes.iter())
+            .map(|bytes| {
+                end += bytes;
+                end
+            })
+            .collect()
+    }
+
+    pub(super) fn padding_bytes(&self) -> Option<u64> {
+        let payload = self
+            .slots
+            .iter()
+            .try_fold(0u64, |total, slot| total.checked_add(slot.total_size()))?;
+        self.len
+            .checked_sub(payload)
+            .filter(|&bytes| bytes < super::layout::ALIGNMENT as u64)
+    }
+
     pub(super) fn replica_metadata(&self) -> orbitkv_state::ReplicaMetadata {
         let mut representation = None;
         let mut stored_bytes = 0u64;
@@ -166,6 +190,7 @@ impl SsdRingBuffer {
         true
     }
 
+    /// Hide exactly the failed generation, retaining its extent while leased.
     pub(super) fn invalidate(&mut self, key: &StateKey, failed: &SsdIndexEntry) -> bool {
         if self
             .entries
@@ -211,23 +236,6 @@ impl SsdRingBuffer {
             Some(SsdEntryState::Committed(e)) if self.is_offset_valid(e) => Some(e),
             _ => None,
         }
-    }
-
-    /// Hide exactly the failed generation, retaining its extent while leased.
-    pub(super) fn invalidate_encoded(&mut self, key: &StateKey, failed: &SsdIndexEntry) -> bool {
-        if matches!(self.entries.get(key), Some(SsdEntryState::Committed(entry) | SsdEntryState::Invalid(entry))
-            if entry.shard_id == failed.shard_id && entry.begin == failed.begin
-                && matches!(entry.encoding, Encoding::Encoded))
-        {
-            if failed.readers.load(Ordering::Acquire) == 0 {
-                self.entries.remove(key);
-            } else {
-                self.entries
-                    .insert(key.clone(), SsdEntryState::Invalid(failed.clone()));
-            }
-            return true;
-        }
-        false
     }
 
     pub(super) fn release_invalid(&mut self, key: &StateKey, released: &SsdIndexEntry) {
@@ -387,6 +395,8 @@ impl SsdRingBuffer {
             slots,
             encoding,
             readers: Arc::new(AtomicUsize::new(0)),
+            checksum: Arc::default(),
+            checksums: Arc::default(),
         };
         self.entries
             .insert(key.clone(), SsdEntryState::Writing(entry.clone()));

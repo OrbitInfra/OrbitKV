@@ -4,6 +4,48 @@ use std::sync::Arc;
 use cudarc::driver::{CudaContext, CudaSlice, CudaStream, DevicePtr, result};
 use half::{bf16, f16};
 
+impl EncodedSegment {
+    // Qualification controls independently check codec-produced output bytes.
+    pub(crate) fn validate(&self, bytes: &[u8]) -> Result<(), String> {
+        self.validate_metadata(bytes.len())?;
+        if crc32fast::hash(&bytes[..self.stored_bytes]) != self.checksum {
+            return Err("encoded segment checksum/size mismatch".into());
+        }
+        Ok(())
+    }
+}
+
+#[test]
+#[ignore = "explicit CPU CUDA shim, or installed GPU integrity gate"]
+fn raw_device_checksum_is_bounded_and_detects_corruption() {
+    assert!(
+        std::env::var("ORBITKV_REQUIRE_LOCAL_COPY_SHIM").as_deref() == Ok("1")
+            || std::env::var("ORBITKV_REQUIRE_GPU_INTEGRITY").as_deref() == Ok("1")
+    );
+    let context = CudaContext::new(0).unwrap();
+    let stream = context.new_stream().unwrap();
+    let mut codec = gpu::GpuCodec::new(&context).unwrap();
+    for bytes in [137, 4096, (16 << 20) + 17] {
+        let mut input = vec![0x6a; bytes];
+        let device = stream.clone_htod(&input).unwrap();
+        let (address, _read) = device.device_ptr(&stream);
+        // SAFETY: this allocation is retained and initialized on this stream;
+        // checksum drains before the fixture changes any bytes.
+        let checksum = unsafe { codec.device_checksum(&stream, address, bytes, 8192) }.unwrap();
+        assert_eq!(checksum, crc32fast::hash(&input));
+        assert!(codec.scratch_bytes() <= 8192);
+        input[bytes - 1] ^= 1;
+        let changed = stream.clone_htod(&input).unwrap();
+        let (address, _read) = changed.device_ptr(&stream);
+        // SAFETY: changed owns this complete input until checksum returns.
+        let changed_checksum =
+            unsafe { codec.device_checksum(&stream, address, bytes, 8192) }.unwrap();
+        assert_ne!(changed_checksum, checksum);
+        // SAFETY: valid retained source; rejection occurs before an over-budget allocation.
+        assert!(unsafe { codec.device_checksum(&stream, address, bytes, 1) }.is_err());
+    }
+}
+
 #[test]
 fn policy_protects_boundaries_opaque_state_and_rejects_corruption() {
     for mode in [StorageCodec::TurboQuant3, StorageCodec::TurboQuant4] {

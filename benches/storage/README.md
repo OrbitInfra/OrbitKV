@@ -41,6 +41,53 @@ describe CPU conversion only and do not measure GPU kernels, SSD transfer,
 end-to-end cache recovery, TTFT or serving throughput.
 
 
+## CPU integrity overhead
+
+The native `peer::read::tests::path_bench::cpu_paths` control exercises the actual
+DRAM lookup, SSD host read, ephemeral/persistent SSD write and peer TCP receiver
+paths at 4 KiB, 1 MiB and 16 MiB. It uses real OrbiTE io_uring/TCP with the CPU
+host-registration shim, not a GPU. Required io_uring and ext4 checks fail closed.
+Sources are initialized outside timing; writes include sealing a new immutable
+source, submission, drain, publication and (when persistent) both syncs. Reads
+include allocation, transfer, verification and sealing. Peer authorization and
+source registration are prepared outside timing; gRPC discovery is not measured.
+The link is loopback, not a network/RDMA qualification. DRAM timings are lookup
+and owner acquisition, not H2D latency. Every operation checks hit/publication.
+
+Build each revision's native test binary in a separate target directory:
+
+```bash
+cargo test --release --locked -p orbitkv-core --lib --no-run --message-format=json
+```
+
+Keep the executable paths from Cargo's `compiler-artifact` output. For a revision
+before this benchmark, copy `benches/storage/native/read_integrity.rs` into its
+external build snapshot and include it from `tests/unit/peer/read.rs` using the
+same `path_bench` module declaration. Remove only the `BENCH_REFERENCE_V2` fixture
+assignment and the subsequent new integrity control when the old revision has
+no checksum-reference API; leave the timed `cpu_paths` body unchanged. Do not
+patch production code or disable verification. Record both revisions, the fixture
+hash and the resulting binary hashes. Never build two revisions into one target
+directory: generated protocol files are revision-specific.
+
+```bash
+LD_LIBRARY_PATH=/external/cpu-host-shim ORBITE_REQUIRE_IO_URING=1 \
+python -m benches.storage.integrity_paths \
+  --baseline /external/before-test --baseline-revision BASE_SHA \
+  --candidate /external/after-test --candidate-revision HEAD_SHA \
+  --root /mnt/ext4/bench --output /external/artifacts/paired-paths --pairs 5
+```
+
+The runner alternates order over five pairs, saves every raw CSV/log and binary
+hash outside Git, and reports all per-path ratios and their range. Each path has
+a 50 ms warmup followed by at least 600 ms and three operations. Buffers/files
+are reused, SSD files are opened O_DIRECT, and this is a warm-cache OS/VM test,
+not bare-NVMe or power-loss evidence. Persistent writes include `fdatasync`;
+ephemeral writes do not. One link and one outstanding operation keep the workload
+bounded. Do not run competing tests while timing. Report every regression;
+source sealing and receiver CRC remain necessary costs. The old isolated
+scan/copy microbenchmark is superseded, and its external evidence is retained.
+
 ## SSD restoration
 
 Choose `--ssd-backend uring`, `auto`, or `cufile` for both engines. This benchmark

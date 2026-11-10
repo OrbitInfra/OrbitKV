@@ -679,6 +679,24 @@ impl OrbitKVEngine {
                     }
                 }
 
+                for block in &mut raw_blocks {
+                    let mut base = 0;
+                    let mut ends = Vec::new();
+                    for (_, physical) in block.segment_iovecs() {
+                        let logical = if layout.geometry().is_split() {
+                            layout.geometry().segment_bytes()
+                        } else {
+                            source_bytes
+                        };
+                        ends.push(base + logical as u64);
+                        base += physical as u64;
+                        ends.push(base);
+                    }
+                    block
+                        .set_checksum_boundaries(ends)
+                        .map_err(EngineError::Storage)?;
+                }
+
                 let save_blocks: Vec<TransferBlock> = ctx
                     .blocks_to_save
                     .iter()
@@ -819,12 +837,33 @@ impl OrbitKVEngine {
             } else {
                 orbitkv_state::StorageFormat::Exact
             };
+            let mut checksum_ends = Vec::new();
+            for ctx in &layer_contexts {
+                let layer_id = topology.layer_id(&ctx.layer_name)?;
+                let (offset, _) = topology
+                    .page_placement(layer_id)
+                    .ok_or_else(|| EngineError::Storage("missing page checksum layout".into()))?;
+                let BlockCopies::Contiguous(copy) = ctx
+                    .layout
+                    .block_copies(ctx.blocks_to_save[0].0)
+                    .map_err(EngineError::Storage)?
+                else {
+                    return Err(EngineError::Storage("split page checksum layout".into()));
+                };
+                if offset != 0 {
+                    checksum_ends.push(offset as u64);
+                }
+                checksum_ends.push((offset + copy.bytes) as u64);
+            }
             let blocks: Vec<RawBlock> = pages
                 .into_iter()
                 .map(|page| {
                     let ptr = page.mapped_ptr().host();
                     let mut block = RawBlock::single_segment(Segment::new(ptr, page_size, page)?);
                     block.storage_format = format;
+                    block
+                        .set_checksum_boundaries(checksum_ends.clone())
+                        .map_err(EngineError::Storage)?;
                     Ok(block)
                 })
                 .collect::<Result<_, EngineError>>()?;

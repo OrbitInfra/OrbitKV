@@ -1,5 +1,215 @@
 use super::*;
 
+#[tokio::test]
+#[ignore = "real OrbiTE file I/O and explicit CPU CUDA driver shim"]
+async fn raw_gpu_corruption_invalidates_completion_and_retains_the_extent_until_drain() {
+    let Some(metrics) = crate::integrity::tests::isolate(
+        "transfer::worker::ssd::queue::tests::raw_gpu_corruption_invalidates_completion_and_retains_the_extent_until_drain",
+    ) else {
+        return;
+    };
+    use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
+    use crate::storage::{
+        Storage,
+        ssd::{SsdBackend, SsdCacheConfig},
+    };
+    use cudarc::driver::{CudaContext, DevicePtr};
+    use std::num::{NonZeroU64, NonZeroUsize};
+
+    for name in [
+        "ORBITKV_REQUIRE_ENGINE_SSD",
+        "ORBITKV_REQUIRE_LOCAL_COPY_SHIM",
+    ] {
+        assert_eq!(std::env::var(name).as_deref(), Ok("1"), "{name}=1 required");
+    }
+    let root = std::env::var_os("ORBITKV_SSD_TEST_ROOT").unwrap();
+    let directory = tempfile::tempdir_in(root).unwrap();
+    let storage = Storage::new_with_config(
+        16 << 20,
+        false,
+        crate::EngineConfig {
+            transfer_transport: crate::TransportHint::Tcp,
+            ssd_cache_config: Some(SsdCacheConfig {
+                cache_paths: vec![directory.path().join("ssd.data")],
+                capacity_bytes: 16384,
+                shards: NonZeroUsize::new(1).unwrap(),
+                backend: SsdBackend::Auto,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        &[],
+    )
+    .unwrap();
+    let store = storage.ssd_store.as_ref().unwrap();
+    let allocation = storage
+        .allocate(NonZeroU64::new(512).unwrap(), None)
+        .unwrap();
+    // SAFETY: freshly allocated fixture has no concurrent readers or DMA.
+    unsafe { std::ptr::write_bytes(allocation.as_non_null().as_ptr(), 0x35, 512) };
+    let source = Arc::new(SealedBlock::from_slots(vec![(
+        RawBlock::single_segment(Segment::new(allocation.as_non_null(), 512, allocation).unwrap()),
+        crate::memory::numa::NumaNode::UNKNOWN,
+    )]));
+    let key = StateKey::new("gpu-integrity".into(), vec![1]);
+    store.ingest_batch(std::iter::once((&key, &source)), false);
+    store.flush().await;
+    let lease = store
+        .discover(std::slice::from_ref(&key))
+        .remove(0)
+        .unwrap()
+        .pin(crate::transfer_engine::tests::demand())
+        .unwrap();
+    let expected = lease.checksum_range(lease.entry.file_offset, 512).unwrap();
+    let readers = Arc::clone(&lease.entry.readers);
+    let context = CudaContext::new(0).unwrap();
+    let anchor = Arc::new(context.new_stream().unwrap().alloc_zeros::<u8>(1).unwrap());
+    let (address, ready) = anchor.device_ptr(anchor.stream());
+    drop(ready);
+    anchor.stream().synchronize().unwrap();
+    // SAFETY: the retained allocation/context is initialized before registration
+    // and remains owned until the worker and all of its transfers drain.
+    let registered = unsafe {
+        crate::transfer_engine::CudaRegistration::new(
+            storage.peer_transport().cloned(),
+            address,
+            1,
+            0,
+            anchor.clone(),
+        )
+    }
+    .unwrap();
+    let runtime = super::super::super::init_worker(
+        0,
+        crate::TransferMode::Direct,
+        Some(registered.clone()),
+        storage.peer_transport().cloned(),
+    )
+    .unwrap();
+    // Source checksum once, before a raw GPU file write, with virtual zero padding.
+    let source_device = runtime.stream.clone_htod(&[0x35u8; 137]).unwrap();
+    let (source_address, _source_ready) = source_device.device_ptr(&runtime.stream);
+    let write = store
+        .reserve_gpu(
+            StateKey::new("gpu-integrity".into(), vec![2]),
+            vec![crate::SlotMeta::new(
+                smallvec::smallvec![512],
+                crate::memory::numa::NumaNode::UNKNOWN,
+            )],
+        )
+        .unwrap();
+    let (reply, _reply_rx) = oneshot::channel();
+    let mut saving = Job::new(
+        1,
+        WorkerCommand::Save(
+            super::super::super::SaveTask {
+                layers: vec![],
+                reply,
+                ssd_writes: vec![super::super::GpuWrite {
+                    lease: write.clone(),
+                    batches: vec![crate::storage::ssd::layout::IoBatch {
+                        file_offset: write.entry.file_offset,
+                        bytes: write.entry.len as usize,
+                        copies: vec![crate::storage::ssd::layout::CopyRange {
+                            file_offset: write.entry.file_offset,
+                            device: source_address,
+                            bytes: 137,
+                        }],
+                    }],
+                }],
+                codec_groups: vec![],
+                storage: Some(storage.clone()),
+                numa: crate::memory::numa::NumaNode::UNKNOWN,
+                ssd_admission: None,
+                admission: super::super::super::SaveAdmission::acquire(4096, 137).unwrap(),
+                _instance: Arc::new(
+                    crate::engine::instance::InstanceContext::new(
+                        "crc".into(),
+                        "crc".into(),
+                        1,
+                        1,
+                        false,
+                        None,
+                    )
+                    .unwrap(),
+                ),
+                #[cfg(feature = "tracing")]
+                trace_ctx: None,
+            },
+            Observation::disabled(),
+        ),
+    )
+    .unwrap();
+    saving.prepare(&runtime).unwrap();
+    assert_eq!(crate::integrity::tests::bytes(&metrics, "ssd_write"), 137);
+    let mut padded = vec![0x35; 137];
+    padded.resize(write.entry.len as usize, 0);
+    assert_eq!(
+        *write.entry.checksum.get().unwrap(),
+        crc32fast::hash(&padded)
+    );
+    drop(saving);
+    drop(write);
+    let initial = crate::integrity::tests::bytes(&metrics, "ssd_gpu");
+    for (index, corrupt) in [false, true].into_iter().enumerate() {
+        let mut bytes = vec![0x35u8; 512];
+        if corrupt {
+            bytes[17] ^= 1;
+        }
+        // Model corruption in the destination after the drained file READ.
+        // The separate real-file controls corrupt the source before this boundary.
+        let device = runtime.stream.clone_htod(&bytes).unwrap();
+        let (address, _guard) = device.device_ptr(&runtime.stream);
+        let (mut job, mut consumer) = load_job();
+        job.checks.push((
+            Arc::clone(&lease),
+            vec![(
+                crate::storage::ssd::layout::CopyRange {
+                    file_offset: lease.entry.file_offset,
+                    device: address,
+                    bytes: 512,
+                },
+                expected,
+            )],
+        ));
+        job.prepare(&runtime).unwrap();
+        assert_eq!(
+            crate::integrity::tests::bytes(&metrics, "ssd"),
+            0,
+            "direct restore must not pre-read the source"
+        );
+        job.inflight = 1;
+        assert!(!job.is_complete(), "a checksum cannot substitute for drain");
+        job.complete(None, Ok(()));
+        assert!(job.is_complete());
+        let verified = job.verify_destinations(&runtime);
+        assert_eq!(verified.is_err(), corrupt, "{verified:?}");
+        assert_eq!(
+            crate::integrity::tests::bytes(&metrics, "ssd_gpu") - initial,
+            (index as u64 + 1) * 512
+        );
+        if let Err(error) = verified {
+            job.fail(error);
+        }
+        assert_eq!(readers.load(std::sync::atomic::Ordering::Acquire), 1);
+        assert_eq!(
+            store.discover(std::slice::from_ref(&key))[0].is_none(),
+            corrupt
+        );
+        job.finish();
+        assert_eq!(consumer.try_recv().unwrap().result.is_err(), corrupt);
+        // The caller still holds this read lease even after a failed completion.
+        assert_eq!(readers.load(std::sync::atomic::Ordering::Acquire), 1);
+    }
+    drop(lease);
+    assert_eq!(readers.load(std::sync::atomic::Ordering::Acquire), 0);
+    runtime.drain_transfers().unwrap();
+    drop(_source_ready);
+    drop(source_device);
+    drop(runtime);
+    registered.close().unwrap();
+}
+
 fn load_job() -> (Job, oneshot::Receiver<super::super::super::LoadOutcome>) {
     let (completion, receiver) = oneshot::channel();
     let job = Job::new(

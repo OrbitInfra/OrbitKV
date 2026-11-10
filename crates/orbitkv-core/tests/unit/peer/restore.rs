@@ -196,6 +196,7 @@ pub(crate) fn source(
         .get(membership.lease(&source_owner).unwrap(), "control", "epoch")
         .unwrap();
     PeerRestoreBlock {
+        hash: vec![1],
         grant: Arc::new(Grant {
             _lock: TransferLockGuard::test_detached(),
             _segments: segments,
@@ -222,6 +223,8 @@ fn descriptor_validation_rejects_missing_overflowing_and_malformed_grants() {
     let mut info = TransferSlotInfo {
         k_ptr: 4096,
         k_size: 8192,
+        checksums: serde_json::to_vec(&vec![crate::integrity::Checksum { end: 8192, crc: 0 }])
+            .unwrap(),
         ..Default::default()
     };
     let parsed = validate_slots(std::slice::from_ref(&info), 1).unwrap();

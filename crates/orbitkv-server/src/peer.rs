@@ -83,6 +83,8 @@ impl P2pTransferService {
             v_ptr: layer_block.v_ptr().map(|p| p as u64).unwrap_or(0),
             v_size: layer_block.v_size().unwrap_or(0) as u64,
             numa_node: numa_node.0,
+            checksums: serde_json::to_vec(raw_block.checksums())
+                .map_err(|error| Status::internal(error.to_string()))?,
             encoding: raw_block
                 .encoding()
                 .map(serde_json::to_vec)
@@ -221,11 +223,12 @@ impl Engine for P2pTransferService {
         &self,
         request: Request<ReleaseTransferLockRequest>,
     ) -> Result<Response<ReleaseTransferLockResponse>, Status> {
-        let ticket = Self::parse_ticket(request.into_inner().ticket)?;
+        let request = request.into_inner();
+        let ticket = Self::parse_ticket(request.ticket)?;
         let released = self
             .engine
             .peer_exports()
-            .release(ticket)
+            .release(ticket, &request.corrupt_block_hashes)
             .map_err(Self::authorization_error)?;
         Ok(Response::new(ReleaseTransferLockResponse {
             status: Some(Self::ok_status()),

@@ -102,10 +102,10 @@ Required cases fail on missing prerequisites; they never substitute a filesystem
 | CPU process case | Required result |
 | --- | --- |
 | SIGKILL after payload write or data sync | No commit: counted orphan miss, no stale bytes |
-| SIGKILL mid-record | Counted cold start; no partial salvage across an overwrite fence |
+| SIGKILL mid-record; truncated append tail | Retain verified prefix, count/drop tail bytes, durably truncate before the next append |
 | SIGKILL after full record, before sync | Correct verified bytes or counted miss; the caller had no durable acknowledgement |
 | SIGKILL after publication | Correct verified raw/encoded bytes after restart |
-| Torn/bit-flipped metadata, wrong version or namespace | Counted drop/cold start, never a hit |
+| Valid frame after corrupt frame; wrong version or namespace | Whole-set cold start; never salvage past corruption |
 | Data bit flip; verification held | Bad CRC drops the entry; even healthy recovery is a miss until verification drains |
 | Wrap killed after reservation or overwrite; orphan reuse | Old generation never resurrects; orphan capacity is reusable |
 | Reader held; file receipt withheld | Eviction pressure cannot reuse the leased extent; releasing the receipt restores admission |
@@ -113,12 +113,39 @@ Required cases fail on missing prerequisites; they never substitute a filesystem
 | Capacity shrink; checkpoint replacement killed | Only fitting entries survive; old or new complete checkpoint remains usable |
 | Real ENOSPC during commit | No published entry, no pending writer/reader leak; writes remain fenced until restart |
 | Default restart; clean persistent restart | Default truncates; opt-in recovers exact bytes and isolates namespaces |
+| Raw/encoded SSD payload/tail bit flips after commit and after recovery | Counted integrity miss, no returned slots, exact replica eviction; correct bytes still hit |
+| More than 16,384 metadata entries; derived limit reached | Admission succeeds below the capacity-derived bound; refuses without appending at the bound |
 
 The receipt barrier is after native completion but before the storage owner
 receives its physical receipt. The existing Unquiesced control separately proves
 indefinite retention; a timer or cancellation never releases that owner.
 CI uploads logs and bounded recovery counters/timing as `ssd-process-crash`.
 SIGKILL tests process failure, **not power loss**; tmpfs has no persistent medium.
+
+CPU controls cover raw/encoded peer TCP receive corruption and exact-generation
+reports, including a stale report after replacement. Sealed immutable DRAM trusts
+ECC and is not rescanned on lookup/export. Scan-count controls require one source
+pass for SSD writes, one seal/verification pass for SSD→DRAM, one device pass for
+SSD→GPU, zero raw or encoded DRAM-hit CRC passes, and one peer receiver pass. A
+sealed-host decode control rejects unsealed or poisoned inputs and deliberately
+breaks ECC after sealing to detect an accidental return of host CRC rescanning.
+There is no
+SSD write read-back or GPU-restore source pre-read. Device controls use the
+existing codec owner, including a range larger than 16 MiB and insufficient
+workspace. A real-file/CPU-CUDA-shim control checks source CRC/padding and flips
+the destination after a simulated drained file transfer: Restore fails and the
+extent remains pinned until drain. These controls do not qualify GPU kernels.
+
+Installed integrity remains **unrun and unqualified**: on the selected GPU/NVMe
+host, run the existing dense vLLM/SGLang SSD restart gates below with raw and
+encoded representations, inject post-commit payload corruption while requests
+are held, and require misses/recomputation, correct model outputs and drained
+owners. Run the device CRC control against the actual driver as well:
+
+```bash
+ORBITKV_REQUIRE_GPU_INTEGRITY=1 cargo test --locked -p orbitkv-core --lib \
+  codec::tests::raw_device_checksum_is_bounded_and_detects_corruption -- --exact --ignored
+```
 
 The installed NVMe gate is **written, unrun and unqualified**. Use the installed
 harness projection described below, a matching test-hooks Manager, an immutable

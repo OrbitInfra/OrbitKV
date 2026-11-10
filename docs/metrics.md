@@ -230,6 +230,18 @@ windows reject startup. This estimate is not observed finite-cache service succe
   including aligned edges. The historical name covers engine CUDA staging and GDS.
 - **orbitkv_ssd_cufile_read_seconds** (Histogram) - Async submission-to-completion latency, including engine-owned scatter and polling; excludes waiting for a slot.
 - **orbitkv_ssd_cufile_read_failures_total** (Counter) - Failed or short GPU file-route reads.
+- **orbitkv_integrity_failures_total** (Counter) - Integrity misses with bounded
+  `tier=seal|ssd|ssd_write|ssd_gpu|peer|peer_gpu` and `reason=checksum|encoding`; invalidation never
+  releases active physical owners.
+- **orbitkv_integrity_bytes_total** (Counter) - Bytes actually scanned by tier; metadata-only
+  CRC combination and trusted DRAM hits do not increment it. Not bytes served
+  or unique cache size.
+- **orbitkv_integrity_seconds** (Histogram) - Verification span by tier: CPU scan
+  for sealing/host fills, and inclusive GPU reduction/drain time for device checks. Do not add these to
+  overlapping read/restore timers.
+- **orbitkv_ssd_recovery_tail_bytes_total** (Counter) - Journal bytes durably
+  discarded from an invalid append tail, labeled by framing/checksum reason.
+  Mid-journal corruption instead increments the existing recovery drop counter.
 - **orbitkv_ssd_read_pinned_bytes** (Gauge) - SSD extents owned by restore leases.
 - **orbitkv_ssd_cufile_inflight_batches** (Gauge) - Outstanding file receipts through I/O completion, at most two per instance/device.
 - **orbitkv_ssd_gpu_write_fallbacks_total** (Counter) - Write jobs using host publication after the eight-job GPU write admission limit is reached.

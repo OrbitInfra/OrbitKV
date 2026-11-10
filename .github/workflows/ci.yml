@@ -306,6 +306,9 @@ jobs:
           # Driver calls move CPU fixture bytes, not hardware-qualified GPU bytes.
           export LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-local-copy-control:$RUNNER_TEMP/orbitkv-cpu-host-control"
           export ORBITKV_REQUIRE_LOCAL_COPY_SHIM=1
+          cargo test --locked -p orbitkv-core --lib codec::tests::raw_device_checksum_is_bounded_and_detects_corruption -- --exact --ignored
+          cargo test --locked -p orbitkv-core --lib transfer::worker::drain_tests::sealed_host_decode_trusts_ecc_and_rejects_unsealed_or_poisoned_sources -- --exact --ignored
+          cargo test --locked -p orbitkv-core --lib transfer::worker::peer::tests::raw_peer_gpu_receive_checks_once_after_drain_before_readiness -- --exact --ignored
           cargo test --locked -p orbitkv-server --lib registry::tests::tensor_owner_survives_registry_removal -- --exact --ignored
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib peer::orbite::local::tests -- --ignored --test-threads=1
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib transfer::local::tests::failed_import_cleanup_preserves_registered_mapping -- --exact --ignored
@@ -328,7 +331,10 @@ jobs:
           for fs in ext4 tmpfs; do
             if [[ "$fs" == tmpfs ]]; then export ORBITKV_SSD_TEST_ROOT=/dev/shm; fi
             LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_SSD_TEST_FS="$fs" cargo test --locked -p orbitkv-core --no-default-features --features orbite-gds,cudarc/cuda-13000,cudarc/nvrtc --lib storage::ssd::io::tests::engine -- --ignored --test-threads=1
+            LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-local-copy-control:$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITKV_REQUIRE_LOCAL_COPY_SHIM=1 cargo test --locked -p orbitkv-core --lib transfer::worker::ssd::queue::tests::raw_gpu_corruption_invalidates_completion_and_retains_the_extent_until_drain -- --exact --ignored
           done
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" ORBITKV_SSD_TEST_ROOT="$RUNNER_TEMP/ssd-ext4" ORBITE_REQUIRE_IO_URING=1 cargo test --locked -p orbitkv-core --lib peer::read::tests::path_bench::tier_crossings_scan_once_and_never_publish_corrupt_receives -- --exact --ignored
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --lib integrity::tests
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --lib storage::ssd:: -- --test-threads=1
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib peer::orbite::tests::compiled_gds_stays_unloaded_without_configuration -- --exact
           cargo test --locked -p orbitkv-core --lib transfer::worker::ssd:: -- --test-threads=1

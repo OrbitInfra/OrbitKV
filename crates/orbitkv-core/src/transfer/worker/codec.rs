@@ -358,7 +358,19 @@ fn save_blocks(
                         &[KeyValue::new("representation", "stored")],
                     );
                 }
+                let mut ends = Vec::new();
+                let mut base = 0;
+                for (meta, (_, physical)) in metadata.iter().zip(raw.segment_iovecs()) {
+                    ends.push(base + meta.stored_bytes as u64);
+                    base += physical as u64;
+                    ends.push(base);
+                }
+                raw.set_checksum_boundaries(ends)
+                    .map_err(EngineError::Storage)?;
                 raw.encoding = compressed.then_some(metadata);
+                if compressed {
+                    raw.seal_codec().map_err(EngineError::Storage)?;
+                }
                 layers[layer].blocks[block].block = TransferPayload::Owned(raw);
             }
             if let Some(key) = key {
@@ -406,8 +418,21 @@ fn write_gpu(
     let Some(store) = &storage.ssd_store else {
         return Ok(());
     };
+    // Encoded device outputs already carry the codec's source CRC. A raw
+    // fallback is already in DRAM and follows the existing sealed write-back.
+    if blocks.iter().any(|&(layer, block)| {
+        layers[layer].blocks[block].block.raw().is_ok_and(|raw| {
+            raw.encoding
+                .as_ref()
+                .is_none_or(|metas| metas.iter().any(|meta| meta.format == StorageFormat::Exact))
+        })
+    }) {
+        core_metrics().ssd_gpu_write_fallbacks.add(1, &[]);
+        return Ok(());
+    }
     let mut metadata = Vec::with_capacity(blocks.len());
     let mut copies = Vec::new();
+    let mut checksums = Vec::new();
     let mut offset = 0;
     for ((layer, block), devices) in blocks.iter().copied().zip(devices) {
         let raw = layers[layer].blocks[block].block.raw()?;
@@ -416,16 +441,32 @@ fn write_gpu(
             numa,
         );
         meta.encoding = raw.encoding.clone();
-        for ((source, bytes), &physical) in devices
+        for (index, ((source, bytes), &physical)) in devices
             .ok_or_else(|| EngineError::Storage("GPU save sources are missing".into()))?
             .into_iter()
             .zip(&meta.segment_sizes)
+            .enumerate()
         {
             copies.push(CopyRange {
                 file_offset: offset,
                 device: source,
                 bytes,
             });
+            let encoded = meta
+                .encoding
+                .as_ref()
+                .and_then(|values| values.get(index))
+                .ok_or_else(|| EngineError::Storage("missing GPU source checksum".into()))?;
+            checksums.push(crate::integrity::Checksum {
+                end: offset + bytes as u64,
+                crc: encoded.checksum,
+            });
+            if physical > bytes as u64 {
+                checksums.push(crate::integrity::Checksum {
+                    end: offset + physical,
+                    crc: crate::integrity::zeros(physical - bytes as u64),
+                });
+            }
             offset += physical;
         }
         metadata.push(meta);
@@ -433,6 +474,20 @@ fn write_gpu(
     let Some(lease) = store.reserve_gpu(key.clone(), metadata) else {
         return Ok(());
     };
+    if offset < lease.entry.len {
+        checksums.push(crate::integrity::Checksum {
+            end: lease.entry.len,
+            crc: crate::integrity::zeros(lease.entry.len - offset),
+        });
+    }
+    lease
+        .set_checksums(checksums)
+        .map_err(EngineError::Storage)?;
+    if !lease.prepare() {
+        return Err(EngineError::Storage(
+            "SSD reservation was not durable".into(),
+        ));
+    }
     for copy in &mut copies {
         copy.file_offset += lease.entry.file_offset;
     }
@@ -521,6 +576,12 @@ pub(super) fn restore(
             let Some(metadata) = &raw.encoding else {
                 continue;
             };
+            if !matches!(&block.block, TransferPayload::Cached { sealed, .. } if sealed.is_verified())
+            {
+                return Err(EngineError::Storage(
+                    "encoded host restore requires a verified sealed replica".into(),
+                ));
+            }
             let copies = ranges(
                 layer
                     .layout
@@ -608,10 +669,6 @@ pub(super) fn restore(
     while offset < inputs.len() {
         let input = &inputs[offset];
         if cpu[offset] {
-            input
-                .meta
-                .validate(input.source)
-                .map_err(EngineError::Storage)?;
             let source_owner = hosts
                 .iter()
                 .find_map(|host| match host {
@@ -656,7 +713,8 @@ pub(super) fn restore(
                 .position(|&fallback| fallback)
                 .map_or(inputs.len(), |n| offset + n);
             observation.submitted();
-            // SAFETY: source host allocations and destination pages are owned by this task.
+            // SAFETY: sources passed the sealed-replica guard and stay immutable;
+            // this task owns their allocations and all disjoint destination pages through drain.
             let count = unsafe {
                 codec.decode_host_batch(
                     stream,

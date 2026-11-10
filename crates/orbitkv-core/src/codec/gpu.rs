@@ -325,6 +325,49 @@ pub(crate) fn validate_targets(
 }
 
 impl GpuCodec {
+    /// Hash a retained, physically ready device range without copying payloads.
+    /// Uses the existing CRC reduction and arena; each launch reads at most 16 MiB.
+    ///
+    /// # Safety
+    /// The caller retains an immutable source on this context until return.
+    pub(crate) unsafe fn device_checksum(
+        &mut self,
+        stream: &Arc<CudaStream>,
+        source: u64,
+        bytes: usize,
+        budget: usize,
+    ) -> Result<u32, String> {
+        check_range(source, bytes)?;
+        self.bind(stream, budget)?;
+        let mut checksum = crc32fast::Hasher::new();
+        for offset in (0..bytes).step_by(MAX_CODEC_BYTES) {
+            let length = (bytes - offset).min(MAX_CODEC_BYTES);
+            let mut entries = [Entry {
+                index: 0,
+                source: source + offset as u64,
+                target: 0,
+                logical: length,
+                stored: length,
+                capacity: length,
+                format: StorageFormat::Exact,
+                offset: 0,
+            }];
+            let layout = Layout::new(&mut entries, 0, false)?;
+            let base = self.reserve(stream, layout.allocation_bytes()?, budget)?;
+            self.prepare_header(&entries, &layout, base, false);
+            let mut guard = Drain::new(stream);
+            self.upload_header(stream, &layout, base)?;
+            self.launch_crc(stream, &entries, &layout, base, false)?;
+            self.download_results(stream, &layout, base)?;
+            guard.finish();
+            checksum.combine(&crc32fast::Hasher::new_with_initial_len(
+                self.checksum(&layout, 0),
+                length as u64,
+            ));
+        }
+        Ok(checksum.finalize())
+    }
+
     pub(crate) fn new(ctx: &Arc<CudaContext>) -> Result<Self, String> {
         use cudarc::driver::sys::CUdevice_attribute::{
             CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR,
@@ -767,7 +810,9 @@ impl GpuCodec {
     ///
     /// # Safety
     /// Target ranges must be writable on this stream until return, mutually
-    /// disjoint and disjoint from this codec's arena.
+    /// disjoint and disjoint from this codec's arena. Sources must be sealed,
+    /// immutable host replicas, verified when filled from an untrusted tier.
+    /// Host DRAM relies on ECC; this path validates geometry, not payload CRC.
     pub(crate) unsafe fn decode_host_batch(
         &mut self,
         stream: &Arc<CudaStream>,
@@ -815,11 +860,6 @@ impl GpuCodec {
             plan = self.decode_plan(&device_inputs, true)?;
         }
         let (mut entries, groups, layout) = plan;
-        // Only checksum the consumed prefix. Rehashing deferred siblings on
-        // every budget-limited call would make host restore quadratic.
-        for input in inputs {
-            input.meta.validate(input.source)?;
-        }
         let base = if entries.is_empty() {
             0
         } else {

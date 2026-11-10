@@ -241,7 +241,7 @@ async fn membership_removal_drains_each_requester_and_keeps_restore_owners() {
     let bytes = local.clone();
     let result = tokio::spawn(async move {
         grant
-            .run_with_buffers(local, move || {
+            .run_with_buffers(local, move |_| {
                 let slice = TransferSlice {
                     local: std::ptr::NonNull::new(bytes.base_address() as *mut u8).unwrap(),
                     remote_address,

@@ -198,7 +198,7 @@ fn ssd_evidence_appears_only_after_commit_and_survives_dram_eviction() {
         orbitkv_state::ReplicaMedium::Ssd
     );
     let entry = store.inner.lock().ring.get(&replacement).unwrap().clone();
-    store.invalidate_encoded_entry(&replacement, &entry);
+    store.invalidate_corrupt_entry(&replacement, &entry);
     assert!(inventory.page(None).unwrap().is_empty());
 }
 
@@ -789,7 +789,7 @@ async fn ssd_plan_revalidates_versions_and_requires_complete_selected_prefixes()
     let full = full_read.deferred_ssd(&store, 64 * 1024).unwrap();
     let partial_read = ReadPlan::new(&keys, QueryMode::Demand, Some(&store));
     let partial = partial_read.deferred_ssd(&store, 64 * 1024).unwrap();
-    store.inner.lock().ring.invalidate_encoded(&missing, &last);
+    store.inner.lock().ring.invalidate(&missing, &last);
     assert!(
         full.acquire(64 * 1024, crate::transfer_engine::tests::demand())
             .is_none()

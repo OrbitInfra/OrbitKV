@@ -117,14 +117,55 @@ flowchart LR
 ```
 
 Each encoded segment carries a version, original length, format, stored length
-and CRC32. The Manager validates checksums before cache admission or GPU decode.
+and CRC32. The Manager validates checksums when bytes arrive from SSD or a peer,
+before cache admission or GPU decode. Sealed immutable DRAM relies on ECC.
 A damaged SSD object becomes a miss; only that generation is invalidated, so
 republication can repair it. Allocation, budget and destination errors fail the
 restore without invalidating healthy SSD data. Peer transfers carry the same
 metadata and verify received bytes. SSD files and indexes are ephemeral by default.
 [Opt-in persistence](storage-persistence.md) verifies the complete stored extent,
 including encoded metadata and padding, before the first recovered hit.
-This does not yet add a checksum to every raw read.
+
+### Read-time integrity
+
+Integrity is verified once at an untrusted tier crossing, before a hit becomes
+visible. Sealed immutable DRAM relies on ECC; a normal DRAM hit or peer export
+does not scan again. Raw and encoded slots retain IEEE CRC32 references at their
+layer/segment boundaries. CRC combination covers requested subranges and engine
+zero padding without another payload pass. Encoded sources reuse the codec's
+CRC. These checks detect accidental corruption, not malicious writes or a hash
+collision.
+
+| Path | Checksum work | Failure boundary |
+| --- | --- | --- |
+| Source → SSD | One source pass at host seal or through the existing GPU codec CRC owner; previously sealed host/encoded sources reuse their reference. No file read-back, persistent or ephemeral. | No publish until write/drain and, for persistence, data and metadata sync |
+| SSD → DRAM | One CPU pass over the drained receive buffers seals and verifies together, including the physical tail. | Exact bad generation evicted; no returned slots or engine destination |
+| SSD → GPU, raw | One device pass over the actual destination ranges after physical drain; no source pre-read | Failed Restore invalidates the destination; no successful readiness |
+| SSD → GPU, encoded | Existing codec input CRC before decode; no source pre-read | Decode failure invalidates the Restore and bad replica |
+| Sealed DRAM → GPU | Zero CRC passes, raw or encoded; decode still checks geometry and output status | Previously poisoned replicas cannot be granted |
+| Peer → DRAM/GPU | Source seal/fill only; receiver verifies once when bytes land (host sealing or device CRC/codec validation) | No host hit or successful GPU completion; existing drained ticket reports the exact corrupt source generation |
+
+A failed GPU restore may already have written destination bytes. The adapter
+must recompute the invalid load; OrbitKV publishes no layer-ready or successful
+hit. An invalidation removes residency, not physical owners. Readers,
+registrations and grants survive until drain; timeout/cancel/Unquiesced never
+release them. A stale corruption report cannot evict a replacement generation.
+
+Checksum metadata is bounded at 65,536 ranges per slot/extent and 1 MiB per
+peer slot on the wire, with natural layout boundaries rather than byte-sized
+entries. Save admission charges range metadata; persistent records charge its
+actual allocation to the metadata budget. Host fills use the existing pinned buffers; tails use less than 4 KiB
+of that pool per extent. Only startup recovery keeps a serialized 1 MiB
+verification scratch. Device CRC reuses the existing codec owner and budget,
+with at most 8 KiB of requested scratch and 16 MiB per launch; no payload staging
+or second coordinator is added. Codec raw/mixed fallback uses its existing DRAM
+write-back when it lacks a complete checksummed GPU output.
+
+[Paired CPU path benchmarks](https://github.com/OrbitInfra/OrbitKV/blob/main/benches/storage/README.md#cpu-integrity-overhead)
+include DRAM lookup, real io_uring SSD read/write and peer TCP receive, including
+remaining source-seal and receiver-CRC cost. They are CPU evidence, not serving,
+NVMe, RDMA or GPU qualification.
+
 
 Encoded segments are kept only when their aligned footprint saves at least
 12.5%. Oversized, unsupported, nonfinite or insufficient-budget segments use the
