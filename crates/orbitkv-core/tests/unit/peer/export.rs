@@ -351,8 +351,8 @@ async fn corrupt_raw_and_encoded_sources_never_receive_peer_grants_or_dram_hits(
         if encoded {
             raw.encoding = Some(vec![crate::EncodedSegment {
                 version: 1,
-                format: orbitkv_state::StorageFormat::Exact,
-                logical_bytes: 64,
+                format: orbitkv_state::StorageFormat::Fp8FromBf16,
+                logical_bytes: 128,
                 stored_bytes: 64,
                 checksum: crc32fast::hash(&[0x35; 64]),
             }]);

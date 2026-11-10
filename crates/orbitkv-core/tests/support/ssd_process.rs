@@ -85,8 +85,8 @@ fn fixture(
             if encoded {
                 raw.encoding = Some(vec![crate::EncodedSegment {
                     version: 1,
-                    format: orbitkv_state::StorageFormat::Exact,
-                    logical_bytes: bytes as usize,
+                    format: orbitkv_state::StorageFormat::Fp8FromBf16,
+                    logical_bytes: bytes as usize * 2,
                     stored_bytes: bytes as usize,
                     checksum: crc32fast::hash(&vec![id.wrapping_add(index as u8); bytes as usize]),
                 }]);
