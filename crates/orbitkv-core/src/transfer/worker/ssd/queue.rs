@@ -57,11 +57,13 @@ struct Pending {
     file: Arc<GpuFile>,
 }
 
+type ReadChecks = (
+    Arc<crate::storage::ssd::SsdReadLease>,
+    Vec<(crate::storage::ssd::layout::CopyRange, u32)>,
+);
+
 struct Job {
-    checks: Vec<(
-        Arc<crate::storage::ssd::SsdReadLease>,
-        Vec<(crate::storage::ssd::layout::CopyRange, u32)>,
-    )>,
+    checks: Vec<ReadChecks>,
     id: u64,
     task: Task,
     work: VecDeque<Work>,
@@ -185,6 +187,8 @@ impl Job {
         if let Err(error) = planned {
             job.fail(error.to_string());
         }
+        job.checks
+            .sort_by_key(|(source, _)| Arc::as_ptr(&source.entry.readers));
         Ok(job)
     }
 
@@ -212,7 +216,14 @@ impl Job {
         let mut previous = None;
         for read in &self.encoded {
             let identity = Arc::as_ptr(&read.source.entry.readers);
-            if previous != Some(identity) {
+            if previous != Some(identity)
+                && self
+                    .checks
+                    .binary_search_by_key(&identity, |(source, _)| {
+                        Arc::as_ptr(&source.entry.readers)
+                    })
+                    .is_err()
+            {
                 read.source.verify_ranges(&[])?;
                 previous = Some(identity);
             }
@@ -357,7 +368,7 @@ impl Job {
                         &runtime.stream,
                         copy.device,
                         copy.bytes,
-                        runtime.codec_budget(task.codec_budget).min(8192),
+                        runtime.codec_budget(task.codec_budget),
                     )
                 }?;
                 if !crate::integrity::checked(
