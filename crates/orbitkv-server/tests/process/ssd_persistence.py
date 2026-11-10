@@ -396,8 +396,8 @@ class Gate:
                 and 'tier="ssd"' in line
                 and 'reason="checksum"' in line
             ]
-            assert (
-                failures and sum(float(line.split()[-1]) for line in failures) == id
+            assert failures and sum(float(line.split()[-1]) for line in failures) == (
+                1 if persistent else id
             ), metrics
         child.close()
 
