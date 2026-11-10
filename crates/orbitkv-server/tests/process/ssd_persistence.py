@@ -367,11 +367,19 @@ class Gate:
         from urllib.request import urlopen
 
         child = self.manager(path, persistent=persistent)
-        for encoded, id in [(False, 1), (True, 2)]:
+        for id, (encoded, padding) in enumerate(
+            [(False, False), (True, False), (False, True), (True, True)], start=1
+        ):
             assert child.call("write", id=id, encoded=encoded)["present"]
             child.read(id, encoded=encoded)
+            if persistent:
+                child.close()
+                child = self.manager(path)
+                child.read(
+                    id, encoded=encoded
+                )  # Recovery verified this extent already.
             with path.open("r+b") as file:
-                file.seek((id - 1) * 1024 + 17)
+                file.seek((id - 1) * 1024 + (900 if padding else 17))
                 file.write(b"\xff")
                 os.fsync(file.fileno())
             missed = child.read(id, present=False)

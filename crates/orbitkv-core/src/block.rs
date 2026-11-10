@@ -413,7 +413,7 @@ impl SealedBlock {
     pub(crate) fn verify(&self, tier: &'static str) -> bool {
         let started = Instant::now();
         let valid = !self.corrupt.load(Ordering::Acquire)
-            && crate::integrity::checksum(&self.slots, 0) == self.checksum;
+            && crate::integrity::checksum(self.slots.iter()) == self.checksum;
         if !valid {
             self.corrupt.store(true, Ordering::Release);
         }
@@ -525,7 +525,7 @@ impl SealedBlock {
         slot_numas: Vec<NumaNode>,
     ) -> Self {
         Self {
-            checksum: crate::integrity::checksum(&slots, 0),
+            checksum: crate::integrity::checksum(slots.iter()),
             corrupt: AtomicBool::new(false),
             slots,
             footprint,

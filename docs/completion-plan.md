@@ -94,7 +94,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 | Replica selection | **Partial:** compatible candidates and opt-in cost observations; complete failure-aware selection remains open. [Planning owners](architecture.md#planning-and-cost-observations). | L/F/M replica lookup |
 | Node loss | **Partial:** retired epochs are fenced and uncertain owners retained; permanent-loss reclamation/cache HA unqualified. [Retirement](transport.md#peer-departure). | F distributed reuse, M leases/replicas |
 | LRU / TTL / watermarks | **Partial:** LRU/protected retention and SSD admission; data TTL and coordinated high/low watermarks missing. Membership TTL is not data TTL. [Policies](cache-policies.md). | L/F LRU, V LRU/ARC, M watermarks/soft pinning |
-| Exact capacity accounting | **Partial:** local pool/index/query/registration/file budgets include retained work; persistent/shared tiers and fleet reconciliation missing. [Budgets](server.md). | L/F/V tier limits, M replica accounting |
+| Exact capacity accounting | **Partial:** local pool/index/query/registration/file and persistence metadata budgets include retained work; shared-tier and fleet reconciliation remain missing. [Budgets](server.md), [persistence](storage-persistence.md#bounds-gc-and-changed-capacity). | L/F/V tier limits, M replica accounting |
 | Tenant namespaces | **Partial:** computation scope and inventory filtering exist; neither authenticates tenants nor provides quotas. [Identity](state-identity.md), [scope](distributed-cache.md#scope-and-bounded-resources). | L/F namespace and management controls |
 
 ### Correctness and operations

@@ -109,7 +109,7 @@ fn pin(store: &Arc<SsdStore>, key: &StateKey) -> Option<Arc<SsdReadLease>> {
 
 async fn read(store: Arc<SsdStore>, lease: Arc<SsdReadLease>) -> Value {
     match store.read_host_batch(vec![lease]).await {
-        Ok(mut blocks) => {
+        Ok(mut blocks) if !blocks.is_empty() => {
             let block = blocks.remove(0).1;
             let slots: Vec<_> = block
                 .slots()
@@ -124,6 +124,7 @@ async fn read(store: Arc<SsdStore>, lease: Arc<SsdReadLease>) -> Value {
                 .collect();
             json!({"present": true, "slots": slots})
         }
+        Ok(_) => json!({"present": false}),
         Err(error) => json!({"present": false, "error": error.to_string()}),
     }
 }

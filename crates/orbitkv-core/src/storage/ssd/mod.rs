@@ -777,6 +777,10 @@ impl SsdStore {
             if !std::ptr::eq(self, Arc::as_ptr(&lease.store)) {
                 return None;
             }
+            let padding = lease.entry.padding_bytes()?;
+            if padding != 0 {
+                bytes = bytes.checked_add((self.allocation_footprint_fn)(padding, None)?)?;
+            }
             for slot in &lease.entry.slots {
                 let numa_node = if self.is_numa {
                     if slot.numa_node.is_unknown() {

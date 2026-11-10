@@ -113,7 +113,7 @@ Required cases fail on missing prerequisites; they never substitute a filesystem
 | Capacity shrink; checkpoint replacement killed | Only fitting entries survive; old or new complete checkpoint remains usable |
 | Real ENOSPC during commit | No published entry, no pending writer/reader leak; writes remain fenced until restart |
 | Default restart; clean persistent restart | Default truncates; opt-in recovers exact bytes and isolates namespaces |
-| Raw/encoded SSD bit flips after commit and after recovery | Counted integrity miss, no returned slots, exact replica eviction; correct bytes still hit |
+| Raw/encoded SSD payload/tail bit flips after commit and after recovery | Counted integrity miss, no returned slots, exact replica eviction; correct bytes still hit |
 | More than 16,384 metadata entries; derived limit reached | Admission succeeds below the capacity-derived bound; refuses without appending at the bound |
 
 The receipt barrier is after native completion but before the storage owner

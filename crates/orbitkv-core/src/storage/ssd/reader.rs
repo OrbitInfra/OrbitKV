@@ -216,6 +216,8 @@ struct PrefetchTask {
     entry: SsdIndexEntry,
     /// One per slot (parallel to `entry.slots`), each from the correct NUMA pool.
     slots: Vec<RawBlock>,
+    /// Read the physical tail too: synthesizing zeros would hide padding corruption.
+    padding: Option<RawBlock>,
     /// Shared batch context: per-block callback + completion counter.
     ctx: Arc<BatchContext>,
     store: Arc<SsdStore>,
@@ -320,7 +322,30 @@ async fn dispatch_prefetch_batch(
             raw.encoding = meta.encoding.clone();
             slots.push(raw);
         }
-        block_slots.push(slots);
+        let padding = (|| {
+            let bytes = req
+                .entry
+                .padding_bytes()
+                .ok_or("invalid SSD padding length")?;
+            if bytes == 0 {
+                return Ok(None);
+            }
+            let allocation = store
+                .allocate_prefetch(bytes, None)
+                .ok_or("SSD padding allocation exhausted")?;
+            let segment = Segment::new(allocation.as_non_null(), bytes as usize, allocation)
+                .map_err(|_| "invalid SSD padding allocation")?;
+            Ok::<_, &str>(Some(RawBlock::single_segment(segment)))
+        })();
+        let padding = match padding {
+            Ok(padding) => padding,
+            Err(error) => {
+                observation.finish(Outcome::Failed, None);
+                let _ = done_tx.send(Err(PeerError::InvalidRequest(error.into())));
+                return true;
+            }
+        };
+        block_slots.push((slots, padding));
     }
 
     let ctx = Arc::new(BatchContext::new(
@@ -331,12 +356,13 @@ async fn dispatch_prefetch_batch(
         reservation,
     ));
     let mut iter = ctx.leases.iter().zip(block_slots);
-    while let Some((req, slots)) = iter.next() {
+    while let Some((req, (slots, padding))) = iter.next() {
         let task = PrefetchTask {
             options: req.options,
             key: req.key.clone(),
             entry: req.entry.clone(),
             slots,
+            padding,
             ctx: Arc::clone(&ctx),
             store: Arc::clone(store),
         };
@@ -458,6 +484,7 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<SsdIo>) -> SingleMateriali
         let slices = task
             .slots
             .iter()
+            .chain(task.padding.iter())
             .flat_map(|slot| slot.segment_iovecs())
             .map(|(local, length)| {
                 let slice = crate::transfer_engine::TransferSlice {
@@ -486,6 +513,7 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<SsdIo>) -> SingleMateriali
                 extent,
                 task.slots
                     .iter()
+                    .chain(task.padding.iter())
                     .flat_map(|slot| slot.allocations().cloned())
                     .collect(),
                 ctx.clone(),
@@ -514,19 +542,15 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<SsdIo>) -> SingleMateriali
     let slots = if !read_ok {
         warn!("SSD prefetch: failed or short read for {key:?}");
         None
-    } else if !crate::integrity::checked("ssd", task.entry.len, std::time::Instant::now(), {
-        let payload: usize = task
-            .slots
-            .iter()
-            .map(|slot| slot.memory_footprint() as usize)
-            .sum();
-        payload <= expected_len
-            && task.entry.checksum.get()
-                == Some(&crate::integrity::checksum(
-                    &task.slots,
-                    expected_len - payload,
-                ))
-    }) {
+    } else if !crate::integrity::checked(
+        "ssd",
+        task.entry.len,
+        std::time::Instant::now(),
+        task.entry.checksum.get()
+            == Some(&crate::integrity::checksum(
+                task.slots.iter().chain(task.padding.iter()),
+            )),
+    ) {
         task.store.invalidate_corrupt_entry(&key, &task.entry);
         warn!("SSD prefetch: checksum mismatch for {key:?}");
         None

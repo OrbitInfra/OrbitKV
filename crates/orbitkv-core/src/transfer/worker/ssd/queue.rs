@@ -336,45 +336,42 @@ impl Job {
     }
 
     fn verify_destinations(&self, runtime: &WorkerRuntime) -> Result<(), String> {
-        if let Task::Load(task) = &self.task {
-            return (|| {
-                if self.checks.is_empty() {
-                    return Ok(());
+        let Task::Load(task) = &self.task else {
+            return Ok(());
+        };
+        if self.checks.is_empty() {
+            return Ok(());
+        }
+        let mut owner = runtime.codec.borrow_mut();
+        if owner.is_none() {
+            *owner = Some(crate::codec::gpu::GpuCodec::new(runtime.stream.context())?);
+        }
+        let codec = owner.as_mut().ok_or("missing integrity codec")?;
+        for (source, copies) in &self.checks {
+            for (copy, expected) in copies {
+                let started = Instant::now();
+                // SAFETY: all file requests have physically drained and the
+                // job still owns every imported destination tensor/registration.
+                let actual = unsafe {
+                    codec.device_checksum(
+                        &runtime.stream,
+                        copy.device,
+                        copy.bytes,
+                        runtime.codec_budget(task.codec_budget).min(8192),
+                    )
+                }?;
+                if !crate::integrity::checked(
+                    "ssd_gpu",
+                    copy.bytes as u64,
+                    started,
+                    actual == *expected,
+                ) {
+                    source.invalidate_corrupt();
+                    return Err(
+                        "SSD GPU destination checksum mismatch; restore invalidated".to_string()
+                    );
                 }
-                let mut owner = runtime.codec.borrow_mut();
-                if owner.is_none() {
-                    *owner = Some(crate::codec::gpu::GpuCodec::new(runtime.stream.context())?);
-                }
-                let codec = owner.as_mut().ok_or("missing integrity codec")?;
-                for (source, copies) in &self.checks {
-                    for (copy, expected) in copies {
-                        let started = Instant::now();
-                        // SAFETY: all file requests have physically drained and the
-                        // job still owns every imported destination tensor/registration.
-                        let actual = unsafe {
-                            codec.device_checksum(
-                                &runtime.stream,
-                                copy.device,
-                                copy.bytes,
-                                runtime.codec_budget(task.codec_budget).min(8192),
-                            )
-                        }?;
-                        if !crate::integrity::checked(
-                            "ssd_gpu",
-                            copy.bytes as u64,
-                            started,
-                            actual == *expected,
-                        ) {
-                            source.invalidate_corrupt();
-                            return Err(
-                                "SSD GPU destination checksum mismatch; restore invalidated"
-                                    .to_string(),
-                            );
-                        }
-                    }
-                }
-                Ok::<(), String>(())
-            })();
+            }
         }
         Ok(())
     }

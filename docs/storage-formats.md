@@ -137,7 +137,7 @@ checks detect accidental corruption, not malicious writes or a hash collision.
 | Read path | Verification and failure boundary | Added work and bound |
 | --- | --- | --- |
 | DRAM → engine | Check at lookup and again before the Restore grant; remove the exact bad owner from residency/inventory. No engine destination is submitted on failure. | Two full CPU CRC32C scans per restore; one scan at sealing, no payload scratch |
-| SSD → host | Check the actual drained host bytes before materialization/publication, then seal the new DRAM owner. Tail padding is not model state. | CPU CRC32C scan; existing read buffers, no extra payload buffer; subsequent DRAM handoff still checks |
+| SSD → host | Check the actual drained host bytes, including the physical tail, before materialization/publication, then seal the new DRAM owner. | CPU CRC32C scan; existing payload buffers plus less than 4 KiB tail space per extent from the pinned pool; subsequent DRAM handoff still checks |
 | SSD → GPU, raw | Verify the complete immutable source through OrbiTE; derive expected CRCs for the requested layer ranges. Read directly into GPU destinations and hash the actual ranges before publishing completion. | One extra full-extent file read; CPU extent/range CRCs; existing codec CRC kernels read up to 16 MiB per launch with at most 8 KiB arena space |
 | SSD → GPU, encoded | Verify the source extent; existing input-owner CRC validation precedes decode. | One extra extent read, then existing codec checks/workspace |
 | Peer → engine/DRAM | Verify the retained source before issuing a grant. Grants keep it immutable through physical drain; OrbiTE's TCP/RDMA transport supplies wire integrity. Encoded receives also validate on decode. | One source-side CPU scan, no new transport staging or registration |
@@ -152,7 +152,8 @@ allocation and device failures fail the load without declaring healthy data
 corrupt. Timeout/cancel/Unquiesced never become release receipts.
 
 One serialized 1 MiB checksum scratch per SSD store comes from the existing
-pinned-host pool. All checksum READs use OrbiTE with the operation's deadline
+pinned-host pool. Host-read tails also use that pool and count toward export
+staging admission; the bounded read queue owns them until drain. All checksum READs use OrbiTE with the operation's deadline
 and intent; an uncertain receipt retains its scratch and extent. Per-copy
 expectations are capped by the engine descriptor bound; GPU CRC reuses the
 worker's codec owner and budget. There is no new coordinator or GPU payload

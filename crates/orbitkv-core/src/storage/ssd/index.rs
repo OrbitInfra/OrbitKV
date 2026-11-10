@@ -31,6 +31,16 @@ pub(crate) struct SsdIndexEntry {
 }
 
 impl SsdIndexEntry {
+    pub(super) fn padding_bytes(&self) -> Option<u64> {
+        let payload = self
+            .slots
+            .iter()
+            .try_fold(0u64, |total, slot| total.checked_add(slot.total_size()))?;
+        self.len
+            .checked_sub(payload)
+            .filter(|&bytes| bytes < super::layout::ALIGNMENT as u64)
+    }
+
     pub(super) fn replica_metadata(&self) -> orbitkv_state::ReplicaMetadata {
         let mut representation = None;
         let mut stored_bytes = 0u64;
