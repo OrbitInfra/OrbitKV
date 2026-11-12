@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "orbitkv"
-version = "0.1.0"
+version = "0.1.0b1"
 description = "Framework adapters and Python bindings for the OrbitKV state cache"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,7 +16,7 @@ authors = [
 dependencies = []
 keywords = ["storage", "kv-cache", "rust", "vllm", "sglang", "inference"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Rust",
     "Programming Language :: Python :: 3",
@@ -138,6 +138,7 @@ known_first_party = ["orbitkv", "benches", "tests"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "0.1.0"
+version = "0.1.0-beta.1"
+version_scheme = "semver"
 version_files = ["pyproject.toml:^version", "../Cargo.toml:^version"]
 tag_format = "v$version"

@@ -226,6 +226,12 @@ requirements. Publication needs maintainer approval; the sole distribution is
 `orbitkv`, and Rust crates remain unpublished. Before release, consume OrbiTE's
 crates.io release and record resolved provenance.
 
+The first candidate is `0.1.0-beta.1` (`0.1.0b1` on PyPI). A Git-pinned OrbiTE
+candidate can be built and checked, but publication is blocked until OrbiTE is
+published to crates.io and OrbitKV is rebuilt against that exact registry
+version. The beta carries the current installed-profile limits; it is not the
+hardware-qualified 0.1.0 gate. See [candidate and publication steps](releases.md#validate-before-publishing).
+
 **CPU now:** wheel contents/loader checks, upstream interface/registration tests,
 source-only suites, docs and reproducible manifests. These do not authorize
 publication. **Hardware after M3:** one installed-artifact batch comparing native

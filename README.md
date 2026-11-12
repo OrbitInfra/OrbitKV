@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="https://github.com/OrbitInfra/OrbitKV/actions/workflows/ci.yml"><img src="https://github.com/OrbitInfra/OrbitKV/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="docs/releases.md"><img src="https://img.shields.io/badge/orbitkv-v0.1.0%20%28unreleased%29-203b30" alt="orbitkv v0.1.0 — unreleased" /></a>
+  <a href="docs/releases.md"><img src="https://img.shields.io/badge/orbitkv-v0.1.0--beta.1%20%28unreleased%29-203b30" alt="orbitkv v0.1.0-beta.1 — unreleased" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-203b30" alt="Apache 2.0 license" /></a>
 </p>
 

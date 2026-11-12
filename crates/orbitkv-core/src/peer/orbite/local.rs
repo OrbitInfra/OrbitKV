@@ -5,6 +5,7 @@ use std::time::Duration;
 use cudarc::driver::CudaStream;
 use orbite::cuda::local_copy::{
     CopyDirection, LocalCopyBackend, LocalCopyConfig, LocalCopyDesc, LocalCopyEngine,
+    LocalCopyOptions,
 };
 
 use super::{RegistrationSet, TransferEngine, transfer_error};
@@ -150,7 +151,7 @@ impl Copies {
                             CopyDirection::DeviceToHost
                         },
                         &descs,
-                        None,
+                        LocalCopyOptions::default(),
                     )
                     .map_err(transfer_error)
             })();

@@ -3,10 +3,81 @@
 
 import argparse
 import ast
+import json
 import re
 import subprocess
-import sys
 from pathlib import Path
+
+
+def python_version(rust: str) -> str:
+    match = re.fullmatch(r"(\d+\.\d+\.\d+)(?:-(alpha|beta|rc)\.(\d+))?", rust)
+    if match is None:
+        raise ValueError(f"unsupported Rust release version: {rust!r}")
+    if match[2] is None:
+        return match[1]
+    return match[1] + {"alpha": "a", "beta": "b", "rc": "rc"}[match[2]] + match[3]
+
+
+def read_toml(path: Path) -> dict:
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib
+    return tomllib.loads(path.read_text())
+
+
+def check_orbite_registry(root: Path) -> None:
+    dependency = read_toml(root / "crates/orbitkv-core/Cargo.toml")["dependencies"][
+        "orbite"
+    ]
+    version = dependency.get("version", "")
+    if "git" in dependency or "path" in dependency or not version.startswith("="):
+        raise ValueError(
+            "publication blocked: first publish OrbiTE, then pin its exact crates.io "
+            "version in orbitkv-core and rebuild; Git/path candidates cannot publish"
+        )
+    locked = [
+        p for p in read_toml(root / "Cargo.lock")["package"] if p["name"] == "orbite"
+    ]
+    if (
+        len(locked) != 1
+        or locked[0]["version"] != version[1:]
+        or locked[0].get("source")
+        != "registry+https://github.com/rust-lang/crates.io-index"
+        or re.fullmatch(r"[0-9a-f]{64}", locked[0].get("checksum", "")) is None
+    ):
+        raise ValueError(
+            "publication blocked: OrbiTE lock entry needs the exact crates.io version and checksum"
+        )
+
+
+def check_versions(root: Path) -> tuple[str, str]:
+    cargo = read_toml(root / "Cargo.toml")
+    manifest = read_toml(root / "python/pyproject.toml")
+    rust = cargo["workspace"]["package"]["version"]
+    python = python_version(rust)
+    if manifest["project"]["name"] != "orbitkv":
+        raise ValueError("Python distribution name must be orbitkv")
+    if manifest["project"]["version"] != python:
+        raise ValueError(f"Python version must be {python} for Rust {rust}")
+    if manifest["tool"]["commitizen"]["version"] != rust:
+        raise ValueError("Commitizen version must match the Rust release/tag spelling")
+    members = cargo["workspace"].get("members", [])
+    if members:
+        locked = read_toml(root / "Cargo.lock")["package"]
+        for member in members:
+            package = read_toml(root / member / "Cargo.toml")["package"]
+            if (
+                package.get("version") != {"workspace": True}
+                or package.get("publish") is not False
+            ):
+                raise ValueError(
+                    f"{member} must inherit its version and remain unpublished"
+                )
+            versions = [p["version"] for p in locked if p["name"] == package["name"]]
+            if versions != [rust]:
+                raise ValueError(f"{package['name']} lock version mismatch: {versions}")
+    return rust, python
 
 
 def check_engine_releases(root: Path) -> None:
@@ -26,12 +97,7 @@ def check_engine_releases(root: Path) -> None:
         raise SystemExit(
             "engine release gate must declare versions and commits for both engines"
         )
-    if sys.version_info >= (3, 11):
-        import tomllib
-    else:
-        import tomli as tomllib
-
-    manifest = tomllib.loads((root / "python/pyproject.toml").read_text())
+    manifest = read_toml(root / "python/pyproject.toml")
     extras = manifest.get("project", {}).get("optional-dependencies", {})
     for engine, version in versions.items():
         extra = extras.get(engine)
@@ -66,6 +132,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", help="Release tag, including the v prefix")
     parser.add_argument(
+        "--publication",
+        action="store_true",
+        help="Require registry-sourced OrbiTE before publishing",
+    )
+    parser.add_argument(
+        "--format", choices=("python", "rust", "json"), default="python"
+    )
+    parser.add_argument(
         "--engines",
         action="store_true",
         help="Check engine extras, release gate and gitlinks",
@@ -74,32 +148,32 @@ def main() -> None:
     root = Path(__file__).resolve().parents[1]
     if args.engines:
         check_engine_releases(root)
-    versions = {}
-    for path, section in (
-        ("Cargo.toml", "workspace.package"),
-        ("python/pyproject.toml", "project"),
-        ("python/pyproject.toml", "tool.commitizen"),
-    ):
-        source = (root / path).read_text()
-        table = re.search(rf"(?ms)^\[{re.escape(section)}\]\n(.*?)(?:^\[|\Z)", source)
-        version = (
-            re.search(r'^version = "([^"]+)"$', table[1], re.MULTILINE)
-            if table
-            else None
+    try:
+        rust, python = check_versions(root)
+        if args.tag is not None and args.tag != f"v{rust}":
+            raise ValueError(f"release tag {args.tag!r} must match v{rust}")
+        if args.publication:
+            check_orbite_registry(root)
+    except (KeyError, ValueError) as error:
+        raise SystemExit(str(error)) from error
+    if args.format == "json":
+        locked = read_toml(root / "Cargo.lock")["package"]
+        orbite = [p for p in locked if p["name"] == "orbite"]
+        print(
+            json.dumps(
+                {
+                    "rust": rust,
+                    "python": python,
+                    "orbite": orbite,
+                    "revision": subprocess.check_output(
+                        ["git", "rev-parse", "HEAD"], cwd=root, text=True
+                    ).strip(),
+                },
+                indent=2,
+            )
         )
-        if version is None:
-            raise SystemExit(f"missing version in {path} [{section}]")
-        if section == "project" and not re.search(
-            r'^name = "orbitkv"$', table[1], re.MULTILINE
-        ):
-            raise SystemExit("Python distribution name must be orbitkv")
-        versions[f"{path} [{section}]"] = version[1]
-    if len(set(versions.values())) != 1:
-        raise SystemExit(f"version mismatch: {versions}")
-    version = next(iter(versions.values()))
-    if args.tag is not None and args.tag != f"v{version}":
-        raise SystemExit(f"release tag {args.tag!r} must match v{version}")
-    print(version)
+    else:
+        print(python if args.format == "python" else rust)
 
 
 if __name__ == "__main__":

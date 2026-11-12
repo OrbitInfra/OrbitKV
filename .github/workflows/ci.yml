@@ -463,7 +463,7 @@ jobs:
         run: scripts/configure-rustc-wrapper.sh
 
       - name: Install wheel build tools
-        run: pip install maturin "auditwheel==6.8.2" "patchelf>=0.14.5" wheel
+        run: pip install maturin "auditwheel==6.8.2" "patchelf>=0.14.5" wheel 'tomli; python_version < "3.11"'
 
       - name: Build wheel
         run: |

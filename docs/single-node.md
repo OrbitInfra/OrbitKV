@@ -28,7 +28,7 @@ export ORBITKV_WHEEL=/absolute/path/to/the-built-wheel.whl
 
 ## Install and start the common manager
 
-Version 0.1.0 is not yet published. Build the complete wheel from the repository
+Version 0.1.0b1 is not yet published. Build the complete wheel from the repository
 root; this example selects Python 3.11 and CUDA 13:
 
 ```bash

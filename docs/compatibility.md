@@ -45,7 +45,7 @@ Different engines do not automatically share compatible KV bytes.
 CUDA 13 is the only release runtime; normally use NVIDIA R580 or newer with
 toolkit-compatible PTX/NVRTC support. Supported older data-center drivers need
 the explicit [forward-compatibility runtime profile](releases.md#packages).
-Version 0.1.0 is being prepared for release; build the complete wheel using the [quickstart](single-node.md).
+Version 0.1.0b1 is being prepared for release; build the complete wheel using the [quickstart](single-node.md).
 Upgrade native clients and Manager together. The wheel supplies native binaries;
 the host supplies compatible Python, CUDA and selected RDMA libraries, and the
 Manager also requires compatible PyTorch. See [release artifact requirements](releases.md).
