@@ -49,9 +49,9 @@ dashmap.workspace = true
 smallvec.workspace = true
 orbitkv-proto = { path = "../orbitkv-proto" }
 mea.workspace = true
-# Candidate only: switch to the reviewed crates.io beta before publication.
-# scripts/check-versions.py --publication rejects a Git/path dependency.
-orbite = { git = "https://github.com/OrbitInfra/OrbiTE", rev = "249d7e47bc78daec5d4045e28d0fee3e2c928ea9", default-features = false, optional = true }
+# Keep the reviewed transfer-engine artifact fixed for this release.
+# scripts/check-versions.py --publication verifies its registry lock checksum.
+orbite = { version = "=0.1.0-beta.1", default-features = false, optional = true }
 
 [dev-dependencies]
 rustix.workspace = true
