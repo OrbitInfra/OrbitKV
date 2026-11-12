@@ -77,17 +77,16 @@ for dependencies, model-quality results and GPU workspace limits.
 
 ## Build a candidate
 
-The candidate uses OrbiTE source
-[`249d7e47`](https://github.com/OrbitInfra/OrbiTE/commit/249d7e47bc78daec5d4045e28d0fee3e2c928ea9),
+The candidate uses the exact
+[`orbite` 0.1.0-beta.1 crate](https://crates.io/crates/orbite/0.1.0-beta.1),
 including runtime-loaded verbs and the current caller-stream local-copy API.
 OrbitKV now passes `LocalCopyOptions::default()` to its existing forced DMA or
 kernel backend; cache policy, producer ordering and retirement are unchanged.
-This Git pin permits candidate builds only. Before publishing OrbitKV, publish
-OrbiTE `0.1.0-beta.1` to crates.io, replace the Git dependency with the exact
-registry requirement `=0.1.0-beta.1`, update its lock entry, and rebuild all
-wheels. The tag gate rejects Git/path dependencies or a missing registry checksum.
-Record the final resolved dependency in `PROVENANCE.json`; a candidate built
-from Git is not the final registry-sourced release artifact.
+The registry requirement is `=0.1.0-beta.1`, with its checksum in `Cargo.lock`.
+The tag gate rejects Git/path dependencies or a missing registry checksum.
+Every release wheel is rebuilt from this lock and records the resolved dependency
+in `PROVENANCE.json`; earlier Git-sourced candidates cannot be uploaded as the
+registry-sourced release artifact.
 
 The experimental vLLM V2 profile requires both `VLLM_USE_V2_MODEL_RUNNER=1` and
 the boolean connector option `orbitkv.v2=true`. Ordinary V1 deployment is
@@ -169,14 +168,14 @@ are written to `target/wheels/`.
 1. Run `python3 scripts/check-versions.py --engines --tag v0.1.0-beta.1`.
    Rust, Commitizen and the proposed tag must use `0.1.0-beta.1`; Python metadata
    must use its canonical `0.1.0b1` equivalent. All Rust crates stay private.
-   After the registry dependency change, require
+   Also require
    `python3 scripts/check-versions.py --publication --tag v0.1.0-beta.1` too.
 2. Trigger the **Release** workflow manually on the candidate branch. It builds
    all ten wheel targets and validates their versions and contents, isolated
    imports and Manager help. The `release-artifacts` bundle contains the wheels,
    source/dependency provenance, notes and `SHA256SUMS`. Manual runs upload
    Actions artifacts only; they do not create a release or publish to PyPI.
-   For example, run `gh workflow run release.yml --repo OrbitInfra/OrbitKV --ref chore/beta1-release`,
+   For example, run `gh workflow run release.yml --repo OrbitInfra/OrbitKV --ref main`,
    then download `release-artifacts` with `gh run download RUN_ID --repo OrbitInfra/OrbitKV -n release-artifacts -D /tmp/orbitkv-candidate`
    and run `sha256sum -c SHA256SUMS` in that directory.
 3. Install a candidate wheel into each engine environment. From outside the

@@ -2062,7 +2062,8 @@ dependencies = [
 [[package]]
 name = "orbite"
 version = "0.1.0-beta.1"
-source = "git+https://github.com/OrbitInfra/OrbiTE?rev=249d7e47bc78daec5d4045e28d0fee3e2c928ea9#249d7e47bc78daec5d4045e28d0fee3e2c928ea9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f80540b28ba33dc9f801a5076bdf507ddca0576755fe488e900b1bc9fc5553ea"
 dependencies = [
  "bindgen 0.71.1",
  "cc",
