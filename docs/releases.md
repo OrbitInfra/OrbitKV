@@ -214,8 +214,8 @@ add a GitHub pending publisher under [PyPI account publishing](https://pypi.org/
 The release job uses the GitHub `pypi` environment and OIDC Trusted Publishing;
 no PyPI API token is needed. A pending publisher creates the project on first
 successful upload, but does not reserve its name. See [PyPI's setup guide](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/).
-Protect that environment with a required maintainer reviewer, prevent
-self-approval, and allow only `v*` tags as deployment refs. Verify the pending
+Protect that environment with a required maintainer reviewer and allow only
+`v*` tags as deployment refs. Verify the pending
 publisher fields in PyPI; a GitHub environment alone does not configure PyPI.
 
 After OrbiTE publication, the registry-pinned rebuild, candidate acceptance and
