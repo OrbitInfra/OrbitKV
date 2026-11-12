@@ -166,7 +166,9 @@ active grant. `peer_alive()` observes the original pidfd and never reconnects.
 ## Transfer engine
 
 The default build enables CUDA 13 and `orbite` 0.1.0-beta.1 source, pinned to
-[`f0556448`](https://github.com/OrbitInfra/OrbiTE/commit/f05564482a40f4cd19589345e260d35417eff700).
+[`249d7e47`](https://github.com/OrbitInfra/OrbiTE/commit/249d7e47bc78daec5d4045e28d0fee3e2c928ea9).
+This candidate pin must become an exact crates.io dependency before publication;
+see the [release gate](releases.md#build-a-candidate).
 OrbitKV consumes its Rust API and shares `cudarc` 0.19.8. The concrete
 `TransferEngine` owns registrations, epoch-bound peer handles, file segments and
 stream bindings; registration permissions do not replace source grants.

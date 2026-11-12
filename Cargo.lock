@@ -1164,16 +1164,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ibverbs-sys"
-version = "0.3.2+55.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8149ab8d940ea7e7073a24ba6e3ec6b0cc8ceab6ea3d562d60a21ca5cc23413a"
-dependencies = [
- "bindgen 0.71.1",
- "cmake",
-]
-
-[[package]]
 name = "iceoryx2"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2072,12 +2062,11 @@ dependencies = [
 [[package]]
 name = "orbite"
 version = "0.1.0-beta.1"
-source = "git+https://github.com/OrbitInfra/OrbiTE?rev=f05564482a40f4cd19589345e260d35417eff700#f05564482a40f4cd19589345e260d35417eff700"
+source = "git+https://github.com/OrbitInfra/OrbiTE?rev=249d7e47bc78daec5d4045e28d0fee3e2c928ea9#249d7e47bc78daec5d4045e28d0fee3e2c928ea9"
 dependencies = [
  "bindgen 0.71.1",
  "cc",
  "cudarc",
- "ibverbs-sys",
  "io-uring",
  "libc",
  "libloading 0.8.9",
@@ -2092,7 +2081,7 @@ dependencies = [
 
 [[package]]
 name = "orbitkv-catalog"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "libc",
  "orbitkv-state",
@@ -2103,7 +2092,7 @@ dependencies = [
 
 [[package]]
 name = "orbitkv-channel"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "iceoryx2",
  "libc",
@@ -2119,7 +2108,7 @@ dependencies = [
 
 [[package]]
 name = "orbitkv-common"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "colored",
  "log",
@@ -2130,7 +2119,7 @@ dependencies = [
 
 [[package]]
 name = "orbitkv-core"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "ahash",
  "base64",
@@ -2174,7 +2163,7 @@ dependencies = [
 
 [[package]]
 name = "orbitkv-proto"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "orbitkv-state",
  "prost",
@@ -2186,7 +2175,7 @@ dependencies = [
 
 [[package]]
 name = "orbitkv-py"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "libc",
  "log",
@@ -2205,7 +2194,7 @@ dependencies = [
 
 [[package]]
 name = "orbitkv-server"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "axum",
  "clap",
@@ -2246,7 +2235,7 @@ dependencies = [
 
 [[package]]
 name = "orbitkv-state"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "serde",
  "serde_json",

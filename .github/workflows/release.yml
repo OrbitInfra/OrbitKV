@@ -9,19 +9,27 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   version:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
       - name: Check package versions and release tag
         env:
           RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
         run: |
           if [[ -n "$RELEASE_TAG" ]]; then
-            python3 scripts/check-versions.py --tag "$RELEASE_TAG"
+            python3 scripts/check-versions.py --engines --publication --tag "$RELEASE_TAG"
           else
-            python3 scripts/check-versions.py
+            python3 scripts/check-versions.py --engines
+            echo 'Candidate only. Git-sourced OrbiTE must become a reviewed crates.io pin before publication.' >> "$GITHUB_STEP_SUMMARY"
           fi
 
   build:
@@ -67,11 +75,11 @@ jobs:
         uses: dtolnay/rust-toolchain@1.97.1
 
       - name: Install wheel build tools
-        run: pip install maturin "auditwheel==6.8.2" "patchelf>=0.14.5" wheel
+        run: pip install maturin "auditwheel==6.8.2" "patchelf>=0.14.5" wheel 'tomli; python_version < "3.11"'
 
       - name: Build wheel
         run: |
-          ./scripts/build-wheel.sh --release
+          ./scripts/build-wheel.sh --release --locked
           mkdir -p dist
           cp target/wheels/*.whl dist/
         env:
@@ -136,11 +144,11 @@ jobs:
         uses: dtolnay/rust-toolchain@1.97.1
 
       - name: Install wheel build tools
-        run: pip install maturin "auditwheel==6.8.2" "patchelf>=0.14.5" wheel
+        run: pip install maturin "auditwheel==6.8.2" "patchelf>=0.14.5" wheel 'tomli; python_version < "3.11"'
 
       - name: Build wheel
         run: |
-          ./scripts/build-wheel.sh --release
+          ./scripts/build-wheel.sh --release --locked
           mkdir -p dist
           cp target/wheels/*.whl dist/
         env:
@@ -165,6 +173,9 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
       - uses: actions/download-artifact@v4
         with:
           pattern: orbitkv-wheel-*
@@ -173,35 +184,80 @@ jobs:
       - name: Validate complete release artifacts
         run: |
           VERSION="$(python3 scripts/check-versions.py)"
-          shopt -s nullglob
-          WHEELS=(dist/*.whl)
-          test "${#WHEELS[@]}" -eq 10
-          for WHEEL in "${WHEELS[@]}"; do
-            python3 scripts/check-wheel.py "$WHEEL" --version "$VERSION"
-          done
+          python3 scripts/check-wheel.py dist --release-dir --version "$VERSION"
+          python3 scripts/check-versions.py --format json > dist/PROVENANCE.json
+          RUST_VERSION="$(python3 scripts/check-versions.py --format rust)"
+          printf '# OrbitKV %s\n\nPython: `%s`.\n\n[Release notes and limits](https://github.com/OrbitInfra/OrbitKV/blob/%s/docs/releases.md).\n\nGPU serving and OrbiTE GPU/RDMA/GDS profiles remain unqualified on this artifact. Rust crates are private; the sole distribution is the PyPI wheel.\n' \
+            "$RUST_VERSION" "$VERSION" "$GITHUB_SHA" > dist/RELEASE-NOTES.md
+          (cd dist && sha256sum *.whl PROVENANCE.json RELEASE-NOTES.md > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/
+          if-no-files-found: error
 
-  publish-release:
+  publish-pypi:
     if: github.event_name == 'push'
     needs: verify-artifacts
     runs-on: ubuntu-22.04
     environment: pypi
     permissions:
-      contents: write
+      contents: read
       id-token: write
     steps:
-      - name: Download all wheel artifacts
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Download tested release artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: orbitkv-wheel-*
-          merge-multiple: true
-          path: dist
-
-      - name: Upload wheels to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*.whl
-
+          name: release-artifacts
+          path: release-artifacts
+      - name: Verify hashes and select only wheels
+        run: |
+          (cd release-artifacts && sha256sum -c SHA256SUMS)
+          mkdir dist
+          cp release-artifacts/*.whl dist/
       - name: Publish orbitkv to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+      - name: Verify the PyPI receipt without retrying uploads
+        run: python3 scripts/check-wheel.py dist --release-dir --version "$(python3 scripts/check-versions.py)" --verify-pypi
+
+  github-release:
+    if: github.event_name == 'push'
+    needs: publish-pypi
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: release-artifacts
+      - name: Release only the existing tag after the registry receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          (cd release-artifacts && sha256sum -c SHA256SUMS)
+          flags=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" --verify-tag "${flags[@]}" --title "$RELEASE_TAG" \
+            --notes-file release-artifacts/RELEASE-NOTES.md release-artifacts/*.whl \
+            release-artifacts/SHA256SUMS release-artifacts/PROVENANCE.json
+
+  outcome:
+    if: always()
+    needs: [version, build, build-arm, verify-artifacts, publish-pypi, github-release]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Report candidate or publication results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo 'Manual runs never publish. A failed upload may be partial: compare PyPI hashes before recovery; never blindly rerun uploads or rebuild the same version.' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$RESULTS" >> "$GITHUB_STEP_SUMMARY"

@@ -3,6 +3,8 @@
 import argparse
 import configparser
 import email
+import hashlib
+import json
 import os
 import stat
 import subprocess
@@ -10,6 +12,7 @@ import sys
 import tempfile
 import venv
 from pathlib import Path
+from urllib.request import urlopen
 from zipfile import ZipFile
 
 
@@ -77,6 +80,22 @@ def check_wheel(path: Path, version: str | None = None) -> None:
             )
         if any("/__pycache__/" in name or name.endswith(".pyc") for name in files):
             raise ValueError("wheel contains Python build caches")
+        host_libraries = (
+            "libibverbs",
+            "libmlx5",
+            "librdmacm",
+            "libcuda",
+            "libcufile",
+            "libnvrtc",
+            "libpython",
+        )
+        if any(
+            name.startswith(("orbitkv/", "orbitkv.libs/"))
+            and Path(name).name.startswith(host_libraries)
+            and ".so" in Path(name).name
+            for name in files
+        ):
+            raise ValueError("wheel bundles a host Python/CUDA/RDMA library")
         if not any(
             name.startswith("orbitkv/orbitkv.") and name.endswith(".so")
             for name in files
@@ -212,19 +231,87 @@ else:
     print(f"Isolated native import and Manager CLI passed: {distribution}")
 
 
+def check_release(directory: Path, version: str, verify_pypi: bool = False) -> None:
+    expected = {
+        (f"cp3{minor}", arch)
+        for minor in range(10, 15)
+        for arch in ("x86_64", "aarch64")
+    }
+    found = set()
+    hashes = {}
+    for path in sorted(directory.glob("*.whl")):
+        parts = path.stem.split("-")
+        if len(parts) != 5 or parts[:2] != ["orbitkv", version] or parts[2] != parts[3]:
+            raise ValueError(f"unexpected release wheel: {path.name}")
+        platforms = parts[4].split(".")
+        arch = next(
+            (
+                arch
+                for arch in ("x86_64", "aarch64")
+                if all(
+                    tag.startswith("manylinux") and tag.endswith("_" + arch)
+                    for tag in platforms
+                )
+            ),
+            None,
+        )
+        key = (parts[2], arch)
+        if key not in expected or key in found:
+            raise ValueError(f"duplicate or unsupported release target: {path.name}")
+        check_wheel(path, version)
+        found.add(key)
+        hashes[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    if found != expected:
+        raise ValueError(
+            f"release matrix incomplete: missing {sorted(expected - found)}"
+        )
+    if verify_pypi:
+        with urlopen(
+            f"https://pypi.org/pypi/orbitkv/{version}/json", timeout=30
+        ) as response:
+            receipt = json.load(response)
+        published = {
+            item["filename"]: item["digests"]["sha256"] for item in receipt["urls"]
+        }
+        if receipt["info"]["version"] != version or published != hashes:
+            raise ValueError(
+                "PyPI receipt differs from tested wheels; inspect partial publication, do not retry blindly"
+            )
+        print("Verified all ten PyPI filenames and SHA-256 receipts.")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("wheel", type=Path)
     parser.add_argument("--version", help="Expected release version")
     parser.add_argument("--install-smoke", action="store_true")
     parser.add_argument("--require-orbite-rdma", action="store_true")
+    parser.add_argument(
+        "--release-dir",
+        action="store_true",
+        help="Check all ten wheels in the directory",
+    )
+    parser.add_argument(
+        "--verify-pypi",
+        action="store_true",
+        help="Read-only check of registry filenames and digests",
+    )
     args = parser.parse_args()
     if args.require_orbite_rdma and not args.install_smoke:
         parser.error("--require-orbite-rdma requires --install-smoke")
+    if args.verify_pypi and not args.release_dir:
+        parser.error("--verify-pypi requires --release-dir")
+    if args.release_dir and (not args.version or args.install_smoke):
+        parser.error(
+            "--release-dir requires --version and cannot install mixed CPython wheels"
+        )
     try:
-        check_wheel(args.wheel, args.version)
-        if args.install_smoke:
-            check_install(args.wheel, args.require_orbite_rdma)
+        if args.release_dir:
+            check_release(args.wheel, args.version, args.verify_pypi)
+        else:
+            check_wheel(args.wheel, args.version)
+            if args.install_smoke:
+                check_install(args.wheel, args.require_orbite_rdma)
     except (OSError, subprocess.CalledProcessError, ValueError) as error:
         print(f"Wheel validation failed: {error}", file=sys.stderr)
         return 1
