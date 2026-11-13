@@ -152,7 +152,6 @@ async fn encoded_inputs_require_matching_representation_and_bounded_device_scrat
 #[tokio::test]
 async fn unknown_peer_drain_keeps_client_pending_backing_and_admission_charged() {
     use super::super::{DeviceRestoreAdmission, LoadTask, complete_peer};
-    use crate::cost::Observation;
     use crate::planning::restore::RestorePlan;
     let layer = layer(false, false);
     let owner = Arc::downgrade(layer.layout.owner.as_ref().unwrap());
@@ -170,19 +169,10 @@ async fn unknown_peer_drain_keeps_client_pending_backing_and_admission_charged()
         peer_bytes: 0,
         codec_budget: 0,
         decode_ready_started: std::time::Instant::now(),
-        decode_ready_observation: Box::new(Observation::disabled()),
         decode_admission: Some(permit),
     };
     let poisoned = std::cell::Cell::new(false);
-    assert!(
-        complete_peer(
-            task,
-            Observation::disabled(),
-            &poisoned,
-            Err(PeerTransferError::Unquiesced)
-        )
-        .is_none()
-    );
+    assert!(complete_peer(task, &poisoned, Err(PeerTransferError::Unquiesced)).is_none());
     assert!(poisoned.get());
     assert!(matches!(
         receiver.try_recv(),

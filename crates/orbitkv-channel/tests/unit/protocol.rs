@@ -1,12 +1,11 @@
 use super::*;
 
 #[test]
-fn completion_observation_command_code_is_stable() {
-    assert_eq!(
-        CommandCode::try_from(8).unwrap(),
-        CommandCode::ObserveCompletion
-    );
-    assert_eq!(CommandCode::ObserveCompletion as u16, 8);
+fn removed_observation_opcode_and_old_abi_are_rejected() {
+    assert!(CommandCode::try_from(8).is_err());
+    let mut message = Command::ping(1, 2).encode();
+    message[0] = (u64::from(MAGIC) << 32) | (12u64 << 16) | CommandCode::Ping as u64;
+    assert!(Command::decode(message).is_err());
 }
 
 #[test]

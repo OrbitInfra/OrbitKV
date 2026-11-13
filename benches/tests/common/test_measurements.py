@@ -10,49 +10,6 @@ from benches.common.metrics import cache_source, metrics, summarize
 from benches.common.report import collect_run
 
 
-@pytest.mark.parametrize(
-    ("configured", "expected"), [(None, "0"), ("0", "0"), ("1", "1"), ("invalid", "0")]
-)
-def test_manifest_records_effective_cost_observations_switch(
-    tmp_path, monkeypatch, configured, expected
-):
-    from benches.common.runtime import manifest
-
-    monkeypatch.setattr(
-        "benches.common.runtime.subprocess.check_output", lambda *a, **kw: "fixture"
-    )
-    monkeypatch.setattr("benches.common.runtime.importlib.metadata.version", lambda name: "fixture")
-    manager = tmp_path / "manager"
-    manager.write_bytes(b"fixed-manager-artifact")
-    env = {"PYTHONPATH": "python"}
-    if configured is not None:
-        env["ORBITKV_COST_OBSERVATIONS"] = configured
-    args = SimpleNamespace(
-        engine="vllm",
-        backend="orbitkv",
-        workload="serial",
-        model=tmp_path,
-        gpu_tokens=8192,
-        host_gib=1,
-        ssd_gib=0,
-        storage_codec_budget=64 * 1024**2,
-        observation_mode="sampled",
-    )
-    launch = SimpleNamespace(
-        command=["vllm"],
-        manager_command=[str(manager)],
-        manager_url="http://manager",
-        env=env,
-        backend_configuration={},
-    )
-    for backend in ("native", "cpu", "orbitkv", "lmcache"):
-        args.backend = backend
-        launch.manager_url = "http://manager" if backend in ("orbitkv", "lmcache") else None
-        recorded = manifest(args, launch, 147456)
-        assert recorded["cost_observations"] == expected
-        assert recorded["capacity"]["host_pool_bytes"] == (0 if backend == "native" else 1024**3)
-
-
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])
 @pytest.mark.parametrize(
     ("device", "external", "bytes_loaded", "expected"),

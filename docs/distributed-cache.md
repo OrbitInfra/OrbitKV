@@ -144,8 +144,8 @@ Unknown work retains its buffers/registrations until a valid termination proof;
 bounded retention is observable and cannot be described as completed reclamation.
 
 Keep replica discovery in Catalog, source authority in existing peer/storage
-owners, and payload work in the transfer owner. Cost selection and global
-retention remain in their existing [planning owners](architecture.md#planning-and-cost-observations).
+owners, and payload work in the transfer owner. Deterministic replica selection
+stays in the existing [planning owners](architecture.md#planning).
 Native engine P/D has an independent transport and destination ownership.
 
 ## Limits and validation

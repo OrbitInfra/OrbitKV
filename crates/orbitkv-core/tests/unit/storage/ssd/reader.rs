@@ -21,17 +21,7 @@ fn staging_reservation(
 #[test]
 fn cancelled_batch_releases_results_and_finishes_after_every_reader() {
     let (done_tx, done_rx) = oneshot::channel();
-    let observation = Observation::new(
-        CostEstimateKey::new(
-            CostObservationKind::LocalSsdHostReady,
-            ExecutionResource::SsdStore(99),
-            Representation::Raw,
-            4096,
-            3,
-        ),
-        None,
-    );
-    let context = Arc::new(BatchContext::new(3, done_tx, observation, Vec::new(), None));
+    let context = Arc::new(BatchContext::new(3, done_tx, Vec::new(), None));
     let block = Arc::new(SealedBlock::from_slots(Vec::new()));
     drop(done_rx);
 
@@ -47,7 +37,6 @@ fn cancelled_batch_releases_results_and_finishes_after_every_reader() {
 
     assert_eq!(context.remaining.load(Ordering::Acquire), 0);
     assert!(context.failed.load(Ordering::Acquire));
-    assert!(context.observation.lock().is_none());
     assert!(context.done_tx.lock().is_none());
     assert!(context.results.lock().is_empty());
     assert_eq!(Arc::strong_count(&block), 1);
@@ -66,13 +55,7 @@ async fn cancelled_batch_retains_extent_until_the_last_reader_releases_its_conte
         .unwrap();
     let readers = Arc::clone(&lease.entry.readers);
     let (done_tx, done_rx) = oneshot::channel();
-    let context = Arc::new(BatchContext::new(
-        2,
-        done_tx,
-        Observation::disabled(),
-        vec![lease],
-        None,
-    ));
+    let context = Arc::new(BatchContext::new(2, done_tx, vec![lease], None));
     let submitted = Arc::clone(&context);
     drop(done_rx);
     context.complete_one(key.clone(), None);
@@ -88,13 +71,7 @@ async fn cancelled_batch_retains_extent_until_the_last_reader_releases_its_conte
 fn cancelled_export_retains_reservation_until_every_reader_drains() {
     let (locks, ticket, reservation) = staging_reservation(2);
     let (done_tx, done_rx) = oneshot::channel();
-    let context = Arc::new(BatchContext::new(
-        2,
-        done_tx,
-        Observation::disabled(),
-        Vec::new(),
-        Some(reservation),
-    ));
+    let context = Arc::new(BatchContext::new(2, done_tx, Vec::new(), Some(reservation)));
     let block = Arc::new(SealedBlock::from_slots(Vec::new()));
     drop(done_rx);
 
@@ -116,13 +93,7 @@ fn cancelled_export_retains_reservation_until_every_reader_drains() {
 fn partial_export_failure_rolls_back_and_reports_staging_failure() {
     let (locks, _ticket, reservation) = staging_reservation(2);
     let (done_tx, done_rx) = oneshot::channel();
-    let context = Arc::new(BatchContext::new(
-        2,
-        done_tx,
-        Observation::disabled(),
-        Vec::new(),
-        Some(reservation),
-    ));
+    let context = Arc::new(BatchContext::new(2, done_tx, Vec::new(), Some(reservation)));
     let block = Arc::new(SealedBlock::from_slots(Vec::new()));
 
     context.complete_one(StateKey::new("failed-export".into(), vec![0]), Some(block));
@@ -138,13 +109,7 @@ fn partial_export_failure_rolls_back_and_reports_staging_failure() {
 fn unknown_file_drain_keeps_export_reservation_after_logical_failure() {
     let (locks, ticket, reservation) = staging_reservation(1);
     let (done_tx, done_rx) = oneshot::channel();
-    let context = Arc::new(BatchContext::new(
-        1,
-        done_tx,
-        Observation::disabled(),
-        Vec::new(),
-        Some(reservation),
-    ));
+    let context = Arc::new(BatchContext::new(1, done_tx, Vec::new(), Some(reservation)));
     // Model the file owner's unknown receipt. Production retains this Arc along
     // with the actual backing and extent; this control admits no native work.
     context.unquiesced.store(true, Ordering::Release);

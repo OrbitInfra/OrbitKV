@@ -363,7 +363,6 @@ def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:
         "engine_command": launch.command,
         "manager_command": launch.manager_command,
         "manager_binary_sha256": manager_sha256,
-        "cost_observations": "1" if launch.env.get("ORBITKV_COST_OBSERVATIONS") == "1" else "0",
         "observation_mode": args.observation_mode,
         "manager_present": launch.manager_url is not None,
         "manager_backend": args.backend if launch.manager_url is not None else None,

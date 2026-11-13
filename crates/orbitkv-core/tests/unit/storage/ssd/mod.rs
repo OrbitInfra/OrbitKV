@@ -405,7 +405,7 @@ async fn host_routes_preserve_source_priority_permissions_and_complete_coverage(
                     },
                 }]);
                 let route = plan.host_route(peer_available, allow_ssd, 0);
-                let expected_peer = peer_available;
+                let expected_peer = peer_available && !allow_ssd;
                 if mode == QueryMode::WaitForFullPrefix {
                     assert!(route.is_none(), "neither source covers the complete demand");
                 } else {
@@ -441,7 +441,6 @@ async fn host_routes_preserve_source_priority_permissions_and_complete_coverage(
 #[tokio::test]
 async fn peer_ssd_route_is_explicit_and_follows_local_ssd_priority() {
     use crate::QueryMode;
-    use crate::cost::{CostEstimateKey, CostObservationKind, Representation};
     use crate::planning::peer::PeerSource;
     use crate::planning::read::{HostReadRoute, ReadPlan};
 
@@ -465,16 +464,6 @@ async fn peer_ssd_route_is_explicit_and_follows_local_ssd_priority() {
     let Some(HostReadRoute::Ssd(local_route)) = local.host_route(true, true, 0) else {
         panic!("local SSD must remain ahead of peer SSD");
     };
-    assert_eq!(
-        local_route.cost_estimate_key(),
-        Some(CostEstimateKey::new(
-            CostObservationKind::LocalSsdHostReady,
-            store.io.cost_resource,
-            Representation::Raw,
-            SSD_ALIGNMENT as u64,
-            1,
-        ))
-    );
     let old = store.inner.lock().ring.get(&key).unwrap().clone();
     {
         let mut inner = store.inner.lock();
@@ -506,98 +495,7 @@ async fn peer_ssd_route_is_explicit_and_follows_local_ssd_priority() {
 }
 
 #[tokio::test]
-async fn cross_medium_selection_is_explicit_and_preserves_equal_coverage() {
-    const CHILD: &str = "ORBITKV_TEST_CROSS_MEDIUM_ROUTE_CHILD";
-    if std::env::var_os(CHILD).is_some() {
-        use crate::QueryMode;
-        use crate::cost::{
-            CostEstimateKey, CostObservationKind, ExecutionResource, Representation, resource_id,
-        };
-        use crate::planning::peer::{FetchPlan, PeerSource};
-        use crate::planning::read::{HostReadRoute, ReadPlan};
-
-        let (store, _queued) = queued_read_store();
-        let key = StateKey::new("queued-lease".into(), vec![0]);
-        let owner = orbitkv_state::CacheOwner {
-            endpoint: "peer".into(),
-            incarnation: uuid::Uuid::from_u128(44),
-        };
-        let replica = orbitkv_state::ReplicaLocation {
-            owner: owner.clone(),
-            sequence: 1,
-            metadata: orbitkv_state::ReplicaMetadata {
-                medium: orbitkv_state::ReplicaMedium::Dram,
-                representation: orbitkv_state::ReplicaRepresentation::Raw,
-                stored_bytes: Some(SSD_ALIGNMENT as u64),
-            },
-        };
-        let mut plan = ReadPlan::new(std::slice::from_ref(&key), QueryMode::Prepare, Some(&store));
-        plan.rows[0].set_peers(vec![replica.clone()]);
-        let local_key = plan
-            .ssd(SsdReadPath::Uring, 0)
-            .unwrap()
-            .cost_estimate_key()
-            .unwrap();
-        let peer_key = CostEstimateKey::new(
-            CostObservationKind::PeerDramHostReady,
-            ExecutionResource::Peer(resource_id(&owner)),
-            Representation::Raw,
-            SSD_ALIGNMENT as u64,
-            1,
-        );
-        for _ in 0..4 {
-            crate::cost::observe_for_test(local_key, 0.01, std::time::Instant::now());
-            crate::cost::observe_for_test(peer_key, 0.02, std::time::Instant::now());
-        }
-        {
-            let peer = FetchPlan::new(&mut plan.rows, 1, PeerSource::Dram).unwrap();
-            assert_eq!(peer.complete_cost_estimate_key(), Some(peer_key));
-        }
-        for (mode, host_ready) in [
-            (QueryMode::Prepare, true),
-            (QueryMode::Warmup, true),
-            (QueryMode::Demand, false),
-            (QueryMode::WaitForFullPrefix, false),
-        ] {
-            let mut plan = ReadPlan::new(std::slice::from_ref(&key), mode, Some(&store));
-            plan.rows[0].set_peers(vec![replica.clone()]);
-            if host_ready {
-                assert!(
-                    matches!(plan.host_route(true, true, 0), Some(HostReadRoute::Ssd(_))),
-                    "host fills must still select the measured faster SSD route"
-                );
-            } else {
-                assert!(
-                    matches!(plan.host_route(true, true, 0), Some(HostReadRoute::Peer(_))),
-                    "HostReady costs cannot rank peer GPU restore against local SSD"
-                );
-            }
-        }
-        return;
-    }
-
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "storage::ssd::tests::cross_medium_selection_is_explicit_and_preserves_equal_coverage",
-            "--nocapture",
-        ])
-        .env(CHILD, "1")
-        .env("ORBITKV_COST_OBSERVATIONS", "1")
-        .env("ORBITKV_COST_SELECTION", "1")
-        .env("ORBITKV_CROSS_MEDIUM_SELECTION", "1")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
-}
-
-#[tokio::test]
-async fn consumed_restore_plan_deduplicates_sources_and_rejects_mixed_paths() {
+async fn consumed_restore_plan_rejects_mixed_paths() {
     let (store, _queued) = queued_read_store();
     let key = StateKey::new("queued-lease".into(), vec![0]);
     let lease = store
@@ -612,12 +510,9 @@ async fn consumed_restore_plan_deduplicates_sources_and_rejects_mixed_paths() {
         path: crate::SsdReadPath::Cufile,
         allow_uring_fallback: false,
     };
-    let plan = crate::planning::restore::RestorePlan::new(2, [(9, &cufile), (9, &cufile)]).unwrap();
+    let plan = crate::planning::restore::RestorePlan::new(2, [&cufile, &cufile]).unwrap();
     assert_eq!(plan.device_id(), 2);
     assert_eq!(plan.ssd_path(), Some(crate::SsdReadPath::Cufile));
-    assert_eq!(plan.ssd_source_bytes(), SSD_ALIGNMENT as u64);
-    assert_eq!(plan.ssd_source_fragments(), 1);
-    assert!(!plan.has_memory());
 
     let automatic = crate::RestoreSource::Ssd {
         lease: Arc::clone(&lease),
@@ -625,7 +520,7 @@ async fn consumed_restore_plan_deduplicates_sources_and_rejects_mixed_paths() {
         allow_uring_fallback: true,
     };
     assert!(
-        crate::planning::restore::RestorePlan::new(2, [(9, &cufile), (9, &automatic)])
+        crate::planning::restore::RestorePlan::new(2, [&cufile, &automatic])
             .unwrap_err()
             .contains("fallback policies")
     );
@@ -636,7 +531,7 @@ async fn consumed_restore_plan_deduplicates_sources_and_rejects_mixed_paths() {
         allow_uring_fallback: false,
     };
     assert!(
-        crate::planning::restore::RestorePlan::new(2, [(9, &cufile), (9, &uring)])
+        crate::planning::restore::RestorePlan::new(2, [&cufile, &uring])
             .unwrap_err()
             .contains("mix SSD read routes")
     );
@@ -768,7 +663,7 @@ async fn ssd_plan_revalidates_versions_and_requires_complete_selected_prefixes()
     assert_eq!(old.readers.load(Ordering::Acquire), 0);
 
     // A later source can disappear after discovery. Strict acquisition must
-    // release earlier leases; ordinary demand may still use that prefix.
+    // release earlier leases rather than silently shorten the selected boundary.
     store._files[0].set_len(2 * SSD_ALIGNMENT as u64).unwrap();
     let mut inner = store.inner.lock();
     inner.ring = SsdRingBuffer::new_sharded(vec![2 * SSD_ALIGNMENT as u64], SSD_ALIGNMENT as u64);
@@ -795,12 +690,11 @@ async fn ssd_plan_revalidates_versions_and_requires_complete_selected_prefixes()
             .is_none()
     );
     assert_eq!(first.readers.load(Ordering::Acquire), 0);
-    let prefix = partial
-        .acquire(64 * 1024, crate::transfer_engine::tests::demand())
-        .unwrap();
-    assert_eq!(prefix.len(), 1);
-    assert_eq!(first.readers.load(Ordering::Acquire), 1);
-    drop(prefix);
+    assert!(
+        partial
+            .acquire(64 * 1024, crate::transfer_engine::tests::demand())
+            .is_none()
+    );
     assert_eq!(first.readers.load(Ordering::Acquire), 0);
     assert_eq!(queued.len(), 0);
 }
@@ -927,4 +821,82 @@ async fn peer_rejection_updates_request_evidence_without_discarding_ssd_versions
         queued.is_empty(),
         "selection and rejection must not read payloads"
     );
+}
+
+#[tokio::test]
+async fn complete_boundary_precedes_medium_preference_for_host_and_direct_restore() {
+    use crate::planning::read::{HostReadRoute, ReadPlan};
+    use orbitkv_state::{
+        CacheOwner, ReplicaLocation, ReplicaMedium, ReplicaMetadata, ReplicaRepresentation,
+    };
+
+    let (store, queued) = query_store(Some(SsdReadPath::Uring));
+    let keys = [
+        StateKey::new("queued-lease".into(), vec![0]),
+        StateKey::new("queued-lease".into(), vec![1]),
+    ];
+    let peer = |medium| ReplicaLocation {
+        owner: CacheOwner {
+            endpoint: "peer".into(),
+            incarnation: uuid::Uuid::from_u128(1),
+        },
+        sequence: 1,
+        metadata: ReplicaMetadata {
+            medium,
+            representation: ReplicaRepresentation::Raw,
+            stored_bytes: Some(4096),
+        },
+    };
+    for mode in [
+        crate::QueryMode::Demand,
+        crate::QueryMode::Prepare,
+        crate::QueryMode::WaitForFullPrefix,
+    ] {
+        let mut plan = ReadPlan::new(&keys, mode, Some(&store));
+        // The cheaper local SSD and peer DRAM cover only the first block;
+        // peer SSD supplies the entire selected boundary.
+        plan.rows[0].set_peers(vec![peer(ReplicaMedium::Dram), peer(ReplicaMedium::Ssd)]);
+        plan.rows[1].set_peers(vec![peer(ReplicaMedium::Ssd)]);
+        assert!(plan.deferred_ssd(&store, 0).is_none());
+        let Some(HostReadRoute::Peer(route)) = plan.host_route(true, true, 0) else {
+            panic!("a partial preferred medium must not shorten the complete hit");
+        };
+        assert_eq!(route.block_count(), 2);
+        assert_eq!(
+            route.next_segment(0).unwrap().source,
+            crate::planning::peer::PeerSource::Ssd
+        );
+    }
+    drop(queued);
+}
+
+#[tokio::test]
+async fn resident_dram_hit_precedes_local_ssd_without_submitting_io() {
+    let (ssd, queued) = queued_read_store();
+    let dram = Arc::new(crate::storage::dram::DramStore::new(
+        1 << 20,
+        false,
+        None,
+        None,
+        0,
+    ));
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let block = Arc::new(SealedBlock::from_slots(Vec::new()));
+    dram.batch_insert(vec![(key.clone(), Arc::clone(&block))]);
+    let reads = crate::query::read::ReadCoordinator::new(dram, Some(ssd), None, 0);
+    let result = reads
+        .read_prefix(
+            "preference",
+            &key.namespace,
+            &[key.hash],
+            crate::QueryMode::Demand,
+            &[],
+            std::time::Instant::now() + std::time::Duration::from_secs(1),
+        )
+        .await;
+    assert_eq!(result.missing, 0);
+    assert!(
+        matches!(&result.blocks[0], crate::RestoreSource::Memory(hit) if Arc::ptr_eq(hit, &block))
+    );
+    assert_eq!(queued.len(), 0);
 }

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use crate::SsdReadPath;
-use crate::cost::{CostEstimateKey, CostObservationKind};
 use crate::storage::ssd::{SsdReadLease, SsdStore};
 
 use super::read::{ReadPlan, ReadTarget};
@@ -12,7 +11,6 @@ pub(crate) struct SsdReadPlan<'a> {
     rows: &'a [ReplicaSet],
     pub(crate) path: SsdReadPath,
     pub(crate) allow_uring_fallback: bool,
-    required: usize,
 }
 
 impl ReadPlan {
@@ -26,7 +24,14 @@ impl ReadPlan {
         }
         let (path, allow_uring_fallback) =
             deferred_route(store.read_path, store.gpu_io.available())?;
-        self.ssd_route(path, codec_budget, allow_uring_fallback)
+        let route = self.ssd_route(path, codec_budget, allow_uring_fallback)?;
+        // The direct restore must not hide a longer, complete peer boundary.
+        let peer_prefix = [super::peer::PeerSource::Dram, super::peer::PeerSource::Ssd]
+            .map(|source| super::peer::FetchPlan::prefix_len(&self.rows, source))
+            .into_iter()
+            .max()
+            .unwrap_or(0);
+        (route.block_count() >= peer_prefix).then_some(route)
     }
 
     pub(crate) fn ssd(&self, path: SsdReadPath, codec_budget: usize) -> Option<SsdReadPlan<'_>> {
@@ -60,7 +65,6 @@ impl ReadPlan {
             rows,
             path,
             allow_uring_fallback,
-            required: self.required,
         })
     }
 }
@@ -81,41 +85,6 @@ impl SsdReadPlan<'_> {
         self.rows.len()
     }
 
-    pub(crate) fn cost_estimate_key(&self) -> Option<CostEstimateKey> {
-        let first = self.rows.first()?.local_ssd()?;
-        let resource = first.cost_resource()?;
-        let mut bytes = 0u64;
-        let mut representation = None;
-        for row in self.rows {
-            let candidate = row.local_ssd()?;
-            if candidate.cost_resource()? != resource {
-                return None;
-            }
-            let metadata = candidate.replica_metadata();
-            bytes = bytes.checked_add(metadata.stored_bytes?)?;
-            representation = Some(match representation {
-                None => metadata.representation,
-                Some(orbitkv_state::ReplicaRepresentation::Unknown) => {
-                    orbitkv_state::ReplicaRepresentation::Unknown
-                }
-                Some(_)
-                    if metadata.representation == orbitkv_state::ReplicaRepresentation::Unknown =>
-                {
-                    orbitkv_state::ReplicaRepresentation::Unknown
-                }
-                Some(previous) if previous == metadata.representation => previous,
-                Some(_) => orbitkv_state::ReplicaRepresentation::Mixed,
-            });
-        }
-        Some(CostEstimateKey::new(
-            CostObservationKind::LocalSsdHostReady,
-            resource,
-            representation.unwrap_or_default(),
-            bytes,
-            self.rows.len(),
-        ))
-    }
-
     pub(crate) fn acquire(
         self,
         codec_budget: usize,
@@ -126,7 +95,7 @@ impl SsdReadPlan<'_> {
             .iter()
             .map_while(|row| row.local_ssd()?.pin(options))
             .collect();
-        if leases.len() < self.required
+        if leases.len() != self.rows.len()
             || (self.path == SsdReadPath::Cufile
                 && leases
                     .iter()

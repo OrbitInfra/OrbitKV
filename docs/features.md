@@ -57,7 +57,7 @@ P/D cancellation/peer-loss/page-reuse composition remains unqualified.
 
 ## Optional and experimental features
 
-Storage codecs, retention/cost policies, explicit CUDA kernels, native cuFile/GDS
+Storage codecs, retention policies, explicit CUDA kernels, native cuFile/GDS
 and broader Graph/rank/container profiles have separate support limits. See
 [storage formats](storage-formats.md), [cache policies](cache-policies.md),
 [kernel copies](transport.md#local-gpudram-copies) and [GDS](gds.md).

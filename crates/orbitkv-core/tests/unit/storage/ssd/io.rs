@@ -26,7 +26,6 @@ pub(in crate::storage::ssd) fn queued_io() -> SsdIo {
     SsdIo {
         transport: FileTransport::Auto,
         files: Vec::new(),
-        cost_resource: ExecutionResource::SsdStore(resource_id(&"queued SSD")),
     }
 }
 
@@ -479,7 +478,6 @@ pub(super) mod engine {
             file: Arc::clone(&real.file),
             admission: Arc::new(Semaphore::new(1)),
             runtime: tokio::runtime::Handle::current(),
-            cost_resource: real.cost_resource,
         });
         let first = allocation(&storage, 512, 0x71);
         let second = allocation(&storage, size.next_multiple_of(512), 0x82);
@@ -669,7 +667,6 @@ pub(super) mod engine {
                 file: Arc::clone(&real.file),
                 admission: Arc::new(Semaphore::new(1)),
                 runtime: tokio::runtime::Handle::current(),
-                cost_resource: real.cost_resource,
             });
             let key = StateKey::new("uncertain-file".into(), vec![1]);
             let slots = vec![crate::SlotMeta::new(

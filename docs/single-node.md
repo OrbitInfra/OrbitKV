@@ -223,7 +223,7 @@ best-effort asynchronous SSD publication created a replica. Pages remain held
 through the selected transfer's completion. On a miss, the engine computes normally.
 Size DRAM, SSD and query budgets for your workload; [metrics](metrics.md) and
 [performance methodology](performance.md) describe how to measure them.
-Leave optional warming, retention and cost-selection experiments disabled for
+Leave optional warming and retention experiments disabled for
 this first deployment.
 
 ## Deployment variants

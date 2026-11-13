@@ -11,6 +11,18 @@ maintainer approves publication. Breaking API and format changes remain allowed
 before 0.1.0. This page describes the artifact contract and a non-publishing
 candidate rehearsal.
 
+## Cost subsystem removal (November 10, 2026)
+
+Removed cost observations/selection, `ORBITKV_COST_OBSERVATIONS`,
+`ORBITKV_COST_SELECTION`, `ORBITKV_CROSS_MEDIUM_SELECTION` and
+`orbitkv_cost_*` metrics, and the unused `observe_completion` Rust/channel API.
+Replica selection is [deterministic](architecture.md#planning); OrbiTE intent,
+priority and deadline dispatch is unchanged. Command ABI 13 rejects the removed
+opcode; client lifecycle 14 requires matching clients and Managers to upgrade
+together. This is a pre-0.1.0 breaking change with no compatibility shim. Physical
+readiness, grants, drain receipts and retained owners are unchanged. Historical
+[observer verdicts](performance.md#qualification-limits) remain valid.
+
 ## Packages
 
 `--ssd-persistent` uses local SSD format version 2 as an opt-in cache.

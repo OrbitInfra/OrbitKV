@@ -12,10 +12,8 @@ pub mod test_faults;
 #[macro_use]
 mod trace;
 mod codec;
-mod cost;
 pub use codec::{EncodedSegment, StorageCodec};
 mod block;
-mod completion;
 mod engine;
 mod integrity;
 mod memory;
@@ -29,10 +27,6 @@ pub mod transfer_engine;
 
 pub use block::{
     BlockHash, LayerBlock, LayerSave, QueryResult, RawBlock, RestoreSource, SealedBlock, StateKey,
-};
-pub use completion::{
-    CompletionAdmission, CompletionIntent, CompletionObservation, CompletionOutcome,
-    CompletionResourceEvidence, CompletionRoute,
 };
 pub use engine::config::{EngineConfig, TransportHint};
 pub use engine::instance::{GpuContext, InstanceContext, QueryRegistration};

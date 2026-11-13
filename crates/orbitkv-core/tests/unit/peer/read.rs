@@ -116,56 +116,6 @@ fn chunked_slabs_chunk_clamped_to_batch_remaining() {
 }
 
 #[test]
-fn transfer_shape_separates_logical_encoded_bytes_from_padded_payload() {
-    use crate::codec::EncodedSegment;
-    use orbitkv_state::StorageFormat;
-
-    let allocate = test_allocate_fn(Arc::new(AtomicUsize::new(0)));
-    let allocation = allocate(1536, Some(NumaNode(0))).unwrap();
-    let address = allocation.as_non_null().as_ptr() as u64;
-    let mut raw = RawBlock::single_segment(
-        Segment::new(allocation.as_non_null(), 512, Arc::clone(&allocation)).unwrap(),
-    );
-    raw.encoding = Some(vec![EncodedSegment {
-        version: 1,
-        format: StorageFormat::Ans,
-        logical_bytes: 2048,
-        stored_bytes: 123,
-        checksum: 0,
-    }]);
-    let mut blocks = vec![(vec![1], vec![(raw, NumaNode(0), vec![])])];
-    assert_eq!(transfer_shape(&blocks), (Some(2048), Representation::Ans));
-    blocks[0].1.push((
-        RawBlock::single_segment(
-            Segment::new(
-                NonNull::new((address + 512) as *mut u8).unwrap(),
-                1024,
-                allocation,
-            )
-            .unwrap(),
-        ),
-        NumaNode(0),
-        vec![],
-    ));
-    assert_eq!(transfer_shape(&blocks), (None, Representation::Mixed));
-}
-
-#[test]
-fn raw_payload_alignment_does_not_imply_logical_bytes() {
-    let allocate = test_allocate_fn(Arc::new(AtomicUsize::new(0)));
-    // A raw 300-byte state can occupy a 512-byte aligned segment. A payload
-    // length alone cannot prove the engine's original logical length.
-    for stored_bytes in [300, 512] {
-        let allocation = allocate(512, Some(NumaNode(0))).unwrap();
-        let raw = RawBlock::single_segment(
-            Segment::new(allocation.as_non_null(), stored_bytes, allocation).unwrap(),
-        );
-        let blocks = vec![(vec![1], vec![(raw, NumaNode(0), vec![])])];
-        assert_eq!(transfer_shape(&blocks), (None, Representation::Raw));
-    }
-}
-
-#[test]
 fn fetch_slabs_follow_receiver_slots_instead_of_source_numa() {
     use orbitkv_proto::proto::engine::TransferSlotInfo;
 

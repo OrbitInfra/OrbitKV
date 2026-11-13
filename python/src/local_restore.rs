@@ -15,11 +15,8 @@ use pyo3::prelude::*;
 
 const MAX_PENDING: usize = 1024;
 
-pub(crate) static RESTORE_TIMING: LazyLock<bool> = LazyLock::new(|| {
-    ["ORBITKV_TRACE_TRANSFERS", "ORBITKV_COST_OBSERVATIONS"]
-        .iter()
-        .any(|name| std::env::var(name).as_deref() == Ok("1"))
-});
+pub(crate) static RESTORE_TIMING: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("ORBITKV_TRACE_TRANSFERS").as_deref() == Ok("1"));
 
 /// One engine notification source signals local DMA results, independently of
 /// Manager grant/reaping notifications on the channel's own eventfd.

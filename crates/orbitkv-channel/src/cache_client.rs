@@ -10,9 +10,9 @@ use std::time::{Duration, Instant};
 use orbitkv_state::RecoveryDemand;
 
 use crate::{
-    CallOptions, CancelQueryRequest, ChannelClient, ChannelError, CompletionObservationRequest,
-    PublishRequest, QueryBundleRequest, QueryBundleResponse, QueryCommand, QueryOutcomeCode,
-    QueryTicket, RestoreRequest, RestoreResponse, RestoreState,
+    CallOptions, CancelQueryRequest, ChannelClient, ChannelError, PublishRequest,
+    QueryBundleRequest, QueryBundleResponse, QueryCommand, QueryOutcomeCode, QueryTicket,
+    RestoreRequest, RestoreResponse, RestoreState,
 };
 
 const MAX_WARMUPS: usize = 16;
@@ -723,14 +723,6 @@ impl CacheClient {
 
     pub fn release(&self, lease: Vec<u8>) -> Result<(), ChannelError> {
         self.channel.release(next_id(&self.requests)?, lease)
-    }
-
-    pub fn observe_completion(
-        &self,
-        observation: &CompletionObservationRequest,
-    ) -> Result<(), ChannelError> {
-        self.channel
-            .observe_completion(next_id(&self.requests)?, observation)
     }
 
     pub fn publish(&self, request: &PublishRequest) -> Result<(), ChannelError> {

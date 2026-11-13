@@ -63,8 +63,8 @@ Metadata ACKs and gRPC ticket-release replies cannot replace native completion.
 ### Bootstrap, registration, and versions
 
 Client, native extension and Manager must upgrade together. No old-wire decoder
-is retained. Current versions are bootstrap **7**, channel ABI **12**, lifecycle
-**13**, cache schema **10** and shared-grant schema **5**.
+is retained. Current versions are bootstrap **7**, channel ABI **13**, lifecycle
+**14**, cache schema **10** and shared-grant schema **5**.
 
 The mode-0600 UDS authenticates the Manager uid with `SO_PEERCRED`, assigns a
 session token and descriptor slot, and passes five FDs: descriptor/grant memfds
@@ -242,9 +242,8 @@ Local copies have stream ordering, with no QoS fields in the consumed API.
 
 CPU/TCP priorities are advisory; the API has no per-priority dispatch statistics.
 Tests establish mapping, policy consumption and bytes, not priority ordering.
-OrbiTE `nic_load_stats` supplies RDMA load metrics. KV-path codec/SSD/Restore
-observations remain separate; replacing pure transfer-leg timing needs an engine
-API. See [cost observation boundaries](architecture.md#planning-and-cost-observations).
+OrbiTE `nic_load_stats` supplies RDMA load metrics independently of replica
+selection. OrbitKV uses the [deterministic planning policy](architecture.md#planning).
 
 ### Peer departure
 

@@ -40,17 +40,17 @@ fn planner_selects_longest_cover_then_stable_owner_and_stops_at_gap() {
     assert_eq!(plan.block_count(), 3);
     let first = plan.next_segment(0).unwrap();
     assert_eq!(first.owner.endpoint, "b");
-    assert_eq!(first.stored_bytes, Some(8192));
-    assert_eq!(first.representation, ReplicaRepresentation::Raw);
+    assert!(
+        first
+            .records
+            .iter()
+            .all(|record| record.metadata.unwrap().representation == ReplicaRepresentation::Raw)
+    );
     assert_eq!(
         first.records.iter().map(|r| r.sequence).collect::<Vec<_>>(),
         [1, 2]
     );
     assert_eq!(plan.next_segment(2).unwrap().owner.endpoint, "d");
-    assert!(
-        plan.complete_cost_estimate_key().is_none(),
-        "a multi-owner prefix has no single complete-route resource identity"
-    );
     let mut rows = (0..=DISCOVERY_MAX_KEYS)
         .map(|_| row(1, &["a"]))
         .collect::<Vec<_>>();
@@ -104,8 +104,11 @@ fn unknown_peer_shape_stays_unknown_instead_of_becoming_zero() {
         .unwrap()
         .next_segment(0)
         .unwrap();
-    assert_eq!(segment.stored_bytes, None);
-    assert_eq!(segment.representation, ReplicaRepresentation::Unknown);
+    assert_eq!(segment.records[0].metadata.unwrap().stored_bytes, None);
+    assert_eq!(
+        segment.records[0].metadata.unwrap().representation,
+        ReplicaRepresentation::Unknown
+    );
 }
 
 #[test]
@@ -206,54 +209,10 @@ fn peer_ssd_plan_is_explicit_and_never_mixes_source_media() {
 }
 
 #[test]
-fn peer_owner_selection_is_opt_in_and_uses_matching_complete_route_evidence() {
-    const CHILD: &str = "ORBITKV_TEST_PEER_OWNER_SELECTION_CHILD";
-    if std::env::var_os(CHILD).is_some() {
-        let owners = ["a-stable", "z-measured"];
+fn equal_coverage_owner_tie_is_independent_of_inventory_order() {
+    for owners in [["c", "a", "b"], ["b", "c", "a"], ["a", "b", "c"]] {
         let mut rows = vec![row(1, &owners), row(2, &owners)];
-        let now = std::time::Instant::now();
-        for (owner, seconds) in [("a-stable", 0.02), ("z-measured", 0.01)] {
-            let location = rows[0]
-                .peer(orbitkv_state::ReplicaMedium::Dram)
-                .find(|replica| replica.owner.endpoint == owner)
-                .unwrap();
-            let key = crate::cost::CostEstimateKey::new(
-                crate::cost::CostObservationKind::PeerDramHostReady,
-                crate::cost::ExecutionResource::Peer(crate::cost::resource_id(&location.owner)),
-                ReplicaRepresentation::Raw,
-                8192,
-                2,
-            );
-            for _ in 0..4 {
-                crate::cost::observe_for_test(key, seconds, now);
-            }
-        }
         let plan = FetchPlan::new(&mut rows, 2, PeerSource::Dram).unwrap();
-        assert_eq!(plan.next_segment(0).unwrap().owner.endpoint, "z-measured");
-        let direct = plan.for_gpu_restore();
-        assert_eq!(
-            direct.next_segment(0).unwrap().owner.endpoint,
-            "a-stable",
-            "HostReady costs cannot rank a GPU restore"
-        );
-        return;
+        assert_eq!(plan.next_segment(0).unwrap().owner.endpoint, "a");
     }
-
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "planning::peer::tests::peer_owner_selection_is_opt_in_and_uses_matching_complete_route_evidence",
-            "--nocapture",
-        ])
-        .env(CHILD, "1")
-        .env("ORBITKV_COST_OBSERVATIONS", "1")
-        .env("ORBITKV_COST_SELECTION", "1")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
 }

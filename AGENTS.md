@@ -70,7 +70,7 @@ orbitkv/
 │   ├── orbitkv-state/           # Framework-neutral state and recovery contracts
 │   ├── orbitkv-channel/         # iceoryx2/UDS process transport
 │   ├── orbitkv-common/           # Process logging and peer-connection defaults
-│   ├── orbitkv-core/             # Storage owners, planning, costs and execution
+│   ├── orbitkv-core/             # Storage owners, planning and execution
 │   ├── orbitkv-proto/            # Protobuf and gRPC definitions
 │   ├── orbitkv-server/           # Cache Manager orchestration and protocol adapters
 │   ├── orbitkv-catalog/          # Complete local global index
@@ -121,7 +121,6 @@ orbitkv/
 - `crates/orbitkv-core/src/storage/mod.rs`: residency assembly and pinned-memory reclamation
 - `crates/orbitkv-core/src/storage/dram/`: DRAM residency, policy and inventory
 - `crates/orbitkv-core/src/storage/publish.rs`: queued sealing and DRAM/SSD publication
-- `crates/orbitkv-core/src/cost/`: bounded observations, estimates and shadow comparisons
 - `crates/orbitkv-core/src/planning/`: batch candidates/targets, SSD route eligibility/acquisition and peer source segmentation
 - `crates/orbitkv-core/src/query/`: byte admission, shared-read coordination, query leases and ownership handoff
 - `crates/orbitkv-core/src/peer/`: local index discovery, authoritative source exports, remote READ and completion ownership

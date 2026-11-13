@@ -98,7 +98,7 @@ fn sealed_host_decode_trusts_ecc_and_rejects_unsealed_or_poisoned_sources() {
             }],
         }];
         let before = read_destination();
-        let error = codec::restore(&runtime, &layers, 0, &mut Observation::disabled()).unwrap_err();
+        let error = codec::restore(&runtime, &layers, 0).unwrap_err();
         assert!(error.to_string().contains("verified sealed replica"));
         assert_eq!(read_destination(), before);
         let TransferPayload::Owned(raw) =
@@ -120,10 +120,7 @@ fn sealed_host_decode_trusts_ecc_and_rejects_unsealed_or_poisoned_sources() {
             slot_id: 0,
             offset: 0,
         };
-        assert_eq!(
-            codec::restore(&runtime, &layers, 0, &mut Observation::disabled()).unwrap(),
-            logical
-        );
+        assert_eq!(codec::restore(&runtime, &layers, 0).unwrap(), logical);
         let mut source = vec![0x35; 512];
         source[17] ^= 1;
         let expected = if format == StorageFormat::Exact {
@@ -142,7 +139,7 @@ fn sealed_host_decode_trusts_ecc_and_rejects_unsealed_or_poisoned_sources() {
             assert_eq!(crate::integrity::tests::bytes(&metrics, tier), 0, "{tier}");
         }
         sealed.poison();
-        let error = codec::restore(&runtime, &layers, 0, &mut Observation::disabled()).unwrap_err();
+        let error = codec::restore(&runtime, &layers, 0).unwrap_err();
         assert!(error.to_string().contains("verified sealed replica"));
         assert_eq!(&read_destination()[..logical], &expected);
     }
@@ -207,7 +204,7 @@ fn decode_restore_admission_is_device_scoped_and_bounded() {
     let mut permits = Vec::new();
     for depth in 1..=MAX_DEVICE_RESTORES {
         let permit = admission.try_acquire().unwrap();
-        assert_eq!(permit.depth, depth as u32);
+        assert_eq!(admission.active.load(Ordering::Acquire), depth);
         permits.push(permit);
     }
     assert!(admission.try_acquire().is_err());
@@ -218,7 +215,7 @@ fn decode_restore_admission_is_device_scoped_and_bounded() {
 fn empty_restore_plan(device_id: i32) -> crate::planning::restore::RestorePlan {
     crate::planning::restore::RestorePlan::new(
         device_id,
-        std::iter::empty::<(usize, &crate::RestoreSource)>(),
+        std::iter::empty::<&crate::RestoreSource>(),
     )
     .unwrap()
 }
@@ -262,22 +259,19 @@ fn save_task_owns_shared_admission_until_terminal_drop() {
     let admission = device_ssd_write_admission(i32::MAX - 2);
     let permit = Arc::clone(&admission).try_acquire_owned().unwrap();
     let (reply, _receiver) = oneshot::channel();
-    let command = WorkerCommand::Save(
-        SaveTask {
-            layers: Vec::new(),
-            reply,
-            ssd_writes: Vec::new(),
-            codec_groups: Vec::new(),
-            storage: None,
-            numa: NumaNode::UNKNOWN,
-            ssd_admission: Some(permit),
-            admission: SaveAdmission::acquire(std::mem::size_of::<SaveTask>(), 0).unwrap(),
-            _instance: empty_save_instance(),
-            #[cfg(feature = "tracing")]
-            trace_ctx: None,
-        },
-        Observation::disabled(),
-    );
+    let command = WorkerCommand::Save(SaveTask {
+        layers: Vec::new(),
+        reply,
+        ssd_writes: Vec::new(),
+        codec_groups: Vec::new(),
+        storage: None,
+        numa: NumaNode::UNKNOWN,
+        ssd_admission: Some(permit),
+        admission: SaveAdmission::acquire(std::mem::size_of::<SaveTask>(), 0).unwrap(),
+        _instance: empty_save_instance(),
+        #[cfg(feature = "tracing")]
+        trace_ctx: None,
+    });
     assert_eq!(admission.available_permits(), ssd::MAX_WRITES - 1);
     drop(command);
     assert_eq!(admission.available_permits(), ssd::MAX_WRITES);
@@ -329,7 +323,7 @@ async fn shared_admission_saturation_falls_back_before_worker_submission() {
             None,
         ));
         assert!(futures::poll!(saving.as_mut()).is_pending());
-        let Some(WorkerCommand::Save(task, _)) = save_rx.recv().await else {
+        let Some(WorkerCommand::Save(task)) = save_rx.recv().await else {
             panic!("saturated GPU write must use the ordinary save lane")
         };
         assert!(task.codec_groups.is_empty());
@@ -396,7 +390,6 @@ fn managed_restore_rejects_overlapping_targets_before_dispatch() {
                 peer_bytes: 0,
                 codec_budget,
                 decode_ready_started: Instant::now(),
-                decode_ready_observation: Box::new(Observation::disabled()),
                 decode_admission: None,
             };
             let error = pool.submit_load(task).unwrap_err();
@@ -441,7 +434,6 @@ fn restore_plan_must_target_the_worker_device() {
             peer_bytes: 0,
             codec_budget: 0,
             decode_ready_started: Instant::now(),
-            decode_ready_observation: Box::new(Observation::disabled()),
             decode_admission: None,
         })
         .unwrap_err();
@@ -481,20 +473,16 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     });
     let queued_load = || {
         let (reply, _result) = oneshot::channel();
-        WorkerCommand::Load(
-            LoadTask {
-                plan: empty_restore_plan(0),
-                layers: vec![],
-                completion: reply,
-                reservations: vec![],
-                peer_bytes: 0,
-                codec_budget: 64 * 1024 * 1024,
-                decode_ready_started: Instant::now(),
-                decode_ready_observation: Box::new(Observation::disabled()),
-                decode_admission: None,
-            },
-            Observation::disabled(),
-        )
+        WorkerCommand::Load(LoadTask {
+            plan: empty_restore_plan(0),
+            layers: vec![],
+            completion: reply,
+            reservations: vec![],
+            peer_bytes: 0,
+            codec_budget: 64 * 1024 * 1024,
+            decode_ready_started: Instant::now(),
+            decode_admission: None,
+        })
     };
     pool.submit(queued_load(), false).unwrap();
     let draining = Arc::clone(&pool);
@@ -550,151 +538,6 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     waiter.await.unwrap().unwrap();
     assert_eq!(cufile_admission.available_permits(), 1);
     pool.drain().await.unwrap();
-}
-
-#[test]
-fn transfer_cost_shape_uses_logical_ranges_and_actual_encoding() {
-    use std::num::NonZeroU64;
-
-    use crate::block::Segment;
-    use crate::codec::EncodedSegment;
-    use crate::memory::pool::PinnedAllocator;
-    use orbitkv_state::StorageFormat;
-
-    let pool = PinnedAllocator::new_global(4096, 1, false, None).unwrap();
-    let block = |bytes: usize| {
-        let allocation = pool
-            .allocate(NonZeroU64::new(bytes as u64).unwrap(), NumaNode::UNKNOWN)
-            .unwrap();
-        RawBlock::single_segment(Segment::new(allocation.as_non_null(), bytes, allocation).unwrap())
-    };
-    let mut encoded = block(512);
-    encoded.storage_format = StorageFormat::Ans;
-    encoded.encoding = Some(vec![EncodedSegment {
-        version: 1,
-        format: StorageFormat::Ans,
-        logical_bytes: 600,
-        stored_bytes: 100,
-        checksum: 0,
-    }]);
-    let layers = vec![LayerTransferData {
-        layer_name: "split".into(),
-        layout: KVCacheLayout::bind(
-            0x10000,
-            4096,
-            crate::transfer::layout::KVCacheGeometry::new(2, 300, 2048, 2, None, 512).unwrap(),
-        )
-        .unwrap(),
-        blocks: vec![
-            TransferBlock {
-                block_idx: 0,
-                block: TransferPayload::Owned(encoded),
-            },
-            TransferBlock {
-                block_idx: 1,
-                block: TransferPayload::Owned(block(1024)),
-            },
-        ],
-    }];
-    assert_eq!(transfer_shape(&layers), (1200, 4));
-    let (key, bytes) = transfer_key(&layers, 2, TransferMode::Direct, false, false);
-    assert_eq!(bytes, 1200);
-    assert_eq!(
-        key,
-        CostEstimateKey::new(
-            CostObservationKind::GpuDecode,
-            ExecutionResource::Gpu(2),
-            Representation::Mixed,
-            1200,
-            4
-        )
-    );
-    let (key, _) = transfer_key(&layers, 2, TransferMode::Direct, false, true);
-    assert_eq!(
-        key,
-        CostEstimateKey::new(
-            CostObservationKind::GpuSsdLoad,
-            ExecutionResource::Gpu(2),
-            Representation::Mixed,
-            1200,
-            4
-        )
-    );
-}
-
-#[test]
-fn failed_gpu_work_is_not_reclassified_by_consumer_loss() {
-    for (completed, closed, expected) in [
-        (true, false, Outcome::Completed),
-        (true, true, Outcome::Cancelled),
-        (false, false, Outcome::Failed),
-        (false, true, Outcome::Failed),
-    ] {
-        assert_eq!(terminal_outcome(completed, closed), expected);
-    }
-}
-
-#[test]
-fn raw_copy_candidates_use_layout_and_direction_without_guessing_engine_dma() {
-    let mut host = [0u8; 16];
-    let contiguous: Vec<_> = (0..4)
-        .map(|index| CopyDesc {
-            device: 0x1000 + (index * 4) as u64,
-            host: host.as_mut_ptr().wrapping_add(index * 4),
-            host_device: 0x2000 + (index * 4) as u64,
-            size: 4,
-            device_allocation: 1,
-            host_registration: 2,
-        })
-        .collect();
-    let mut fragmented = contiguous.clone();
-    fragmented.swap(1, 2);
-    let mut allocations = contiguous.clone();
-    for (index, copy) in allocations.iter_mut().enumerate() {
-        copy.host_registration = index;
-    }
-    for write in [false, true] {
-        let (merged_keys, bytes) = raw_copy_keys(&contiguous, 3, write, usize::MAX);
-        assert_eq!(bytes, 16);
-        let paths = if write {
-            [
-                CostObservationKind::GpuSaveDirect,
-                CostObservationKind::GpuSaveKernel,
-            ]
-        } else {
-            [
-                CostObservationKind::GpuLoadDirect,
-                CostObservationKind::GpuLoadKernel,
-            ]
-        };
-        for (key, path) in merged_keys.iter().zip(paths) {
-            assert_eq!(
-                *key,
-                CostEstimateKey::new(path, ExecutionResource::Gpu(3), Representation::Raw, 16, 4)
-            );
-        }
-        for copies in [&fragmented, &allocations] {
-            let (keys, bytes) = raw_copy_keys(copies, 3, write, usize::MAX);
-            assert_eq!(bytes, 16);
-            for ((key, merged_key), path) in keys.iter().zip(merged_keys).zip(paths) {
-                assert_eq!(*key, merged_key);
-                assert_eq!(
-                    *key,
-                    CostEstimateKey::new(
-                        path,
-                        ExecutionResource::Gpu(3),
-                        Representation::Raw,
-                        16,
-                        4
-                    )
-                );
-            }
-        }
-        assert_ne!(
-            merged_keys,
-            raw_copy_keys(&contiguous, 3, !write, usize::MAX).0
-        );
-    }
 }
 
 #[test]
@@ -818,7 +661,7 @@ async fn save_queue_admission_child() {
             .is_err()
     );
     assert_eq!(save_rx.len(), MAX_SAVE_OPERATIONS);
-    let Some(WorkerCommand::Save(task, _)) = save_rx.recv().await else {
+    let Some(WorkerCommand::Save(task)) = save_rx.recv().await else {
         panic!("expected SaveTask");
     };
     let admission = Arc::clone(&task.admission);

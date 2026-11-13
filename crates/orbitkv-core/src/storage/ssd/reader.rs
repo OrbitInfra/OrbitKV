@@ -1,8 +1,5 @@
 use super::{SsdStore, index::SsdIndexEntry, io::SsdIo};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
-use crate::cost::{
-    CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
-};
 use crate::metrics::core_metrics;
 use crate::peer::export::{PeerError, StagingReservation};
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -29,90 +26,7 @@ type BatchResult = Result<crate::storage::MaterializedBlocks, PeerError>;
 pub(super) struct PrefetchBatch {
     pub requests: Vec<Arc<super::SsdReadLease>>,
     pub done_tx: oneshot::Sender<BatchResult>,
-    pub observation: Observation,
     pub reservation: Option<StagingReservation>,
-}
-
-impl PrefetchBatch {
-    pub(super) fn new(
-        requests: Vec<Arc<super::SsdReadLease>>,
-        done_tx: oneshot::Sender<BatchResult>,
-        resource: ExecutionResource,
-    ) -> Self {
-        Self::build(requests, done_tx, resource, None)
-    }
-
-    pub(super) fn for_export(
-        requests: Vec<Arc<super::SsdReadLease>>,
-        done_tx: oneshot::Sender<BatchResult>,
-        resource: ExecutionResource,
-        reservation: StagingReservation,
-    ) -> Self {
-        Self::build(requests, done_tx, resource, Some(reservation))
-    }
-
-    fn build(
-        requests: Vec<Arc<super::SsdReadLease>>,
-        done_tx: oneshot::Sender<BatchResult>,
-        resource: ExecutionResource,
-        reservation: Option<StagingReservation>,
-    ) -> Self {
-        if !crate::cost::enabled() {
-            return Self {
-                requests,
-                done_tx,
-                observation: Observation::disabled(),
-                reservation,
-            };
-        }
-        let mut logical_bytes = Some(0u64);
-        let mut stored_bytes = 0u64;
-        let mut representation = None;
-        for request in &requests {
-            for slot in &request.entry.slots {
-                stored_bytes = stored_bytes.saturating_add(slot.total_size());
-                if let Some(metadata) = &slot.encoding {
-                    if metadata.len() != slot.num_segments() {
-                        logical_bytes = None;
-                    }
-                    for meta in metadata {
-                        logical_bytes = logical_bytes
-                            .and_then(|bytes| bytes.checked_add(meta.logical_bytes as u64));
-                        let next = Representation::from(meta.format);
-                        representation = Some(match representation {
-                            None => next,
-                            Some(previous) if previous == next => previous,
-                            Some(_) => Representation::Mixed,
-                        });
-                    }
-                } else {
-                    // Raw segment lengths include allocation alignment. Only
-                    // the GPU layout owner knows their logical data size.
-                    logical_bytes = None;
-                    representation = Some(match representation {
-                        None | Some(Representation::Raw) => Representation::Raw,
-                        Some(_) => Representation::Mixed,
-                    });
-                }
-            }
-        }
-        let observation = Observation::new(
-            CostEstimateKey::new(
-                CostObservationKind::LocalSsdHostReady,
-                resource,
-                representation.unwrap_or(Representation::Unknown),
-                stored_bytes,
-                requests.len(),
-            ),
-            logical_bytes,
-        );
-        Self {
-            requests,
-            done_tx,
-            observation,
-            reservation,
-        }
-    }
 }
 
 /// Shared context for a batch of prefetch operations.
@@ -121,11 +35,9 @@ pub(super) struct BatchContext {
     results: Mutex<crate::storage::MaterializedBlocks>,
     remaining: AtomicUsize,
     done_tx: Mutex<Option<oneshot::Sender<BatchResult>>>,
-    observation: Mutex<Option<Observation>>,
     reservation: Mutex<Option<StagingReservation>>,
     failed: AtomicBool,
     unquiesced: AtomicBool,
-    submitted: AtomicBool,
     /// Pinned generations stay owned until every queued/submitted read drains.
     leases: Vec<Arc<super::SsdReadLease>>,
 }
@@ -134,7 +46,6 @@ impl BatchContext {
     fn new(
         count: usize,
         done_tx: oneshot::Sender<BatchResult>,
-        observation: Observation,
         leases: Vec<Arc<super::SsdReadLease>>,
         reservation: Option<StagingReservation>,
     ) -> Self {
@@ -142,11 +53,9 @@ impl BatchContext {
             results: Mutex::new(Vec::with_capacity(count)),
             remaining: AtomicUsize::new(count),
             done_tx: Mutex::new(Some(done_tx)),
-            observation: Mutex::new(Some(observation)),
             reservation: Mutex::new(reservation),
             failed: AtomicBool::new(false),
             unquiesced: AtomicBool::new(false),
-            submitted: AtomicBool::new(false),
             leases,
         }
     }
@@ -188,22 +97,9 @@ impl BatchContext {
             } else {
                 Ok(results)
             };
-            let terminal_failed = failed || result.is_err();
             let delivered = tx.send(result).is_ok();
             if delivered && let Some(transfer) = prepared {
                 transfer.publish();
-            }
-            if let Some(observation) = self.observation.lock().take() {
-                let outcome = if terminal_failed {
-                    Outcome::Failed
-                } else if !delivered {
-                    Outcome::Cancelled
-                } else {
-                    Outcome::Completed
-                };
-                // The file engine owns byte accounting. This composite also
-                // includes allocation, queueing, validation and reconstruction.
-                observation.finish(outcome, None);
             }
         }
     }
@@ -284,10 +180,9 @@ async fn dispatch_prefetch_batch(
     let PrefetchBatch {
         requests,
         done_tx,
-        mut observation,
         reservation,
     } = batch;
-    observation.admitted();
+
     let mut block_slots = Vec::with_capacity(requests.len());
     for req in &requests {
         let mut slots = Vec::with_capacity(req.entry.slots.len());
@@ -300,7 +195,7 @@ async fn dispatch_prefetch_batch(
                     warn!(
                         "SSD prefetch dispatcher: alloc failed for {size} bytes numa={numa_node:?}, failing entire batch"
                     );
-                    observation.finish(Outcome::Failed, None);
+
                     let result = if reservation.is_some() {
                         Err(PeerError::StagingFailed)
                     } else {
@@ -340,7 +235,6 @@ async fn dispatch_prefetch_batch(
         let padding = match padding {
             Ok(padding) => padding,
             Err(error) => {
-                observation.finish(Outcome::Failed, None);
                 let _ = done_tx.send(Err(PeerError::InvalidRequest(error.into())));
                 return true;
             }
@@ -351,7 +245,6 @@ async fn dispatch_prefetch_batch(
     let ctx = Arc::new(BatchContext::new(
         requests.len(),
         done_tx,
-        observation,
         requests,
         reservation,
     ));
@@ -496,11 +389,6 @@ async fn execute_prefetch(mut task: PrefetchTask, io: Arc<SsdIo>) -> SingleMater
                 slice
             })
             .collect();
-        if !ctx.submitted.swap(true, Ordering::Relaxed)
-            && let Some(observation) = ctx.observation.lock().as_mut()
-        {
-            observation.submitted();
-        }
         crate::transfer_engine::FileExtent::from_slices(
             task.entry.file_offset,
             expected_len,

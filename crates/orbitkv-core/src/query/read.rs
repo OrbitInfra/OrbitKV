@@ -104,6 +104,9 @@ impl ReadCoordinator {
         }
 
         let mut plan = ReadPlan::new(&keys[hit..], mode, self.ssd_store.as_ref());
+        if let Some(remote) = &self.remote_fetch {
+            remote.discover(&mut plan.rows);
+        }
         if let Some(ssd) = &self.ssd_store
             && let Some(route) = plan.deferred_ssd(ssd, self.codec_budget)
         {
@@ -267,9 +270,6 @@ impl ReadCoordinator {
         destination_nodes: &[NumaNode],
         options: TransferOptions,
     ) -> (Option<AttributionSource>, Vec<(StateKey, RestoreSource)>) {
-        if let Some(remote) = &self.remote_fetch {
-            remote.discover(&mut plan.rows);
-        }
         let peer_available = self.remote_fetch.is_some();
 
         let target = plan.target;

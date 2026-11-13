@@ -1,0 +1,41 @@
+name: Install pinned CUDA with bounded retry
+description: Retry toolkit installation only, then require a working CUDA 13 compiler.
+runs:
+  using: composite
+  steps:
+    - id: first
+      uses: Jimver/cuda-toolkit@v0.2.35
+      continue-on-error: true
+      with:
+        cuda: '13.0.2'
+        linux-local-args: '["--toolkit"]'
+        method: network
+        sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
+    - name: Log retry
+      if: steps.first.outcome == 'failure'
+      shell: bash
+      run: echo 'CUDA installation failed; retrying the same pinned toolkit (attempt 2/3).'
+    - id: second
+      if: steps.first.outcome == 'failure'
+      uses: Jimver/cuda-toolkit@v0.2.35
+      continue-on-error: true
+      with:
+        cuda: '13.0.2'
+        linux-local-args: '["--toolkit"]'
+        method: network
+        sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
+    - name: Log final attempt
+      if: steps.second.outcome == 'failure'
+      shell: bash
+      run: echo 'CUDA installation failed; final attempt (3/3), failure is fatal.'
+    - id: last
+      if: steps.second.outcome == 'failure'
+      uses: Jimver/cuda-toolkit@v0.2.35
+      with:
+        cuda: '13.0.2'
+        linux-local-args: '["--toolkit"]'
+        method: network
+        sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
+    - name: Require installed toolkit
+      shell: bash
+      run: /usr/local/cuda/bin/nvcc --version | grep -F 'release 13.0,'

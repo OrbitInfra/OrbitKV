@@ -7,9 +7,6 @@ use super::instance::LayerTopology;
 use super::{EngineError, OrbitKVEngine};
 use crate::QueryReservation;
 use crate::block::{RestoreSource, SealedBlock};
-use crate::cost::{
-    self, CostEstimateKey, CostObservationKind, ExecutionResource, Outcome, Representation,
-};
 use crate::metrics::core_metrics;
 use crate::planning::restore::RestorePlan;
 use crate::query::lease::{QueryLeaseId, QueryLeaseManager};
@@ -28,7 +25,6 @@ pub struct RawRestoreGrant {
     sources: Vec<Arc<SealedBlock>>,
     reservations: Vec<QueryReservation>,
     bytes: u64,
-    cost_key: Option<CostEstimateKey>,
     decode_admission: Option<DecodeRestorePermit>,
 }
 
@@ -53,21 +49,6 @@ impl RawRestoreGrant {
     }
 
     pub fn finish(self, success: bool, elapsed: Option<std::time::Duration>) {
-        if let (Some(key), Some(elapsed)) = (self.cost_key, elapsed) {
-            cost::record_completion_observation(
-                key,
-                self.bytes,
-                if success { self.bytes } else { 0 },
-                elapsed,
-                None,
-                true,
-                if success {
-                    Outcome::Completed
-                } else {
-                    Outcome::Failed
-                },
-            );
-        }
         if success {
             for source in &self.sources {
                 source.mark_warmup_restored();
@@ -265,19 +246,6 @@ impl OrbitKVEngine {
                 sources,
                 reservations: prepared.reservations,
                 bytes,
-                cost_key: (cost::enabled() && bytes != 0).then(|| {
-                    CostEstimateKey::new(
-                        CostObservationKind::EngineLocalRestore,
-                        ExecutionResource::CacheRestore {
-                            source_set_hash: prepared.plan.source_set_hash(),
-                            destination_device: device_id as u64,
-                            copy_backend: gpu.worker_pool().transfer_mode as u8,
-                        },
-                        Representation::Raw,
-                        bytes,
-                        fragments,
-                    )
-                }),
                 decode_admission,
             }));
         }
@@ -401,7 +369,7 @@ impl PreparedRestore {
                 let plan = RestorePlan::new(
                     device_id,
                     groups.iter().flat_map(|group| &group.targets)
-                        .map(|&(_, index)| (index, sources[index])),
+                        .map(|&(_, index)| sources[index]),
                 ).map_err(EngineError::InvalidArgument)?;
                 let raw = Self::raw_plan(&mut groups, &sources, layouts)?;
                 Ok((plan, raw))
@@ -590,7 +558,6 @@ impl PreparedRestore {
             codec_budget,
             peer_bytes: 0,
             decode_ready_started,
-            decode_ready_observation: Box::new(crate::cost::Observation::disabled()),
             decode_admission: None,
         }
     }

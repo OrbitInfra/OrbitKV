@@ -99,7 +99,6 @@ fn raw_grant_retains_allocation_and_query_charge_until_explicit_finish() {
         sources,
         reservations: prepared.reservations,
         bytes,
-        cost_key: None,
         decode_admission: None,
     };
     leases

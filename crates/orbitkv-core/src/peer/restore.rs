@@ -86,10 +86,6 @@ impl PeerRestoreBlock {
         self.slots.iter().map(|slot| slot.meta.total_size()).sum()
     }
 
-    pub(crate) fn source_id(&self) -> u64 {
-        self.grant.peer.source_id()
-    }
-
     pub(crate) fn grant_id(&self) -> usize {
         Arc::as_ptr(&self.grant) as usize
     }
@@ -306,14 +302,7 @@ impl PeerReader {
         nodes: &[NumaNode],
         options: TransferOptions,
     ) -> FetchResult<PeerRestoreBlock> {
-        execute_fetch_plan(
-            &RestoreReader(self),
-            plan.for_gpu_restore(),
-            req_id,
-            nodes,
-            options,
-        )
-        .await
+        execute_fetch_plan(&RestoreReader(self), plan, req_id, nodes, options).await
     }
 }
 

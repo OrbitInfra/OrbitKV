@@ -19,7 +19,7 @@ original revision, not copied into another result table:
   **failed mixed-prefix regression guards**. It remains opt-in.
   [Historical TENT admission comparison](https://github.com/OrbitInfra/OrbitKV/blob/4a36b11c680b9e82f05a663da5cb38c0dc694a9b/docs/performance.md#sglang-concurrent-admission).
 - Native transfer and engine-local observers **failed overhead/tail guards**;
-  diagnostic clocks are not free. Cost observations remain opt-in.
+  diagnostic clocks are not free. The cost observation and selection subsystem has been removed.
   [Frozen observation requirements and failures](https://github.com/OrbitInfra/OrbitKV/blob/4a36b11c680b9e82f05a663da5cb38c0dc694a9b/docs/completion-plan.md#s4--finish-communication-execution-and-demonstrate-gains).
 - Physical termination, permanent-loss reclamation, broad rank/Graph support,
   native GDS and complete P/D faults are unqualified. Healthy outputs and
@@ -43,6 +43,16 @@ The [immutable archive index](https://github.com/OrbitInfra/OrbitKV/blob/4a36b11
 locations, hashes, failed runs and review limits. Those directories are unchanged;
 some are private host archives, not public downloads. Git history preserves full
 reports without keeping delivery diaries in the operating guides.
+
+## Integrity follow-up (P11)
+
+[Reviewed CPU VM path pairs (#344)](https://github.com/OrbitInfra/OrbitKV/pull/344)
+retain these 16 MiB regressions: SSD→host **+41.9%**, ephemeral SSD write
+**+32.4%**, TCP receive **+10.3%**. Persistent writes improved **13–30%** after
+removing read-back. The remaining CRC pass follows O_DIRECT DMA, which has no
+host copy to fuse with. A later optimization may pipeline CRC of each completed
+chunk while the next chunk's I/O runs, for reads and writes. It is not implemented
+or qualified; these CPU results are not GPU/serving evidence.
 
 ## Reproduce a comparison
 

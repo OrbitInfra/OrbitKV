@@ -4,6 +4,14 @@
 > The gates below describe required behavior, not new passing results.
 > CPU/TCP and io_uring controls remain CI evidence.
 
+## Replica selection controls
+
+CPU controls cover the [fixed policy](architecture.md#planning): complete coverage
+before medium preference, stable peer ties and no SSD submission for a DRAM hit.
+Losing a selected SSD generation refuses acquisition instead of shortening that
+boundary. Only rejected, unsubmitted admission may replan; a submitted transfer
+failure still never authorizes replay or owner release.
+
 ## Engine conformance matrix
 
 The [test registry](../python/tests/support/engine_registry.py) assigns every

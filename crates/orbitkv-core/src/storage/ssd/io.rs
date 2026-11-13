@@ -12,10 +12,6 @@ use std::time::{Duration, Instant};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 
 use super::SSD_ALIGNMENT;
-use crate::cost::{
-    CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
-    resource_id,
-};
 use crate::memory::pool::PinnedAllocation;
 use crate::transfer_engine::{
     Cancellation, ErrorKind, FileExtent, FileIoElement, FileMemory, FileSegment, FileTransfer,
@@ -64,7 +60,6 @@ pub(crate) struct EngineFile {
     file: Arc<File>,
     admission: Arc<Semaphore>,
     runtime: tokio::runtime::Handle,
-    pub(crate) cost_resource: ExecutionResource,
 }
 
 impl EngineFile {
@@ -172,30 +167,12 @@ impl EngineFile {
         options: TransferOptions,
     ) -> Result<usize, TransferError> {
         let bytes = owners.value.extent.bytes()?;
-        let elements = owners.value.extent.elements.len();
         let gpu = matches!(owners.value.memory, FileMemory::RegisteredCuda { .. });
         let started = Instant::now();
         let metrics = crate::metrics::core_metrics();
         if gpu {
             metrics.ssd_cufile_inflight_batches.add(1, &[]);
         }
-        let mut observation = Observation::new(
-            CostEstimateKey::new(
-                match (gpu, operation) {
-                    (true, TransferOp::Read) => CostObservationKind::SsdCufileRead,
-                    (true, TransferOp::Write) => CostObservationKind::SsdCufileWrite,
-                    (false, TransferOp::Read) => CostObservationKind::SsdRead,
-                    (false, TransferOp::Write) => CostObservationKind::SsdWrite,
-                },
-                self.cost_resource,
-                Representation::Unknown,
-                bytes as u64,
-                elements,
-            ),
-            None,
-        );
-        observation.admitted();
-        observation.submitted();
         let registrations = match &owners.value.memory {
             FileMemory::RegisteredCuda { owners, .. } => owners.as_slice(),
             _ => &[],
@@ -281,14 +258,7 @@ impl EngineFile {
                 metrics.ssd_cufile_inflight_batches.add(-1, &[]);
             }
         }
-        observation.finish(
-            if result.is_ok() {
-                Outcome::Completed
-            } else {
-                Outcome::Failed
-            },
-            result.as_ref().ok().map(|n| *n as u64),
-        );
+
         #[cfg(test)]
         if self.receipt_control.as_ref().is_some_and(|c| c.short) {
             result = result.map(|bytes| bytes / 2);
@@ -333,7 +303,6 @@ impl Drop for EngineFile {
 pub(super) struct SsdIo {
     transport: FileTransport,
     files: Vec<Arc<EngineFile>>,
-    pub(super) cost_resource: ExecutionResource,
 }
 
 impl SsdIo {
@@ -359,10 +328,6 @@ impl SsdIo {
                 file: Arc::clone(file),
                 admission: Arc::clone(&admission),
                 runtime: tokio::runtime::Handle::current(),
-                cost_resource: ExecutionResource::SsdFile(resource_id(&(
-                    transfer.source_epoch(),
-                    file.as_raw_fd(),
-                ))),
             });
             if handle.segment.length != file.metadata()?.len() {
                 return Err(std::io::Error::other(
@@ -371,13 +336,9 @@ impl SsdIo {
             }
             handles.push(handle);
         }
-        let cost_resource = ExecutionResource::SsdStore(resource_id(
-            &handles.iter().map(|f| f.cost_resource).collect::<Vec<_>>(),
-        ));
         Ok(Self {
             transport,
             files: handles,
-            cost_resource,
         })
     }
 

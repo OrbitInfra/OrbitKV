@@ -220,13 +220,10 @@ dispatch, dequeue, grant claim, enqueue return and GPU drain. They are host
 observations, including conversion, locks, queueing and descriptor compilation,
 not device kernel timestamps. The session/operation-fenced record accompanies
 `Active → Drained` and is accepted once before source reaping. Invalid, missing or
-over-one-day reports cannot block drain or reuse. Failed/no-submit operations do
-not train success estimates.
+over-one-day reports cannot block drain or reuse.
 
-Enable `ORBITKV_COST_OBSERVATIONS=1` in both processes for `engine_local_restore`.
-Its caller-to-drain interval is excluded from comparisons with Manager preparation
-or P/D handoff intervals. `ORBITKV_TRACE_TRANSFERS=1` additionally emits
-`local_restore_complete` and `local_restore_observed`. The parser counts each
-physical batch once and separates native stages, consumer wait and first use.
-Disabled observation takes no stage clocks; source reaping never extends the
-engine-ready latency. See [metrics](metrics.md#bounded-cost-observations).
+`ORBITKV_TRACE_TRANSFERS=1` emits `local_restore_complete` and
+`local_restore_observed`. The parser counts each physical batch once and separates
+native stages, consumer wait and first use. Disabled tracing takes no stage
+clocks; source reaping never extends engine-ready latency. These diagnostics do
+not select replicas. See [metrics](metrics.md#transfer-diagnostics).

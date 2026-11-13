@@ -1,7 +1,6 @@
 use super::{SsdStore, index::Encoding, io::SsdIo};
 use crate::PublishDiagnostic;
 use crate::block::{SealedBlock, StateKey};
-use crate::cost::{Observation, Outcome};
 use crate::metrics::core_metrics;
 use futures::stream::{FuturesOrdered, StreamExt};
 use log::{debug, warn};
@@ -13,29 +12,27 @@ use std::time::Instant;
 pub(super) struct SsdWriteBatch {
     pub options: crate::transfer_engine::TransferOptions,
     pub blocks: Vec<(StateKey, Weak<SealedBlock>)>,
-    pub observation: Observation,
     pub diagnostic: Option<Box<PublishDiagnostic>>,
 }
 
-struct WriteBatchObservation {
+struct WriteBatchDiagnostic {
     remaining: usize,
-    outcome: Outcome,
-    observation: Observation,
+    outcome: &'static str,
     diagnostic: Option<PublishDiagnostic>,
 }
 
 fn complete_write_batch(
-    batches: &mut VecDeque<WriteBatchObservation>,
+    batches: &mut VecDeque<WriteBatchDiagnostic>,
     success: bool,
     bytes: u64,
-) -> Option<(PublishDiagnostic, Outcome)> {
+) -> Option<(PublishDiagnostic, &'static str)> {
     let batch = batches.front_mut()?;
     batch.remaining -= 1;
     if !success {
         if bytes != 0 {
-            batch.outcome = Outcome::Failed;
-        } else if batch.outcome == Outcome::Completed {
-            batch.outcome = Outcome::Cancelled;
+            batch.outcome = "Failed";
+        } else if batch.outcome == "Completed" {
+            batch.outcome = "Cancelled";
         }
     }
     if batch.remaining == 0
@@ -43,7 +40,6 @@ fn complete_write_batch(
     {
         // FuturesOrdered returns writes in submission order. Completion follows
         // every ring commit; the file engine counts actual bytes.
-        batch.observation.finish(batch.outcome, None);
         return batch
             .diagnostic
             .map(|diagnostic| (diagnostic, batch.outcome));
@@ -67,16 +63,6 @@ struct WriteTask {
 /// Result: key, success, elapsed seconds, physical bytes (zero for unreserved skips).
 type WriteResult = (StateKey, bool, f64, u64);
 
-const fn outcome_name(outcome: Outcome) -> &'static str {
-    match outcome {
-        Outcome::Completed => "Completed",
-        Outcome::Failed => "Failed",
-        Outcome::Cancelled => "Cancelled",
-        Outcome::TimedOut => "TimedOut",
-        Outcome::Abandoned => "Abandoned",
-    }
-}
-
 // ============================================================================
 // SSD Writer Loop
 // ============================================================================
@@ -98,7 +84,7 @@ pub(super) async fn ssd_writer_loop(
 
     let mut pending: VecDeque<WriteTask> = VecDeque::new();
     let mut inflight: FuturesOrdered<WriteFuture> = FuturesOrdered::new();
-    let mut batches: VecDeque<WriteBatchObservation> = VecDeque::new();
+    let mut batches: VecDeque<WriteBatchDiagnostic> = VecDeque::new();
     let mut flush_waiters: Vec<tokio::sync::oneshot::Sender<()>> = Vec::new();
 
     loop {
@@ -130,7 +116,7 @@ pub(super) async fn ssd_writer_loop(
                     diagnostic.record(
                         "publish_ssd_complete",
                         orbitkv_common::timeline::DiagnosticFields::default()
-                            .outcome(outcome_name(outcome))
+                            .outcome(outcome)
                             .pending_blocks(pending.len())
                             .inflight_writes(inflight.len())
                             .max_inflight_writes(max_inflight),
@@ -141,12 +127,6 @@ pub(super) async fn ssd_writer_loop(
             // Priority 2: Submit pending writes if inflight has room
             _ = std::future::ready(()), if inflight.len() < max_inflight && !pending.is_empty() => {
                 let Some(task) = pending.pop_front() else { continue; };
-                // Only the newest dequeued batch can still have pending tasks.
-                // This composite starts service at worker admission; low-level
-                // file submission and completion are observed by the engine boundary.
-                if let Some(batch) = batches.back_mut() {
-                    batch.observation.submitted();
-                }
                 metrics.ssd_write_inflight.add(1, &[]);
                 inflight.push_back(Box::pin(execute_write(task, store.clone(), io.clone())));
             }
@@ -154,10 +134,10 @@ pub(super) async fn ssd_writer_loop(
             // Priority 3: Receive new command
             cmd = rx.recv(), if pending.is_empty() && flush_waiters.is_empty() => {
                 match cmd {
-                    Some(SsdWriteCommand::Write(mut b)) => {
+                    Some(SsdWriteCommand::Write(b)) => {
                         // Dequeue metric
                         metrics.ssd_write_queue_pending.add(-(b.blocks.len() as i64), &[]);
-                        b.observation.admitted();
+
                         if let Some(diagnostic) = b.diagnostic.as_deref().copied() {
                             let blocks = b.blocks.len();
                             diagnostic.record(
@@ -178,16 +158,15 @@ pub(super) async fn ssd_writer_loop(
                                         .outcome("Cancelled:store_dropped"),
                                 );
                             }
-                            b.observation.finish(Outcome::Cancelled, None);
                             continue;
                         };
-                        let mut outcome = Outcome::Completed;
+                        let mut outcome = "Completed";
                         for (key, weak) in b.blocks {
                             if let Some(block) = weak.upgrade() {
                                 pending.push_back(WriteTask { key, block, options: b.options });
                             } else {
                                 s.inner.lock().pending_writes.remove(&key);
-                                outcome = Outcome::Cancelled;
+                                outcome = "Cancelled";
                             }
                         }
                         if pending.is_empty() {
@@ -198,12 +177,10 @@ pub(super) async fn ssd_writer_loop(
                                         .outcome("Cancelled:sources_dropped"),
                                 );
                             }
-                            b.observation.finish(Outcome::Cancelled, None);
                         } else {
-                            batches.push_back(WriteBatchObservation {
+                            batches.push_back(WriteBatchDiagnostic {
                                 remaining: pending.len(),
                                 outcome,
-                                observation: b.observation,
                                 diagnostic: b.diagnostic.as_deref().copied(),
                             });
                         }
@@ -233,7 +210,7 @@ async fn drain_inflight(
     inflight: &mut FuturesOrdered<
         std::pin::Pin<Box<dyn std::future::Future<Output = WriteResult> + Send>>,
     >,
-    batches: &mut VecDeque<WriteBatchObservation>,
+    batches: &mut VecDeque<WriteBatchDiagnostic>,
 ) {
     while let Some((key, success, duration_secs, block_size)) = inflight.next().await {
         metrics.ssd_write_inflight.add(-1, &[]);
@@ -252,7 +229,7 @@ async fn drain_inflight(
             diagnostic.record(
                 "publish_ssd_complete",
                 orbitkv_common::timeline::DiagnosticFields::default()
-                    .outcome(outcome_name(outcome))
+                    .outcome(outcome)
                     .pending_blocks(0)
                     .inflight_writes(inflight.len()),
             );
