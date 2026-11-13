@@ -153,8 +153,7 @@ jobs:
         uses: ./.github/actions/install-cuda
       - name: Install native build dependencies
         run: |
-          bash .github/scripts/retry-install.sh sudo apt-get update
-          bash .github/scripts/retry-install.sh sudo apt-get install -y pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev liburing-dev patchelf
+          bash .github/scripts/retry-install.sh apt-get install -y pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev liburing-dev patchelf
       - name: Install protocol compiler
         run: bash scripts/install-protoc.sh
 
@@ -237,8 +236,7 @@ jobs:
         uses: ./.github/actions/install-cuda
       - name: Install native build dependencies
         run: |
-          bash .github/scripts/retry-install.sh sudo apt-get update
-          bash .github/scripts/retry-install.sh sudo apt-get install -y pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev liburing-dev patchelf
+          bash .github/scripts/retry-install.sh apt-get install -y pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev liburing-dev patchelf
       - name: Install protocol compiler
         run: bash scripts/install-protoc.sh
 
@@ -436,8 +434,7 @@ jobs:
 
       - name: Install native build dependencies
         run: |
-          bash .github/scripts/retry-install.sh sudo apt-get update
-          bash .github/scripts/retry-install.sh sudo apt-get install -y clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libcli11-dev liburing-dev libboost-dev patchelf
+          bash .github/scripts/retry-install.sh apt-get install -y clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libcli11-dev liburing-dev libboost-dev patchelf
 
       - name: Install protocol compiler
         run: bash scripts/install-protoc.sh

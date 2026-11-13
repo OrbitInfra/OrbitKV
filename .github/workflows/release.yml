@@ -59,9 +59,8 @@ jobs:
 
       - name: Install native build dependencies
         run: |
-          bash .github/scripts/retry-install.sh sudo apt-get update
           # Explicitly select glog's headers over the runner's LLVM libunwind variant.
-          bash .github/scripts/retry-install.sh sudo apt-get install -y libunwind-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libcli11-dev liburing-dev libboost-dev patchelf
+          bash .github/scripts/retry-install.sh apt-get install -y libunwind-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libcli11-dev liburing-dev libboost-dev patchelf
 
       - name: Install protocol compiler
         run: bash scripts/install-protoc.sh
@@ -108,15 +107,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install CUDA 13 toolkit and build dependencies
+      - name: Install CUDA Toolkit
+        uses: ./.github/actions/install-cuda
+
+      - name: Install native build dependencies
         run: |
-          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/sbsa/cuda-keyring_1.1-1_all.deb
-          sudo dpkg -i cuda-keyring_1.1-1_all.deb
-          bash .github/scripts/retry-install.sh sudo apt-get update
-          bash .github/scripts/retry-install.sh sudo apt-get install -y \
-            cuda-cudart-dev-13-0 \
-            cuda-nvcc-13-0 \
-            cuda-nvrtc-dev-13-0 \
+          bash .github/scripts/retry-install.sh apt-get install -y \
             libibverbs-dev \
             librdmacm-dev \
             libnuma-dev \

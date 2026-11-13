@@ -49,7 +49,7 @@ test('real failures, timeouts, cancellations and ambiguous jobs stay visible', a
   assert.equal(await check(base, [{status: 'queued', conclusion: null, started_at: '2026-11-10'}]), 0);
 });
 test('scope and concurrent reruns fail closed', async () => {
-  for (const patch of [{event: 'workflow_dispatch'}, {event: 'push', head_branch: 'feature'},
+  for (const patch of [{event: 'workflow_dispatch'}, {event: 'push', head_branch: 'feature'}, {event: 'push', head_branch: 'v0.1.0-beta.1'},
     {path: '.github/workflows/release.yml'}, {conclusion: 'success'}, {status: 'in_progress'},
     {run_attempt: 2}, {run_attempt: undefined}]) {
     assert.equal(await check({...base, ...patch}, [success]), 0);

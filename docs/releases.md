@@ -5,13 +5,15 @@
 > revisions and backend (TENT where recorded); CPU/TCP and io_uring checks are CI
 > evidence, not installed GPU qualification.
 
-OrbitKV's first Python candidate is `0.1.0b1`, with Rust workspace and tag
-spelling `0.1.0-beta.1`. It is not published. Build from source until the
-maintainer approves publication. Breaking API and format changes remain allowed
-before 0.1.0. This page describes the artifact contract and a non-publishing
-candidate rehearsal.
+OrbitKV `0.1.0b1` was published on November 12, 2026, with Rust workspace
+and tag spelling `0.1.0-beta.1`. Its [published release notes](https://github.com/OrbitInfra/OrbitKV/releases/tag/v0.1.0-beta.1)
+and [frozen artifact contract](https://github.com/OrbitInfra/OrbitKV/blob/a2e879b9/docs/releases.md)
+remain unchanged. Breaking API and format changes remain allowed before 0.1.0.
+Changes below apply to the next pre-release; nothing new is published by this PR.
 
-## Cost subsystem removal (November 10, 2026)
+## Next pre-release (unreleased)
+
+### Breaking: cost subsystem removal
 
 Removed cost observations/selection, `ORBITKV_COST_OBSERVATIONS`,
 `ORBITKV_COST_SELECTION`, `ORBITKV_CROSS_MEDIUM_SELECTION` and
@@ -38,7 +40,8 @@ references and binds corruption reports to drained grant tickets. Upgrade all
 Managers together and replace the old cluster format marker only after stopping
 them; there is no compatibility alias. The migration tool now takes
 `--from-protocol orbitkv/inventory-stream/v4` (or v3), replacing `--direction`,
-and cuts over to v5. Client lifecycle 13 is unchanged.
+and cuts over to v5. The published beta uses client lifecycle 13; the unreleased
+removal above advances it to 14.
 
 The `orbitkv` PyPI wheel is OrbitKV's only distribution. All Rust crates,
 including the Python extension crate, are internal and are not published.
@@ -247,7 +250,7 @@ install with `pip install orbitkv==0.1.0b1` in the compatible runtime environmen
 
 ## Release scope
 
-`orbitkv` remains unpublished. Follow [M4](completion-plan.md#m4--release-and-upstream)
+`orbitkv` 0.1.0b1 is published; follow [M4](completion-plan.md#m4--release-and-upstream)
 for official engine targets, upstream contributions and installed qualification.
 Current OrbiTE GPU/RDMA/GDS and installed paths are unqualified; historical TENT
 candidate checks do not carry over. Publication is the maintainer's action.
