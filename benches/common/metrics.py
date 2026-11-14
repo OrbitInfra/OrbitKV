@@ -252,24 +252,6 @@ def metrics(url: str | None) -> dict[str, float]:
                 if dimensions:
                     key = f"{name}_{'_'.join(dimensions)}"
                     values[key] = values.get(key, 0) + number
-            if name.startswith("orbitkv_cost_"):
-                labels = dict(re.findall(r'(\w+)="([^"\\]*)"', series))
-                dimensions = [
-                    f"{label}={labels[label]}"
-                    for label in (
-                        "path",
-                        "stage",
-                        "outcome",
-                        "evidence",
-                        "decision",
-                        "scope",
-                        "reason",
-                    )
-                    if label in labels
-                ]
-                if dimensions:
-                    key = f"{name}{{{','.join(dimensions)}}}"
-                    values[key] = values.get(key, 0) + number
             if name.startswith("orbitkv_remote_stage_duration_seconds_"):
                 for stage in REMOTE_STAGES:
                     if f'stage="{stage}"' in series:

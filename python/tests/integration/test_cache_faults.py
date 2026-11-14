@@ -1572,11 +1572,10 @@ def test_local_restore_fences_previous_use_on_nondefault_stream(fault_cache):
 
 
 @pytest.mark.skipif(
-    os.environ.get("ORBITKV_COST_OBSERVATIONS") != "1"
-    or os.environ.get("ORBITKV_TRACE_TRANSFERS") != "1",
-    reason="requires cost observations and transfer tracing in both processes",
+    os.environ.get("ORBITKV_TRACE_TRANSFERS") != "1",
+    reason="requires transfer tracing in both processes",
 )
-def test_local_completion_evidence_excludes_retirement_and_trains_once(fault_cache):
+def test_local_completion_trace_excludes_retirement(fault_cache):
     import json
 
     import torch
@@ -1626,20 +1625,6 @@ def test_local_completion_evidence_excludes_retirement_and_trains_once(fault_cac
         <= report["submitted_ns"]
         <= report["drained_ns"]
     )
-    response = requests.get(f"http://127.0.0.1:{server.http_port}/metrics", timeout=5)
-    response.raise_for_status()
-    samples = {
-        line.split("{", 1)[0]: float(line.rsplit(" ", 1)[1])
-        for line in response.text.splitlines()
-        if 'path="engine_local_restore"' in line
-        and 'stage="total"' in line
-        and (
-            line.startswith("orbitkv_cost_stage_seconds_count{")
-            or line.startswith("orbitkv_cost_stage_seconds_sum{")
-        )
-    }
-    assert samples["orbitkv_cost_stage_seconds_count"] == 1
-    assert samples["orbitkv_cost_stage_seconds_sum"] == pytest.approx(report["drained_ns"] / 1e9)
     with pytest.raises(OrbitKVError, match="consumed"):
         client.poll_restore(handle)
 

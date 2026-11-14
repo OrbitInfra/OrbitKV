@@ -2,10 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::block::{SealedBlock, StateKey};
-use crate::cost::{CostEstimateKey, CostObservationKind, ExecutionResource};
 use crate::planning::restore::RestorePlan;
 use crate::storage::MaterializedBlocks;
-use crate::{EngineError, SsdReadPath, TransferMode};
+use crate::{EngineError, SsdReadPath};
 
 use super::{LayerTransferData, TransferPayload};
 
@@ -41,95 +40,6 @@ pub(super) fn set_ssd_path(layers: &mut [LayerTransferData], path: SsdReadPath) 
             *selected = path;
         }
     }
-}
-
-pub(super) fn cost_estimate_key(
-    plan: &RestorePlan,
-    layers: &[LayerTransferData],
-    mode: TransferMode,
-    path: SsdReadPath,
-    shape: CostEstimateKey,
-) -> CostEstimateKey {
-    let mut resources: Vec<_> = layers
-        .iter()
-        .flat_map(|layer| &layer.blocks)
-        .filter_map(|block| match &block.block {
-            TransferPayload::Ssd { source, .. } => Some(source.cost_resource()),
-            _ => None,
-        })
-        .collect();
-    resources.sort_unstable();
-    resources.dedup();
-    let mut target_bytes = 0u64;
-    let mut target_fragments = 0usize;
-    for layer in layers {
-        for block in &layer.blocks {
-            if let TransferPayload::Ssd { .. } = &block.block
-                && let Ok(copies) = layer.layout.block_copies(block.block_idx)
-            {
-                use crate::transfer::layout::BlockCopies;
-                match copies {
-                    BlockCopies::Contiguous(copy) => {
-                        target_bytes = target_bytes.saturating_add(copy.bytes as u64);
-                        target_fragments += 1;
-                    }
-                    BlockCopies::Split { k, v } => {
-                        target_bytes = target_bytes
-                            .saturating_add(k.bytes as u64)
-                            .saturating_add(v.bytes as u64);
-                        target_fragments += 2;
-                    }
-                }
-            }
-        }
-    }
-    let resource = ExecutionResource::SsdRestore {
-        device: plan.device_id() as u64,
-        copy_backend: mode as u8,
-        stores: crate::cost::resource_id(&resources),
-        has_memory: plan.has_memory(),
-    };
-    shape
-        .with_ssd_shape(
-            plan.ssd_source_bytes(),
-            plan.ssd_source_fragments(),
-            target_bytes,
-            target_fragments,
-        )
-        .with_observation_kind_and_resource(
-            match path {
-                SsdReadPath::Uring => CostObservationKind::SsdUringRestore,
-                SsdReadPath::Cufile => CostObservationKind::SsdCufileRestore,
-            },
-            resource,
-        )
-}
-
-pub(super) fn shadow(
-    layers: &[LayerTransferData],
-    codec_budget: usize,
-    selected: SsdReadPath,
-    key: CostEstimateKey,
-) {
-    let uring = key.with_observation_kind(CostObservationKind::SsdUringRestore);
-    let cufile = key.with_observation_kind(CostObservationKind::SsdCufileRestore);
-    let cufile_eligible =
-        layers
-            .iter()
-            .flat_map(|layer| &layer.blocks)
-            .all(|block| match &block.block {
-                TransferPayload::Ssd { source, .. } => source.cufile_eligible(codec_budget),
-                _ => true,
-            });
-    let candidates = [uring, cufile];
-    crate::cost::shadow(
-        if cufile_eligible {
-            &candidates
-        } else {
-            &candidates[..1]
-        },
-        usize::from(selected == SsdReadPath::Cufile),
-    );
 }
 
 /// Runs only on the independent SSD host lane. The existing bounded reader

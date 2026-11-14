@@ -150,16 +150,10 @@ jobs:
         with:
           persist-credentials: false
       - name: Install CUDA Toolkit
-        uses: Jimver/cuda-toolkit@v0.2.35
-        with:
-          cuda: '13.0.2'
-          linux-local-args: '["--toolkit"]'
-          method: 'network'
-          sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
+        uses: ./.github/actions/install-cuda
       - name: Install native build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev liburing-dev patchelf
+          bash .github/scripts/retry-install.sh apt-get install -y pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev liburing-dev patchelf
       - name: Install protocol compiler
         run: bash scripts/install-protoc.sh
 
@@ -214,6 +208,10 @@ jobs:
           python-version: '3.13'
       - name: Install uv
         run: pip install uv
+      - name: Check bounded CI recovery controls
+        run: |
+          node --test .github/tests/workflow-recovery.cjs
+          python3 -m unittest discover -s .github/tests
       - name: Run default Python test gate
         working-directory: python
         run: |
@@ -235,16 +233,10 @@ jobs:
         with:
           persist-credentials: false
       - name: Install CUDA Toolkit
-        uses: Jimver/cuda-toolkit@v0.2.35
-        with:
-          cuda: '13.0.2'
-          linux-local-args: '["--toolkit"]'
-          method: 'network'
-          sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
+        uses: ./.github/actions/install-cuda
       - name: Install native build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev liburing-dev patchelf
+          bash .github/scripts/retry-install.sh apt-get install -y pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev liburing-dev patchelf
       - name: Install protocol compiler
         run: bash scripts/install-protoc.sh
 
@@ -280,10 +272,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/orbitkv-cpu-host-control"
           c++ -std=c++20 -shared -fPIC -DORBITKV_CPU_HOST_CONTROL -x c++ crates/orbitkv-core/tests/native/source_owner_host_shim.cu -o "$RUNNER_TEMP/orbitkv-cpu-host-control/libcudart.so"
           # The shim exercises host ownership only; it is not CUDA evidence.
-          for filter in peer:: query:: planning:: cost:: metrics:: transfer_engine::tests \
+          for filter in peer:: query:: planning:: metrics:: transfer_engine::tests \
             codec:: engine::restore:: storage::inventory:: \
             transfer::worker::drain_tests::nonresident_payloads_return_errors_without_host_access \
-            transfer::tests::raw_copy_shape transfer::worker::drain_tests::raw_copy_candidates \
+            transfer::tests::raw_copy_shape \
             missing_orbite_worker_engine no_backend_storage; do
             LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --no-default-features --features cuda-13 --lib "$filter" -- --test-threads=1
           done
@@ -438,17 +430,11 @@ jobs:
           sudo rm -rf /opt/hostedtoolcache/CodeQL
 
       - name: Install CUDA Toolkit
-        uses: Jimver/cuda-toolkit@v0.2.35
-        with:
-          cuda: '13.0.2'
-          linux-local-args: '["--toolkit"]'
-          method: 'network'
-          sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
+        uses: ./.github/actions/install-cuda
 
       - name: Install native build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libcli11-dev liburing-dev libboost-dev patchelf
+          bash .github/scripts/retry-install.sh apt-get install -y clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libcli11-dev liburing-dev libboost-dev patchelf
 
       - name: Install protocol compiler
         run: bash scripts/install-protoc.sh

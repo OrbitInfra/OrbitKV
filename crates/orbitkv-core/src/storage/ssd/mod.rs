@@ -9,9 +9,6 @@ use mea::oneshot;
 use parking_lot::Mutex;
 
 use crate::block::{SealedBlock, StateKey};
-use crate::cost::{
-    CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
-};
 use crate::memory::numa::NumaNode;
 use crate::memory::pool::PinnedAllocation;
 use crate::metrics::core_metrics;
@@ -92,14 +89,6 @@ impl SsdReadCandidate {
             store,
         }))
     }
-
-    pub(crate) fn cost_resource(&self) -> Option<ExecutionResource> {
-        Some(self.store.upgrade()?.io.cost_resource)
-    }
-
-    pub(crate) fn replica_metadata(&self) -> orbitkv_state::ReplicaMetadata {
-        self.entry.replica_metadata()
-    }
 }
 
 impl SsdReadLease {
@@ -131,10 +120,6 @@ impl SsdReadLease {
             .cufile_files
             .get(self.entry.shard_id)
             .ok_or_else(|| crate::EngineError::Storage("SSD source has no GPU file route".into()))
-    }
-
-    pub(crate) fn cost_resource(&self) -> ExecutionResource {
-        self.store.io.cost_resource
     }
 
     pub(crate) fn invalidate_corrupt(&self) {
@@ -908,11 +893,6 @@ impl SsdStore {
         let metrics = core_metrics();
         let mut admitted = Vec::new();
         let mut seen_batch = HashSet::new();
-        let observe = crate::cost::enabled();
-        let mut logical_bytes = Some(0u64);
-        let mut stored_bytes = 0u64;
-        let mut fragments = 0;
-        let mut representation = None;
         for (key, block) in blocks {
             let skip = if seen_batch.insert(key) {
                 inner.admission_skip(key, reused, self.write_policy)
@@ -924,33 +904,6 @@ impl SsdStore {
                     .ssd_write_admission_skips
                     .add(1, &[opentelemetry::KeyValue::new("reason", reason)]);
             } else {
-                if observe {
-                    for slot in block.slots() {
-                        fragments += slot.num_segments();
-                        stored_bytes = stored_bytes.saturating_add(slot.memory_footprint());
-                        if let Some(metadata) = &slot.encoding {
-                            if metadata.len() != slot.num_segments() {
-                                logical_bytes = None;
-                            }
-                            for meta in metadata {
-                                logical_bytes = logical_bytes
-                                    .and_then(|bytes| bytes.checked_add(meta.logical_bytes as u64));
-                                let next = Representation::from(meta.format);
-                                representation = Some(match representation {
-                                    None => next,
-                                    Some(previous) if previous == next => previous,
-                                    Some(_) => Representation::Mixed,
-                                });
-                            }
-                        } else {
-                            logical_bytes = None;
-                            representation = Some(match representation {
-                                None | Some(Representation::Raw) => Representation::Raw,
-                                Some(_) => Representation::Mixed,
-                            });
-                        }
-                    }
-                }
                 admitted.push((key.clone(), Arc::downgrade(block)));
             }
         }
@@ -958,16 +911,6 @@ impl SsdStore {
             return;
         }
         let len = admitted.len();
-        let observation = Observation::new(
-            CostEstimateKey::new(
-                CostObservationKind::SsdWriteBatch,
-                self.io.cost_resource,
-                representation.unwrap_or(Representation::Unknown),
-                logical_bytes.unwrap_or(stored_bytes),
-                fragments,
-            ),
-            logical_bytes,
-        );
         match self.write_tx.try_reserve() {
             Ok(permit) => {
                 inner
@@ -985,7 +928,7 @@ impl SsdStore {
                         std::time::Instant::now() + io::DEADLINE,
                     ),
                     blocks: admitted,
-                    observation,
+
                     diagnostic: diagnostic.map(Box::new),
                 })));
             }
@@ -1000,7 +943,6 @@ impl SsdStore {
                             .outcome("queue_full"),
                     );
                 }
-                observation.finish(Outcome::Cancelled, None);
             }
         }
     }
@@ -1033,12 +975,16 @@ impl SsdStore {
         }
         let started = std::time::Instant::now();
         let (done_tx, done_rx) = oneshot::channel();
-        let batch = PrefetchBatch::new(leases, done_tx, self.io.cost_resource);
+        let batch = PrefetchBatch {
+            requests: leases,
+            done_tx,
+            reservation: None,
+        };
         if let Err(error) = self.prefetch_tx.send(batch).await {
             core_metrics()
                 .ssd_prefetch_queue_closed
                 .add(error.0.requests.len() as u64, &[]);
-            error.0.observation.finish(Outcome::Failed, None);
+
             return Err(crate::EngineError::Storage(
                 "SSD host reader is closed".into(),
             ));
@@ -1070,12 +1016,16 @@ impl SsdStore {
         let started = std::time::Instant::now();
         let count = leases.len();
         let (done_tx, done_rx) = oneshot::channel();
-        let batch = PrefetchBatch::for_export(leases, done_tx, self.io.cost_resource, reservation);
-        if let Err(error) = self.prefetch_tx.send(batch).await {
+        let batch = PrefetchBatch {
+            requests: leases,
+            done_tx,
+            reservation: Some(reservation),
+        };
+        if self.prefetch_tx.send(batch).await.is_err() {
             core_metrics()
                 .ssd_prefetch_queue_closed
                 .add(count as u64, &[]);
-            error.0.observation.finish(Outcome::Failed, None);
+
             return Err(crate::PeerError::StagingFailed);
         }
         let result = done_rx

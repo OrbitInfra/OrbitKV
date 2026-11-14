@@ -67,7 +67,7 @@ Layout vectors preserve each source generation and express unrequested gaps as
 padding. Fan-out of the same file bytes requires separate vectors. GPU publication
 remains bounded to eight queued/active jobs and one active write per worker;
 there are two in-flight file receipts. Saturation uses ordinary host publication
-for unsubmitted work. Opt-in route costs remain observational.
+for unsubmitted work.
 
 ## Qualification
 
@@ -159,20 +159,10 @@ event means the source lease is ready. Disk reading occurs during GPU restoratio
 preparation; compare end-to-end TTFT and storage counters rather than treating
 preparation time alone as an improvement.
 
-With `ORBITKV_COST_OBSERVATIONS=1`, the `ssd_uring_restore` and
-`ssd_cufile_restore` cost paths measure complete restore totals. Child
-`local_ssd_host_ready`, `ssd_read` and cuFile/copy/codec observations overlap
-these totals;
-do not add them or count their physical bytes twice. Observations remain off by
-default while the earlier SGLang ANS overhead gate is open. The route changes have
-[separate validation](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#ssd-sourcepath-separation-final-evidence);
-the earlier serving and observation matrices are not reruns of this implementation.
-
 Before claiming a performance improvement, compare io_uring and **verified native** GDS on the same
 NVMe mount, model and working set larger than DRAM. Measure TTFT, throughput, CPU
 use, physical/read amplification, staging budgets and lease drain. Keep
-speculative preparation off in the first comparison. Automatic cost-based path
-selection and tuning concurrency/placement remain follow-up work. Complete-group direct writeback is
+speculative preparation off in the first comparison. Replica selection follows the [fixed policy](architecture.md#planning). Complete-group direct writeback is
 implemented; multi-writer GPU assembly remains separate work.
 
 ## Design references

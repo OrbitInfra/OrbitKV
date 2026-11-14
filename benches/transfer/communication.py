@@ -476,7 +476,6 @@ def main(argv: list[str] | None = None) -> None:
                 "LD_LIBRARY_PATH",
                 "CUDA_VISIBLE_DEVICES",
                 "RUST_LOG",
-                "ORBITKV_COST_OBSERVATIONS",
                 "ORBITKV_TRACE_TRANSFERS",
                 "CUDA_MPS_PIPE_DIRECTORY",
                 "CUDA_MPS_LOG_DIRECTORY",

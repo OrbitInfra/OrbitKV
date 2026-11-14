@@ -75,10 +75,8 @@ rejected `mbind` or disallowed memory nodes fail explicitly. CPU affinity alone
 is not placement evidence. Huge pages require reserved hugetlb resources and
 permissions; no silent regular-page fallback is promised.
 
-Keep optional warming, retention and cost-selection experiments off until the
-matching workload qualifies. `ORBITKV_COST_SELECTION=1` requires observations
-and only selects comparable candidates; it is not a general cross-tier optimizer.
-See [planning contracts](architecture.md#planning-and-cost-observations).
+Keep optional warming and retention experiments off until the matching workload
+qualifies. Replica selection uses the [fixed planning policy](architecture.md#planning).
 
 ## Share one Manager
 

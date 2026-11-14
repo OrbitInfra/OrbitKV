@@ -1,0 +1,7 @@
+name: Install pinned CUDA with bounded retry
+description: Alternate mirrors for the CUDA 13.0.2 components, with fatal final failure.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: bash .github/scripts/install-cuda.sh

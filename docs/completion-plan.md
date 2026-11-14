@@ -5,7 +5,7 @@ into both upstream mainlines.** OrbiTE is the only byte mover. Engines own
 scheduling, HBM and native P/D; OrbitKV owns cache identity, storage, discovery,
 grants and resource lifetime. This is the only execution queue.
 
-The current delivery is **M2 PR 2: read-time integrity and persistence recovery bounds**.
+The current delivery is **remove cost observations and cost-based selection**.
 Each coherent PR stops for review before dependent work starts. Research designs
 and simulator campaigns are removed from the maintained tree; Git history retains
 them and external artifacts are untouched. DeepInfer/OrbitInfer and an OrbiTE
@@ -91,7 +91,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 | Membership | **Have:** etcd leases, persistent epochs and Watch fencing. [Membership](distributed-cache.md#local-global-index-and-etcd-metadata). | F/M coordination |
 | Bounded-stale placement directory | **Partial:** covered requester-local inventories and authoritative grants; no external directory API or qualified visibility bound under loss/pressure. [Coverage](distributed-cache.md#owner-inventory-streams). | F metadata service, L coordinator, M master |
 | Router lookup / KV events | **Missing:** diagnostics are not a router API. Target [llm-d's event index](https://github.com/llm-d/llm-d/blob/main/docs/architecture/advanced/kv-management/kv-indexer.md) and [Dynamo's selection interface](https://docs.nvidia.com/dynamo/dev/knowledge-base/modular-components/router/standalone-selection). | L coordination and V KV events; no new inference router |
-| Replica selection | **Partial:** compatible candidates and opt-in cost observations; complete failure-aware selection remains open. [Planning owners](architecture.md#planning-and-cost-observations). | L/F/M replica lookup |
+| Replica selection | **Have:** deterministic, coverage-first [fixed medium and owner ordering](architecture.md#planning). Cost-based selection is removed by design until hardware evidence warrants reconsideration; no blind replay on failure. | L/F/M replica lookup |
 | Node loss | **Partial:** retired epochs are fenced and uncertain owners retained; permanent-loss reclamation/cache HA unqualified. [Retirement](transport.md#peer-departure). | F distributed reuse, M leases/replicas |
 | LRU / TTL / watermarks | **Partial:** LRU/protected retention and SSD admission; data TTL and coordinated high/low watermarks missing. Membership TTL is not data TTL. [Policies](cache-policies.md). | L/F LRU, V LRU/ARC, M watermarks/soft pinning |
 | Exact capacity accounting | **Partial:** local pool/index/query/registration/file and persistence metadata budgets include retained work; shared-tier and fleet reconciliation remain missing. [Budgets](server.md), [persistence](storage-persistence.md#bounds-gc-and-changed-capacity). | L/F/V tier limits, M replica accounting |
@@ -181,9 +181,10 @@ commands and the distinction between fixture bytes and serving are in
    overwrite fences, bounded recovery/GC and full-extent checksum verification
    before the first recovered hit. Default behavior stays cold. See the
    [protocol and crash controls](storage-persistence.md).
-2. **Read-time integrity (current review):** all stored representations, exact-generation
+2. **Read-time integrity (reviewed, #344):** all stored representations, exact-generation
    invalidation, torn-tail prefix recovery and capacity-derived metadata limits.
-   Recovery verification remains in addition to every-read checks.
+   One integrity pass at each tier crossing; sealed immutable DRAM trusts ECC.
+   Recovery verification remains before the first recovered hit.
 3. **Layerwise load/save.**
 4. **TTL/watermark eviction.**
 

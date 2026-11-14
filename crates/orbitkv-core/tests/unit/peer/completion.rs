@@ -221,8 +221,6 @@ impl Fixture {
                 present: true,
                 metadata: None,
             }],
-            stored_bytes: None,
-            representation: orbitkv_state::ReplicaRepresentation::Unknown,
         }
     }
 

@@ -17,7 +17,6 @@ use crate::{
         gpu::{EncodeInput, GpuCodec, HostDecodeInput},
         segment_format,
     },
-    cost::Observation,
     memory::numa::NumaNode,
     metrics::core_metrics,
     storage::Storage,
@@ -80,7 +79,6 @@ pub(super) fn save(
     storage: Option<&Storage>,
     numa: NumaNode,
     groups: &[SaveGroup],
-    observation: &mut Observation,
 ) -> Result<(), EngineError> {
     if !layers.iter().any(|l| {
         l.blocks
@@ -111,7 +109,6 @@ pub(super) fn save(
             numa,
             &group.blocks,
             Some(&group.key),
-            observation,
         )?;
     }
     let remaining: Vec<_> = layers
@@ -128,23 +125,14 @@ pub(super) fn save(
         })
         .collect();
     if !remaining.is_empty() {
-        save_blocks(
-            runtime,
-            codec,
-            layers,
-            storage,
-            numa,
-            &remaining,
-            None,
-            observation,
-        )?;
+        save_blocks(runtime, codec, layers, storage, numa, &remaining, None)?;
     }
     Ok(())
 }
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "Keep existing resource owners and their observation explicit"
+    reason = "Keep source identity and existing resource owners explicit"
 )]
 fn save_blocks(
     runtime: &WorkerRuntime,
@@ -154,7 +142,6 @@ fn save_blocks(
     numa: NumaNode,
     blocks: &[(usize, usize)],
     key: Option<&StateKey>,
-    observation: &mut Observation,
 ) -> Result<(), EngineError> {
     let stream = &runtime.stream;
     let alignment = if storage.is_ssd_enabled() { 512 } else { 1 };
@@ -183,7 +170,6 @@ fn save_blocks(
     let mut offset = 0;
     let mut transferred = 0u64;
     while offset < inputs.len() {
-        observation.submitted();
         // SAFETY: the save task owns every registered source page until completion.
         let batch = unsafe { codec.encode_batch(stream, &inputs[offset..], storage.codec_budget) }
             .map_err(EngineError::Storage)?;
@@ -564,7 +550,6 @@ pub(super) fn restore(
     runtime: &WorkerRuntime,
     layers: &[LayerTransferData],
     budget: usize,
-    observation: &mut Observation,
 ) -> Result<usize, EngineError> {
     let mut inputs = Vec::new();
     for layer in layers {
@@ -695,7 +680,7 @@ pub(super) fn restore(
             if !crate::codec::cpu::decode(input.meta.format, input.source, decoded) {
                 return Err(EngineError::Storage("CPU FP8 decode mismatch".into()));
             }
-            observation.submitted();
+
             copy_payload(
                 runtime,
                 &[(input.target, decoded.as_mut_ptr(), decoded.len())],
@@ -712,7 +697,7 @@ pub(super) fn restore(
                 .iter()
                 .position(|&fallback| fallback)
                 .map_or(inputs.len(), |n| offset + n);
-            observation.submitted();
+
             // SAFETY: sources passed the sealed-replica guard and stay immutable;
             // this task owns their allocations and all disjoint destination pages through drain.
             let count = unsafe {

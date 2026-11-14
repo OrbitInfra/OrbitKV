@@ -50,7 +50,7 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   Resolve their full physical GPU UUIDs; the native owner retains the Manager's
   resolved ordinal for Publish/Restore. Do not reuse the client's ordinal on the
   Manager or convert a UUID into an ordinal with physical `nvidia-smi` ordering.
-  Lifecycle protocol 12 requires matching installed client and Manager artifacts.
+  Lifecycle protocol 14 requires matching installed client and Manager artifacts.
   The selected Torch 2.13 cudaMalloc IPC storage handle has a version/type
   envelope around the native CUDA handle. Keep the validated 66-byte version-3
   cudaMalloc export unchanged through the importer; bare legacy and expandable
@@ -66,8 +66,9 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   latter reads original held counter descriptors and distinguishes current-path
   identity, missing paths and read errors. Neither API authorizes repayment or
   physical reuse; preserve the original failure and quarantine on uncertainty.
-- Client byte movement uses OrbiTE local_copy. Lifecycle 13 removes the selected
-  engine field; clients and Managers upgrade together. Retain exporter owners,
+- Client byte movement uses OrbiTE local_copy. Lifecycle 14 removes the unused
+  cost-completion diagnostic command; the selected-engine field is already gone.
+  Clients and Managers upgrade together. Retain exporter owners,
   registrations and completions until physical drain, with no fallback engine.
 
 Use the gate table in `AGENTS.md`: default Python tests must remain source-only;

@@ -15,9 +15,8 @@ use crate::lifecycle::{
 };
 use crate::{
     BootstrapClient, BootstrapError, CacheProtocolError, CallOptions, Command, CommandCode,
-    CompletionObservationRequest, PublishRequest, QueryBundleResponse,
-    RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest, RestoreRequest, RestoreResponse, RestoreState,
-    StatusCode, TransportClient, TransportError,
+    PublishRequest, QueryBundleResponse, RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest,
+    RestoreRequest, RestoreResponse, RestoreState, StatusCode, TransportClient, TransportError,
 };
 
 #[derive(Debug, Error)]
@@ -311,22 +310,6 @@ impl ChannelClient {
     ) -> Result<(), ChannelError> {
         let payload = request.encode()?;
         self.call_descriptor(CommandCode::CancelQuery, request_id, &payload, 0, None)?;
-        Ok(())
-    }
-
-    pub fn observe_completion(
-        &self,
-        request_id: u64,
-        observation: &CompletionObservationRequest,
-    ) -> Result<(), ChannelError> {
-        let payload = observation.encode()?;
-        self.call_descriptor(
-            CommandCode::ObserveCompletion,
-            request_id,
-            &payload,
-            0,
-            None,
-        )?;
         Ok(())
     }
 

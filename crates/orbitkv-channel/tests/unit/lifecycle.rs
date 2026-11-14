@@ -12,7 +12,7 @@ fn rejects_incompatible_and_unbounded_frames_before_allocating() {
     bytes[16..20].copy_from_slice(&u32::MAX.to_le_bytes());
     assert!(LifecycleHeader::decode(bytes).is_err());
     bytes = header.encode().unwrap();
-    for version in [12_u16, 99] {
+    for version in [13_u16, 99] {
         bytes[4..6].copy_from_slice(&version.to_le_bytes());
         assert!(LifecycleHeader::decode(bytes).is_err());
     }

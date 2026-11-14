@@ -6,7 +6,6 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::EngineError;
 use crate::codec::gpu::{DecodeError, MAX_BATCH_SEGMENTS};
-use crate::cost::{Observation, Outcome};
 use crate::metrics::core_metrics;
 use crate::storage::ssd::GpuFile;
 use crate::storage::ssd::WriteLease;
@@ -77,15 +76,13 @@ struct Job {
     host_completion: Option<Box<dyn LocalCompletion>>,
     started: Instant,
     bytes: usize,
-    observation: Observation,
-    outcome: Outcome,
 }
 
 impl Job {
     fn new(id: u64, command: WorkerCommand) -> Result<Self, EngineError> {
-        let (task, observation) = match command {
-            WorkerCommand::Load(task, observation) => (Task::Load(task), observation),
-            WorkerCommand::Save(task, observation) => (Task::Save(task), observation),
+        let task = match command {
+            WorkerCommand::Load(task) => Task::Load(task),
+            WorkerCommand::Save(task) => Task::Save(task),
             WorkerCommand::Drain(reply) => {
                 let error = "drain cannot be submitted as a file job";
                 let _ = reply.send(Err(error.into()));
@@ -107,13 +104,7 @@ impl Job {
             host_completion: None,
             started: Instant::now(),
             bytes: 0,
-            observation,
-            outcome: Outcome::Completed,
         };
-        if let Task::Load(task) = &mut job.task {
-            task.decode_ready_observation.admitted();
-            task.decode_ready_observation.submitted();
-        }
         let planned = (|| {
             match &mut job.task {
                 Task::Load(task) => {
@@ -189,10 +180,10 @@ impl Job {
         if self.prepared {
             return Ok(());
         }
-        self.observation.admitted();
+
         // The route estimate starts before staging/codec work and ends only
         // at engine-visible completion, just like the io_uring host route.
-        self.observation.submitted();
+
         for (source, copies) in &mut self.checks {
             for (copy, expected) in copies {
                 *expected = source.checksum_range(copy.file_offset, copy.bytes)?;
@@ -280,20 +271,14 @@ impl Job {
         let layers = match &self.task {
             Task::Load(task) => {
                 let layers = &task.layers;
-                self.bytes += super::super::codec::restore(
-                    runtime,
-                    layers,
-                    task.codec_budget,
-                    &mut self.observation,
-                )
-                .inspect_err(|_| core_metrics().storage_codec_decode_failures.add(1, &[]))?;
+                self.bytes += super::super::codec::restore(runtime, layers, task.codec_budget)
+                    .inspect_err(|_| core_metrics().storage_codec_decode_failures.add(1, &[]))?;
                 layers
             }
             Task::Save(task) => &task.layers,
         };
         let (copies, bytes) = build_copy_descs(layers)?;
         if !copies.is_empty() {
-            self.observation.submitted();
             // SAFETY: the pending job retains all layer/grant owners through poll_host.
             self.host_completion = Some(
                 unsafe {
@@ -344,7 +329,6 @@ impl Job {
     }
 
     fn fail(&mut self, error: String) {
-        self.outcome = Outcome::Failed;
         self.error.get_or_insert(error);
         self.work.clear();
         self.encoded.clear();
@@ -357,7 +341,6 @@ impl Job {
         };
         if closed {
             if self.error.is_none() {
-                self.outcome = Outcome::Cancelled;
                 self.error = Some("GPU transfer consumer closed".into());
             }
             self.work.clear();
@@ -451,24 +434,13 @@ impl Job {
             self.host_completion.is_none(),
             "host copy still owns this job"
         );
-        let consumer_closed = match &self.task {
-            Task::Load(task) => task.completion.is_closed(),
-            Task::Save(task) => task.reply.is_closed(),
-        };
-        let outcome = if self.outcome == Outcome::Completed && consumer_closed {
-            Outcome::Cancelled
-        } else {
-            self.outcome
-        };
-        // Physical file bytes belong to EngineFile; this is an inclusive job span.
-        self.observation.finish(outcome, None);
         // Drop unpublished extents before telling the caller it can reuse pages.
         drop(self.writes);
         let result = self
             .error
             .map_or(Ok(()), |error| Err(EngineError::Storage(error)));
         match self.task {
-            Task::Load(task) => finish_load(task, result, self.started, self.bytes, outcome),
+            Task::Load(task) => finish_load(task, result, self.started, self.bytes),
             Task::Save(task) => {
                 drop(task.ssd_admission);
                 task.admission.complete();
@@ -966,7 +938,7 @@ pub(in crate::transfer::worker) fn run(
                 write: work.write,
                 encoded: work.encoded,
             };
-            job.observation.submitted();
+
             let submitted = (|| {
                 let owners = if let Some(input) = work.input {
                     vec![input]

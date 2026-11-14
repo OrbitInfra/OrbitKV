@@ -18,13 +18,9 @@ use super::execute::{
 };
 use super::segment::{PeerIdentity, PeerSegments};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
-use crate::cost::{
-    CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
-    resource_id,
-};
 use crate::memory::AllocateFn;
 use crate::metrics::core_metrics;
-use crate::planning::peer::{FetchPlan, FetchSegment, PeerSource};
+use crate::planning::peer::{FetchPlan, FetchSegment};
 use crate::storage::MaterializedBlocks;
 use crate::transfer_engine::{PeerReadSlice, PeerTransferError, TransferEngine, TransferOptions};
 use orbitkv_catalog::GlobalIndex;
@@ -63,8 +59,6 @@ pub(super) struct AuthorizedSegment {
     pub(super) lock_guard: TransferLockGuard,
     pub(super) authorized_at: Instant,
     query_elapsed: Duration,
-    resource: ExecutionResource,
-    route_observation: Observation,
 }
 
 fn valid_transfer_authorization(
@@ -94,7 +88,7 @@ impl SegmentFetcher for PeerReader {
     async fn authorize_segment(
         &self,
         segment: &FetchSegment,
-        mode: AuthorizationMode,
+        _mode: AuthorizationMode,
         options: TransferOptions,
     ) -> Result<Self::Grant, AuthorizationError> {
         let member = self
@@ -102,52 +96,13 @@ impl SegmentFetcher for PeerReader {
             .lease(&segment.owner)
             .ok_or(AuthorizationError::Rejected)?;
         let remote_addr = &segment.owner.endpoint;
-        // A prepared grant can wait for the preceding READ. That residence time
-        // is not this route's service cost; keep leaf authorization/READ samples
-        // but train the composite route only on demand-authorized segments.
-        let mut route_observation = if mode == AuthorizationMode::Demand && crate::cost::enabled() {
-            Observation::new(segment.cost_estimate_key(), None)
-        } else {
-            Observation::disabled()
-        };
-        route_observation.admitted();
-        route_observation.submitted();
-
         // Query the OrbitKV authority before exposing any physical addresses.
         let query_start = Instant::now();
-        let resource = ExecutionResource::Peer(if crate::cost::enabled() {
-            resource_id(&segment.owner)
-        } else {
-            0
-        });
-        let mut authorization_observation = Observation::new(
-            CostEstimateKey::new(
-                match segment.source {
-                    PeerSource::Dram => CostObservationKind::RemoteAuthorization,
-                    PeerSource::Ssd => CostObservationKind::RemoteSsdAuthorization,
-                },
-                resource,
-                segment.representation,
-                segment.stored_bytes.unwrap_or(0),
-                segment.records.len(),
-            ),
-            None,
-        );
-        authorization_observation.admitted();
-        authorization_observation.submitted();
         let authorization = self
             .completions
             .authorize(segment, self.membership.owner().incarnation, options)
             .await;
-        authorization_observation.finish(
-            match &authorization {
-                Ok(_) => Outcome::Completed,
-                Err(error) if error.code() == tonic::Code::DeadlineExceeded => Outcome::TimedOut,
-                Err(error) if error.code() == tonic::Code::Cancelled => Outcome::Cancelled,
-                Err(_) => Outcome::Failed,
-            },
-            None,
-        );
+
         let query_elapsed = query_start.elapsed();
         core_metrics().remote_stage_duration_seconds.record(
             query_elapsed.as_secs_f64(),
@@ -159,7 +114,6 @@ impl SegmentFetcher for PeerReader {
         let (lock_guard, response) = match authorization {
             Ok(cr) => cr,
             Err(error) if error.code() == tonic::Code::FailedPrecondition => {
-                route_observation.finish(Outcome::Failed, None);
                 core_metrics()
                     .remote_fetch_total
                     .add(1, &[KeyValue::new("status", "rejected")]);
@@ -173,23 +127,12 @@ impl SegmentFetcher for PeerReader {
                     tonic::Code::ResourceExhausted | tonic::Code::Unavailable
                 ) =>
             {
-                route_observation.finish(Outcome::Failed, None);
                 core_metrics()
                     .remote_fetch_total
                     .add(1, &[KeyValue::new("status", "rejected")]);
                 return Err(AuthorizationError::Rejected);
             }
             Err(e) => {
-                route_observation.finish(
-                    if e.code() == tonic::Code::DeadlineExceeded {
-                        Outcome::TimedOut
-                    } else if e.code() == tonic::Code::Cancelled {
-                        Outcome::Cancelled
-                    } else {
-                        Outcome::Failed
-                    },
-                    None,
-                );
                 warn!("Remote query to {remote_addr} failed: {e}");
                 core_metrics()
                     .remote_fetch_total
@@ -203,7 +146,6 @@ impl SegmentFetcher for PeerReader {
         if !valid_transfer_authorization(&response, &segment.records)
             || !self.transfer.accepts_endpoint(&response.transfer_endpoint)
         {
-            route_observation.finish(Outcome::Failed, None);
             warn!("Remote query to {remote_addr} returned invalid transfer authorization");
             drop(lock_guard);
             core_metrics()
@@ -228,8 +170,6 @@ impl SegmentFetcher for PeerReader {
             lock_guard,
             authorized_at: Instant::now(),
             query_elapsed,
-            resource,
-            route_observation,
         })
     }
 
@@ -248,8 +188,6 @@ impl SegmentFetcher for PeerReader {
             lock_guard,
             authorized_at,
             query_elapsed,
-            resource,
-            route_observation,
         } = grant;
         let prepared_wait = authorized_at.elapsed();
         let transfer_start = Instant::now();
@@ -275,13 +213,11 @@ impl SegmentFetcher for PeerReader {
             destination_nodes,
             options,
             lock_guard,
-            resource,
         )
         .await
         {
             Ok(r) => r,
             Err(e) => {
-                route_observation.finish(Outcome::Failed, None);
                 warn!("peer transfer from {remote_addr} failed: {e}");
                 core_metrics()
                     .remote_fetch_total
@@ -289,7 +225,6 @@ impl SegmentFetcher for PeerReader {
                 return Err(());
             }
         };
-        route_observation.finish(Outcome::Completed, Some(total_bytes));
 
         // Retain authorization + payload service timing. Lookahead residence
         // belongs to the pipeline queue, not the READ or its throughput sample.
@@ -420,7 +355,7 @@ type StagedBlock = (Vec<u8>, Vec<StagedSlot>);
 /// Allocate local memory, execute one peer READ batch, and rebuild blocks.
 #[allow(
     clippy::too_many_arguments,
-    reason = "the peer incarnation scopes cost evidence"
+    reason = "source authority and destination backing remain explicit across the blocking READ"
 )]
 async fn fetch_blocks_via_peer(
     transfer: &Arc<TransferEngine>,
@@ -431,7 +366,6 @@ async fn fetch_blocks_via_peer(
     destination_nodes: &[NumaNode],
     options: TransferOptions,
     lock_guard: TransferLockGuard,
-    resource: ExecutionResource,
 ) -> Result<(MaterializedBlocks, TransferTiming), String> {
     if blocks.is_empty() {
         return Ok((Vec::new(), TransferTiming::default()));
@@ -558,34 +492,11 @@ async fn fetch_blocks_via_peer(
     };
 
     let wait_start = Instant::now();
-    let (stored_bytes, logical_bytes, representation) = if crate::cost::enabled() {
-        let (logical_bytes, representation) = transfer_shape(&block_allocs);
-        (
-            all_descs.iter().map(|slice| slice.length as u64).sum(),
-            logical_bytes,
-            representation,
-        )
-    } else {
-        (0, None, Representation::Unknown)
-    };
-    let mut observation = Observation::new(
-        CostEstimateKey::new(
-            CostObservationKind::RemoteRead,
-            resource,
-            representation,
-            logical_bytes.unwrap_or(stored_bytes),
-            all_descs.len(),
-        ),
-        logical_bytes,
-    );
     let transfer = Arc::clone(transfer);
     let corrupt = Arc::clone(&lock_guard.corrupt);
     let (block_allocs, transferred) = lock_guard
         .run_with_buffers(block_allocs, move |blocks| {
-            observation.admitted();
-            observation.submitted();
-            let result = peer
-                .open(options.deadline)
+            peer.open(options.deadline)
                 .map_err(PeerTransferError::from)
                 .and_then(|operation| transfer.read(operation, &all_descs, options))
                 .and_then(|bytes| {
@@ -601,19 +512,7 @@ async fn fetch_blocks_via_peer(
                         }
                     }
                     Ok(bytes)
-                });
-            let (outcome, actual_bytes) = match &result {
-                Ok(bytes) if *bytes as u64 == stored_bytes => {
-                    (Outcome::Completed, Some(*bytes as u64))
-                }
-                Ok(bytes) => (Outcome::Failed, Some(*bytes as u64)),
-                Err(PeerTransferError::Timeout) => (Outcome::TimedOut, None),
-                Err(_) => (Outcome::Failed, None),
-            };
-            // The blocking owner outlives a cancelled caller. A timeout is only
-            // recorded after native drain and never trains completed service.
-            observation.finish(outcome, actual_bytes);
-            result
+                })
         })
         .await
         .map_err(|error| format!("peer READ task failed: {error}"))?;
@@ -636,43 +535,6 @@ async fn fetch_blocks_via_peer(
     timing.rebuild = rebuild_start.elapsed();
 
     Ok((result, timing))
-}
-
-fn transfer_shape(blocks: &[StagedBlock]) -> (Option<u64>, Representation) {
-    let mut logical_bytes = Some(0u64);
-    let mut representation = None;
-    for (_, slots) in blocks {
-        for (raw, _, _) in slots {
-            match &raw.encoding {
-                Some(metadata) => {
-                    if metadata.len() != raw.num_segments() {
-                        logical_bytes = None;
-                    }
-                    for meta in metadata {
-                        logical_bytes = logical_bytes
-                            .and_then(|bytes| bytes.checked_add(meta.logical_bytes as u64));
-                        let next = Representation::from(meta.format);
-                        representation = Some(match representation {
-                            None => next,
-                            Some(previous) if previous == next => previous,
-                            Some(_) => Representation::Mixed,
-                        });
-                    }
-                }
-                None => {
-                    logical_bytes = None;
-                    representation = Some(match representation {
-                        None | Some(Representation::Raw) => Representation::Raw,
-                        Some(_) => Representation::Mixed,
-                    });
-                }
-            }
-        }
-    }
-    (
-        logical_bytes,
-        representation.unwrap_or(Representation::Unknown),
-    )
 }
 
 /// Total staged bytes per NUMA node for one fetch batch. Used to right-size

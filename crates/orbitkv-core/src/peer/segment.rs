@@ -155,10 +155,6 @@ impl PeerSegments {
 }
 
 impl PeerIdentity {
-    pub(super) fn source_id(&self) -> u64 {
-        crate::cost::resource_id(&(&self.identity.endpoint, &self.identity.epoch))
-    }
-
     pub(super) fn open(
         self: &Arc<Self>,
         deadline: Instant,

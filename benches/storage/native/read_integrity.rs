@@ -137,7 +137,6 @@ impl Peer {
             &[NumaNode::UNKNOWN],
             crate::transfer_engine::tests::demand(),
             TransferLockGuard::test_detached(),
-            ExecutionResource::Peer(0),
         )
         .await
         .map(|(blocks, _)| blocks)

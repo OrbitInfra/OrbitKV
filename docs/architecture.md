@@ -73,7 +73,7 @@ boundary. A **source plan** acquires concrete replica evidence and leases. Plans
 | `peer/` | Source grants/exports, remote READ and completion reconciliation |
 | `transfer/` | GPU layouts, bounded copy plans, workers and final ownership fences |
 | `codec/` | Encoding metadata, GPU batches/workspace and CPU fallback |
-| `planning/` / `cost/` | Candidate/target contracts, eligible routes and bounded observations |
+| `planning/` | Candidate/target contracts and deterministic eligible routes |
 
 Keep allocation, lease and physical-drain proof with these existing owners.
 Detailed contracts live in [transport](transport.md), [engine-local Restore](engine-local-restore.md),
@@ -181,30 +181,21 @@ qualify independent fault domains, cache HA or safe crash reclamation. See
 [P2P deployment](p2p.md), [shared-cache gates](fault-qualification.md#shared-cache-gates) and
 [metadata qualification](completion-plan.md#milestones).
 
-## Planning and cost observations
+## Planning
 
-`planning/` selects compatible candidates and completion targets; `cost/` keeps
-bounded observations. Neither changes cache identity, grants or physical drain.
-Unknown cost is not zero. Submitted payload failure never permits blind replay
-through a different medium. A route acquires actual source leases, byte credits
-and destinations before execution.
+`planning/` selects compatible candidates and completion targets. Coverage comes
+first: a route must cover the entire selected hit boundary. Prefix queries choose
+the longest available contiguous boundary; full-prefix queries require every
+requested block. Existing local DRAM prefix holds remain usable while acquiring
+the remainder. Among equally complete candidates the fixed order is **local DRAM
+→ local SSD → peer DRAM → peer SSD**. Peer segments prefer the longest cover,
+then the existing `CacheOwner` ordering (endpoint, incarnation), independently of
+inventory arrival order. The candidate order in `planning/read.rs` is the medium
+policy; it needs no estimates, sampling or tuning flags.
 
-The observer holds at most 512 entries, requires four successful samples and
-expires after five idle minutes. Keys include resource/incarnation, representation,
-size/fragment class and destination shape. Contention drops an update rather than
-blocking execution. Failures and cancelled/timed-out work do not train successes.
-Physical bytes are counted once by their owner; parent restore totals overlap
-copy/file/codec legs and must not be summed. `nic_load_stats` supplies OrbiTE RDMA
-load; missing route timing remains unknown.
-
-`ORBITKV_COST_OBSERVATIONS=1` enables observation/shadow estimates;
-`ORBITKV_COST_SELECTION=1` additionally enables guarded equal-coverage same-medium
-peer selection. `ORBITKV_CROSS_MEDIUM_SELECTION=1` is experimental and requires
-fresh compatible HostReady evidence. All are off by default. Shadow comparisons
-require matching work/resources and a margin exceeding the estimates' errors;
-they are not a statistical guarantee. The separate 128-entry resource cache
-expires after two seconds. A prediction cannot create a lease or drain receipt.
-
-See [metrics](metrics.md#bounded-cost-observations) for clocks and counters and
-[performance](performance.md#qualification-limits) for failed observer guards.
-The [completion plan](completion-plan.md) owns product work and qualification.
+Selection does not authorize bytes. Execution still acquires current source
+grants, leases, byte credits and destinations. Missing size or coverage remains
+unknown, never zero. Replanning after rejected, unsubmitted admission is allowed;
+a submitted failure never permits blind replay through another medium. OrbiTE
+owns transport policy and QoS; OrbitKV passes the operation's intent, priority
+and deadline unchanged. See [transport intent](transport.md#scheduling-metadata).

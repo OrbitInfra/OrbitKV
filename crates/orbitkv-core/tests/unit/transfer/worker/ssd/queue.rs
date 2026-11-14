@@ -101,43 +101,40 @@ async fn raw_gpu_corruption_invalidates_completion_and_retains_the_extent_until_
     let (reply, _reply_rx) = oneshot::channel();
     let mut saving = Job::new(
         1,
-        WorkerCommand::Save(
-            super::super::super::SaveTask {
-                layers: vec![],
-                reply,
-                ssd_writes: vec![super::super::GpuWrite {
-                    lease: write.clone(),
-                    batches: vec![crate::storage::ssd::layout::IoBatch {
+        WorkerCommand::Save(super::super::super::SaveTask {
+            layers: vec![],
+            reply,
+            ssd_writes: vec![super::super::GpuWrite {
+                lease: write.clone(),
+                batches: vec![crate::storage::ssd::layout::IoBatch {
+                    file_offset: write.entry.file_offset,
+                    bytes: write.entry.len as usize,
+                    copies: vec![crate::storage::ssd::layout::CopyRange {
                         file_offset: write.entry.file_offset,
-                        bytes: write.entry.len as usize,
-                        copies: vec![crate::storage::ssd::layout::CopyRange {
-                            file_offset: write.entry.file_offset,
-                            device: source_address,
-                            bytes: 137,
-                        }],
+                        device: source_address,
+                        bytes: 137,
                     }],
                 }],
-                codec_groups: vec![],
-                storage: Some(storage.clone()),
-                numa: crate::memory::numa::NumaNode::UNKNOWN,
-                ssd_admission: None,
-                admission: super::super::super::SaveAdmission::acquire(4096, 137).unwrap(),
-                _instance: Arc::new(
-                    crate::engine::instance::InstanceContext::new(
-                        "crc".into(),
-                        "crc".into(),
-                        1,
-                        1,
-                        false,
-                        None,
-                    )
-                    .unwrap(),
-                ),
-                #[cfg(feature = "tracing")]
-                trace_ctx: None,
-            },
-            Observation::disabled(),
-        ),
+            }],
+            codec_groups: vec![],
+            storage: Some(storage.clone()),
+            numa: crate::memory::numa::NumaNode::UNKNOWN,
+            ssd_admission: None,
+            admission: super::super::super::SaveAdmission::acquire(4096, 137).unwrap(),
+            _instance: Arc::new(
+                crate::engine::instance::InstanceContext::new(
+                    "crc".into(),
+                    "crc".into(),
+                    1,
+                    1,
+                    false,
+                    None,
+                )
+                .unwrap(),
+            ),
+            #[cfg(feature = "tracing")]
+            trace_ctx: None,
+        }),
     )
     .unwrap();
     saving.prepare(&runtime).unwrap();
@@ -214,33 +211,20 @@ fn load_job() -> (Job, oneshot::Receiver<super::super::super::LoadOutcome>) {
     let (completion, receiver) = oneshot::channel();
     let job = Job::new(
         0,
-        WorkerCommand::Load(
-            LoadTask {
-                plan: crate::planning::restore::RestorePlan::new(
-                    0,
-                    std::iter::empty::<(usize, &crate::RestoreSource)>(),
-                )
-                .unwrap(),
-                layers: Vec::new(),
-                completion,
-                reservations: Vec::new(),
-                peer_bytes: 0,
-                codec_budget: 64 << 20,
-                decode_ready_started: Instant::now(),
-                decode_ready_observation: Box::new(Observation::disabled()),
-                decode_admission: None,
-            },
-            Observation::new(
-                crate::cost::CostEstimateKey::new(
-                    crate::cost::CostObservationKind::GpuSsdLoad,
-                    crate::cost::ExecutionResource::Gpu(0),
-                    crate::cost::Representation::Raw,
-                    0,
-                    0,
-                ),
-                Some(0),
-            ),
-        ),
+        WorkerCommand::Load(LoadTask {
+            plan: crate::planning::restore::RestorePlan::new(
+                0,
+                std::iter::empty::<&crate::RestoreSource>(),
+            )
+            .unwrap(),
+            layers: Vec::new(),
+            completion,
+            reservations: Vec::new(),
+            peer_bytes: 0,
+            codec_budget: 64 << 20,
+            decode_ready_started: Instant::now(),
+            decode_admission: None,
+        }),
     )
     .unwrap();
     (job, receiver)
@@ -405,18 +389,16 @@ fn failed_or_canceled_write_cannot_commit_a_later_successful_chunk() {
 }
 
 #[test]
-fn cancellation_observation_waits_for_io_and_preserves_later_failure() {
+fn cancellation_waits_for_io_before_completion() {
     for submitted in [false, true] {
         for failed in [false, true] {
             let (mut job, consumer) = load_job();
-            job.observation.admitted();
             if submitted {
-                job.observation.submitted();
                 job.inflight = 1;
             }
             drop(consumer);
             job.cancel_abandoned();
-            assert_eq!(job.outcome, Outcome::Cancelled);
+            assert_eq!(job.error.as_deref(), Some("GPU transfer consumer closed"));
             assert_eq!(job.is_complete(), !submitted);
             if submitted {
                 job.complete(
@@ -430,16 +412,8 @@ fn cancellation_observation_waits_for_io_and_preserves_later_failure() {
             } else if failed {
                 job.fail("preparation failed".into());
             }
-            assert_eq!(
-                job.outcome,
-                if failed {
-                    Outcome::Failed
-                } else {
-                    Outcome::Cancelled
-                }
-            );
             assert!(job.is_complete());
-            // Only this safe terminal path emits the cancellation/failure sample.
+            // Only the drained path may drop the job and deliver completion.
             job.finish();
         }
     }
@@ -473,7 +447,10 @@ fn canceled_decoder_preparation_is_not_an_io_failure() {
     poll_decode(&decoder, &mut active, &mut jobs);
     assert!(active.is_none());
     assert!(jobs[0].is_complete());
-    assert_eq!(jobs[0].outcome, Outcome::Cancelled);
+    assert_eq!(
+        jobs[0].error.as_deref(),
+        Some("GPU transfer consumer closed")
+    );
     assert!(requests.try_recv().is_err());
     jobs.pop_front().unwrap().finish();
 }

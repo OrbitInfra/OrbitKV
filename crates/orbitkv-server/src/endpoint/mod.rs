@@ -14,15 +14,11 @@ use crate::metric::hll::MultiWindowHllTracker;
 use log::{error, info};
 use orbitkv_channel::{
     ArenaError, BootstrapError, BootstrapServer, BootstrapSession, Command, CommandCode,
-    CompletionObservationRequest, DeferredResponse, PublishRequest as ChannelPublishRequest,
-    QueryBundleResponse, QueryOutcomeCode, RESPONSE_FLAG_REQUEST_CONSUMED,
-    ReleaseRequest as ChannelReleaseRequest, Response, RestoreRequest, StatusCode, TransportError,
-    TransportServer,
+    DeferredResponse, PublishRequest as ChannelPublishRequest, QueryBundleResponse,
+    QueryOutcomeCode, RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest as ChannelReleaseRequest,
+    Response, RestoreRequest, StatusCode, TransportError, TransportServer,
 };
-use orbitkv_core::{
-    CompletionAdmission, CompletionIntent, CompletionObservation, CompletionOutcome,
-    CompletionResourceEvidence, CompletionRoute, EngineError, OrbitKVEngine,
-};
+use orbitkv_core::{EngineError, OrbitKVEngine};
 use thiserror::Error;
 use tokio::runtime::Handle;
 use tokio::sync::{Notify, watch};
@@ -541,9 +537,6 @@ fn dispatch(
         CommandCode::Release => {
             response = dispatch_release(command, bootstrap, sessions, engine);
         }
-        CommandCode::ObserveCompletion => {
-            response = dispatch_completion_observation(command, bootstrap, sessions, engine);
-        }
         CommandCode::Publish => {
             return error_response(
                 response,
@@ -605,70 +598,6 @@ fn dispatch_shards(
         .arena()
         .write_response(command.descriptor, &payload)
     {
-        Ok(descriptor) => response.descriptor = descriptor,
-        Err(error) => return error_response(response, arena_error_status(&error), &error),
-    }
-    response
-}
-
-fn dispatch_completion_observation(
-    command: Command,
-    bootstrap: &BootstrapServer,
-    sessions: &mut HashMap<u64, BootstrapSession>,
-    engine: &OrbitKVEngine,
-) -> Response {
-    let mut response = Response::ok(command);
-    response.value1 = 0;
-    let payload = match consume_descriptor(command, bootstrap, sessions, &mut response) {
-        Ok(payload) => payload,
-        Err(response) => return response,
-    };
-    let request = match CompletionObservationRequest::decode(&payload) {
-        Ok(request) => request,
-        Err(error) => return error_response(response, StatusCode::Invalid, &error),
-    };
-    let observation = CompletionObservation {
-        instance_id: request.instance_id,
-        destination_device_id: request.destination_device_id,
-        source_endpoint: request.source_endpoint,
-        transfer_generation: request.transfer_generation,
-        intent: match request.intent {
-            orbitkv_channel::CompletionIntent::HostReady => CompletionIntent::HostReady,
-            orbitkv_channel::CompletionIntent::EngineRestore => CompletionIntent::EngineRestore,
-            orbitkv_channel::CompletionIntent::SourceRelease => CompletionIntent::SourceRelease,
-        },
-        route: match request.route {
-            orbitkv_channel::CompletionRoute::PrefillToDecodeHandoff => {
-                CompletionRoute::PrefillToDecodeHandoff
-            }
-        },
-        representation: request.representation,
-        logical_bytes: request.logical_bytes,
-        wire_bytes: request.wire_bytes,
-        fragment_count: request.fragment_count,
-        elapsed: Duration::from_nanos(request.elapsed_ns),
-        resources: CompletionResourceEvidence {
-            decode_page_bytes: request.decode_page_bytes,
-            queue_depth: request.handoff_queue_depth,
-            queue_parallelism: request.handoff_queue_parallelism,
-            transfer_inflight_bytes: request.transfer_inflight_bytes,
-            transfer_bandwidth_bytes_per_second: request.transfer_bandwidth_bytes_per_second,
-        },
-        admission: match request.admission {
-            orbitkv_channel::CompletionAdmission::Admitted => CompletionAdmission::Admitted,
-            orbitkv_channel::CompletionAdmission::Rejected => CompletionAdmission::Rejected,
-        },
-        outcome: match request.outcome {
-            orbitkv_channel::CompletionOutcome::Completed => CompletionOutcome::Completed,
-            orbitkv_channel::CompletionOutcome::Failed => CompletionOutcome::Failed,
-            orbitkv_channel::CompletionOutcome::Cancelled => CompletionOutcome::Cancelled,
-            orbitkv_channel::CompletionOutcome::TimedOut => CompletionOutcome::TimedOut,
-        },
-    };
-    if let Err(error) = engine.observe_completion(observation) {
-        return error_response(response, engine_error_status(&error), &error);
-    }
-    match bootstrap.arena().write_response(command.descriptor, &[]) {
         Ok(descriptor) => response.descriptor = descriptor,
         Err(error) => return error_response(response, arena_error_status(&error), &error),
     }

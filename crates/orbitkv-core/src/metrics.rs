@@ -27,23 +27,6 @@ pub(crate) static CACHE_RESIDENCE_REASON_CLEANUP: LazyLock<[KeyValue; 1]> =
     LazyLock::new(|| [KeyValue::new("reason", "cleanup")]);
 
 pub(crate) struct CoreMetrics {
-    pub cost_operations: Counter<u64>,
-    pub cost_logical_bytes: Counter<u64>,
-    pub cost_logical_unknown: Counter<u64>,
-    pub cost_io_bytes: Counter<u64>,
-    pub cost_io_unknown: Counter<u64>,
-    pub cost_stage_seconds: Histogram<f64>,
-    pub cost_prediction_absolute_error_seconds: Histogram<f64>,
-    pub cost_estimate_evictions: Counter<u64>,
-    pub cost_estimate_dropped: Counter<u64>,
-    pub cost_shadow_candidates: Counter<u64>,
-    pub cost_shadow_prediction_seconds: Histogram<f64>,
-    pub cost_shadow_decisions: Counter<u64>,
-    pub cost_route_decisions: Counter<u64>,
-    pub cost_estimate_samples: Histogram<u64>,
-    pub cost_estimate_age_seconds: Histogram<f64>,
-    pub cost_estimate_error_seconds: Histogram<f64>,
-
     // Pinned pool (allocator-level)
     pub pool_capacity_bytes: UpDownCounter<i64>,
     pub pool_used_bytes: UpDownCounter<i64>,
@@ -258,81 +241,12 @@ pub(crate) fn record_cache_tier_block_requests(ram: usize, remote: usize, ssd: u
     }
 }
 
-fn cost_seconds_boundaries() -> Vec<f64> {
-    vec![
-        0.000_001, 0.000_005, 0.000_01, 0.000_025, 0.000_05, 0.000_1, 0.000_25, 0.000_5, 0.001,
-        0.002_5, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 300.0,
-    ]
-}
-
 pub(crate) fn core_metrics() -> &'static CoreMetrics {
     static METRICS: OnceLock<CoreMetrics> = OnceLock::new();
     METRICS.get_or_init(|| {
         let meter = init_meter();
 
         let metrics = CoreMetrics {
-            cost_operations: meter.u64_counter("orbitkv_cost_operations")
-                .with_description("Batch outcomes; abandoned means no terminal service evidence")
-                .build(),
-            cost_logical_bytes: meter.u64_counter("orbitkv_cost_logical_bytes")
-                .with_description("Logical bytes attempted within each path boundary; nested paths must not be summed")
-                .with_unit("bytes")
-                .build(),
-            cost_logical_unknown: meter.u64_counter("orbitkv_cost_logical_unknown")
-                .with_description("Operations whose unpadded logical byte count is unavailable at this owner")
-                .build(),
-            cost_io_bytes: meter.u64_counter("orbitkv_cost_io_bytes")
-                .with_description("Known physical bytes completed at the I/O owner, including short I/O")
-                .with_unit("bytes")
-                .build(),
-            cost_io_unknown: meter.u64_counter("orbitkv_cost_io_unknown")
-                .with_description("Operations whose physical byte count is unknown or belongs to a child owner")
-                .build(),
-            cost_stage_seconds: meter.f64_histogram("orbitkv_cost_stage")
-                .with_description("Host-observed queue, admission, completed service and inclusive total; never device time")
-                .with_unit("s")
-                .with_boundaries(cost_seconds_boundaries())
-                .build(),
-            cost_prediction_absolute_error_seconds: meter.f64_histogram("orbitkv_cost_prediction_absolute_error")
-                .with_description("Absolute prediction error: operation service or complete restore-route latency")
-                .with_unit("s")
-                .with_boundaries(cost_seconds_boundaries())
-                .build(),
-            cost_estimate_evictions: meter.u64_counter("orbitkv_cost_estimate_evictions")
-                .with_description("Cost entries evicted at the fixed 512-entry limit")
-                .build(),
-            cost_estimate_dropped: meter.u64_counter("orbitkv_cost_estimate_dropped")
-                .with_description("Estimation or shadow updates skipped on contention")
-                .build(),
-            cost_shadow_candidates: meter.u64_counter("orbitkv_cost_shadow_candidates")
-                .with_description("Feasible metadata-backed candidate predictions; no alternative execution")
-                .build(),
-            cost_shadow_prediction_seconds: meter.f64_histogram("orbitkv_cost_shadow_prediction")
-                .with_description("Predicted host-observed operation service or complete restore-route latency")
-                .with_unit("s")
-                .with_boundaries(cost_seconds_boundaries())
-                .build(),
-            cost_shadow_decisions: meter.u64_counter("orbitkv_cost_shadow_decisions")
-                .with_description("Shadow agreement with compatibility, empirical-error and gain-margin checks; never selects execution")
-                .build(),
-            cost_route_decisions: meter.u64_counter("orbitkv_cost_route_decisions")
-                .with_description("Opt-in execution choices among fresh compatible complete-route estimates")
-                .build(),
-            cost_estimate_samples: meter.u64_histogram("orbitkv_cost_estimate_samples")
-                .with_description("Completed samples behind shadow predictions")
-                .with_boundaries(vec![1.0, 4.0, 16.0, 64.0, 256.0, 1024.0, 4096.0])
-                .build(),
-            cost_estimate_age_seconds: meter.f64_histogram("orbitkv_cost_estimate_age")
-                .with_description("Age of the last completed sample behind a shadow prediction")
-                .with_unit("s")
-                .with_boundaries(cost_seconds_boundaries())
-                .build(),
-            cost_estimate_error_seconds: meter.f64_histogram("orbitkv_cost_estimate_error")
-                .with_description("EWMA absolute fitting error behind a shadow prediction")
-                .with_unit("s")
-                .with_boundaries(cost_seconds_boundaries())
-                .build(),
-
             query_reserved_bytes: meter
                 .i64_up_down_counter("orbitkv_query_reserved_bytes")
                 .with_unit("bytes")

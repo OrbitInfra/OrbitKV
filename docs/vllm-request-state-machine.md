@@ -74,7 +74,7 @@ This is an ownership diagram, not an additional network protocol. An abandoned
 preparation can finish without another client poll; completion then releases its
 resources. Identical backing reads may share preparation, but separate engine
 GPU destinations still require their own restores. See
-[query budgets and demand planning](architecture.md#planning-and-cost-observations).
+[query budgets and demand planning](architecture.md#planning).
 
 ## Restore completion is not compute admission
 

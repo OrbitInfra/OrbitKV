@@ -33,53 +33,7 @@ The associated warning is limited to once per minute.
 after failed drain, including partial registration. Full backing remains charged
 against 1,024 pools / 1 TiB. These counters do not authorize reclamation.
 
-### Bounded cost observations
-
-Read [cost boundaries](architecture.md#planning-and-cost-observations) before combining
-samples. Fixed path/outcome/stage labels exclude device, peer, request and state
-identities. Internal resource keys retain those distinctions without metric
-cardinality growth.
-
-| Metric family | Labels / meaning |
-| --- | --- |
-| `orbitkv_cost_operations_total` | `path`, `outcome`: completed, failed, cancelled, timed_out or abandoned; externally reported handoffs also carry bounded `admission` |
-| `orbitkv_cost_stage_seconds` | `path`, `outcome`, `stage`: queue, admission, completed service or inclusive total; externally reported handoffs also carry bounded `admission`; microsecond-to-second buckets |
-| `orbitkv_cost_logical_bytes_total` / `orbitkv_cost_logical_unknown_total` | Known attempted logical bytes versus unavailable unpadded sizes; do not sum nested owners |
-| `orbitkv_cost_io_bytes_total` / `orbitkv_cost_io_unknown_total` | Known physical bytes, including short I/O, versus unknown counts; same path/outcome labels |
-| `orbitkv_cost_prediction_absolute_error_seconds` | Successful observation error against the prediction captured before submission: service for individual operations, enqueue-to-terminal total for complete SSD restore and HostReady routes |
-| `orbitkv_cost_shadow_candidates_total` / `orbitkv_cost_shadow_prediction_seconds` | Feasible raw-copy or SSD restore-route candidates, labelled by path and known/unknown evidence |
-| `orbitkv_cost_shadow_decisions_total` | agree, different, within_margin, incomparable or unknown; execution never follows this result |
-| `orbitkv_cost_route_decisions_total` | `decision` is `default`, `selected`, `within_margin`, `unknown`, `incomparable` or `contention`; `scope` distinguishes `peer_owner` from `cross_medium` |
-| `orbitkv_cost_estimate_samples`, `orbitkv_cost_estimate_age_seconds`, `orbitkv_cost_estimate_error_seconds` | Count, sample age and EWMA absolute error supporting known shadow predictions |
-| `orbitkv_cost_estimate_evictions_total` / `orbitkv_cost_estimate_dropped_total` | Fixed-capacity eviction and skipped updates on estimator contention |
-
-Composite SSD Restore and HostReady totals overlap their child copy/codec/file
-operations. **Do not sum parent/child timers or bytes.** Logical sizes exclude
-padding only when known; physical bytes are counted at the I/O owner, including
-short I/O. Failed/unknown work cannot train a success estimate.
-
-| Path | Start/end and interpretation |
-| --- | --- |
-| `ssd_uring_restore`, `ssd_cufile_restore` | Enqueue to GPU-terminal Restore, including queues and materialization/decode |
-| `remote_authorization`, `remote_ssd_authorization` | Source grant; SSD includes source preparation |
-| `remote_read` | OrbiTE payload READ owner |
-| `peer_dram_host_ready`, `peer_ssd_host_ready`, `local_ssd_host_ready` | Whole host preparation through reconstruction; comparable only with equal coverage/shape |
-| `cache_restore` | Manager preparation after page allocation to GPU completion |
-| `engine_local_restore` | Native caller to local drain, accepted once per operation; not interchangeable with Manager or P/D starts |
-| `prefill_to_decode_handoff` | Decode-owned enqueue to physical drain; only admitted completed reports train |
-
-Engine-local collection needs `ORBITKV_COST_OBSERVATIONS=1` in both processes.
-Complete-route shapes include destination GPU, representation, source stores and
-mixed DRAM presence. Resource snapshots occupy a separate 128-entry/two-second
-cache; they are not labels or reservations. OrbiTE owns coalescing, so
-`dma_ranges=0` means unavailable. Historical TENT counts are not comparable.
-
-Observation/shadow is off by default. `ORBITKV_COST_SELECTION=1` additionally
-allows guarded same-medium peer choices; `ORBITKV_CROSS_MEDIUM_SELECTION=1`
-requires both preceding flags for experimental cross-medium HostReady choice.
-The [original overhead failure](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#p41-final-evidence)
-remains unchanged. No prediction authorizes a source or selects an unobserved
-route. The 5% switching margin is empirical, not statistical confidence.
+### Transfer diagnostics
 
 `ORBITKV_TRACE_TRANSFERS=1` emits completion and consumer-observation records.
 A positive `ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT` additionally enables channel/storage
@@ -101,7 +55,7 @@ verified bytes, elapsed seconds and bounded drop reasons.
 `orbitkv_ssd_recovery_drops_total{reason=...}` counts rejected metadata sets or
 individual extents; a whole cold-start count is not a count of lost entries.
 `orbitkv_ssd_recovery_seconds` includes metadata parsing and the background CRC
-pass. Recovery reads also enter ordinary engine I/O observations. See the
+pass. Recovery reads also enter ordinary SSD I/O counters. See the
 [recovery bounds and integrity limits](storage-persistence.md).
 
 | Instrument | Meaning |

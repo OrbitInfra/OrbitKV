@@ -259,8 +259,7 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
         };
         worker
             .submit_load(LoadTask {
-                plan: crate::planning::restore::RestorePlan::new(0, [(0, &planned_source)])
-                    .unwrap(),
+                plan: crate::planning::restore::RestorePlan::new(0, [&planned_source]).unwrap(),
                 layers: vec![LayerTransferData {
                     layer_name: "attention".into(),
                     layout: layout.clone(),
@@ -279,7 +278,6 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
                 peer_bytes: 0,
                 codec_budget: CODEC_BUDGET,
                 decode_ready_started: std::time::Instant::now(),
-                decode_ready_observation: Box::new(crate::cost::Observation::disabled()),
                 decode_admission: None,
             })
             .unwrap();
