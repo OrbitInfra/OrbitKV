@@ -126,6 +126,12 @@ query execution and storage. A granted source is held until authoritative drain,
 even if the caller times out or drops its Python handle. Storage policy cannot
 release a physically active allocation.
 
+Optional DRAM high/low watermarks use the same Storage allocator and replacement
+classes. The Manager schedules bounded passes in its existing maintenance task;
+physical pool usage, including held and staging allocations, controls hysteresis.
+Inventory removal does not establish memory release. These soft targets add no
+independent cache queue or lease expiry. See [cache policies](cache-policies.md).
+
 ### Transfer and backing domains
 
 Raw DRAM Restore executes in the engine through independently registered shared

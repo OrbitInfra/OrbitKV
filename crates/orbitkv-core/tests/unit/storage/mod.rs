@@ -25,6 +25,198 @@ fn make_engine() -> Arc<Storage> {
     Storage::new_with_config(1 << 20, false, EngineConfig::default(), &[]).unwrap()
 }
 
+#[test]
+fn invalid_memory_watermarks_fail_before_pinned_allocation() {
+    for (low, high) in [
+        (Some(50), None),
+        (None, Some(80)),
+        (Some(0), Some(0)),
+        (Some(80), Some(80)),
+        (Some(90), Some(80)),
+        (Some(100), Some(101)),
+        (Some(254), Some(255)),
+    ] {
+        let result = Storage::new_with_config(
+            4096,
+            false,
+            EngineConfig {
+                cache_low_watermark_percent: low,
+                cache_high_watermark_percent: high,
+                ..EngineConfig::default()
+            },
+            &[],
+        );
+        let Err(error) = result else {
+            panic!("invalid watermarks accepted: {low:?}, {high:?}");
+        };
+        assert!(error.contains("0 <= low < high <= 100"), "{error}");
+    }
+}
+
+fn insert_allocated_resident(storage: &Storage, id: u32, bytes: usize) -> StateKey {
+    use crate::block::{RawBlock, Segment};
+
+    let allocation = storage
+        .allocate(NonZeroU64::new(bytes as u64).unwrap(), None)
+        .unwrap();
+    let slot = RawBlock::single_segment(
+        Segment::new(allocation.as_non_null(), bytes, allocation).unwrap(),
+    );
+    let key = StateKey::new("watermarks".into(), id.to_le_bytes().to_vec());
+    storage.dram.batch_insert(vec![(
+        key.clone(),
+        Arc::new(SealedBlock::from_slots(vec![(slot, NumaNode::UNKNOWN)])),
+    )]);
+    key
+}
+
+#[tokio::test]
+async fn memory_watermarks_preserve_held_residents_and_finish_below_high() {
+    const PAGE: usize = 4096;
+    for enabled in [false, true] {
+        let storage = Storage::new_with_config(
+            16 * PAGE,
+            false,
+            EngineConfig {
+                cache_low_watermark_percent: enabled.then_some(50),
+                cache_high_watermark_percent: enabled.then_some(75),
+                hint_value_size_bytes: Some(PAGE),
+                ..EngineConfig::default()
+            },
+            &[],
+        )
+        .unwrap();
+        let keys: Vec<_> = (0..12)
+            .map(|id| insert_allocated_resident(&storage, id, PAGE))
+            .collect();
+        let held = storage.dram.get_blocks_aligned(&keys[2..]);
+        assert_eq!(storage.allocator.usage().0, (12 * PAGE) as u64);
+        let first = storage.maintain_memory_cache();
+        if !enabled {
+            assert_eq!(first, MemoryCacheCleanupStats::default());
+            assert!(
+                storage
+                    .dram
+                    .contains_keys(&keys)
+                    .into_iter()
+                    .all(|present| present)
+            );
+            continue;
+        }
+        assert_eq!(first.evicted_blocks, 2);
+        assert_eq!(first.reclaimed_bytes, (2 * PAGE) as u64);
+        assert_eq!(storage.allocator.usage().0, (10 * PAGE) as u64);
+        assert_eq!(
+            storage.maintain_memory_cache(),
+            MemoryCacheCleanupStats::default()
+        );
+        assert!(
+            storage
+                .dram
+                .contains_keys(&keys[2..])
+                .into_iter()
+                .all(|present| present)
+        );
+        drop(held);
+        let second = storage.maintain_memory_cache();
+        assert_eq!(
+            second.evicted_blocks, 2,
+            "continue below high until the low target"
+        );
+        assert_eq!(storage.allocator.usage().0, (8 * PAGE) as u64);
+        for id in 12..15 {
+            insert_allocated_resident(&storage, id, PAGE);
+        }
+        assert_eq!(storage.allocator.usage().0, (11 * PAGE) as u64);
+        assert_eq!(
+            storage.maintain_memory_cache(),
+            MemoryCacheCleanupStats::default()
+        );
+        insert_allocated_resident(&storage, 15, PAGE);
+        assert_eq!(storage.maintain_memory_cache().evicted_blocks, 4);
+        assert_eq!(storage.allocator.usage().0, (8 * PAGE) as u64);
+    }
+}
+
+#[tokio::test]
+async fn memory_watermarks_count_allocations_retained_outside_residency() {
+    use crate::block::{RawBlock, Segment};
+
+    const PAGE: usize = 4096;
+    let storage = Storage::new_with_config(
+        4 * PAGE,
+        false,
+        EngineConfig {
+            cache_low_watermark_percent: Some(25),
+            cache_high_watermark_percent: Some(50),
+            hint_value_size_bytes: Some(PAGE),
+            ..EngineConfig::default()
+        },
+        &[],
+    )
+    .unwrap();
+    let held = storage
+        .allocate(NonZeroU64::new((2 * PAGE) as u64).unwrap(), None)
+        .unwrap();
+    let slot =
+        RawBlock::single_segment(Segment::new(held.as_non_null(), 2 * PAGE, held.clone()).unwrap());
+    storage.dram.batch_insert(vec![(
+        StateKey::new("watermarks".into(), vec![0]),
+        Arc::new(SealedBlock::from_slots(vec![(slot, NumaNode::UNKNOWN)])),
+    )]);
+    let other = insert_allocated_resident(&storage, 1, PAGE);
+    let first = storage.maintain_memory_cache();
+    assert_eq!(first.evicted_blocks, 1);
+    assert_eq!(first.evicted_bytes, (2 * PAGE) as u64);
+    assert_eq!(
+        first.reclaimed_bytes, 0,
+        "removing a cache entry is not physical release"
+    );
+    assert_eq!(storage.allocator.usage().0, (3 * PAGE) as u64);
+    assert_eq!(storage.dram.contains_keys(&[other]), vec![true]);
+    assert_eq!(storage.maintain_memory_cache().evicted_blocks, 1);
+    assert_eq!(storage.allocator.usage().0, (2 * PAGE) as u64);
+    assert_eq!(
+        storage.maintain_memory_cache(),
+        MemoryCacheCleanupStats::default()
+    );
+    drop(held);
+    assert_eq!(storage.allocator.usage().0, 0);
+    assert_eq!(
+        storage.maintain_memory_cache(),
+        MemoryCacheCleanupStats::default()
+    );
+    insert_allocated_resident(&storage, 2, PAGE);
+    assert_eq!(
+        storage.maintain_memory_cache(),
+        MemoryCacheCleanupStats::default()
+    );
+}
+
+#[tokio::test]
+async fn memory_watermarks_bound_each_pass_and_resume_the_cycle() {
+    const PAGE: usize = 4096;
+    let storage = Storage::new_with_config(
+        1024 * PAGE,
+        false,
+        EngineConfig {
+            cache_low_watermark_percent: Some(0),
+            cache_high_watermark_percent: Some(50),
+            hint_value_size_bytes: Some(PAGE),
+            ..EngineConfig::default()
+        },
+        &[],
+    )
+    .unwrap();
+    for id in 0..768 {
+        insert_allocated_resident(&storage, id, PAGE);
+    }
+    assert_eq!(storage.maintain_memory_cache().evicted_blocks, 512);
+    assert_eq!(storage.allocator.usage().0, (256 * PAGE) as u64);
+    assert_eq!(storage.maintain_memory_cache().evicted_blocks, 256);
+    assert_eq!(storage.allocator.usage().0, 0);
+}
+
 #[tokio::test]
 async fn filter_hashes_not_in_cache_inplace_handles_empty_input() {
     let storage = make_engine();

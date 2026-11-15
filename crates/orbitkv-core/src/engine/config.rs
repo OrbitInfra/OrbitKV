@@ -36,6 +36,12 @@ pub struct EngineConfig {
     /// Maximum percent of host capacity in demand-promoted cache entries.
     /// Zero keeps the ordinary LRU classes; positive values enable segmented LRU.
     pub cache_protected_percent: u8,
+    /// Start background DRAM eviction at this percentage of actual pinned capacity.
+    /// Both watermarks must be supplied; omission keeps allocation-pressure eviction only.
+    pub cache_high_watermark_percent: Option<u8>,
+    /// Stop an active eviction cycle at this percentage, strictly below the high watermark.
+    /// Leased and transfer-owned memory remains charged and may prevent reaching this target.
+    pub cache_low_watermark_percent: Option<u8>,
     /// Optional hint for expected value size in bytes (tunes cache + allocator granularity).
     pub hint_value_size_bytes: Option<usize>,
     /// Optional SSD cache for sealed blocks (single-node, FIFO).
@@ -72,6 +78,8 @@ impl Default for EngineConfig {
             query_instance_budget_bytes: None,
             enable_lfu_admission: false,
             cache_protected_percent: 0,
+            cache_high_watermark_percent: None,
+            cache_low_watermark_percent: None,
             hint_value_size_bytes: None,
             ssd_cache_config: None,
             codec: crate::StorageCodec::None,

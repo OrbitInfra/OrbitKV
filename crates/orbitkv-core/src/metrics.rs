@@ -23,6 +23,8 @@ pub(crate) static CACHE_CLASS_PROBATIONARY: LazyLock<[KeyValue; 1]> =
     LazyLock::new(|| [KeyValue::new("class", "probationary")]);
 pub(crate) static CACHE_RESIDENCE_REASON_PRESSURE: LazyLock<[KeyValue; 1]> =
     LazyLock::new(|| [KeyValue::new("reason", "pressure")]);
+pub(crate) static CACHE_RESIDENCE_REASON_WATERMARK: LazyLock<[KeyValue; 1]> =
+    LazyLock::new(|| [KeyValue::new("reason", "watermark")]);
 pub(crate) static CACHE_RESIDENCE_REASON_CLEANUP: LazyLock<[KeyValue; 1]> =
     LazyLock::new(|| [KeyValue::new("reason", "cleanup")]);
 

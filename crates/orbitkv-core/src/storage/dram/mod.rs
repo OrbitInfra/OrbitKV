@@ -15,7 +15,8 @@ use crate::storage::inventory::ResidencyInventory;
 use crate::block::{SealedBlock, StateKey};
 use crate::metrics::{
     CACHE_CLASS_PROBATIONARY, CACHE_CLASS_RECLAIMABLE, CACHE_CLASS_RETAINED,
-    CACHE_RESIDENCE_REASON_CLEANUP, CACHE_RESIDENCE_REASON_PRESSURE, core_metrics,
+    CACHE_RESIDENCE_REASON_CLEANUP, CACHE_RESIDENCE_REASON_PRESSURE,
+    CACHE_RESIDENCE_REASON_WATERMARK, core_metrics,
 };
 use crate::storage::dram::policy::{CacheInsertOutcome, TinyLfuCache};
 
@@ -51,6 +52,12 @@ enum ResidentClass {
     Reclaimable,
     Probationary,
     Retained,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ReclaimReason {
+    Pressure,
+    Watermark,
 }
 
 impl DramStore {
@@ -321,6 +328,7 @@ impl DramStore {
         &self,
         batch_size: usize,
         target_bytes: u64,
+        reason: ReclaimReason,
     ) -> Vec<(StateKey, Arc<SealedBlock>)> {
         let removed = {
             let mut inner = self.inner.lock();
@@ -331,6 +339,10 @@ impl DramStore {
                 ResidentClass::Probationary,
                 ResidentClass::Retained,
             ] {
+                let mut scans_left = match reason {
+                    ReclaimReason::Pressure => usize::MAX,
+                    ReclaimReason::Watermark => batch_size,
+                };
                 if let Err(error) = remove_lru_batch_from_class(
                     &mut inner,
                     class,
@@ -338,6 +350,7 @@ impl DramStore {
                     target_bytes,
                     &mut removed,
                     &mut removed_bytes,
+                    &mut scans_left,
                 ) {
                     log::error!("DRAM eviction failed: {error}");
                     break;
@@ -345,7 +358,11 @@ impl DramStore {
             }
             removed
         };
-        record_residence_durations(removed, &*CACHE_RESIDENCE_REASON_PRESSURE)
+        let attributes = match reason {
+            ReclaimReason::Pressure => &*CACHE_RESIDENCE_REASON_PRESSURE,
+            ReclaimReason::Watermark => &*CACHE_RESIDENCE_REASON_WATERMARK,
+        };
+        record_residence_durations(removed, attributes)
     }
 
     pub(crate) fn remove_all(&self) -> Vec<(StateKey, Arc<SealedBlock>)> {
@@ -618,12 +635,14 @@ fn remove_lru_batch_from_class(
     target_bytes: u64,
     removed: &mut Vec<RemovedResident>,
     removed_bytes: &mut u64,
+    scans_left: &mut usize,
 ) -> Result<(), String> {
     let candidates = class_lru(inner, class).len();
     for _ in 0..candidates {
-        if removed.len() == batch_size || *removed_bytes >= target_bytes {
+        if removed.len() == batch_size || *removed_bytes >= target_bytes || *scans_left == 0 {
             break;
         }
+        *scans_left -= 1;
 
         let Some(key) = class_lru(inner, class)
             .iter()

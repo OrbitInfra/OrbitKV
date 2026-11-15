@@ -5,6 +5,7 @@ pub(crate) mod ssd;
 
 use bytesize::ByteSize;
 use log::{debug, info};
+use parking_lot::Mutex;
 use std::collections::HashSet;
 use std::num::NonZeroU64;
 use std::sync::{Arc, Weak};
@@ -22,7 +23,7 @@ use crate::transfer_engine::{TransferEngine, create_transfer_engine};
 use orbitkv_catalog::GlobalIndex;
 
 use crate::query::read::ReadCoordinator;
-use dram::DramStore;
+use dram::{DramStore, ReclaimReason};
 use publish::PublishQueue;
 
 pub(crate) type MaterializedBlocks = Vec<(StateKey, Arc<SealedBlock>)>;
@@ -47,6 +48,8 @@ pub(crate) struct Storage {
     pub(crate) ssd_store: Option<Arc<SsdStore>>,
     peer_transport: Arc<TransferEngine>,
     blockwise_alloc: bool,
+    memory_watermarks: Option<(u64, u64)>,
+    watermark_reclaiming: Mutex<bool>,
     pub(crate) global_index: Option<Arc<GlobalIndex>>,
     pub(crate) inventory: Option<Arc<inventory::ResidencyInventory>>,
     pub(crate) exports: crate::peer::export::PeerExports,
@@ -69,6 +72,18 @@ impl Storage {
         if config.cache_protected_percent > 100 {
             return Err("cache protected percent must be between 0 and 100".into());
         }
+        let watermarks = match (
+            config.cache_low_watermark_percent,
+            config.cache_high_watermark_percent,
+        ) {
+            (None, None) => None,
+            (Some(low), Some(high)) if low < high && high <= 100 => Some((low, high)),
+            _ => {
+                return Err(
+                    "cache watermarks require both percentages with 0 <= low < high <= 100".into(),
+                );
+            }
+        };
         let value_size_hint = config.hint_value_size_bytes.filter(|size| *size > 0);
         let unit_hint = value_size_hint.and_then(|size| NonZeroU64::new(size as u64));
         let ssd_cache_config = config.ssd_cache_config;
@@ -116,6 +131,13 @@ impl Storage {
                 unit_hint,
             )?)
         };
+        let capacity = allocator.usage().1;
+        let memory_watermarks = watermarks.map(|(low, high)| {
+            (
+                (u128::from(capacity) * u128::from(low) / 100) as u64,
+                (u128::from(capacity) * u128::from(high)).div_ceil(100) as u64,
+            )
+        });
 
         // Sub-components
         if config.membership.is_some() != config.global_index.is_some()
@@ -216,6 +238,8 @@ impl Storage {
                 ssd_store,
                 peer_transport,
                 blockwise_alloc,
+                memory_watermarks,
+                watermark_reclaiming: Mutex::new(false),
                 global_index,
                 inventory,
                 exports,
@@ -316,6 +340,50 @@ impl Storage {
     pub(crate) fn cleanup_memory_cache(&self) -> MemoryCacheCleanupStats {
         let used_before = self.allocator.usage().0;
         let evicted = self.dram.remove_all();
+        let stats = self.release_evicted(evicted, used_before);
+        if stats.evicted_blocks == 0 {
+            return stats;
+        }
+        info!(
+            "Cleaned resident memory cache: evicted_blocks={} evicted_bytes={} reclaimed_bytes={} still_referenced_blocks={}",
+            stats.evicted_blocks,
+            ByteSize(stats.evicted_bytes),
+            ByteSize(stats.reclaimed_bytes),
+            stats.still_referenced_blocks
+        );
+        stats
+    }
+
+    /// One bounded maintenance pass. The latch survives partial progress and held owners.
+    pub(crate) fn maintain_memory_cache(&self) -> MemoryCacheCleanupStats {
+        let Some((low, high)) = self.memory_watermarks else {
+            return MemoryCacheCleanupStats::default();
+        };
+        let Some(mut reclaiming) = self.watermark_reclaiming.try_lock() else {
+            return MemoryCacheCleanupStats::default();
+        };
+        let used = self.allocator.usage().0;
+        if used <= low {
+            *reclaiming = false;
+            return MemoryCacheCleanupStats::default();
+        }
+        if !*reclaiming && used < high {
+            return MemoryCacheCleanupStats::default();
+        }
+        *reclaiming = true;
+        let evicted =
+            self.dram
+                .remove_lru_batch(RECLAIM_BATCH_SIZE, used - low, ReclaimReason::Watermark);
+        let stats = self.release_evicted(evicted, used);
+        *reclaiming = self.allocator.usage().0 > low;
+        stats
+    }
+
+    fn release_evicted(
+        &self,
+        evicted: MaterializedBlocks,
+        used_before: u64,
+    ) -> MemoryCacheCleanupStats {
         if evicted.is_empty() {
             return MemoryCacheCleanupStats::default();
         }
@@ -351,14 +419,6 @@ impl Storage {
                 .add(reclaimed_bytes, &[]);
         }
 
-        info!(
-            "Cleaned resident memory cache: evicted_blocks={} evicted_bytes={} reclaimed_bytes={} still_referenced_blocks={}",
-            evicted_blocks,
-            ByteSize(evicted_bytes),
-            ByteSize(reclaimed_bytes),
-            still_referenced_blocks
-        );
-
         MemoryCacheCleanupStats {
             evicted_blocks,
             evicted_bytes,
@@ -387,9 +447,11 @@ impl Storage {
         while largest_free < required_bytes {
             let used_before = self.allocator.usage().0;
 
-            let evicted = self
-                .dram
-                .remove_lru_batch(RECLAIM_BATCH_SIZE, required_bytes);
+            let evicted = self.dram.remove_lru_batch(
+                RECLAIM_BATCH_SIZE,
+                required_bytes,
+                ReclaimReason::Pressure,
+            );
 
             if evicted.is_empty() {
                 break;

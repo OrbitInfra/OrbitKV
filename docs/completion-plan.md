@@ -5,13 +5,13 @@ into both upstream mainlines.** OrbiTE is the only byte mover. Engines own
 scheduling, HBM and native P/D; OrbitKV owns cache identity, storage, discovery,
 grants and resource lifetime. This is the only execution queue.
 
-The current delivery is **M2 layerwise Save**: consume vLLM's layer callbacks
-for ordinary single-group, layer-first caches, with step-end submission for
-missing callbacks and ineligible profiles. Reuse the bounded native Save owners
-and Manager's partial-slot publication. OrbiTE became required in #348;
-cost observations and selection were removed in #347. This source step requires
-independent review and the CPU/native build gates; installed GPU profiles remain
-unqualified. TTL/watermark eviction follows this step.
+The current delivery is **M2 DRAM watermarks**: optional high/low thresholds,
+bounded maintenance through the existing DRAM replacement owner, and physical
+pinned-pool accounting through held queries and transfers. Layerwise Save
+merged in #349; OrbiTE became required in #348 and cost selection was removed
+in #347. This source step requires independent review and CPU/native gates;
+installed GPU profiles remain unqualified. Data TTL, including persistent SSD
+expiry, and coordinated SSD watermarks follow in separate reviewed substeps.
 Each coherent PR stops for review before dependent work starts. Research designs
 and simulator campaigns are removed from the maintained tree; Git history retains
 them and external artifacts are untouched. DeepInfer/OrbitInfer and an OrbiTE
@@ -99,7 +99,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 | Router lookup / KV events | **Missing:** diagnostics are not a router API. Target [llm-d's event index](https://github.com/llm-d/llm-d/blob/main/docs/architecture/advanced/kv-management/kv-indexer.md) and [Dynamo's selection interface](https://docs.nvidia.com/dynamo/dev/knowledge-base/modular-components/router/standalone-selection). | L coordination and V KV events; no new inference router |
 | Replica selection | **Have:** deterministic, coverage-first [fixed medium and owner ordering](architecture.md#planning). Cost-based selection is removed by design until hardware evidence warrants reconsideration; no blind replay on failure. | L/F/M replica lookup |
 | Node loss | **Partial:** retired epochs are fenced and uncertain owners retained; permanent-loss reclamation/cache HA unqualified. [Retirement](transport.md#peer-departure). | F distributed reuse, M leases/replicas |
-| LRU / TTL / watermarks | **Partial:** LRU/protected retention and SSD admission; data TTL and coordinated high/low watermarks missing. Membership TTL is not data TTL. [Policies](cache-policies.md). | L/F LRU, V LRU/ARC, M watermarks/soft pinning |
+| LRU / TTL / watermarks | **Partial:** LRU/protected retention, SSD admission and optional bounded DRAM high/low watermarks; data TTL and coordinated SSD watermarks missing. Membership TTL is not data TTL. [Policies](cache-policies.md). | L/F LRU, V LRU/ARC, M watermarks/soft pinning |
 | Exact capacity accounting | **Partial:** local pool/index/query/registration/file and persistence metadata budgets include retained work; shared-tier and fleet reconciliation remain missing. [Budgets](server.md), [persistence](storage-persistence.md#bounds-gc-and-changed-capacity). | L/F/V tier limits, M replica accounting |
 | Tenant namespaces | **Partial:** computation scope and inventory filtering exist; neither authenticates tenants nor provides quotas. [Identity](state-identity.md), [scope](distributed-cache.md#scope-and-bounded-resources). | L/F namespace and management controls |
 
@@ -198,7 +198,11 @@ commands and the distinction between fixture bytes and serving are in
    cross-layer/HMA, microbatch/DBO and speculative profiles keep the
    [step-end path](adapters.md#layerwise-save). Installed GPU gates are written,
    unrun and unqualified; broader layer layouts and measured overlap remain open.
-4. **TTL/watermark eviction.**
+4. **TTL/watermark eviction (partial):** optional DRAM high/low-watermark
+   maintenance is implemented, with per-pass scan bounds, physical usage
+   hysteresis and held-owner controls. Defaults keep allocation-pressure
+   eviction only. Data TTL/persistent expiry and coordinated SSD watermarks
+   remain open. See [watermark semantics](cache-policies.md#dram-highlow-watermarks).
 
 Reuse storage/lease owners and OrbiTE file I/O. Document
 commit/recovery ordering, orphan reclamation and corrupt-data misses. Never reuse

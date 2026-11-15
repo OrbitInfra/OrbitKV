@@ -13,6 +13,17 @@ Changes below apply to the next pre-release; nothing new is published by this PR
 
 ## Next pre-release (unreleased)
 
+### Optional DRAM watermarks
+
+Added paired `--cache-high-watermark-percent` / `--cache-low-watermark-percent`
+flags and corresponding optional `EngineConfig` fields. Rust struct literals
+that specify every field must add them; `Default` keeps both disabled.
+The Manager runs bounded maintenance once per second; embedded callers schedule
+the new `OrbitKVEngine::maintain_memory_cache()` method. The existing residence
+histogram adds `reason="watermark"`. See [policy and lifetime semantics](cache-policies.md#dram-highlow-watermarks).
+No wire or persistent format changes. Data TTL and SSD watermarks remain open;
+GPU/RDMA/GDS and installed profiles remain unqualified.
+
 ### vLLM layerwise Save
 
 Ordinary single-group, layer-first caches now consume `save_kv_layer` readiness.
