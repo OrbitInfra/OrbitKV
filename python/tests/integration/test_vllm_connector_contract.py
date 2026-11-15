@@ -115,7 +115,7 @@ def test_released_microbatch_property_controls_early_save(kwargs):
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("fault_cache", [{"num_layers": 2}], indirect=True)
-@pytest.mark.parametrize("last_callback", [False, True], ids=["partial-graph", "all-layers"])
+@pytest.mark.parametrize("last_callback", [False, True], ids=["step-end-remainder", "all-layers"])
 def test_native_layer_save_bytes_and_partial_visibility(fault_cache, last_callback):  # noqa: F811
     """Written installed gate: real producer events, native Save, partial slots and Restore."""
     import torch
@@ -124,13 +124,15 @@ def test_native_layer_save_bytes_and_partial_visibility(fault_cache, last_callba
     from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, SaveIntent
     from orbitkv.vllm.worker import WorkerAdapter
     from tests.integration.test_cache_faults import query, until
+    from tests.support.metrics import fetch_orbitkv_metrics
 
-    _, client, ctx, _ = fault_cache
+    server, client, ctx, _ = fault_cache
     worker = WorkerAdapter(ConnectorContext(ctx.instance_id, ctx.namespace, 16, 1, 1, 0, 0, client))
     worker._registration, worker._registered_layers = ctx.registration, ctx._layer_names
     worker._torch_device = ctx.device
     metadata = OrbitKVConnectorMetadata(save_intents={"r": SaveIntent(((1,),), (b"layer-save",))})
     producer = torch.cuda.Stream(device=ctx.device)
+    producer.wait_stream(torch.cuda.current_stream(ctx.device))
     try:
         with torch.cuda.stream(producer):
             ctx.get_kv_cache(0)[:, 1].fill_(11)
@@ -140,6 +142,7 @@ def test_native_layer_save_bytes_and_partial_visibility(fault_cache, last_callba
         until(lambda: worker._req_pending_save_tasks.get("r") == 1)
         assert not completion.is_set()
         assert not worker.get_transfer_results({"r"}).finished_sending
+        until(lambda: fetch_orbitkv_metrics(server.http_port).get("orbitkv_inflight_bytes", 0) > 0)
         partial = query(client, ctx, [b"layer-save"], "partial")
         assert partial.num_hit_blocks == 0
         client.cancel_query(ctx.instance_id, "partial")
@@ -154,8 +157,19 @@ def test_native_layer_save_bytes_and_partial_visibility(fault_cache, last_callba
         for tensor in ctx.gpu_kv_caches:
             tensor[:, 1].fill_(87)
             tensor[:, 2].zero_()
-        ready = query(client, ctx, [b"layer-save"], "restore")
-        assert ready.num_hit_blocks == 1
+        attempt = 0
+
+        def published():
+            nonlocal attempt
+            attempt += 1
+            rid = f"restore-{attempt}"
+            result = query(client, ctx, [b"layer-save"], rid)
+            if result.num_hit_blocks == 1:
+                return result
+            client.cancel_query(ctx.instance_id, rid)
+            return None
+
+        ready = until(published)
         handle = client.start_restore(
             ctx.instance_id,
             0,
