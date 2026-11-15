@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import weakref
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -246,14 +247,17 @@ def test_rejected_layer_preparation_does_not_finish_its_pending_siblings():
     assert worker.get_transfer_results({"request"}).finished_sending == {"request"}
 
 
-@pytest.mark.parametrize("cancelled", [False, True])
+@pytest.mark.parametrize("cancelled", [False, True, None], ids=["rejected", "cancelled", "unknown"])
 def test_shutdown_cancels_only_unsubmitted_layers_and_drains_queued_layers(cancelled):
     worker = make_worker()
     metadata = layer_step(worker)
     worker.save_kv_layer("first", metadata)
     completion = worker._save_completion_events["request"]
-    pending = worker._layer_save_tasks["last"].native_handle
+    task = worker._layer_save_tasks["last"]
+    pending = task.native_handle
     worker._client.cancel_save.return_value = cancelled
+    if cancelled is None:
+        worker._client.cancel_save.side_effect = RuntimeError("cancel failed")
     worker._ctx.client.unregister_context.return_value = True, ""
     worker._save_thread = MagicMock()
     worker._save_thread.join.side_effect = worker._save_worker
@@ -262,11 +266,13 @@ def test_shutdown_cancels_only_unsubmitted_layers_and_drains_queued_layers(cance
         assert completion.is_set()
         worker._client.submit_saves.assert_called_once()
         worker._ctx.client.unregister_context.assert_called_once()
+        assert task.native_handle is None
     else:
-        with pytest.raises(RuntimeError, match="could not be cancelled"):
+        with pytest.raises(RuntimeError, match="could not be cancelled|cancel failed"):
             worker.shutdown()
         assert not completion.is_set()
         worker._ctx.client.unregister_context.assert_not_called()
+        assert task.native_handle is pending
     worker._client.cancel_save.assert_called_once_with(pending)
     assert worker._save_queue.unfinished_tasks == 0
 
@@ -279,6 +285,62 @@ def test_next_forward_cannot_replace_unsubmitted_layers():
         worker.start_load_kv(OrbitKVConnectorMetadata())
     with pytest.raises(RuntimeError, match="previous forward"):
         worker.save_kv_layer("last", layer_step(worker))
+
+
+def test_idle_save_worker_returns_completed_handle_budget_before_the_next_step():
+    worker = make_worker()
+    live = weakref.WeakSet()
+    admitted = []
+
+    class Handle:
+        pass
+
+    def prepare(registration, saves):
+        if len(live) == 2:
+            raise SaveNotSubmittedError("native handle budget exhausted")
+        handle = Handle()
+        live.add(handle)
+        admitted.append(saves[0][0])
+        return handle
+
+    # Plain callables avoid Mock call history becoming an extra handle owner.
+    worker._client.prepare_save = prepare
+    worker._client.submit_saves = lambda handles: None
+    worker._client.wait_save = lambda handle: SimpleNamespace(done=True, success=True, message="")
+    worker._client.unregister_context.return_value = True, ""
+    worker._save_thread = threading.Thread(target=worker._save_worker, daemon=True)
+    worker._save_thread.start()
+    try:
+        for _ in range(2):
+            metadata = layer_step(worker)
+            worker.save_kv_layer("first", metadata)
+            completion = worker._save_completion_events["request"]
+            worker.save_kv_layer("last", metadata)
+            worker.wait_for_save()
+            assert completion.wait(5)
+            assert not live, "an idle worker must not charge completed native handles"
+        assert admitted == ["first", "last", "first", "last"]
+    finally:
+        worker.shutdown()
+
+
+def test_mixed_receipts_release_only_completed_handle_budget():
+    worker = make_worker()
+    metadata = layer_step(worker)
+    worker.save_kv_layer("first", metadata)
+    worker.save_kv_layer("last", metadata)
+    batch = [worker._save_queue.get_nowait(), worker._save_queue.get_nowait()]
+    unknown = batch[1].native_handle
+    worker._client.wait_save.side_effect = [
+        SimpleNamespace(done=True, success=True, message=""),
+        MemoryError("unknown last receipt"),
+    ]
+    with pytest.raises(RuntimeError, match="pages remain held"):
+        worker._process_save_batch(batch)
+    assert batch[0].native_handle is None
+    assert batch[1].native_handle is unknown
+    assert worker._retained_save_tasks == batch
+    assert not worker._save_completion_events["request"].is_set()
 
 
 @pytest.mark.parametrize("alive", [True, False, None])
@@ -414,6 +476,7 @@ def test_native_save_wait_failure_keeps_engine_pages_and_registration(failure):
     worker = make_worker()
     worker._registered_layers = ["layer"]
     completion = enqueue_save(worker)
+    prepared = worker._save_queue.queue[0].native_handle
     handle = object()
     worker._client.start_save.return_value = handle
     if failure == "pending":
@@ -431,8 +494,7 @@ def test_native_save_wait_failure_keeps_engine_pages_and_registration(failure):
     assert not completion.is_set()
     assert not worker.get_transfer_results({"request"}).finished_sending
     assert worker._retained_save_tasks[0].native_attempted
-    if failure != "start":
-        assert worker._retained_save_tasks[0].native_handle is not None
+    assert worker._retained_save_tasks[0].native_handle is prepared
     with pytest.raises(RuntimeError, match="pages remain held"):
         worker.unregister_context()
 

@@ -51,6 +51,8 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   unknown handoff closes admission; unqueued handles cancel only on native
   `cancel_save=True`. Keep the released dispatch and installed-byte controls
   in `test_vllm_connector_contract.py`; CPU seams do not qualify CUDA/Graph.
+  Drop completed native handles before an idle worker blocks for its next
+  batch; otherwise its frame can keep the admission budget permanently full.
 - vLLM uses the KV Connector contract; SGLang uses UnifiedRadixCache and the
   external linker. Preserve valid native HBM hits without external synchronous
   lookup. Keep unselected backend imports free of native initialization.

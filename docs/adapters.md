@@ -206,6 +206,8 @@ further admission. Python never treats a timeout or missing handle as drain.
 The Save worker waits each producer event, then consumes Rust
 `submit_saves`/`wait_save`. Every request stays held until all its layers have
 terminal receipts, including layers not yet reached by the forward pass.
+Completed native handles are released before the worker waits for new tasks,
+so an idle worker cannot keep its previous batch charged against admission.
 Manager accumulates their slots and publishes a block only when all required
 slots exist. Partial or rejected layer sets cannot become complete hits.
 

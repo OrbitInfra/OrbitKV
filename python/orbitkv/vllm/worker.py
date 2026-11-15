@@ -279,6 +279,7 @@ class WorkerAdapter:
                     if not self._client.cancel_save(task.native_handle):
                         raise RuntimeError("unsubmitted layer Save could not be cancelled")
                     task.native_completed = True
+                    task.native_handle = None
                     self._complete_save_requests(task.request_ids)
                     del self._layer_save_tasks[name]
                 except BaseException:
@@ -979,6 +980,12 @@ class WorkerAdapter:
         try:
             self._save_batch(batch)
         finally:
+            # Completed handles still charge the native admission budget. The
+            # idle worker frame may keep this batch alive until another task
+            # arrives; release receipts before admitting that next task.
+            for task in batch:
+                if task.native_completed:
+                    task.native_handle = None
             # A returned failed completion can release pages; missing completion
             # retains the task and its engine lifecycle instead.
             if all(not task.native_attempted or task.native_completed for task in batch):
