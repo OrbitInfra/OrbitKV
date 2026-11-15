@@ -303,8 +303,7 @@ fn exports() -> (
             dram,
             None,
             Some(membership.clone()),
-            Some("127.0.0.1:12345".into()),
-            None,
+            crate::transfer_engine::tests::engine(),
             Duration::ZERO,
             1 << 20,
         ),
@@ -540,7 +539,7 @@ async fn export_rejects_invalid_evidence_before_reserving_resources() {
         ));
     }
     assert_eq!(exports.locks.inner.lock().active, 0);
-    exports.endpoint = None;
+    exports.membership = None;
     assert_eq!(
         exports.open(owner, Uuid::new_v4()),
         Err(PeerError::Unavailable)
@@ -558,7 +557,6 @@ async fn export_rejects_invalid_evidence_before_reserving_resources() {
     ));
 }
 
-#[cfg(feature = "orbite")]
 #[tokio::test]
 #[ignore = "OrbiTE source registration hardware gate: requires a real CUDA pinned allocator"]
 async fn orbite_grant_registrations_share_backing_and_fence_old_completion_generations() {
@@ -580,7 +578,7 @@ async fn orbite_grant_registrations_share_backing_and_fence_old_completion_gener
         )
         .unwrap(),
     );
-    exports.transport = Some(source.clone());
+    exports.transport = source.clone();
     let owner = membership.owner().incarnation;
     let (blocks, allocation) = shared_slab();
     let weak = Arc::downgrade(&allocation);

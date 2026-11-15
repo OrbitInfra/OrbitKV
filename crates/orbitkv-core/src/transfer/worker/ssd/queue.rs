@@ -207,8 +207,11 @@ impl Job {
                 let mut owner = runtime.codec.borrow_mut();
                 if owner.is_none() {
                     *owner = Some(
-                        crate::codec::gpu::GpuCodec::new(runtime.stream.context())
-                            .map_err(EngineError::Storage)?,
+                        crate::codec::gpu::GpuCodec::new(
+                            runtime.stream.context(),
+                            runtime.engine.clone(),
+                        )
+                        .map_err(EngineError::Storage)?,
                     );
                 }
                 let codec = owner
@@ -387,7 +390,10 @@ impl Job {
         }
         let mut owner = runtime.codec.borrow_mut();
         if owner.is_none() {
-            *owner = Some(crate::codec::gpu::GpuCodec::new(runtime.stream.context())?);
+            *owner = Some(crate::codec::gpu::GpuCodec::new(
+                runtime.stream.context(),
+                runtime.engine.clone(),
+            )?);
         }
         let codec = owner.as_mut().ok_or("missing integrity codec")?;
         for (source, copies) in &self.checks {

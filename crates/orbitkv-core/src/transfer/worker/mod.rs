@@ -146,7 +146,7 @@ pub(crate) struct GpuWorkerPool {
     numa_node: NumaNode,
     pub(crate) transfer_mode: TransferMode,
     local_device: Option<Arc<crate::transfer_engine::CudaRegistration>>,
-    engine: Option<Arc<crate::transfer_engine::TransferEngine>>,
+    engine: Arc<crate::transfer_engine::TransferEngine>,
     ssd_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     ssd_host_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     codec_write_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
@@ -414,7 +414,7 @@ impl GpuWorkerPool {
         numa_node: NumaNode,
         transfer_mode: TransferMode,
         local_device: Option<Arc<crate::transfer_engine::CudaRegistration>>,
-        engine: Option<Arc<crate::transfer_engine::TransferEngine>>,
+        engine: Arc<crate::transfer_engine::TransferEngine>,
     ) -> Result<Self, EngineError> {
         Ok(Self {
             device_id,
@@ -722,7 +722,7 @@ fn spawn_worker(
     mode: TransferMode,
     name: &str,
     local_device: Option<Arc<crate::transfer_engine::CudaRegistration>>,
-    engine: Option<Arc<crate::transfer_engine::TransferEngine>>,
+    engine: Arc<crate::transfer_engine::TransferEngine>,
 ) -> Result<mpsc::UnboundedSender<WorkerCommand>, EngineError> {
     let (sender, receiver) = mpsc::unbounded_channel();
     let (ready_tx, ready_rx) = std_mpsc::channel();
@@ -757,7 +757,7 @@ fn spawn_worker(
 }
 
 struct WorkerRuntime {
-    engine: Option<Arc<crate::transfer_engine::TransferEngine>>,
+    engine: Arc<crate::transfer_engine::TransferEngine>,
     stream: Arc<CudaStream>,
     backend: Box<dyn crate::transfer_engine::local::LocalCopy>,
     max_dma_pitch: usize,
@@ -791,17 +791,8 @@ fn init_worker(
     device_id: i32,
     transfer_mode: TransferMode,
     local_device: Option<Arc<crate::transfer_engine::CudaRegistration>>,
-    engine: Option<Arc<crate::transfer_engine::TransferEngine>>,
+    engine: Arc<crate::transfer_engine::TransferEngine>,
 ) -> Result<WorkerRuntime, EngineError> {
-    if engine.is_none() {
-        return Err(EngineError::CudaInit(
-            crate::transfer_engine::TransferError::new(
-                crate::transfer_engine::ErrorKind::Unavailable,
-                "OrbiTE local copy is unavailable",
-            )
-            .to_string(),
-        ));
-    }
     let address = local_device.as_ref().map_or(0, |owner| owner.address);
     // Initialize CUDA context for this thread
     let ctx = CudaContext::new(device_id as usize)

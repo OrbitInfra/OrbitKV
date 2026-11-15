@@ -133,7 +133,7 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
         .collect();
     let (payload, encoding) = if format == StorageFormat::Ans {
         let input = stream.clone_htod(&expected).unwrap();
-        let mut codec = GpuCodec::new(&ctx).unwrap();
+        let mut codec = GpuCodec::new(&ctx, crate::transfer_engine::tests::engine()).unwrap();
         let inputs = [EncodeInput {
             source: input.device_ptr(&stream).0,
             bytes: BYTES,
@@ -238,8 +238,14 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
     )
     .unwrap();
     layout.storage_format = format;
-    let worker =
-        GpuWorkerPool::new(0, NumaNode::UNKNOWN, TransferMode::Direct, None, None).unwrap();
+    let worker = GpuWorkerPool::new(
+        0,
+        NumaNode::UNKNOWN,
+        TransferMode::Direct,
+        None,
+        crate::transfer_engine::tests::engine(),
+    )
+    .unwrap();
     // Host staging works before any cuFile operation and again after its success.
     for (index, path) in [SsdReadPath::Uring, SsdReadPath::Cufile, SsdReadPath::Uring]
         .into_iter()

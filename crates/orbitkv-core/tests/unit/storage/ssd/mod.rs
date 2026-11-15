@@ -284,8 +284,7 @@ async fn cancelled_ssd_authorization_keeps_admission_with_queued_batch() {
         dram,
         Some(Arc::clone(&store)),
         Some(membership),
-        Some("127.0.0.1:12345".into()),
-        None,
+        crate::transfer_engine::tests::engine(),
         std::time::Duration::from_secs(30),
         SSD_ALIGNMENT as u64,
     );

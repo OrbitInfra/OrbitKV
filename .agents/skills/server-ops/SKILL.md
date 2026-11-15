@@ -65,8 +65,8 @@ Trace an incident through its owner:
 4. Inspect query, source export, SSD staging and GPU admission budgets using
    `docs/metrics.md`. Lease expiry or a deadline cannot establish native drain.
 
-OrbiTE is the only transfer engine, pinned by Cargo.lock. The default `orbite`
-feature enables TCP/CUDA/io_uring; `orbite-rdma` adds RDMA and `orbite-gds` adds
+OrbiTE is the required transfer engine, pinned by Cargo.lock. Every build includes
+TCP/CUDA/io_uring; `orbite-rdma` adds RDMA and `orbite-gds` adds
 optional cuFile. `--transfer-transport auto|tcp|rdma` is the only transport hint;
 auto uses engine policy. Missing features return Unavailable before CUDA setup.
 SSD always uses engine file segments and padded vectors. No legacy I/O or copy
@@ -97,7 +97,7 @@ completion; the worker is fenced and instance cleanup cannot claim drain.
 The `--orbite-rdma-gpu-direct` option selects strict engine GDR registration,
 requiring `MLX5_SCATTER_TO_CQE=0`; the default uses engine-owned staging. Both
 GPU profiles remain unqualified. See `docs/transport.md#peer-restore-into-gpu`.
-The default `orbite` build can explicitly select
+The base build can explicitly select
 `--transfer-transport tcp`; read `docs/transport.md` for its 64 MiB
 READ/4,096-region limits, numeric advertised IP and no-RDMA-filter requirement.
 The requester accepts all OrbiTE endpoint schemes and keeps its own transport hint. Keep the

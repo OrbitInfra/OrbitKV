@@ -190,7 +190,7 @@ incarnations; it does not restore live leases or old cursors.
 
 OrbiTE is the only engine. `--transfer-transport` accepts `auto` (default),
 `tcp` or `rdma`. Automatic requests use engine policy over configured providers.
-The default `orbite` build enables TCP; `orbite-rdma` adds RDMA. Missing features
+Every build includes OrbiTE TCP/CUDA/io_uring; `orbite-rdma` adds RDMA. Missing optional transports
 fail before CUDA initialization. There is no engine-family selector or fallback.
 RDMA requires `--orbite-rdma-device`; port and GID index are explicit options.
 See [transfer contracts](transport.md#transfer-engine) for budgets and the

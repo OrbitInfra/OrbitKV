@@ -181,11 +181,11 @@ states or errors are `Unquiesced`, never success or permission to release owners
 | `--transfer-transport tcp` | Explicit TCP hint |
 | `--transfer-transport rdma` | Requires `orbite-rdma` and RNIC/port/GID configuration |
 | `orbite-gds` | Compiles cuFile support; loads it only for configured GDS |
-| No backend features | Starts no native engine; byte movement returns typed `Unavailable` before worker CUDA setup |
+| Base build, including `--no-default-features --features cuda-13` | Requires OrbiTE TCP/CUDA/io_uring; construction returns an engine or the initialization error |
 
 HP-TCP, SHM, NVLink, MNNVL and automatic failover are off. There is no local-copy
-or native SSD fallback. `scripts/check-backend-features.py` checks the optional
-native-code boundary.
+or native SSD fallback. `scripts/check-backend-features.py` rejects the removed
+base-engine feature and confines optional RDMA/GDS gates to native adapters.
 
 | Resource | Bound |
 | --- | --- |

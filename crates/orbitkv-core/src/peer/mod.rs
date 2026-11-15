@@ -5,7 +5,6 @@ pub(crate) mod execute;
 pub(crate) mod export;
 pub(crate) mod read;
 
-#[cfg(feature = "orbite")]
 pub(crate) mod orbite;
 
 pub(crate) mod restore;

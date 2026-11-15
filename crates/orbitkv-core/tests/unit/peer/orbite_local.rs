@@ -96,7 +96,7 @@ fn local_copy_shim_bytes_stream_binding_and_pin_owners() {
                 NumaNode::UNKNOWN,
                 mode,
                 None,
-                Some(backend.clone())
+                backend.clone()
             )
             .is_err(),
             "a missing OrbiTE registration must reject local copies"
@@ -104,7 +104,7 @@ fn local_copy_shim_bytes_stream_binding_and_pin_owners() {
         // SAFETY: the actual device/context owner is retained in the registration.
         let registered = unsafe {
             CudaRegistration::new(
-                Some(backend.clone()),
+                backend.clone(),
                 device.address,
                 device.length,
                 0,
@@ -210,7 +210,7 @@ fn local_copy_shim_large_batch_and_partial_submission_drain() {
     // SAFETY: retained actual device/context backing, with no concurrent accesses.
     let registered = unsafe {
         CudaRegistration::new(
-            Some(backend.clone()),
+            backend.clone(),
             device.address,
             device.length,
             0,
@@ -379,16 +379,9 @@ fn local_copy_shim_unknown_completion_retains_backing() {
         .unwrap();
     let backend: Arc<TransferEngine> = engine(4096);
     // SAFETY: actual device allocation and context remain held through this child.
-    let registered = unsafe {
-        CudaRegistration::new(
-            Some(backend.clone()),
-            device.address,
-            4096,
-            0,
-            device.clone(),
-        )
-    }
-    .unwrap();
+    let registered =
+        unsafe { CudaRegistration::new(backend.clone(), device.address, 4096, 0, device.clone()) }
+            .unwrap();
     let worker = backend
         .bind_local(stream, TransferMode::Direct, device.address)
         .unwrap();

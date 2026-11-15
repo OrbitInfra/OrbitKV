@@ -181,6 +181,5 @@ fn fetch_slabs_follow_receiver_slots_instead_of_source_numa() {
     );
 }
 
-#[cfg(feature = "orbite")]
 #[path = "../../../../../benches/storage/native/read_integrity.rs"]
 mod path_bench;

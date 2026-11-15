@@ -338,10 +338,7 @@ fn ssd_uses_selected_engine_and_rejects_removed_legacy_switch() {
         .ssd_persistent
     );
     assert!(Cli::try_parse_from(["manager", "--ssd-unknown-key"]).is_err());
-    assert_eq!(
-        SsdCacheConfig::default().validate_transfer_engine().is_ok(),
-        cfg!(feature = "orbite")
-    );
+    assert!(SsdCacheConfig::default().validate_transfer_engine().is_ok());
     for value in ["auto", "transfer", "legacy"] {
         assert!(
             Cli::try_parse_from([

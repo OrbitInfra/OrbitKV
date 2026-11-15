@@ -35,7 +35,6 @@ impl Control {
         if let Some(engine) = cached.upgrade() {
             return engine;
         }
-        #[cfg(feature = "orbite")]
         let mut engine = TransferEngine::new(
             4096,
             "127.0.0.1:0",
@@ -45,8 +44,6 @@ impl Control {
             None,
         )
         .unwrap();
-        #[cfg(not(feature = "orbite"))]
-        let mut engine = TransferEngine { control: None };
         engine.control = Some(self.clone());
         let engine = Arc::new(engine);
         *cached = Arc::downgrade(&engine);
@@ -214,7 +211,7 @@ pub(crate) fn registered(
     owner: Arc<dyn Send + Sync>,
 ) -> Arc<CudaRegistration> {
     // SAFETY: CPU control retains host backing or uses only non-dereferencing fixtures.
-    unsafe { CudaRegistration::new(Some(control.engine()), address, length, 0, owner) }.unwrap()
+    unsafe { CudaRegistration::new(control.engine(), address, length, 0, owner) }.unwrap()
 }
 
 #[test]
@@ -258,8 +255,7 @@ async fn uncertainty_retains_actual_backing_and_never_retries_cleanup_or_transfe
         let owner = Arc::new(());
         let backing = Arc::downgrade(&owner);
         // SAFETY: these controls fail without dereferencing fixture addresses.
-        let registration =
-            unsafe { CudaRegistration::new(Some(control.engine()), 8192, 16, 0, owner) };
+        let registration = unsafe { CudaRegistration::new(control.engine(), 8192, 16, 0, owner) };
         if let Ok(registration) = registration {
             if matches!(failure, Some(Failure::CleanupPanic)) {
                 assert!(registration.close().is_err());

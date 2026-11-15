@@ -107,7 +107,7 @@ fn snapshot(
 fn gpu_mixed_batches_reuse_scratch_and_crc_failure_precedes_all_target_writes() {
     let ctx = CudaContext::new(0).unwrap();
     let stream = ctx.new_stream().unwrap();
-    let mut codec = GpuCodec::new(&ctx).unwrap();
+    let mut codec = GpuCodec::new(&ctx, transfer_engine()).unwrap();
     let formats = [
         StorageFormat::Fp8FromBf16,
         StorageFormat::TurboQuant {
@@ -273,7 +273,12 @@ fn gpu_mixed_batches_reuse_scratch_and_crc_failure_precedes_all_target_writes() 
     assert_eq!(
         // SAFETY: the fixture retains all source/target allocations and metadata
         // through the codec drain; only completed bytes are inspected or reused afterward.
-        unsafe { codec.decode_host_batch(&stream, &host_inputs, retained, None) }.unwrap(),
+        unsafe {
+            codec.decode_host_batch(&stream, &host_inputs, retained, &|uploads| {
+                upload_fixture(&stream, uploads)
+            })
+        }
+        .unwrap(),
         inputs.len()
     );
     for (i, target) in targets.iter().enumerate() {
@@ -310,7 +315,7 @@ fn gpu_mixed_batches_reuse_scratch_and_crc_failure_precedes_all_target_writes() 
 fn gpu_decode_classifies_corruption_and_budget_without_target_writes() {
     let ctx = CudaContext::new(0).unwrap();
     let stream = ctx.new_stream().unwrap();
-    let mut codec = GpuCodec::new(&ctx).unwrap();
+    let mut codec = GpuCodec::new(&ctx, transfer_engine()).unwrap();
     let encoded = [0x30u8; 16];
     let meta = EncodedSegment {
         version: 1,
@@ -368,7 +373,7 @@ fn gpu_decode_classifies_corruption_and_budget_without_target_writes() {
 fn gpu_batch_limits_make_progress_and_raw_exact_needs_no_arena() {
     let ctx = CudaContext::new(0).unwrap();
     let stream = ctx.new_stream().unwrap();
-    let mut codec = GpuCodec::new(&ctx).unwrap();
+    let mut codec = GpuCodec::new(&ctx, transfer_engine()).unwrap();
     let small = EncodedSegment {
         version: 1,
         format: StorageFormat::Fp8FromBf16,
@@ -423,7 +428,12 @@ fn gpu_batch_limits_make_progress_and_raw_exact_needs_no_arena() {
         .collect();
     // SAFETY: the fixture retains all source/target allocations and metadata
     // through the codec drain; only completed bytes are inspected or reused afterward.
-    let count = unsafe { codec.decode_host_batch(&stream, &restores, budget, None) }.unwrap();
+    let count = unsafe {
+        codec.decode_host_batch(&stream, &restores, budget, &|uploads| {
+            upload_fixture(&stream, uploads)
+        })
+    }
+    .unwrap();
     assert!((1..restores.len()).contains(&count));
     assert!(codec.scratch_bytes() <= budget);
     // SAFETY: the fixture owns every source CudaSlice for its declared range
@@ -472,7 +482,7 @@ fn gpu_batch_limits_make_progress_and_raw_exact_needs_no_arena() {
                 meta: &meta,
             }],
             0,
-            None,
+            &|uploads| upload_fixture(&stream, uploads),
         )
     }
     .unwrap();
@@ -499,7 +509,12 @@ fn gpu_batch_limits_make_progress_and_raw_exact_needs_no_arena() {
     assert_eq!(
         // SAFETY: the fixture retains all source/target allocations and metadata
         // through the codec drain; only completed bytes are inspected or reused afterward.
-        unsafe { codec.decode_host_batch(&stream, &mixed, retained, None) }.unwrap(),
+        unsafe {
+            codec.decode_host_batch(&stream, &mixed, retained, &|uploads| {
+                upload_fixture(&stream, uploads)
+            })
+        }
+        .unwrap(),
         2
     );
     assert!(codec.scratch_bytes() <= retained);
@@ -515,7 +530,7 @@ fn gpu_batch_limits_make_progress_and_raw_exact_needs_no_arena() {
 fn gpu_ans_batches_restore_with_the_encode_reservation() {
     let ctx = CudaContext::new(0).unwrap();
     let stream = ctx.new_stream().unwrap();
-    let mut codec = GpuCodec::new(&ctx).unwrap();
+    let mut codec = GpuCodec::new(&ctx, transfer_engine()).unwrap();
     let formats = [
         StorageFormat::Ans,
         StorageFormat::Ans16,
@@ -574,7 +589,12 @@ fn gpu_ans_batches_restore_with_the_encode_reservation() {
     assert_eq!(
         // SAFETY: the fixture retains all source/target allocations and metadata
         // through the codec drain; only completed bytes are inspected or reused afterward.
-        unsafe { codec.decode_host_batch(&stream, &restore, retained, None) }.unwrap(),
+        unsafe {
+            codec.decode_host_batch(&stream, &restore, retained, &|uploads| {
+                upload_fixture(&stream, uploads)
+            })
+        }
+        .unwrap(),
         inputs.len()
     );
     assert_eq!(codec.scratch_bytes(), retained);
@@ -622,7 +642,7 @@ fn gpu_ans_batches_restore_with_the_encode_reservation() {
 fn gpu_crc_checks_exact_payloads_with_unaligned_lengths_and_padding() {
     let ctx = CudaContext::new(0).unwrap();
     let stream = ctx.new_stream().unwrap();
-    let mut codec = GpuCodec::new(&ctx).unwrap();
+    let mut codec = GpuCodec::new(&ctx, transfer_engine()).unwrap();
     let lengths = [
         1, 9, 255, 256, 257, 4095, 4096, 4097, 65537, 524291, 1048579,
     ];
@@ -687,7 +707,7 @@ fn gpu_crc_checks_exact_payloads_with_unaligned_lengths_and_padding() {
 fn gpu_decode_rejects_overlapping_targets_and_device_sources_before_writes() {
     let ctx = CudaContext::new(0).unwrap();
     let stream = ctx.new_stream().unwrap();
-    let mut codec = GpuCodec::new(&ctx).unwrap();
+    let mut codec = GpuCodec::new(&ctx, transfer_engine()).unwrap();
     let encoded = [0x30u8; 16];
     let meta = EncodedSegment {
         version: 1,
@@ -713,7 +733,12 @@ fn gpu_decode_rejects_overlapping_targets_and_device_sources_before_writes() {
             .collect();
         // SAFETY: all ranges lie inside retained real allocations. Deliberate
         // overlap is rejected by the codec preflight before any native access.
-        let error = unsafe { codec.decode_host_batch(&stream, &host, budget, None) }.unwrap_err();
+        let error = unsafe {
+            codec.decode_host_batch(&stream, &host, budget, &|uploads| {
+                upload_fixture(&stream, uploads)
+            })
+        }
+        .unwrap_err();
         assert!(error.contains("target ranges overlap"), "{error}");
         assert_eq!(stream.clone_dtoh(&target).unwrap(), sentinel);
         let device: Vec<_> = offsets

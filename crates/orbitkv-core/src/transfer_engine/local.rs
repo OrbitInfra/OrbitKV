@@ -39,16 +39,12 @@ pub trait LocalCopy: Send {
 
 /// Every GPU worker requires OrbiTE, including a local-only deployment.
 pub(crate) fn bind(
-    engine: Option<Arc<TransferEngine>>,
+    engine: Arc<TransferEngine>,
     stream: Arc<CudaStream>,
     mode: TransferMode,
     device: u64,
 ) -> Result<Box<dyn LocalCopy>, TransferError> {
-    engine
-        .ok_or_else(|| {
-            TransferError::new(ErrorKind::Unavailable, "OrbiTE local copy is unavailable")
-        })?
-        .bind_local(stream, mode, device)
+    engine.bind_local(stream, mode, device)
 }
 
 pub(crate) fn failure(error: TransferError) -> String {

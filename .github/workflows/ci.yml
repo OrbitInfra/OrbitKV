@@ -253,15 +253,14 @@ jobs:
         run: |
           cargo check -p orbitkv-core
           cargo check --locked -p orbitkv-server --all-targets --features test-hooks
-          cargo check -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbite
           CC=gcc CXX=g++ cargo clippy --locked -p orbitkv-server --all-targets --no-default-features --features cuda-13,orbite-rdma -- -D warnings
           CC=gcc CXX=g++ cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-rdma --lib peer::orbite::tests
           CC=gcc CXX=g++ cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,orbite-rdma --lib tests::orbite_rdma_cli_requires_explicit_device_and_valid_port -- --exact
           cargo check -p orbitkv-server --all-targets --no-default-features --features cuda-13
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13 --lib storage::tests::unavailable_rdma_backend_is_rejected_before_pinned_allocation -- --exact
-          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib peer::orbite::tests
-          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib peer::completion::tests
-          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib peer::completion::tests::unquiesced_transfer_retains_source_ticket_and_actual_buffer_owner -- --exact --ignored
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13 --lib peer::orbite::tests
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13 --lib peer::completion::tests
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13 --lib peer::completion::tests::unquiesced_transfer_retains_source_ticket_and_actual_buffer_owner -- --exact --ignored
           cargo check -p orbitkv-server --all-targets
         env:
           CUDA_PATH: /usr/local/cuda
@@ -276,13 +275,14 @@ jobs:
             codec:: engine::restore:: storage::inventory:: \
             transfer::worker::drain_tests::nonresident_payloads_return_errors_without_host_access \
             transfer::tests::raw_copy_shape \
-            missing_orbite_worker_engine no_backend_storage; do
+            transfer::local::trace::tests \
+            storage::tests::local_storage_owns_orbite_without_enabling_distributed_admission; do
             LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --no-default-features --features cuda-13 --lib "$filter" -- --test-threads=1
           done
-          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib peer::
+          LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --no-default-features --features cuda-13 --lib peer::
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --lib peer::
-          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib query::read::tests
-          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite --lib transfer_engine::tests
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13 --lib query::read::tests
+          cargo test --locked -p orbitkv-core --no-default-features --features cuda-13 --lib transfer_engine::tests
           cargo test --locked -p orbitkv-server --lib tests::auto_is_default_and_explicit_transport_hints_remain_available -- --exact
           cargo test --locked -p orbitkv-core --lib query::read::tests
         env:
@@ -298,6 +298,7 @@ jobs:
           # Driver calls move CPU fixture bytes, not hardware-qualified GPU bytes.
           export LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-local-copy-control:$RUNNER_TEMP/orbitkv-cpu-host-control"
           export ORBITKV_REQUIRE_LOCAL_COPY_SHIM=1
+          cargo test --locked -p orbitkv-core --lib engine::instance::tests -- --test-threads=1
           cargo test --locked -p orbitkv-core --lib codec::tests::raw_device_checksum_is_bounded_and_detects_corruption -- --exact --ignored
           cargo test --locked -p orbitkv-core --lib transfer::worker::drain_tests::sealed_host_decode_trusts_ecc_and_rejects_unsealed_or_poisoned_sources -- --exact --ignored
           cargo test --locked -p orbitkv-core --lib transfer::worker::peer::tests::raw_peer_gpu_receive_checks_once_after_drain_before_readiness -- --exact --ignored
@@ -306,7 +307,7 @@ jobs:
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib transfer::local::tests::failed_import_cleanup_preserves_registered_mapping -- --exact --ignored
           cargo test --locked -p orbitkv-core --no-default-features --features cuda-13,orbite-gds --lib memory::pinned::tests::unregister_failure_policy -- --exact --ignored
           cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,test-hooks --lib -- --test-threads=1
-          cargo test --locked -p orbitkv-server --features orbite,test-hooks --lib -- --test-threads=1
+          cargo test --locked -p orbitkv-server --features test-hooks --lib -- --test-threads=1
         env:
           CUDA_PATH: /usr/local/cuda
           LIBCLANG_PATH: /usr/lib/llvm-18/lib

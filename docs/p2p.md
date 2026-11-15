@@ -192,16 +192,16 @@ OrbiTE build prerequisites. The etcd gate starts isolated temporary processes:
 
 ```bash
 ETCD_BIN=/path/to/etcd cargo test --release \
-  --no-default-features --features cuda-13,orbite,test-hooks \
+  --no-default-features --features cuda-13,test-hooks \
   --lib cluster::tests::etcd -- --ignored
 
 ETCD_BIN=/path/to/etcd ORBITKV_METADATA_ARTIFACT_DIR=/external/run \
   cargo test --release -p orbitkv-server \
-  --no-default-features --features cuda-13,orbite,test-hooks \
+  --no-default-features --features cuda-13,test-hooks \
   cluster::inventory::tests -- --ignored --nocapture --test-threads=1
 
 ETCD_BIN=/path/to/etcd cargo test --release -p orbitkv-server \
-  --no-default-features --features cuda-13,orbite,test-hooks \
+  --no-default-features --features cuda-13,test-hooks \
   --lib cluster::tests::p2p_orbite -- --ignored
 ```
 
@@ -228,7 +228,7 @@ PYTHONPATH=. ../.venv/vllm-release/bin/python -m pytest -m integration \
 
 ## OrbiTE TCP development profile
 
-The default `orbite` build uses the same inventory, source grants and
+The base build uses the same inventory, source grants and
 generation-scoped release RPCs. `--transfer-transport tcp` is an explicit hint;
 `orbite-rdma` enables the RDMA hint and configured devices. See the current
 [engine contract](transport.md#transfer-engine) and [peer departure rules](transport.md#peer-departure).

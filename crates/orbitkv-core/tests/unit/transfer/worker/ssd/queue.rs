@@ -71,7 +71,7 @@ async fn raw_gpu_corruption_invalidates_completion_and_retains_the_extent_until_
     // and remains owned until the worker and all of its transfers drain.
     let registered = unsafe {
         crate::transfer_engine::CudaRegistration::new(
-            storage.peer_transport().cloned(),
+            storage.peer_transport().clone(),
             address,
             1,
             0,
@@ -83,7 +83,7 @@ async fn raw_gpu_corruption_invalidates_completion_and_retains_the_extent_until_
         0,
         crate::TransferMode::Direct,
         Some(registered.clone()),
-        storage.peer_transport().cloned(),
+        storage.peer_transport().clone(),
     )
     .unwrap();
     // Source checksum once, before a raw GPU file write, with virtual zero padding.
@@ -128,7 +128,7 @@ async fn raw_gpu_corruption_invalidates_completion_and_retains_the_extent_until_
                     1,
                     1,
                     false,
-                    None,
+                    crate::transfer_engine::tests::engine(),
                 )
                 .unwrap(),
             ),

@@ -281,7 +281,8 @@ impl TestEnvBuilder {
             .collect();
 
         ctx.bind_to_thread().expect("bind imported tensor context");
-        let allocation_owners = engine.transfer_backend().map(|backend| {
+        let backend = engine.transfer_backend();
+        let allocation_owners = {
             layers
                 .iter()
                 .map(|layer| {
@@ -289,7 +290,7 @@ impl TestEnvBuilder {
                     // have drained, and caller completion coordinates subsequent aliases.
                     unsafe {
                         orbitkv_core::transfer_engine::CudaRegistration::new(
-                            Some(Arc::clone(&backend)),
+                            Arc::clone(&backend),
                             layer.data.ptr(),
                             layer.data.total_size(),
                             ctx.ordinal() as i32,
@@ -299,7 +300,7 @@ impl TestEnvBuilder {
                     .expect("register fixture tensor with selected engine")
                 })
                 .collect::<Vec<_>>()
-        });
+        };
 
         let layer_infos: Vec<LayerInfo> = layers
             .iter()
@@ -333,7 +334,7 @@ impl TestEnvBuilder {
                 self.world_size,
                 self.transfer_mode,
                 self.page_first,
-                allocation_owners.as_deref(),
+                Some(&allocation_owners),
             );
         }
 

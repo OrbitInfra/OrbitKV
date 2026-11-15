@@ -222,7 +222,7 @@ pub(super) fn restore(
             // SAFETY: the pool owns its allocation and CUDA context through unregister.
             *input = Some(unsafe {
                 CudaRegistration::new(
-                    Some(copy.source.backend()),
+                    copy.source.backend(),
                     address,
                     capacity,
                     copy.owner.device,
@@ -255,9 +255,8 @@ pub(super) fn restore(
             let mut codec = runtime.codec.borrow_mut();
             if codec.is_none() {
                 *codec = Some(
-                    GpuCodec::new(runtime.stream.context())
-                        .map_err(fail)?
-                        .with_transfer(runtime.engine.clone()),
+                    GpuCodec::new(runtime.stream.context(), runtime.engine.clone())
+                        .map_err(fail)?,
                 );
             }
             for decode in &batch.decodes {
@@ -282,7 +281,9 @@ pub(super) fn restore(
     if !checks.is_empty() {
         let mut codec = runtime.codec.borrow_mut();
         if codec.is_none() {
-            *codec = Some(GpuCodec::new(runtime.stream.context()).map_err(fail)?);
+            *codec = Some(
+                GpuCodec::new(runtime.stream.context(), runtime.engine.clone()).map_err(fail)?,
+            );
         }
         for copy in checks {
             let started = std::time::Instant::now();

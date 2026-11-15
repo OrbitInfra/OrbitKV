@@ -1,5 +1,7 @@
 use super::*;
 use crate::transfer::layout::BlockCopies;
+use crate::transfer_engine::tests::engine as transfer_engine;
+use cudarc::driver::DevicePtr;
 use std::collections::BTreeSet;
 
 /// `["layer_0", "layer_1", ...]` for `build_page_layout` unit tests.
@@ -16,22 +18,24 @@ fn layer_names(n: usize) -> Vec<String> {
 // single-device flows commit device 0; multi-device flows are gated on the
 // host exposing enough CUDA devices and skip otherwise.
 
-/// Build a `GpuRegistration` for the given layer names. Data pointers are
-/// assigned deterministically from the slice order.
-fn gpu_registration(device_id: i32, tp_rank: usize, layers: &[&str]) -> GpuRegistration {
-    gpu_registration_with_segment_bytes(device_id, tp_rank, layers, 1024)
+/// Register actual allocation owners before exercising the production topology.
+fn gpu_registration(
+    instance: &InstanceContext,
+    device_id: i32,
+    tp_rank: usize,
+    layers: &[&str],
+) -> GpuRegistration {
+    gpu_registration_with_segment_bytes(instance, device_id, tp_rank, layers, 1024)
 }
 
-/// Build a `GpuRegistration` with explicit hybrid-cache group ids per layer.
-/// `(name, group)` pairs; group 0 is the attention default, higher groups are
-/// e.g. recurrent-state checkpoints in hybrid (mamba) models.
 fn gpu_registration_with_groups(
+    instance: &InstanceContext,
     device_id: i32,
     tp_rank: usize,
     layers_and_groups: &[(&str, u32)],
 ) -> GpuRegistration {
     let layers: Vec<&str> = layers_and_groups.iter().map(|(name, _)| *name).collect();
-    let mut registration = gpu_registration(device_id, tp_rank, &layers);
+    let mut registration = gpu_registration(instance, device_id, tp_rank, &layers);
     registration.layer_groups = layers_and_groups
         .iter()
         .map(|(name, group)| ((*name).to_string(), *group))
@@ -40,20 +44,40 @@ fn gpu_registration_with_groups(
 }
 
 fn gpu_registration_with_segment_bytes(
+    instance: &InstanceContext,
     device_id: i32,
     tp_rank: usize,
     layers: &[&str],
     segment_bytes: usize,
 ) -> GpuRegistration {
+    let context = CudaContext::new(device_id as usize).unwrap();
+    let stream = context.new_stream().unwrap();
     let mut kv_caches = HashMap::new();
-    for (index, name) in layers.iter().enumerate() {
-        let layout = KVCacheLayout::bind(
-            0x1000 + index as u64 * 0x10000,
+    for name in layers {
+        let backing = Arc::new(stream.alloc_zeros::<u8>(1024 * 1024).unwrap());
+        let (address, ready) = backing.device_ptr(&stream);
+        drop(ready);
+        stream.synchronize().unwrap();
+        // SAFETY: the registered owner retains initialized allocation and context;
+        // these topology controls admit no payload I/O outside their worker owners.
+        let owner = unsafe {
+            crate::transfer_engine::CudaRegistration::new(
+                instance.transfer_engine.clone(),
+                address,
+                backing.len(),
+                device_id,
+                backing,
+            )
+        }
+        .unwrap();
+        let mut layout = KVCacheLayout::bind(
+            address,
             1024 * 1024,
             crate::transfer::layout::KVCacheGeometry::new(100, segment_bytes, 0, 1, None, 1)
                 .unwrap(),
         )
         .unwrap();
+        layout.owner = Some(owner);
         kv_caches.insert((*name).to_string(), layout);
     }
     GpuRegistration {
@@ -78,18 +102,25 @@ fn single_worker_registration_seals_topology() {
         1,
         1,
         false,
-        None,
+        transfer_engine(),
     )
     .unwrap();
 
     // Names intentionally out of registration order: ids come from sorted
     // names, not from declaration order.
+    let registration = gpu_registration(
+        &instance,
+        0,
+        0,
+        &["layer_b", "layer_a", "layer_d", "layer_c"],
+    );
+    let original_address = registration.kv_caches["layer_b"]
+        .owner
+        .as_ref()
+        .unwrap()
+        .address;
     instance
-        .register_new_gpu(gpu_registration(
-            0,
-            0,
-            &["layer_b", "layer_a", "layer_d", "layer_c"],
-        ))
+        .register_new_gpu(registration)
         .expect("register gpu with layers");
 
     let topology = instance
@@ -122,7 +153,10 @@ fn single_worker_registration_seals_topology() {
 
     // A sealed instance accepts no further devices.
     let err = instance
-        .register_new_gpu(gpu_registration(1, 0, &["layer_a"]))
+        .register_new_gpu(GpuRegistration {
+            device_id: 1,
+            ..gpu_registration(&instance, 0, 0, &["layer_a"])
+        })
         .expect_err("sealed instance must reject new devices");
     assert!(err.to_string().contains("already fully registered"));
 
@@ -131,7 +165,7 @@ fn single_worker_registration_seals_topology() {
     let layout = gpu.get_layout("layer_b").expect("get layout");
     assert_eq!(layout.geometry().num_blocks(), 100);
     match layout.block_copies(0).expect("block 0 in range") {
-        BlockCopies::Contiguous(c) => assert_eq!(c.addr, 0x1000),
+        BlockCopies::Contiguous(c) => assert_eq!(c.addr, original_address),
         BlockCopies::Split { .. } => panic!("dense test layout must be contiguous"),
     }
 }
@@ -141,13 +175,21 @@ fn single_worker_registration_seals_topology() {
 /// (layer-id) order. Commits device 0.
 #[test]
 fn page_first_collapses_slots_and_lays_out_page() {
-    let instance =
-        InstanceContext::new("page-first".into(), "page-ns".into(), 1, 1, true, None).unwrap();
+    let instance = InstanceContext::new(
+        "page-first".into(),
+        "page-ns".into(),
+        1,
+        1,
+        true,
+        transfer_engine(),
+    )
+    .unwrap();
 
     // segment_bytes=1024, single segment, no SSD padding on this path, so each
     // layer's padded_block_bytes == 1024.
     instance
         .register_new_gpu(gpu_registration_with_segment_bytes(
+            &instance,
             0,
             0,
             &["layer_b", "layer_a", "layer_c"],
@@ -254,10 +296,18 @@ fn page_first_layer_split_seals_per_shard_slots() {
 
     // tp_size stays 1 (MLA collapses TP to effective rank 0); the two workers
     // are distinguished by their disjoint layer sets, not by tp_rank.
-    let instance =
-        InstanceContext::new("split-page".into(), "split-ns".into(), 1, 2, true, None).unwrap();
+    let instance = InstanceContext::new(
+        "split-page".into(),
+        "split-ns".into(),
+        1,
+        2,
+        true,
+        transfer_engine(),
+    )
+    .unwrap();
     instance
         .register_new_gpu(gpu_registration_with_segment_bytes(
+            &instance,
             0,
             0,
             &["layer_a", "layer_c"],
@@ -266,6 +316,7 @@ fn page_first_layer_split_seals_per_shard_slots() {
         .expect("rank 0 registers its shard");
     instance
         .register_new_gpu(gpu_registration_with_segment_bytes(
+            &instance,
             1,
             0,
             &["layer_b"],
@@ -294,10 +345,17 @@ fn page_first_layer_split_seals_per_shard_slots() {
 /// rejected with a registration-progress error. Commits device 0.
 #[test]
 fn unsealed_instance_rejects_topology_access() {
-    let instance =
-        InstanceContext::new("partial".into(), "partial-ns".into(), 2, 2, false, None).unwrap();
+    let instance = InstanceContext::new(
+        "partial".into(),
+        "partial-ns".into(),
+        2,
+        2,
+        false,
+        transfer_engine(),
+    )
+    .unwrap();
     instance
-        .register_new_gpu(gpu_registration(0, 0, &["layer_0"]))
+        .register_new_gpu(gpu_registration(&instance, 0, 0, &["layer_0"]))
         .expect("first of two workers");
 
     let err = instance
@@ -307,7 +365,7 @@ fn unsealed_instance_rejects_topology_access() {
 
     // Duplicate device registration is still rejected while filling.
     let err = instance
-        .register_new_gpu(gpu_registration(0, 0, &["layer_0"]))
+        .register_new_gpu(gpu_registration(&instance, 0, 0, &["layer_0"]))
         .expect_err("duplicate GPU registration should fail");
     assert!(err.to_string().contains("already exists"));
 }
@@ -316,10 +374,17 @@ fn unsealed_instance_rejects_topology_access() {
 /// sealed topology contract; reject it outright.
 #[test]
 fn registration_without_layers_is_rejected() {
-    let instance =
-        InstanceContext::new("empty".into(), "empty-ns".into(), 1, 1, false, None).unwrap();
+    let instance = InstanceContext::new(
+        "empty".into(),
+        "empty-ns".into(),
+        1,
+        1,
+        false,
+        transfer_engine(),
+    )
+    .unwrap();
     let err = instance
-        .register_new_gpu(gpu_registration(0, 0, &[]))
+        .register_new_gpu(gpu_registration(&instance, 0, 0, &[]))
         .expect_err("empty registration must fail");
     assert!(err.to_string().contains("no KV cache layers"));
 }
@@ -344,15 +409,28 @@ fn seal_derives_layer_space_from_union_of_workers() {
         return;
     }
 
-    let instance =
-        InstanceContext::new("pp-mtp".into(), "pp-mtp-ns".into(), 1, 2, false, None).unwrap();
+    let instance = InstanceContext::new(
+        "pp-mtp".into(),
+        "pp-mtp-ns".into(),
+        1,
+        2,
+        false,
+        transfer_engine(),
+    )
+    .unwrap();
     instance
-        .register_new_gpu(gpu_registration(0, 0, &["model.layers.0.self_attn.attn"]))
+        .register_new_gpu(gpu_registration(
+            &instance,
+            0,
+            0,
+            &["model.layers.0.self_attn.attn"],
+        ))
         .expect("stage 0 registers the main layer");
     instance
         .register_new_gpu(GpuRegistration {
             pp_rank: 1,
             ..gpu_registration(
+                &instance,
                 1,
                 0,
                 &[
@@ -392,13 +470,20 @@ fn mla_replica_registration_seals() {
         return;
     }
 
-    let instance =
-        InstanceContext::new("mla-replica".into(), "mla-ns".into(), 1, 2, false, None).unwrap();
+    let instance = InstanceContext::new(
+        "mla-replica".into(),
+        "mla-ns".into(),
+        1,
+        2,
+        false,
+        transfer_engine(),
+    )
+    .unwrap();
     instance
-        .register_new_gpu(gpu_registration(0, 0, MLA_DSA_LAYERS))
+        .register_new_gpu(gpu_registration(&instance, 0, 0, MLA_DSA_LAYERS))
         .expect("register replica on device 0");
     instance
-        .register_new_gpu(gpu_registration(1, 0, MLA_DSA_LAYERS))
+        .register_new_gpu(gpu_registration(&instance, 1, 0, MLA_DSA_LAYERS))
         .expect("register replica on device 1, sealing the instance");
 
     let topology = instance.sealed_topology().expect("sealed");
@@ -417,17 +502,24 @@ fn seal_rejects_replicas_across_pipeline_stages() {
         return;
     }
 
-    let instance =
-        InstanceContext::new("pp-conflict".into(), "pp-ns".into(), 1, 2, false, None).unwrap();
+    let instance = InstanceContext::new(
+        "pp-conflict".into(),
+        "pp-ns".into(),
+        1,
+        2,
+        false,
+        transfer_engine(),
+    )
+    .unwrap();
     let layers = &["model.layers.0.self_attn.attn"];
     instance
-        .register_new_gpu(gpu_registration(0, 0, layers))
+        .register_new_gpu(gpu_registration(&instance, 0, 0, layers))
         .expect("register pp_rank 0 owner");
 
     let err = instance
         .register_new_gpu(GpuRegistration {
             pp_rank: 1,
-            ..gpu_registration(1, 0, layers)
+            ..gpu_registration(&instance, 1, 0, layers)
         })
         .expect_err("one layer on two pipeline stages must be rejected at seal");
     assert!(err.to_string().contains("different pipeline stages"));
@@ -454,22 +546,22 @@ fn seal_rejects_missing_slot_owner() {
         2,
         2,
         false,
-        None,
+        transfer_engine(),
     )
     .unwrap();
     instance
-        .register_new_gpu(gpu_registration(0, 0, &["layer_0", "layer_1"]))
+        .register_new_gpu(gpu_registration(&instance, 0, 0, &["layer_0", "layer_1"]))
         .expect("rank 0 registers both layers");
 
     let err = instance
-        .register_new_gpu(gpu_registration(1, 1, &["layer_0"]))
+        .register_new_gpu(gpu_registration(&instance, 1, 1, &["layer_0"]))
         .expect_err("rank 1 missing layer_1 must fail the seal");
     assert!(err.to_string().contains("incomplete KV registration"));
     assert!(err.to_string().contains("layer_1"));
 
     // Re-registering rank 1 with the full layer set seals the instance.
     instance
-        .register_new_gpu(gpu_registration(1, 1, &["layer_0", "layer_1"]))
+        .register_new_gpu(gpu_registration(&instance, 1, 1, &["layer_0", "layer_1"]))
         .expect("complete worker set seals");
     assert!(instance.sealed_topology().is_ok());
 }
@@ -483,10 +575,18 @@ fn seal_rejects_inconsistent_layer_geometry() {
         return;
     }
 
-    let instance =
-        InstanceContext::new("geom".into(), "geom-ns".into(), 1, 2, false, None).unwrap();
+    let instance = InstanceContext::new(
+        "geom".into(),
+        "geom-ns".into(),
+        1,
+        2,
+        false,
+        transfer_engine(),
+    )
+    .unwrap();
     instance
         .register_new_gpu(gpu_registration_with_segment_bytes(
+            &instance,
             0,
             0,
             &["layer_0"],
@@ -496,6 +596,7 @@ fn seal_rejects_inconsistent_layer_geometry() {
 
     let err = instance
         .register_new_gpu(gpu_registration_with_segment_bytes(
+            &instance,
             1,
             0,
             &["layer_0"],
@@ -514,10 +615,18 @@ fn seal_rejects_inconsistent_layer_geometry() {
 fn hybrid_topology_seals_per_group_slot_spaces() {
     // tp_size=1 keeps this single-device; the group-rank reset and per-group
     // totals are what distinguish groups (tp_rank math is unchanged).
-    let instance =
-        InstanceContext::new("hybrid".into(), "hybrid-ns".into(), 1, 1, false, None).unwrap();
+    let instance = InstanceContext::new(
+        "hybrid".into(),
+        "hybrid-ns".into(),
+        1,
+        1,
+        false,
+        transfer_engine(),
+    )
+    .unwrap();
     instance
         .register_new_gpu(gpu_registration_with_groups(
+            &instance,
             0,
             0,
             &[
@@ -557,10 +666,22 @@ fn hybrid_topology_seals_per_group_slot_spaces() {
 /// backward-compat guard for current connectors. Commits device 0.
 #[test]
 fn default_groups_keep_global_slot_layout() {
-    let instance =
-        InstanceContext::new("classic".into(), "classic-ns".into(), 1, 1, false, None).unwrap();
+    let instance = InstanceContext::new(
+        "classic".into(),
+        "classic-ns".into(),
+        1,
+        1,
+        false,
+        transfer_engine(),
+    )
+    .unwrap();
     instance
-        .register_new_gpu(gpu_registration(0, 0, &["layer_a", "layer_b", "layer_c"]))
+        .register_new_gpu(gpu_registration(
+            &instance,
+            0,
+            0,
+            &["layer_a", "layer_b", "layer_c"],
+        ))
         .expect("register classic gpu");
 
     let topology = instance.sealed_topology().expect("sealed");
@@ -585,14 +706,31 @@ fn seal_rejects_inconsistent_layer_group_across_devices() {
         return;
     }
 
-    let instance =
-        InstanceContext::new("grp-conflict".into(), "grp-ns".into(), 1, 2, false, None).unwrap();
+    let instance = InstanceContext::new(
+        "grp-conflict".into(),
+        "grp-ns".into(),
+        1,
+        2,
+        false,
+        transfer_engine(),
+    )
+    .unwrap();
     instance
-        .register_new_gpu(gpu_registration_with_groups(0, 0, &[("layer_0", 0)]))
+        .register_new_gpu(gpu_registration_with_groups(
+            &instance,
+            0,
+            0,
+            &[("layer_0", 0)],
+        ))
         .expect("first worker");
 
     let err = instance
-        .register_new_gpu(gpu_registration_with_groups(1, 0, &[("layer_0", 1)]))
+        .register_new_gpu(gpu_registration_with_groups(
+            &instance,
+            1,
+            0,
+            &[("layer_0", 1)],
+        ))
         .expect_err("same layer in different groups must fail the seal");
     assert!(err.to_string().contains("storage group"), "{err}");
 }
@@ -602,10 +740,18 @@ fn seal_rejects_inconsistent_layer_group_across_devices() {
 /// Commits device 0.
 #[test]
 fn seal_rejects_sparse_group_ids() {
-    let instance =
-        InstanceContext::new("sparse".into(), "sparse-ns".into(), 1, 1, false, None).unwrap();
+    let instance = InstanceContext::new(
+        "sparse".into(),
+        "sparse-ns".into(),
+        1,
+        1,
+        false,
+        transfer_engine(),
+    )
+    .unwrap();
     let err = instance
         .register_new_gpu(gpu_registration_with_groups(
+            &instance,
             0,
             0,
             &[("layer_a", 0), ("layer_b", 2)],
@@ -625,11 +771,12 @@ fn page_first_rejects_multiple_groups() {
         1,
         1,
         true,
-        None,
+        transfer_engine(),
     )
     .unwrap();
     let err = instance
         .register_new_gpu(gpu_registration_with_groups(
+            &instance,
             0,
             0,
             &[("layer_a", 0), ("layer_b", 1)],
@@ -644,10 +791,17 @@ fn receiver_placement_is_sealed_per_group_without_changing_storage_identity() {
         let groups = if page_first { [0, 0, 0] } else { [0, 1, 0] };
         let mut namespace = None;
         for node in [NumaNode(0), NumaNode(1), NumaNode::UNKNOWN] {
-            let instance =
-                InstanceContext::new("receiver".into(), "model".into(), 1, 1, page_first, None)
-                    .unwrap();
+            let instance = InstanceContext::new(
+                "receiver".into(),
+                "model".into(),
+                1,
+                1,
+                page_first,
+                transfer_engine(),
+            )
+            .unwrap();
             let mut registration = gpu_registration_with_groups(
+                &instance,
                 0,
                 0,
                 &[

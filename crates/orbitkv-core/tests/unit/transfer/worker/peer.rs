@@ -329,7 +329,7 @@ async fn raw_peer_gpu_receive_checks_once_after_drain_before_readiness() {
     // SAFETY: the initialized destination/context outlive the bound stream and registration.
     let anchor = unsafe {
         CudaRegistration::new(
-            storage.peer_transport().cloned(),
+            storage.peer_transport().clone(),
             address,
             512,
             0,
@@ -341,7 +341,7 @@ async fn raw_peer_gpu_receive_checks_once_after_drain_before_readiness() {
         0,
         crate::TransferMode::Direct,
         Some(anchor.clone()),
-        storage.peer_transport().cloned(),
+        storage.peer_transport().clone(),
     )
     .unwrap();
     let control = Arc::new(Control::default());

@@ -141,12 +141,6 @@ impl Engine for P2pTransferService {
                     .min(std::time::Duration::from_secs(30)),
         );
 
-        if !self.engine.has_remote_transport() {
-            return Err(Status::failed_precondition(
-                "Peer transfer engine is not configured",
-            ));
-        }
-
         if req.residency_sequences.len() != req.block_hashes.len()
             || req.residency_sequences.contains(&0)
         {
@@ -202,20 +196,8 @@ impl Engine for P2pTransferService {
             status: Some(Self::ok_status()),
             blocks,
             lock_timeout_secs: self.engine.peer_exports().lock_timeout().as_secs() as u32,
-            native_source_epoch: self
-                .engine
-                .transfer_source_epoch()
-                .ok_or_else(|| {
-                    Status::failed_precondition("registered native source epoch is unavailable")
-                })?
-                .to_string(),
-            transfer_endpoint: self
-                .engine
-                .transfer_endpoint()
-                .ok_or_else(|| {
-                    Status::failed_precondition("Peer transfer engine is not configured")
-                })?
-                .to_string(),
+            native_source_epoch: self.engine.transfer_source_epoch().to_string(),
+            transfer_endpoint: self.engine.transfer_endpoint().to_string(),
         }))
     }
 

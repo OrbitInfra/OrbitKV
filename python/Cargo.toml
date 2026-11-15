@@ -20,11 +20,10 @@ path = "src/bin/cache_manager.rs"
 
 [features]
 test-hooks = ["orbitkv-channel/test-hooks"]
-default = ["cuda-13", "orbite"]
+default = ["cuda-13"]
 cuda-13 = ["orbitkv-core/cuda-13", "orbitkv-server/cuda-13"]
-orbite = ["orbitkv-core/orbite", "orbitkv-server/orbite"]
-orbite-gds = ["orbite", "orbitkv-core/orbite-gds", "orbitkv-server/orbite-gds"]
-orbite-rdma = ["orbite", "orbitkv-core/orbite-rdma", "orbitkv-server/orbite-rdma"]
+orbite-gds = ["orbitkv-core/orbite-gds", "orbitkv-server/orbite-gds"]
+orbite-rdma = ["orbitkv-core/orbite-rdma", "orbitkv-server/orbite-rdma"]
 
 [dependencies]
 log.workspace = true

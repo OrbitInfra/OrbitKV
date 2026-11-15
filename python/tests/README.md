@@ -188,10 +188,10 @@ fixture does not qualify the final CUDA wheel.
 
 ### Installed OrbiTE peer candidate
 
-Build a complete wheel with `--features orbite` or `--features orbite-rdma`
+Build the default complete wheel, adding `--features orbite-rdma` for RDMA,
 as described in [release builds](../../docs/releases.md#build-a-candidate).
 `release/test_installed_orbite.py` is a model-free two-Manager gate for that
-optional artifact. It compares all requested GPU bytes and untouched pages,
+installed artifact. It compares all requested GPU bytes and untouched pages,
 checks actual remote-fetch and H2D byte counters, awaits the source inventory
 fence, and retains the original IPC counter descriptors through normal
 unregister. Registration and Publish cross CUDA IPC; DRAM Restore uses the

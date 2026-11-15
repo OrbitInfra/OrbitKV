@@ -171,7 +171,7 @@ cargo build --release
 cargo test
 ```
 
-CUDA 13 and OrbiTE are the default features. Use a CUDA 13 toolkit for native
+CUDA 13 is the default feature; OrbiTE is a required dependency in every build. Use a CUDA 13 toolkit for native
 builds; CUDA 12 is unsupported. The single Python distribution is `orbitkv`.
 
 Run Cargo builds/checks/Clippy and runtime tests sequentially in one checkout.

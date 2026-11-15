@@ -421,7 +421,7 @@ These commands target the current path; historical results do not qualify it.
 ```bash
 PYO3_PYTHON=$PWD/.venv/sglang-release/bin/python \
   cargo build --release -p orbitkv-server -p orbitkv-py \
-  --no-default-features --features cuda-13,orbite,orbitkv-server/test-hooks
+  --no-default-features --features cuda-13,orbitkv-server/test-hooks
 # Install the matching extension using the development/build instructions.
 cd python
 ORBITKV_CACHE_MANAGER_BINARY=../target/release/orbitkv-cache-manager-py \

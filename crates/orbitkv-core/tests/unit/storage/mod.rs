@@ -184,55 +184,38 @@ fn invalid_ssd_setup_returns_an_error_without_panicking() {
     );
 }
 
-#[cfg(not(feature = "orbite"))]
 #[tokio::test]
-async fn no_backend_storage_stays_local_and_loads_no_native_engine() {
-    use crate::transfer_engine::ErrorKind;
+async fn local_storage_owns_orbite_without_enabling_distributed_admission() {
     let storage = make_engine();
-    assert!(storage.peer_transport().is_none());
-    assert!(storage.transfer_endpoint().is_none());
-    assert!(storage.transfer_source_epoch().is_none());
+    assert!(!storage.transfer_endpoint().is_empty());
+    assert!(!storage.transfer_source_epoch().is_empty());
+    assert_eq!(
+        storage.peer_transport().transfer_endpoint(),
+        storage.transfer_endpoint()
+    );
     assert_eq!(
         storage
             .exports
             .open(uuid::Uuid::new_v4(), uuid::Uuid::new_v4()),
         Err(crate::PeerError::Unavailable)
     );
-    for selected in [crate::TransportHint::Tcp, crate::TransportHint::Rdma] {
+    for hint in [crate::TransportHint::Auto, crate::TransportHint::Tcp] {
         let error = crate::transfer_engine::create_transfer_engine(
-            selected,
+            hint,
             storage.allocator.clone(),
-            "127.0.0.1:0",
+            "not-an-endpoint",
             None,
             None,
         )
         .err()
-        .expect("no network provider was compiled");
-        assert_eq!(error.kind, ErrorKind::Unavailable);
-        if selected != crate::TransportHint::Auto {
-            let error = crate::transfer::local::LocalRestoreExecutor::new(
-                usize::MAX,
-                Vec::new(),
-                Vec::new(),
-                crate::TransferMode::Direct,
-                Arc::new(()),
-            )
-            .err()
-            .expect("uncompiled client provider is rejected before CUDA setup");
-            assert!(error.contains("orbite build feature"), "{error}");
-        }
+        .expect("native initialization failure must reach the caller");
+        assert_eq!(error.kind, crate::transfer_engine::ErrorKind::Backend);
     }
     let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
-    for library in [
-        "libtent",
-        "libmooncake",
-        "liborbite",
-        "libibverbs",
-        "libcufile",
-    ] {
+    for library in ["libtent", "libmooncake", "libibverbs", "libcufile"] {
         assert!(
             !maps.contains(library),
-            "unexpected native engine dependency: {library}"
+            "unexpected native dependency: {library}"
         );
     }
 }
