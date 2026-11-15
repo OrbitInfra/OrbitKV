@@ -384,10 +384,11 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
         attn_metadata,
         **kwargs: Any,
     ) -> None:
-        # Save is submitted from wait_for_save() using scheduler metadata.
-        # Layer callbacks are intentionally ignored so CUDA graph replay
-        # cannot suppress save submission.
-        pass
+        if not self._worker:
+            return
+        metadata = self._get_connector_metadata()
+        if metadata is not None:
+            self._worker.save_kv_layer(layer_name, metadata)
 
     def wait_for_save(self) -> None:
         if not self._worker:

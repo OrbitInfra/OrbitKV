@@ -13,6 +13,16 @@ Changes below apply to the next pre-release; nothing new is published by this PR
 
 ## Next pre-release (unreleased)
 
+### vLLM layerwise Save
+
+Ordinary single-group, layer-first caches now consume `save_kv_layer` readiness.
+All request layers retain their page holds until their native Save receipts;
+missing callbacks use step-end submission. Page-first/cross-layer/HMA,
+microbatch/DBO and speculative profiles keep whole-step Save. CUDA capture
+does no early admission. This changes no native API, protocol or file format.
+See the [scope and ownership contract](adapters.md#layerwise-save); installed
+GPU/Graph behavior and overlap performance remain unqualified.
+
 ### Breaking: required OrbiTE dependency
 
 Removed the `orbite` Cargo feature and the unavailable-backend implementation.

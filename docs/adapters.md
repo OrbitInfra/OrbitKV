@@ -184,8 +184,47 @@ The selected role alone is constructed. Native sessions close on initialization
 failure, plugin conflicts stay visible, and `get_transfer_results` uses the
 released completion/failure contract, including MultiConnector. Ordinary cache
 publication has `requires_kv_delivery=False`; native reliable P/D retains its own
-requirement. Saves submit at step end. Restore errors retain GPU ownership rather
+requirement. Eligible Saves submit by layer, with a step-end path for omitted
+callbacks and excluded profiles. Restore errors retain GPU ownership rather
 than becoming a silent availability fallback.
+
+### Layerwise Save
+
+For one cache group with a layer-first layout, `save_kv_layer` consumes the
+currently bound scheduler metadata, records readiness on the producer CUDA
+stream and hands that layer to the existing Save worker. Both released V1 and
+V2 may call `start_load_kv` only after forward when there is no synchronous load;
+layer saving therefore does not depend on that callback having run.
+
+Before queuing the first layer, the adapter creates all request completion
+markers and calls native `prepare_save` for every registered layer. Accepted
+handles use the existing process-wide count/byte budget. Admission is best
+effort per layer: a typed pre-submit rejection completes only that layer, and
+other accepted layers can proceed. Unknown handoffs retain pages and close
+further admission. Python never treats a timeout or missing handle as drain.
+
+The Save worker waits each producer event, then consumes Rust
+`submit_saves`/`wait_save`. Every request stays held until all its layers have
+terminal receipts, including layers not yet reached by the forward pass.
+Manager accumulates their slots and publishes a block only when all required
+slots exist. Partial or rejected layer sets cannot become complete hits.
+
+`wait_for_save` submits only the remaining layers if Python callbacks were
+partially omitted, or the ordinary whole-step Save if no layer callback ran.
+CUDA capture performs no early admission; full-graph replay still has the
+step-end path. Duplicate callbacks in the admitted ordinary profile do not
+repeat a handoff. Page-first, cross-layer, multi-group/HMA, speculative and
+microbatch/DBO profiles keep whole-step saving. In particular, released
+[`ParallelConfig.use_ubatching`](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/config/parallel.py#L644-L650)
+includes both DBO and `ubatch_size > 1`; one microbatch's callback cannot prove
+all request pages are ready.
+
+Shutdown cancels unqueued prepared layers only on native `cancel_save=True`,
+and drains queued work before unregistering. A failed/unknown cancel retains
+owners. This adds no public native API or protocol. Source and installed-CPU
+controls cover dispatch and retention; the [installed byte gate](fault-qualification.md#layerwise-save-controls)
+is written but unrun. GPU/Graph behavior and overlap performance remain
+unqualified.
 
 ### Released V2 lifetime contract
 
@@ -199,8 +238,8 @@ The following audit is pinned to vLLM **0.33.0, `4ba787ec`**:
   invokes pre-forward before eager/piecewise execution or full-graph replay, then
   `finish_forward`. The [attention wrapper, lines 37–57](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/model_executor/layers/attention/kv_transfer_utils.py#L37-L57)
   calls `wait_for_layer_load`, attention, `save_kv_layer` on the caller's current
-  stream. OrbitKV links full-graph loads on the replay stream and submits saves
-  at step end, independent of replay executing Python layer callbacks.
+  stream. OrbitKV links full-graph loads on the replay stream. Eligible saves
+  consume layer callbacks; step-end submission covers replay omissions.
 - Completion: [post-forward, lines 136–175](https://github.com/vllm-project/vllm/blob/4ba787ec9959e566d3b587a796dff07673324da5/vllm/v1/worker/gpu/kv_connector.py#L136-L175)
   waits/submits saves, collects finished sends/receives and failed receives through
   `KVConnectorTransferResults`, errors/stats/events/worker metadata, then clears
