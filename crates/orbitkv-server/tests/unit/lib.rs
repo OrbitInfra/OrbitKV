@@ -25,6 +25,49 @@ fn cache_policy_controls_validate_protection_and_admission() {
 }
 
 #[test]
+fn memory_watermark_flags_are_optional_paired_and_percentage_bounded() {
+    let default = Cli::try_parse_from(["orbitkv-cache-manager"]).unwrap();
+    assert_eq!(default.cache_high_watermark_percent, None);
+    assert_eq!(default.cache_low_watermark_percent, None);
+    for flags in [
+        vec!["--cache-high-watermark-percent", "80"],
+        vec!["--cache-low-watermark-percent", "60"],
+        vec![
+            "--cache-high-watermark-percent",
+            "101",
+            "--cache-low-watermark-percent",
+            "60",
+        ],
+        vec![
+            "--cache-high-watermark-percent",
+            "0",
+            "--cache-low-watermark-percent",
+            "0",
+        ],
+        vec![
+            "--cache-high-watermark-percent",
+            "100",
+            "--cache-low-watermark-percent",
+            "100",
+        ],
+    ] {
+        assert!(
+            Cli::try_parse_from(std::iter::once("orbitkv-cache-manager").chain(flags)).is_err()
+        );
+    }
+    let cli = Cli::try_parse_from([
+        "orbitkv-cache-manager",
+        "--cache-high-watermark-percent",
+        "80",
+        "--cache-low-watermark-percent",
+        "60",
+    ])
+    .unwrap();
+    assert_eq!(cli.cache_high_watermark_percent, Some(80));
+    assert_eq!(cli.cache_low_watermark_percent, Some(60));
+}
+
+#[test]
 fn ssd_read_route_is_independent_of_backend_initialization() {
     for (value, expected) in [
         ("uring", orbitkv_core::SsdReadPath::Uring),

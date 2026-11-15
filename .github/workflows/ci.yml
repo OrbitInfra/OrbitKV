@@ -272,11 +272,10 @@ jobs:
           c++ -std=c++20 -shared -fPIC -DORBITKV_CPU_HOST_CONTROL -x c++ crates/orbitkv-core/tests/native/source_owner_host_shim.cu -o "$RUNNER_TEMP/orbitkv-cpu-host-control/libcudart.so"
           # The shim exercises host ownership only; it is not CUDA evidence.
           for filter in peer:: query:: planning:: metrics:: transfer_engine::tests \
-            codec:: engine::restore:: storage::inventory:: \
+            codec:: engine::restore:: storage::inventory:: storage::dram:: storage::tests:: \
             transfer::worker::drain_tests::nonresident_payloads_return_errors_without_host_access \
             transfer::tests::raw_copy_shape \
-            transfer::local::trace::tests \
-            storage::tests::local_storage_owns_orbite_without_enabling_distributed_admission; do
+            transfer::local::trace::tests; do
             LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --no-default-features --features cuda-13 --lib "$filter" -- --test-threads=1
           done
           LD_LIBRARY_PATH="$RUNNER_TEMP/orbitkv-cpu-host-control" cargo test --locked -p orbitkv-core --lib memory::pool::backend::orbite_tests -- --ignored --test-threads=1

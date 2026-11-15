@@ -124,6 +124,14 @@ pub struct Cli {
     #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u8).range(0..=100))]
     pub cache_protected_percent: u8,
 
+    /// Start DRAM eviction at this percent of pinned capacity; requires a lower target.
+    #[arg(long, requires = "cache_low_watermark_percent", value_parser = clap::value_parser!(u8).range(1..=100))]
+    pub cache_high_watermark_percent: Option<u8>,
+
+    /// Target percent for an active DRAM eviction cycle (strictly below the high watermark).
+    #[arg(long, requires = "cache_high_watermark_percent", value_parser = clap::value_parser!(u8).range(0..=99))]
+    pub cache_low_watermark_percent: Option<u8>,
+
     /// Disable NUMA-aware memory allocation (use single pool instead of per-node pools)
     #[arg(long, default_value_t = false)]
     pub disable_numa_affinity: bool,
@@ -761,6 +769,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         query_instance_budget_bytes: cli.query_instance_budget,
         enable_lfu_admission: cli.enable_lfu_admission,
         cache_protected_percent: cli.cache_protected_percent,
+        cache_high_watermark_percent: cli.cache_high_watermark_percent,
+        cache_low_watermark_percent: cli.cache_low_watermark_percent,
         hint_value_size_bytes: cli.hint_value_size,
         ssd_cache_config,
         codec: cli.storage_codec,
@@ -903,19 +913,28 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         )?;
         if let Some(control) = &query_control { control.start_reaper(); }
 
-        // Spawn background GC task for stale inflight blocks and expired transfer locks
+        // Keep watermark work in the existing maintenance task, separately from slow GC.
         {
             let engine = Arc::clone(&engine);
             let shutdown = Arc::clone(&shutdown);
+            let maintain_memory = cli.cache_high_watermark_percent.is_some();
             tokio::spawn(async move {
                 const GC_INTERVAL: Duration = Duration::from_secs(60);
                 const INFLIGHT_MAX_AGE: Duration = Duration::from_secs(300); // 5 min
 
                 let mut interval = tokio::time::interval(GC_INTERVAL);
                 interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                let mut memory_interval = tokio::time::interval(Duration::from_secs(1));
+                memory_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
                 loop {
                     tokio::select! {
+                        _ = memory_interval.tick(), if maintain_memory => {
+                            let stats = engine.maintain_memory_cache();
+                            if stats.evicted_blocks > 0 {
+                                log::debug!("Watermark eviction: {stats:?}");
+                            }
+                        }
                         _ = interval.tick() => {
                             let cleaned = engine
                                 .gc_stale_inflight(INFLIGHT_MAX_AGE)

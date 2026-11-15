@@ -51,7 +51,10 @@ fn demand_protection_survives_scans_and_demotes_by_bytes() {
         Arc::new(SealedBlock::for_policy_test(40)),
     )]);
     assert_class(&cache, &b, ResidentClass::Probationary);
-    assert_eq!(cache.remove_lru_batch(1, 40)[0].0, b);
+    assert_eq!(
+        cache.remove_lru_batch(1, 40, ReclaimReason::Pressure)[0].0,
+        b
+    );
     cache.batch_insert(vec![(
         c.clone(),
         Arc::new(SealedBlock::for_policy_test(30)),
@@ -62,10 +65,16 @@ fn demand_protection_survives_scans_and_demotes_by_bytes() {
     assert_eq!(cache.inner.lock().retained_bytes, 30);
     // A live consumer still prevents reclaim after policy demotion.
     let held = cache.get_prefix_blocks(std::slice::from_ref(&a), true).1;
-    assert_eq!(cache.remove_lru_batch(1, 40)[0].0, c);
+    assert_eq!(
+        cache.remove_lru_batch(1, 40, ReclaimReason::Pressure)[0].0,
+        c
+    );
     assert_eq!(cache.inner.lock().retained_bytes, 0);
     drop(held);
-    assert_eq!(cache.remove_lru_batch(1, 40)[0].0, a);
+    assert_eq!(
+        cache.remove_lru_batch(1, 40, ReclaimReason::Pressure)[0].0,
+        a
+    );
 }
 
 #[test]
@@ -111,6 +120,48 @@ fn assert_class(cache: &DramStore, key: &StateKey, expected: ResidentClass) {
         inner.retained.contains_key(key),
         expected == ResidentClass::Retained
     );
+}
+
+#[test]
+fn watermark_scans_are_bounded_without_starving_other_classes_or_losing_inventory() {
+    let cache = DramStore::new(4096, false, None, Some(16 * 1024), 0);
+    let mut held = Vec::new();
+    for id in 0..3 {
+        let block = Arc::new(SealedBlock::for_policy_test(40));
+        cache.batch_insert_reclaimable(vec![(StateKey::new("ns".into(), vec![id]), block.clone())]);
+        held.push(block);
+    }
+    let victim = StateKey::new("ns".into(), vec![3]);
+    cache.batch_insert(vec![(
+        victim.clone(),
+        Arc::new(SealedBlock::for_policy_test(40)),
+    )]);
+    let inventory = cache.inner.lock().inventory.as_ref().unwrap().clone();
+    let before = inventory.page(None).unwrap();
+    let removed = cache.remove_lru_batch(2, u64::MAX, ReclaimReason::Watermark);
+    assert_eq!(
+        removed.len(),
+        1,
+        "held reclaimable entries must not starve retained entries"
+    );
+    assert_eq!(removed[0].0, victim);
+    assert_eq!(inventory.sequence(), 5);
+    let changes = inventory.changes(4, 5).unwrap();
+    assert_eq!(changes.len(), 1);
+    assert!(!changes[0].present);
+    assert!(cache.pin_residencies(&before).is_none());
+    assert_eq!(
+        cache.inner.lock().reclaimable.iter().next().unwrap().0.hash,
+        vec![2]
+    );
+    drop(held);
+    assert_eq!(
+        cache
+            .remove_lru_batch(2, u64::MAX, ReclaimReason::Watermark)
+            .len(),
+        2
+    );
+    assert_eq!(cache.inner.lock().reclaimable.len(), 1);
 }
 
 fn resident_metadata(cache: &DramStore, key: &StateKey) -> Option<ResidentMetadata> {
@@ -164,7 +215,7 @@ fn reclaimable_blocks_are_evicted_before_retained_blocks() {
     cache.batch_insert(vec![(retained.clone(), make_block())]);
     cache.batch_insert_reclaimable(vec![(reclaimable.clone(), make_block())]);
 
-    let evicted = cache.remove_lru_batch(2, u64::MAX);
+    let evicted = cache.remove_lru_batch(2, u64::MAX, ReclaimReason::Pressure);
     assert_eq!(
         evicted.into_iter().map(|(key, _)| key).collect::<Vec<_>>(),
         vec![reclaimable, retained]
@@ -179,7 +230,10 @@ fn pressure_reclaim_ignores_weak_references() {
     let weak = Arc::downgrade(&block);
     cache.batch_insert(vec![(key.clone(), block)]);
 
-    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, key);
+    assert_eq!(
+        cache.remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure)[0].0,
+        key
+    );
     assert!(weak.upgrade().is_none());
 }
 
@@ -192,11 +246,18 @@ fn pressure_reclaim_waits_for_external_strong_reference() {
     let weak = Arc::downgrade(&block);
     cache.batch_insert(vec![(key.clone(), block)]);
 
-    assert!(cache.remove_lru_batch(1, u64::MAX).is_empty());
+    assert!(
+        cache
+            .remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure)
+            .is_empty()
+    );
     assert_class(&cache, &key, ResidentClass::Retained);
 
     drop(external);
-    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, key);
+    assert_eq!(
+        cache.remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure)[0].0,
+        key
+    );
     assert!(weak.upgrade().is_none());
 }
 
@@ -218,7 +279,10 @@ fn local_hit_refreshes_recency_without_changing_class() {
         resident_metadata(&cache, &hit).unwrap().inserted_at,
         inserted_at
     );
-    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, oldest);
+    assert_eq!(
+        cache.remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure)[0].0,
+        oldest
+    );
     assert_class(&cache, &hit, ResidentClass::Reclaimable);
 }
 
@@ -236,8 +300,14 @@ fn warmup_hits_do_not_refresh_recency_and_unused_pages_are_reclaimable() {
     let block = make_block();
     block.mark_warmed();
     cache.batch_insert_reclaimable(vec![(warmed.clone(), block)]);
-    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, warmed);
-    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, oldest);
+    assert_eq!(
+        cache.remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure)[0].0,
+        warmed
+    );
+    assert_eq!(
+        cache.remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure)[0].0,
+        oldest
+    );
     assert_class(&cache, &newest, ResidentClass::Retained);
 }
 
@@ -254,9 +324,16 @@ fn demand_promotes_only_the_matching_warmup_generation() {
     assert_class(&cache, &key, ResidentClass::Reclaimable);
     cache.retain_demand(std::slice::from_ref(&key), std::slice::from_ref(&block));
     assert_class(&cache, &key, ResidentClass::Retained);
-    assert!(cache.remove_lru_batch(1, u64::MAX).is_empty());
+    assert!(
+        cache
+            .remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure)
+            .is_empty()
+    );
     drop(block);
-    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, key);
+    assert_eq!(
+        cache.remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure)[0].0,
+        key
+    );
 }
 
 #[test]
@@ -283,7 +360,10 @@ fn serving_hit_refreshes_recency_without_changing_class() {
         resident_metadata(&cache, &hit).unwrap().inserted_at,
         inserted_at
     );
-    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, oldest);
+    assert_eq!(
+        cache.remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure)[0].0,
+        oldest
+    );
     assert_class(&cache, &hit, ResidentClass::Retained);
 }
 
@@ -304,9 +384,18 @@ fn already_existing_insert_keeps_original_class() {
 
     assert_class(&cache, &remote_first, ResidentClass::Reclaimable);
     assert_class(&cache, &local_first, ResidentClass::Retained);
-    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, remote_other);
-    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, remote_first);
-    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, local_other);
+    assert_eq!(
+        cache.remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure)[0].0,
+        remote_other
+    );
+    assert_eq!(
+        cache.remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure)[0].0,
+        remote_first
+    );
+    assert_eq!(
+        cache.remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure)[0].0,
+        local_other
+    );
     assert_class(&cache, &local_first, ResidentClass::Retained);
 }
 
@@ -333,7 +422,7 @@ fn reinsert_after_eviction_starts_new_residence_episode() {
     cache.batch_insert(vec![(key.clone(), make_block())]);
     let first_inserted_at = backdate_resident(&cache, &key, Duration::from_secs(60));
 
-    cache.remove_lru_batch(1, u64::MAX);
+    cache.remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure);
     cache.batch_insert(vec![(key.clone(), make_block())]);
 
     let second_inserted_at = resident_metadata(&cache, &key).unwrap().inserted_at;
@@ -376,10 +465,19 @@ fn inventory_tracks_actual_residency_and_fences_old_grants() {
     cache.batch_insert_refs(&[(key.clone(), make_block())]);
     assert_eq!(cache.inner.lock().inventory.as_ref().unwrap().sequence(), 1);
     let pinned = cache.get_blocks_aligned(std::slice::from_ref(&key));
-    assert!(cache.remove_lru_batch(1, u64::MAX).is_empty());
+    assert!(
+        cache
+            .remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure)
+            .is_empty()
+    );
     assert_eq!(cache.inner.lock().inventory.as_ref().unwrap().sequence(), 1);
     drop(pinned);
-    assert_eq!(cache.remove_lru_batch(1, u64::MAX).len(), 1);
+    assert_eq!(
+        cache
+            .remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure)
+            .len(),
+        1
+    );
     assert_eq!(cache.inner.lock().inventory.as_ref().unwrap().sequence(), 2);
     assert!(
         !cache
@@ -437,9 +535,18 @@ fn pin_residencies_fences_eviction_and_reinsertion() {
         .page(None)
         .unwrap();
     let pinned = cache.pin_residencies(&first).unwrap();
-    assert!(cache.remove_lru_batch(1, u64::MAX).is_empty());
+    assert!(
+        cache
+            .remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure)
+            .is_empty()
+    );
     drop(pinned);
-    assert_eq!(cache.remove_lru_batch(1, u64::MAX).len(), 1);
+    assert_eq!(
+        cache
+            .remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure)
+            .len(),
+        1
+    );
     cache.batch_insert(vec![(key.clone(), make_block())]);
     assert!(cache.pin_residencies(&first).is_none());
     let current = cache
@@ -454,7 +561,12 @@ fn pin_residencies_fences_eviction_and_reinsertion() {
     mixed.extend(first);
     assert!(cache.pin_residencies(&mixed).is_none());
     assert!(cache.pin_residencies(&current).is_some());
-    assert_eq!(cache.remove_lru_batch(1, u64::MAX).len(), 1);
+    assert_eq!(
+        cache
+            .remove_lru_batch(1, u64::MAX, ReclaimReason::Pressure)
+            .len(),
+        1
+    );
 }
 
 #[test]

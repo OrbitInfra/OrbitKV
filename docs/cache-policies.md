@@ -1,14 +1,56 @@
-# Retention and SSD write admission
+# Cache retention, watermarks and SSD admission
 
 For artifact locations and verification limits, see [benchmark evidence](performance.md#evidence-and-instrumentation).
 The [pre-migration report](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/cache-policies.md) retains full tables and historical run details.
 
-OrbitKV provides two optional Rust policies for workloads larger than GPU and
-host memory: protect demand-reused pages from scans, and avoid writing every
-new page to SSD. They use the existing cache and backing-store owners; Python
+OrbitKV provides optional Rust policies for workloads larger than GPU and
+host memory: protect demand-reused pages from scans, reclaim DRAM between
+configured watermarks, and avoid writing every new page to SSD. They use the existing cache and backing-store owners; Python
 adapters do not maintain another policy queue. Defaults remain
 `--cache-protected-percent 0 --ssd-write-policy all` until matched serving
 measurements justify a change.
+
+## DRAM high/low watermarks
+
+Set both `--cache-high-watermark-percent 80` and
+`--cache-low-watermark-percent 60` to start a reclaim cycle at 80% of actual
+pinned-pool capacity and stop at or below 60%. Both flags are optional together;
+valid values satisfy `0 <= low < high <= 100`. Omitting them preserves
+allocation-pressure eviction. These are soft maintenance targets, not admission
+limits or reserved free memory. Allocation-pressure reclaim still handles
+fragmentation and target-NUMA shortages.
+
+The Manager's existing maintenance task checks once per second. Each pass
+examines at most 512 candidates in each of the three replacement classes and
+removes at most 512 residents in total. It follows reclaimable, probationary,
+then protected order. Held candidates rotate within their class; a large held
+class cannot prevent scanning the others. Partial progress keeps the cycle
+active below the high watermark until actual usage reaches the low target.
+The bounded scan can reach a later class before an unexamined candidate in an
+earlier class; allocation-pressure reclaim still scans the full class.
+No-progress passes wait for the next tick. Embedded Rust users schedule
+`OrbitKVEngine::maintain_memory_cache()` themselves; the method serializes
+concurrent passes without waiting for another maintenance caller.
+
+Usage includes **all actual pinned allocations**, including pending Publish,
+query/transfer owners and staging. Only cache-owned DRAM residents are selected
+for removal. Removing an index entry does not prove its allocation was freed;
+shared allocation owners remain charged until release. Concurrent allocations
+and live holders can prevent reaching the low target. Watermarks never expire a
+lease, cancel a transfer, or authorize memory reuse. Existing inventory removals
+fence later source grants, and existing SSD copies are preserved. Queued weak
+SSD writes can lose their source under eviction, as with allocation pressure.
+
+This substep does not add data TTL, SSD watermarks or persistent expiry. It
+changes no peer/channel protocol or SSD format. The CPU host-registration shim
+exercises the real Rust allocation, replacement and inventory owners; it does
+not qualify GPU or RDMA transfers. No serving-performance gain is claimed.
+
+The reference is LMCache's
+[L1 eviction controller at `bcafb031`](https://github.com/LMCache/LMCache/blob/bcafb031401d404a5dabae4853f5e23bf9e5685c/lmcache/v1/distributed/storage_controllers/eviction_controller.py):
+periodic physical-usage checks and eligibility-filtered eviction. OrbitKV uses
+its existing maintenance task and replacement classes, with explicit high/low
+hysteresis and bounded passes instead of an eviction ratio or another controller.
 
 ## Protect reused pages
 
@@ -98,7 +140,10 @@ write-queue drops. The benchmark accepts both Manager flags and checks sampled
 protected bytes against the configured cap.
 
 The [metrics reference](metrics.md) includes protected bytes, promotions,
-demotions and SSD admission skips. The [benchmark guide](https://github.com/OrbitInfra/OrbitKV/blob/main/benches/README.md)
+demotions, the `watermark` residence-removal reason and SSD admission skips.
+Keep watermarks disabled in the retention/admission comparison above; measure
+them separately with the same capacities, workload and live-owner pressure.
+The [benchmark guide](https://github.com/OrbitInfra/OrbitKV/blob/main/benches/README.md)
 describes the serving harness; the [SSD capacity comparison](gds.md)
 provides the preceding allocation and queue controls.
 
