@@ -17,6 +17,12 @@ Shared payload arenas support engine-local raw DRAM Restore. Publish and SSD/cod
 Restore remain in Manager CUDA workers with registered engine-owned destinations.
 Standalone operation needs neither etcd nor a peer gRPC listener.
 
+Eligible vLLM [layerwise Saves](adapters.md#layerwise-save) hand producer events
+and prepared native owners to the existing Save worker. Request-page completion
+counts cover every registered layer before the first handoff. Manager retains
+partial slots until a complete block can be published; native receipts, not a
+layer callback or request finish, authorize source-page reuse.
+
 | Path | Control/ownership | Payload |
 | --- | --- | --- |
 | Local raw DRAM Restore | Native client keeps destination/source holds and readiness dependencies | OrbiTE local copies and completion |

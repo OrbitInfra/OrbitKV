@@ -65,6 +65,38 @@ neither alone proves the whole matrix. Allocator-generation issues
 checked November 9, 2026. Do not add a private runner, shadow tree, synthetic
 generation or a passing placeholder for that missing proof.
 
+### Layerwise Save controls
+
+The source lifecycle suite and its installed-CPU replay cover all-layer request
+holds, known rejection, unknown prepare/event/queue/wait, duplicate callbacks,
+capture exclusion and cancellation during shutdown. The installed vLLM
+`test_vllm_connector_contract.py` suite drives the released attention wrapper
+and V1/V2 dispatch, including callback-before-load ordering, absent/partial
+callbacks and the real microbatch configuration property. CPU seams control
+CUDA events and Manager replies; these are not DMA or model execution evidence.
+
+`test_native_layer_save_bytes_and_partial_visibility` is a **written, unrun,
+unqualified** installed-GPU gate. It uses two real registered CUDA layers and
+a separate producer stream, checks a miss after the first layer's native
+receipt, then completes the other layer by callback or step-end, overwrites
+source pages and verifies restored bytes. It does not execute a CUDA Graph or
+model; serving/Graph qualification and matched overlap measurements remain
+separate gates.
+
+Use the tests-only installed projection and prerequisite variables under
+[required installed-GPU runs](#required-installed-gpu-runs), with a matching test-hooks
+Manager, the installed vLLM 0.33.0 environment and a local immutable model for
+the harness prerequisite checks:
+
+```bash
+export VLLM_USE_V2_MODEL_RUNNER=0 ORBITKV_REQUIRE_ENGINE_TESTS=1 ORBITKV_FAULT_TESTS=1
+export ORBITKV_CACHE_MANAGER_BINARY="$MANAGER"
+"$PYTHON" -m pytest -m '' --engine=vllm --engine-evidence=installed-gpu \
+  tests/integration/test_vllm_connector_contract.py \
+  -k native_layer_save_bytes_and_partial_visibility --model "$MODEL" \
+  --basetemp "$OUT/layerwise-save" --engine-report "$OUT/layerwise-save.json"
+```
+
 ### V2 controls
 
 The [V2 suite](../python/tests/integration/test_vllm_v2_contract.py) uses installed

@@ -5,11 +5,13 @@ into both upstream mainlines.** OrbiTE is the only byte mover. Engines own
 scheduling, HBM and native P/D; OrbitKV owns cache identity, storage, discovery,
 grants and resource lifetime. This is the only execution queue.
 
-The current delivery is **make OrbiTE a required dependency**: remove the base
-feature, unavailable backend and optional engine handles; preserve optional
-RDMA/GDS capabilities and physical-lifetime controls. Cost observations and
-cost-based selection were removed in #347. This source step requires independent
-review and the CPU/native build gates; installed profiles remain unqualified.
+The current delivery is **M2 layerwise Save**: consume vLLM's layer callbacks
+for ordinary single-group, layer-first caches, with step-end submission for
+missing callbacks and ineligible profiles. Reuse the bounded native Save owners
+and Manager's partial-slot publication. OrbiTE became required in #348;
+cost observations and selection were removed in #347. This source step requires
+independent review and the CPU/native build gates; installed GPU profiles remain
+unqualified. TTL/watermark eviction follows this step.
 Each coherent PR stops for review before dependent work starts. Research designs
 and simulator campaigns are removed from the maintained tree; Git history retains
 them and external artifacts are untouched. DeepInfer/OrbitInfer and an OrbiTE
@@ -74,7 +76,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 | Latest vLLM, V2 runner, HMA multi-group/hybrid | **Partial:** 0.33.0 V1 single-group and Full + SWA; V2 opt-in remains one uniform Full group. Atomic recovery, Save pins and identity have CPU controls; GPU profiles are unqualified. Recurrent, zeroing and V2 multi-group reject. [Released HMA contract](adapters.md#released-hma-contract). | L/F/M thin entries; released V lifecycle |
 | Latest SGLang | **Partial:** 0.5.23 Full/SWA and static Mamba checkpoint linker; MLA stays per-rank; pre-capture and pending-admission hooks remain private. [Contract](adapters.md#sglang-linker-and-current-internal-dependencies). | Released linker and HiCache integrations above |
 | Async load | **Have:** pending queries, bounded admission and completion-owned destinations; installed faults remain unqualified. [Lifecycle](vllm-request-state-machine.md). | L/F/V asynchronous offload |
-| Layerwise load/save | **Partial:** eligible raw Restore has layer readiness; other routes may wait for whole completion. vLLM saves at step end; `save_kv_layer` does not submit. [Restore](engine-local-restore.md#layer-readiness-and-framework-consumption), [connector](https://github.com/OrbitInfra/OrbitKV/blob/main/python/orbitkv/vllm/connector.py). | L layerwise transfer, V layer hooks |
+| Layerwise load/save | **Partial:** eligible raw Restore has layer readiness; other routes may wait for whole completion. vLLM single-group, layer-first Save consumes layer callbacks with a step-end path for omitted callbacks and excluded profiles. GPU ordering/overlap remains unqualified. [Restore](engine-local-restore.md#layer-readiness-and-framework-consumption), [Save](adapters.md#layerwise-save). | L layerwise transfer, V layer hooks |
 | Official P/D composition | **Partial:** NIXL/MultiConnector and SGLang native paths are candidates; full faults unqualified. [P/D](pd.md). | V MultiConnector, L/F native integration |
 | Dense and hybrid models | **Partial:** dense layouts and declared Prefix/Window/Checkpoint validation exist; complete SWA/MLA/recurrent recovery is not qualified. Unsupported layouts are rejected. [Models](models.md), [recovery](hybrid-recovery.md). | V hybrid offload, L recipes, SGLang components |
 | MLA TP deduplication | **Missing:** ordinary TP sharding is not replica deduplication. [TP boundary](adapters.md#tp-shards-and-host-boundary). | SGLang `HiCacheStorageConfig.is_storage_writer` selects MLA writers |
@@ -189,7 +191,13 @@ commands and the distinction between fixture bytes and serving are in
    invalidation, torn-tail prefix recovery and capacity-derived metadata limits.
    One integrity pass at each tier crossing; sealed immutable DRAM trusts ECC.
    Recovery verification remains before the first recovered hit.
-3. **Layerwise load/save.**
+3. **Layerwise load/save (implemented subset):** existing raw Restore readiness;
+   ordinary vLLM layer-first single-group Save prepares bounded native handles
+   before the first layer handoff, fences each producer layer and waits for all
+   layer receipts before releasing request pages. Graph omissions, page-first,
+   cross-layer/HMA, microbatch/DBO and speculative profiles keep the
+   [step-end path](adapters.md#layerwise-save). Installed GPU gates are written,
+   unrun and unqualified; broader layer layouts and measured overlap remain open.
 4. **TTL/watermark eviction.**
 
 Reuse storage/lease owners and OrbiTE file I/O. Document

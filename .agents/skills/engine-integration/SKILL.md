@@ -42,6 +42,17 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   rejection cannot release an earlier unknown owner.
 - Python translates engine layout, state boundaries, callbacks and CUDA readiness.
   Existing Rust owners manage shared cache policy, transfers, admission and drain.
+  Ordinary vLLM single-group layer-first Save consumes bound metadata directly:
+  V1/V2 can call `start_load_kv` after forward. Reserve all layer completion
+  markers and prepare bounded native handles before queuing the first layer;
+  per-layer rejection cannot release pending siblings. Missing callbacks use
+  step-end submission. Capture, page-first/cross-layer/HMA, `use_ubatching`
+  (DBO or multiple microbatches) and speculation must not submit early. An
+  unknown handoff closes admission; unqueued handles cancel only on native
+  `cancel_save=True`. Keep the released dispatch and installed-byte controls
+  in `test_vllm_connector_contract.py`; CPU seams do not qualify CUDA/Graph.
+  Drop completed native handles before an idle worker blocks for its next
+  batch; otherwise its frame can keep the admission budget permanently full.
 - vLLM uses the KV Connector contract; SGLang uses UnifiedRadixCache and the
   external linker. Preserve valid native HBM hits without external synchronous
   lookup. Keep unselected backend imports free of native initialization.

@@ -46,6 +46,7 @@ class SaveTask:
     metadata: OrbitKVConnectorMetadata
     request_ids: list[str]
     ready: torch.cuda.Event
+    layer_name: str | None = None
     # HMA boundary-state jobs carried by this task; reported back to the
     # scheduler through OrbitKVWorkerMetadata once the batch is done.
     boundary_job_ids: list[int] = field(default_factory=list)
@@ -238,6 +239,15 @@ class WorkerAdapter:
         self._completed_boundary_jobs: list[int] = []
         self._completed_query_controls: dict[bytes, set[int]] = {}
         self._current_metadata: OrbitKVConnectorMetadata | None = None
+        self._layer_save_metadata: OrbitKVConnectorMetadata | None = None
+        self._layer_save_tasks: dict[str, SaveTask] = {}
+        # A layer callback must cover the entire scheduler step. Microbatching
+        # and speculative forwards can call the same layer before all its
+        # source pages are ready, so those profiles keep the step-end fence.
+        self._layerwise_save = (
+            not getattr(getattr(vllm_config, "parallel_config", None), "use_ubatching", False)
+            and getattr(vllm_config, "speculative_config", None) is None
+        )
 
         self._restore: RestoreTask | None = None
         self._layer_events: dict[str, torch.cuda.Event] = {}
@@ -259,12 +269,29 @@ class WorkerAdapter:
         self._stats_lock = threading.Lock()
 
     def shutdown(self) -> None:
-        self._save_queue.put(None)
-        self._save_thread.join()
+        try:
+            if self._retained_save_tasks:
+                raise RuntimeError(
+                    "native Save completion unknown; registration and pages remain held"
+                )
+            for name, task in list(self._layer_save_tasks.items()):
+                try:
+                    if not self._client.cancel_save(task.native_handle):
+                        raise RuntimeError("unsubmitted layer Save could not be cancelled")
+                    task.native_completed = True
+                    task.native_handle = None
+                    self._complete_save_requests(task.request_ids)
+                    del self._layer_save_tasks[name]
+                except BaseException:
+                    self._retained_save_tasks.append(task)
+                    raise
+        finally:
+            self._save_queue.put(None)
+            self._save_thread.join()
         self.unregister_context()
 
     def unregister_context(self) -> None:
-        if self._retained_save_tasks:
+        if self._retained_save_tasks or self._layer_save_tasks:
             raise RuntimeError("native Save completion unknown; registration and pages remain held")
         if not self._registered_layers:
             return
@@ -535,6 +562,8 @@ class WorkerAdapter:
         return KVConnectorTransferResults(finished_sending=finished_sending)
 
     def start_load_kv(self, metadata: OrbitKVConnectorMetadata) -> None:
+        if self._layer_save_metadata is not None and self._layer_save_metadata is not metadata:
+            raise RuntimeError("previous forward still owns its layer Saves")
         if self._current_metadata is metadata:
             return
         if self._restore is not None:
@@ -683,6 +712,47 @@ class WorkerAdapter:
         for event in self._layer_events.values():
             stream.wait_event(event)
 
+    def save_kv_layer(self, layer_name: str, metadata: OrbitKVConnectorMetadata) -> None:
+        if self._retained_save_tasks:
+            raise RuntimeError(
+                "native Save completion unknown; new source pages cannot be admitted"
+            )
+        if (
+            not self._layerwise_save
+            or not metadata.save_intents
+            or metadata.boundary_save_intents
+            or self._page_first
+            or self._cross_layer_mode
+            or self._cache_groups.group_count != 1
+            or layer_name not in self._registered_layers
+            or torch.cuda.is_current_stream_capturing()
+        ):
+            return
+        if self._layer_save_metadata is not None and self._layer_save_metadata is not metadata:
+            raise RuntimeError("previous forward still owns its layer Saves")
+        if self._current_metadata is not None and self._current_metadata is not metadata:
+            raise RuntimeError("previous forward still owns its metadata")
+        if self._layer_save_metadata is None:
+            self._layer_save_metadata = metadata
+            # Reserve all request completion markers before any layer can
+            # finish. Admit each layer before queuing the first copy; known
+            # rejections complete only that layer without reading its pages.
+            try:
+                for name in self._registered_layers:
+                    self._layer_save_tasks[name] = self._make_save_task(
+                        metadata.save_intents, torch.cuda.Event(blocking=True), name
+                    )
+                for name, task in list(self._layer_save_tasks.items()):
+                    if not self._prepare_save(task):
+                        del self._layer_save_tasks[name]
+            except BaseException:
+                self._retained_save_tasks.extend(self._layer_save_tasks.values())
+                raise
+        task = self._layer_save_tasks.get(layer_name)
+        if task is not None:
+            self._enqueue_save(task)
+            del self._layer_save_tasks[layer_name]
+
     def wait_for_save(self) -> None:
         if self._retained_save_tasks:
             raise RuntimeError(
@@ -712,6 +782,18 @@ class WorkerAdapter:
                     )
             self._restore = None
         metadata = self._current_metadata
+        if self._layer_save_metadata is not None:
+            if metadata is not None and metadata is not self._layer_save_metadata:
+                raise RuntimeError("forward metadata does not own the prepared layer Saves")
+            metadata = self._layer_save_metadata
+            # Graph replay may omit all or some Python attention callbacks.
+            # Only layers not already handed off need the step-end fence.
+            for name, task in list(self._layer_save_tasks.items()):
+                self._enqueue_save(task)
+                del self._layer_save_tasks[name]
+            self._layer_save_metadata = None
+            self._current_metadata = None
+            return
         self._current_metadata = None
         if metadata is None:
             return
@@ -773,7 +855,10 @@ class WorkerAdapter:
         )
 
     def _make_save_task(
-        self, save_intents: dict[str, SaveIntent], ready: torch.cuda.Event
+        self,
+        save_intents: dict[str, SaveIntent],
+        ready: torch.cuda.Event,
+        layer_name: str | None = None,
     ) -> SaveTask:
         request_ids = list(save_intents)
 
@@ -790,15 +875,16 @@ class WorkerAdapter:
             metadata=OrbitKVConnectorMetadata(save_intents=save_intents),
             request_ids=request_ids,
             ready=ready,
+            layer_name=layer_name,
         )
 
-    def _enqueue_save(self, task: SaveTask) -> None:
+    def _prepare_save(self, task: SaveTask) -> bool:
         saves = []
         for req_id, intent in task.metadata.save_intents.items():
             try:
                 saves.extend(
                     (name, list(ids), list(hashes))
-                    for name, ids, hashes in self._layer_saves(intent)
+                    for name, ids, hashes in self._layer_saves(intent, task.layer_name)
                 )
             except Exception:
                 logger.exception("Malformed Save intent skipped for request %s", req_id)
@@ -807,7 +893,7 @@ class WorkerAdapter:
             with self._save_completion_lock:
                 self._completed_boundary_jobs.extend(task.boundary_job_ids)
             task.native_completed = True
-            return
+            return False
         # Preparation submits no native copy. Unknown handoff still retains
         # completion markers rather than exposing a queued owner's pages.
         task.native_attempted = True
@@ -822,13 +908,24 @@ class WorkerAdapter:
                 self._complete_save_requests(task.request_ids)
                 with self._save_completion_lock:
                     self._completed_boundary_jobs.extend(task.boundary_job_ids)
-                return
+                return False
         except BaseException:
             self._retained_save_tasks.append(task)
             raise
         try:
             task.native_handle = handle
             task.metadata = OrbitKVConnectorMetadata()
+        except BaseException:
+            self._retained_save_tasks.append(task)
+            raise
+        return True
+
+    def _enqueue_save(self, task: SaveTask) -> None:
+        if task.native_handle is None and not self._prepare_save(task):
+            return
+        try:
+            if task.layer_name is not None:
+                task.ready.record(torch.cuda.current_stream(self._torch_device))
             self._save_queue.put(task)
         except BaseException:
             self._retained_save_tasks.append(task)
@@ -883,6 +980,12 @@ class WorkerAdapter:
         try:
             self._save_batch(batch)
         finally:
+            # Completed handles still charge the native admission budget. The
+            # idle worker frame may keep this batch alive until another task
+            # arrives; release receipts before admitting that next task.
+            for task in batch:
+                if task.native_completed:
+                    task.native_handle = None
             # A returned failed completion can release pages; missing completion
             # retains the task and its engine lifecycle instead.
             if all(not task.native_attempted or task.native_completed for task in batch):
@@ -963,13 +1066,15 @@ class WorkerAdapter:
             self._stats.record_save(save_duration, total_blocks, success)
 
     def _layer_saves(
-        self, save_intent: SaveIntent
+        self, save_intent: SaveIntent, layer_name: str | None = None
     ) -> Iterator[tuple[str, tuple[int, ...], tuple[bytes, ...]]]:
         """Yield `(layer, block_ids, block_hashes)` this rank writes for one intent."""
         if not any(save_intent.block_ids_by_group):
             return
 
-        if self._cross_layer_mode:
+        if layer_name is not None:
+            target_layers = (layer_name,)
+        elif self._cross_layer_mode:
             target_layers = (self._cross_layer_key,)
         else:
             assert self._registered_layers, (

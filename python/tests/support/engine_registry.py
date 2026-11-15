@@ -55,6 +55,7 @@ CPU = {
     "integration/test_sglang_direct_transfer.py::test_cancel_before_forward_releases_only_unsubmitted_leases": SGLANG,
 }
 GPU = {
+    "integration/test_vllm_connector_contract.py::test_native_layer_save_bytes_and_partial_visibility": VLLM,
     "integration/test_sglang_components.py::test_native_component_bytes_and_faults": SGLANG,
     "integration/test_vllm_hma_contract.py::test_native_hma_page_reuse_bytes": VLLM,
     "integration/test_vllm_v2_contract.py::test_native_v2_page_reuse_bytes": VLLM,

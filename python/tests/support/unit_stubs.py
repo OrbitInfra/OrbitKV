@@ -37,6 +37,10 @@ def _install_torch_stub() -> None:
             return "producer-stream"
 
         @staticmethod
+        def is_current_stream_capturing() -> bool:
+            return False
+
+        @staticmethod
         def is_available() -> bool:
             return False
 

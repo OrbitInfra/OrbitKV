@@ -6,10 +6,183 @@ Requires official vLLM 0.33.0. Model composition uses test_vllm_native_pd_e2e.py
 
 import importlib.metadata
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
+from tests.integration.test_cache_faults import fault_cache  # noqa: F401
+
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.parametrize("runner", ["v1", "v2"])
+@pytest.mark.parametrize("callbacks", ["all", "partial", "none", "capture"])
+def test_released_layer_callbacks_and_late_load_dispatch(
+    released_config, monkeypatch, runner, callbacks
+):
+    import torch
+    from vllm.distributed.kv_transfer.kv_connector.v1.base import (
+        KVConnectorBase_V1,
+        KVConnectorRole,
+    )
+    from vllm.model_executor.layers.attention import kv_transfer_utils
+    from vllm.v1.worker import kv_connector_model_runner_mixin as v1
+    from vllm.v1.worker.gpu import kv_connector as v2
+
+    from orbitkv.vllm.connector import OrbitKVConnector
+    from tests.unit.test_connector_save_lifecycle import layer_step, make_worker, process_next_save
+
+    monkeypatch.setattr(torch.cuda, "Event", MagicMock())
+    monkeypatch.setattr(torch.cuda, "current_stream", MagicMock())
+    monkeypatch.setattr(torch.cuda, "is_current_stream_capturing", lambda: callbacks == "capture")
+    config, cache = released_config
+    connector = OrbitKVConnector.__new__(OrbitKVConnector)
+    KVConnectorBase_V1.__init__(connector, config, KVConnectorRole.WORKER, cache)
+    worker = make_worker()
+    connector._worker, connector._scheduler = worker, None
+    connector._ctx = SimpleNamespace(query_control=False)
+    metadata = layer_step(worker)
+    output = SimpleNamespace(
+        kv_connector_metadata=metadata, has_sync_kv_loads=False, finished_req_ids=set()
+    )
+    context = SimpleNamespace(attn_metadata={}, cudagraph_runtime_mode=None)
+    for module in (v1, v2):
+        monkeypatch.setattr(module, "get_forward_context", lambda: context)
+    monkeypatch.setattr(v1, "get_kv_transfer_group", lambda: connector)
+    monkeypatch.setattr(v2, "is_forward_context_available", lambda: True)
+    monkeypatch.setattr(kv_transfer_utils, "has_kv_transfer_group", lambda: True)
+    monkeypatch.setattr(kv_transfer_utils, "is_v1_kv_transfer_group", lambda: True)
+    monkeypatch.setattr(kv_transfer_utils, "get_kv_transfer_group", lambda: connector)
+    monkeypatch.setattr(
+        "vllm.model_executor.layers.attention.attention.get_attention_context",
+        lambda name: ({}, None, object(), None),
+    )
+    written = []
+
+    @kv_transfer_utils.maybe_transfer_kv_layer
+    def attention(layer_name):
+        assert worker._current_metadata is None
+        written.append(layer_name)
+
+    def forward():
+        for name in (
+            ["first", "last"]
+            if callbacks in ("all", "capture")
+            else ["first"]
+            if callbacks == "partial"
+            else []
+        ):
+            attention(name)
+            if callbacks == "capture":
+                worker._client.prepare_save.assert_not_called()
+            else:
+                queued = worker._save_queue.queue[-1]
+                assert queued.native_handle.saves[0][0] == written[-1]
+        if callbacks in ("all", "partial"):
+            process_next_save(worker)
+            assert not worker.get_transfer_results({"request"}).finished_sending
+
+    if runner == "v1":
+        with v1.KVConnectorModelRunnerMixin._get_kv_connector_output(output):
+            forward()
+    else:
+        active = v2.ActiveKVConnector.__new__(v2.ActiveKVConnector)
+        active.kv_connector, active._disabled, active._pending_load_kwargs = connector, False, None
+        active.pre_forward(output)
+        forward()
+        active.post_forward(set())
+    while not worker._save_queue.empty():
+        process_next_save(worker)
+    assert worker.get_transfer_results({"request"}).finished_sending == {"request"}
+    assert not connector.has_connector_metadata()
+    saved = [
+        name for call in worker._client.prepare_save.call_args_list for name, _, _ in call.args[1]
+    ]
+    assert saved == ["first", "last"]
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"enable_dbo": True}, {"ubatch_size": 2}])
+def test_released_microbatch_property_controls_early_save(kwargs):
+    from vllm.config import ParallelConfig
+
+    from tests.unit.test_connector_save_lifecycle import make_worker
+
+    config = ParallelConfig(**kwargs)
+    worker = make_worker(parallel_config=config)
+    assert worker._layerwise_save is (not config.use_ubatching)
+    assert worker._layerwise_save is (not kwargs)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("fault_cache", [{"num_layers": 2}], indirect=True)
+@pytest.mark.parametrize("last_callback", [False, True], ids=["step-end-remainder", "all-layers"])
+def test_native_layer_save_bytes_and_partial_visibility(fault_cache, last_callback):  # noqa: F811
+    """Written installed gate: real producer events, native Save, partial slots and Restore."""
+    import torch
+
+    from orbitkv.vllm.config import ConnectorContext
+    from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, SaveIntent
+    from orbitkv.vllm.worker import WorkerAdapter
+    from tests.integration.test_cache_faults import query, until
+    from tests.support.metrics import fetch_orbitkv_metrics
+
+    server, client, ctx, _ = fault_cache
+    worker = WorkerAdapter(ConnectorContext(ctx.instance_id, ctx.namespace, 16, 1, 1, 0, 0, client))
+    worker._registration, worker._registered_layers = ctx.registration, ctx._layer_names
+    worker._torch_device = ctx.device
+    metadata = OrbitKVConnectorMetadata(save_intents={"r": SaveIntent(((1,),), (b"layer-save",))})
+    producer = torch.cuda.Stream(device=ctx.device)
+    producer.wait_stream(torch.cuda.current_stream(ctx.device))
+    try:
+        with torch.cuda.stream(producer):
+            ctx.get_kv_cache(0)[:, 1].fill_(11)
+            worker.save_kv_layer(ctx._layer_names[0], metadata)
+        completion = worker._save_completion_events["r"]
+        # The first native receipt alone must not publish a complete cache hit.
+        until(lambda: worker._req_pending_save_tasks.get("r") == 1)
+        assert not completion.is_set()
+        assert not worker.get_transfer_results({"r"}).finished_sending
+        until(lambda: fetch_orbitkv_metrics(server.http_port).get("orbitkv_inflight_bytes", 0) > 0)
+        partial = query(client, ctx, [b"layer-save"], "partial")
+        assert partial.num_hit_blocks == 0
+        client.cancel_query(ctx.instance_id, "partial")
+        with torch.cuda.stream(producer):
+            ctx.get_kv_cache(1)[:, 1].fill_(23)
+            if last_callback:
+                worker.save_kv_layer(ctx._layer_names[1], metadata)
+            worker.start_load_kv(metadata)
+            worker.wait_for_save()
+        assert completion.wait(30)
+        assert worker.get_transfer_results(set()).finished_sending == {"r"}
+        for tensor in ctx.gpu_kv_caches:
+            tensor[:, 1].fill_(87)
+            tensor[:, 2].zero_()
+        attempt = 0
+
+        def published():
+            nonlocal attempt
+            attempt += 1
+            rid = f"restore-{attempt}"
+            result = query(client, ctx, [b"layer-save"], rid)
+            if result.num_hit_blocks == 1:
+                return result
+            client.cancel_query(ctx.instance_id, rid)
+            return None
+
+        ready = until(published)
+        handle = client.start_restore(
+            ctx.instance_id,
+            0,
+            0,
+            [ctx._layer_names],
+            [(ready.lease, [[2]])],
+            ready_stream=torch.cuda.current_stream(ctx.device).cuda_stream,
+        )
+        assert client.wait_restore(handle, timeout=30).success
+        for index, expected in enumerate((11, 23)):
+            assert torch.all(ctx.get_kv_cache(index)[:, 2].cpu() == expected)
+    finally:
+        worker.shutdown()
 
 
 def test_native_multi_connector_keeps_cache_best_effort_and_handoff_reliable():
