@@ -54,9 +54,8 @@ pub struct PeerExports {
     dram: Arc<crate::storage::dram::DramStore>,
     ssd: Option<Arc<crate::storage::ssd::SsdStore>>,
     membership: Option<Arc<orbitkv_catalog::MembershipView>>,
-    endpoint: Option<String>,
     locks: TransferLockManager,
-    transport: Option<Arc<crate::transfer_engine::TransferEngine>>,
+    transport: Arc<crate::transfer_engine::TransferEngine>,
 }
 
 impl PeerExports {
@@ -64,8 +63,7 @@ impl PeerExports {
         dram: Arc<crate::storage::dram::DramStore>,
         ssd: Option<Arc<crate::storage::ssd::SsdStore>>,
         membership: Option<Arc<orbitkv_catalog::MembershipView>>,
-        endpoint: Option<String>,
-        transport: Option<Arc<crate::transfer_engine::TransferEngine>>,
+        transport: Arc<crate::transfer_engine::TransferEngine>,
         timeout: Duration,
         budget_bytes: u64,
     ) -> Self {
@@ -73,14 +71,13 @@ impl PeerExports {
             dram,
             ssd,
             membership,
-            endpoint,
             locks: TransferLockManager::new(timeout, budget_bytes),
             transport,
         }
     }
 
     fn validate_owner(&self, owner: Uuid) -> Result<(), PeerError> {
-        if self.endpoint.is_none() {
+        if self.membership.is_none() {
             return Err(PeerError::Unavailable);
         }
         if self
@@ -163,15 +160,12 @@ impl PeerExports {
         ticket: TransferTicket,
         blocks: &[(StateKey, Arc<SealedBlock>)],
     ) -> Result<(), PeerError> {
-        let Some(transport) = self.transport.as_ref() else {
-            return Ok(());
-        };
         let allocations = blocks
             .iter()
             .flat_map(|(_, block)| block.allocations())
             .cloned()
             .collect::<Vec<_>>();
-        let result = Arc::clone(transport)
+        let result = Arc::clone(&self.transport)
             .register_pinned(&allocations, crate::transfer_engine::Permission::RemoteRead)
             .map_err(|error| {
                 warn!("Source registration rejected: {error}");

@@ -1,8 +1,18 @@
 use super::*;
+use crate::transfer_engine::tests::engine as transfer_engine;
 use std::sync::Arc;
 
 use cudarc::driver::{CudaContext, CudaSlice, CudaStream, DevicePtr, result};
 use half::{bf16, f16};
+
+fn upload_fixture(stream: &Arc<CudaStream>, uploads: &[(u64, &[u8])]) -> Result<(), String> {
+    for (target, source) in uploads {
+        // SAFETY: codec fixtures own these validated ranges until stream drain.
+        unsafe { result::memcpy_htod_async(*target, source, stream.cu_stream()) }
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
 
 impl EncodedSegment {
     // Qualification controls independently check codec-produced output bytes.
@@ -24,7 +34,7 @@ fn raw_device_checksum_is_bounded_and_detects_corruption() {
     );
     let context = CudaContext::new(0).unwrap();
     let stream = context.new_stream().unwrap();
-    let mut codec = gpu::GpuCodec::new(&context).unwrap();
+    let mut codec = gpu::GpuCodec::new(&context, transfer_engine()).unwrap();
     for bytes in [137, 4096, (16 << 20) + 17] {
         let mut input = vec![0x6a; bytes];
         let device = stream.clone_htod(&input).unwrap();
@@ -95,7 +105,7 @@ fn policy_protects_boundaries_opaque_state_and_rejects_corruption() {
 fn gpu_fp8_matches_simd_for_every_finite_in_range_bf16_and_fp16_value() {
     let ctx = CudaContext::new(0).expect("GPU qualification needs CUDA");
     let stream = ctx.new_stream().unwrap();
-    let mut codec = gpu::GpuCodec::new(&ctx).unwrap();
+    let mut codec = gpu::GpuCodec::new(&ctx, transfer_engine()).unwrap();
     for format in [StorageFormat::Fp8FromBf16, StorageFormat::Fp8FromFp16] {
         let bits: Vec<u16> = (0..=u16::MAX)
             .filter(|&b| {
@@ -176,7 +186,7 @@ fn gpu_fp8_matches_simd_for_every_finite_in_range_bf16_and_fp16_value() {
 fn gpu_turboquant_three_and_four_bits_preserve_key_norm_and_bound_error() {
     let ctx = CudaContext::new(0).unwrap();
     let stream = ctx.new_stream().unwrap();
-    let mut codec = gpu::GpuCodec::new(&ctx).unwrap();
+    let mut codec = gpu::GpuCodec::new(&ctx, transfer_engine()).unwrap();
     for dim in [32, 64, 128, 256] {
         for bits in [3, 4] {
             for role in [
@@ -290,7 +300,7 @@ fn gpu_turboquant_three_and_four_bits_preserve_key_norm_and_bound_error() {
 fn gpu_ans_exact_roundtrip_and_budget() {
     let ctx = CudaContext::new(0).unwrap();
     let stream = ctx.new_stream().unwrap();
-    let mut codec = gpu::GpuCodec::new(&ctx).unwrap();
+    let mut codec = gpu::GpuCodec::new(&ctx, transfer_engine()).unwrap();
     let data: Vec<u8> = (0..65536)
         .map(|i| if i % 7 == 0 { (i % 251) as u8 } else { 0 })
         .collect();

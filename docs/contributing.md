@@ -41,7 +41,7 @@ Local hooks use `prek run` on a topic branch.
 Workspace Clippy requires a `// SAFETY:` note for each unsafe block and impl,
 including test fixtures. State the actual lifetime, aliasing, alignment or FFI
 invariant at the call site; if it does not hold, fix the owner before documenting
-it. The strict feature gates cover no-backend, OrbiTE TCP, and OrbiTE RDMA/GDS builds.
+it. The strict feature gates cover the required OrbiTE base and optional RDMA/GDS builds.
 
 
 PRs limited to Markdown, docs tooling and Python benchmark/test files run the relevant

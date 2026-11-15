@@ -12,11 +12,10 @@ workspace = true
 
 [features]
 test-hooks = ["orbitkv-core/test-hooks"]
-default = ["cuda-13", "orbite"]
+default = ["cuda-13"]
 cuda-13 = ["orbitkv-core/cuda-13"]
-orbite = ["orbitkv-core/orbite"]
-orbite-gds = ["orbite", "orbitkv-core/orbite-gds"]
-orbite-rdma = ["orbite", "orbitkv-core/orbite-rdma"]
+orbite-gds = ["orbitkv-core/orbite-gds"]
+orbite-rdma = ["orbitkv-core/orbite-rdma"]
 tracing = ["fastrace", "orbitkv-core/tracing"]
 
 [lib]

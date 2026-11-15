@@ -370,7 +370,7 @@ fn captures_actual_submitted_order_and_one_shared_part_drain() {
     assert_eq!(values[2]["copies"][0][14], 256);
     assert_eq!(values[1]["copies"][0][13], 16384);
     assert_eq!(values[1]["copies"][0][7], 65536);
-    assert_eq!(values[1]["dma_ranges"], 1);
+    assert_eq!(values[1]["dma_ranges"], 0, "OrbiTE owns DMA decomposition");
     assert_eq!(
         values[1],
         serde_json::json!({
@@ -387,7 +387,7 @@ fn captures_actual_submitted_order_and_one_shared_part_drain() {
             "direction": "h2d",
             "bytes": 4096,
             "descriptors": 1,
-            "dma_ranges": 1,
+            "dma_ranges": 0,
             "zero_descriptors": 0,
             "min_bytes": 4096,
             "max_bytes": 4096,

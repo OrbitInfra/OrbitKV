@@ -45,7 +45,7 @@ pub(crate) struct Storage {
     pub(crate) reads: ReadCoordinator,
     pub(crate) writes: PublishQueue,
     pub(crate) ssd_store: Option<Arc<SsdStore>>,
-    peer_transport: Option<Arc<TransferEngine>>,
+    peer_transport: Arc<TransferEngine>,
     blockwise_alloc: bool,
     pub(crate) global_index: Option<Arc<GlobalIndex>>,
     pub(crate) inventory: Option<Arc<inventory::ResidencyInventory>>,
@@ -174,20 +174,16 @@ impl Storage {
                     allocation_footprint_fn.clone(),
                     is_numa,
                     inventory.clone(),
-                    {
-                        let transfer = peer_transport.clone();
-                        transfer.ok_or("SSD transfer engine was not initialized")?
-                    },
+                    peer_transport.clone(),
                 )
                 .map_err(|error| format!("Failed to initialise SSD cache: {error}"))
             })
             .transpose()?;
         let engine = Arc::new({
-            let remote_fetch = peer_transport.as_ref().and_then(|transfer| {
-                let ms = global_index.as_ref()?;
+            let remote_fetch = global_index.as_ref().and_then(|ms| {
                 Some(Arc::new(PeerReader::new(
                     Arc::clone(ms),
-                    Arc::clone(transfer),
+                    Arc::clone(&peer_transport),
                     allocate_fn.clone(),
                     config.membership.clone()?,
                 )))
@@ -200,14 +196,10 @@ impl Storage {
                 config.codec_budget,
             );
 
-            let endpoint = peer_transport
-                .as_ref()
-                .map(|transport| transport.transfer_endpoint().to_owned());
             let exports = crate::peer::export::PeerExports::new(
                 dram.clone(),
                 ssd_store.clone(),
                 config.membership.clone(),
-                endpoint,
                 peer_transport.clone(),
                 transfer_lock_timeout,
                 transfer_budget as u64,
@@ -442,20 +434,16 @@ impl Storage {
         (freed_blocks, freed_bytes, largest_free)
     }
 
-    pub(crate) fn peer_transport(&self) -> Option<&Arc<TransferEngine>> {
-        self.peer_transport.as_ref()
+    pub(crate) fn peer_transport(&self) -> &Arc<TransferEngine> {
+        &self.peer_transport
     }
 
-    pub(crate) fn transfer_endpoint(&self) -> Option<&str> {
-        self.peer_transport
-            .as_ref()
-            .map(|transport| transport.transfer_endpoint())
+    pub(crate) fn transfer_endpoint(&self) -> &str {
+        self.peer_transport.transfer_endpoint()
     }
 
-    pub(crate) fn transfer_source_epoch(&self) -> Option<&str> {
-        self.peer_transport
-            .as_ref()
-            .map(|transport| transport.source_epoch())
+    pub(crate) fn transfer_source_epoch(&self) -> &str {
+        self.peer_transport.source_epoch()
     }
 }
 

@@ -1,41 +1,21 @@
 //! Native registrations sharing each pinned allocation and physical pool pin.
 use super::*;
 
-#[cfg(feature = "orbite")]
 pub(super) type MemoryRegistration = Mutex<std::sync::Weak<orbite::HostMemory>>;
-#[cfg(not(feature = "orbite"))]
-#[derive(Default)]
-pub(super) struct MemoryRegistration;
-#[cfg(feature = "orbite")]
 pub(super) type PoolRegistration = Arc<orbite::cuda::local_copy::PinnedHostRegistration>;
-#[cfg(not(feature = "orbite"))]
-pub(super) struct PoolRegistration;
 
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "the adapter contract is fallible when OrbiTE registrations are compiled"
-)]
 pub(super) fn pin(backing: &Arc<PinnedMemory>) -> Result<PoolRegistration, String> {
-    #[cfg(feature = "orbite")]
-    {
-        // SAFETY: backing owns the physical CUDA pin until the last local loan.
-        unsafe {
-            orbite::cuda::local_copy::PinnedHostRegistration::from_raw_parts(
-                backing.as_non_null(),
-                backing.size(),
-                backing.clone(),
-            )
-        }
-        .map_err(|error| error.to_string())
+    // SAFETY: backing owns the physical CUDA pin until the last local loan.
+    unsafe {
+        orbite::cuda::local_copy::PinnedHostRegistration::from_raw_parts(
+            backing.as_non_null(),
+            backing.size(),
+            backing.clone(),
+        )
     }
-    #[cfg(not(feature = "orbite"))]
-    {
-        let _ = backing;
-        Ok(PoolRegistration)
-    }
+    .map_err(|error| error.to_string())
 }
 
-#[cfg(feature = "orbite")]
 impl PinnedAllocation {
     /// Shares this allocation and its access lock with OrbiTE registrations.
     /// Retaining the returned memory keeps this exact allocator slot occupied,
@@ -69,6 +49,6 @@ impl PinnedAllocation {
     }
 }
 
-#[cfg(all(test, feature = "orbite"))]
+#[cfg(test)]
 #[path = "../../../tests/unit/memory/orbite.rs"]
 mod orbite_tests;

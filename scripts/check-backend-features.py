@@ -7,14 +7,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ADAPTERS = {
-    "crates/orbitkv-core/src/memory/pool/backend.rs",
-    "crates/orbitkv-core/src/peer/mod.rs",  # Native adapter module declarations.
     "crates/orbitkv-core/src/peer/orbite.rs",
-    "crates/orbitkv-core/src/transfer/local/backend.rs",
     "crates/orbitkv-core/src/transfer/local/orbite.rs",
     "crates/orbitkv-core/src/transfer_engine/backend.rs",
 }
 PREDICATE = re.compile(r"\bcfg(?:_attr)?!?\s*\(")
+REMOVED_ENGINE_FEATURE = re.compile(r'feature\s*=\s*"orbite"')
 BACKEND = re.compile(r'feature\s*=\s*"orbite[^\"]*"')
 
 
@@ -42,6 +40,8 @@ def main() -> int:
     ):
         source = (ROOT / path).read_text()
         count = 0
+        if REMOVED_ENGINE_FEATURE.search(source):
+            violations.append(path + " (OrbiTE is required)")
         for match in PREDICATE.finditer(source):
             depth, end = 1, match.end()
             while end < len(source) and depth:

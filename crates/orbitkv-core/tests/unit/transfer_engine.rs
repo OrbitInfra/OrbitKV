@@ -1,5 +1,20 @@
 use super::*;
 
+/// Real CPU engine for owner tests; CUDA work still requires its explicit shim.
+pub(crate) fn engine() -> Arc<TransferEngine> {
+    Arc::new(
+        TransferEngine::new(
+            64 << 20,
+            "127.0.0.1:0",
+            orbite::Transport::Tcp,
+            None,
+            #[cfg(feature = "orbite-rdma")]
+            None,
+        )
+        .unwrap(),
+    )
+}
+
 pub(crate) fn demand() -> TransferOptions {
     TransferOptions::read(
         crate::QueryMode::Demand,

@@ -91,9 +91,8 @@ pub(super) fn save(
     let mut owner = runtime.codec.borrow_mut();
     if owner.is_none() {
         *owner = Some(
-            GpuCodec::new(runtime.stream.context())
-                .map_err(EngineError::Storage)?
-                .with_transfer(runtime.engine.clone()),
+            GpuCodec::new(runtime.stream.context(), runtime.engine.clone())
+                .map_err(EngineError::Storage)?,
         );
     }
     let codec = owner
@@ -626,9 +625,8 @@ pub(super) fn restore(
     let mut owner = runtime.codec.borrow_mut();
     if owner.is_none() {
         *owner = Some(
-            GpuCodec::new(stream.context())
-                .map_err(EngineError::Storage)?
-                .with_transfer(runtime.engine.clone()),
+            GpuCodec::new(stream.context(), runtime.engine.clone())
+                .map_err(EngineError::Storage)?,
         );
     }
     let codec = owner
@@ -701,20 +699,13 @@ pub(super) fn restore(
             // SAFETY: sources passed the sealed-replica guard and stay immutable;
             // this task owns their allocations and all disjoint destination pages through drain.
             let count = unsafe {
-                codec.decode_host_batch(
-                    stream,
-                    &inputs[offset..end],
-                    budget,
-                    Some(&|uploads| {
-                        let ranges: Vec<_> = uploads
-                            .iter()
-                            .map(|(target, source)| {
-                                (*target, source.as_ptr().cast_mut(), source.len())
-                            })
-                            .collect();
-                        copy_payload(runtime, &ranges, &hosts, true).map_err(|e| e.to_string())
-                    }),
-                )
+                codec.decode_host_batch(stream, &inputs[offset..end], budget, &|uploads| {
+                    let ranges: Vec<_> = uploads
+                        .iter()
+                        .map(|(target, source)| (*target, source.as_ptr().cast_mut(), source.len()))
+                        .collect();
+                    copy_payload(runtime, &ranges, &hosts, true).map_err(|e| e.to_string())
+                })
             }
             .map_err(EngineError::Storage)?;
             if count == 0 {

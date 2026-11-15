@@ -644,21 +644,16 @@ impl OrbitKVEngine {
         self.storage.exports.expire()
     }
 
-    /// Returns true if the peer transfer engine is available.
-    pub fn has_remote_transport(&self) -> bool {
-        self.storage.peer_transport().is_some()
-    }
-
     /// Shared byte engine used when importing persistent GPU allocations.
-    pub fn transfer_backend(&self) -> Option<Arc<crate::transfer_engine::TransferEngine>> {
-        self.storage.peer_transport().cloned()
+    pub fn transfer_backend(&self) -> Arc<crate::transfer_engine::TransferEngine> {
+        self.storage.peer_transport().clone()
     }
 
-    pub fn transfer_endpoint(&self) -> Option<&str> {
+    pub fn transfer_endpoint(&self) -> &str {
         self.storage.transfer_endpoint()
     }
 
-    pub fn transfer_source_epoch(&self) -> Option<&str> {
+    pub fn transfer_source_epoch(&self) -> &str {
         self.storage.transfer_source_epoch()
     }
 }

@@ -1,5 +1,18 @@
 use super::*;
 
+fn transfer_backend() -> Arc<TransferEngine> {
+    orbitkv_core::OrbitKVEngine::new_with_config(
+        1 << 20,
+        false,
+        orbitkv_core::EngineConfig {
+            enable_numa_affinity: false,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .transfer_backend()
+}
+
 #[test]
 fn importer_constructs_an_empty_typed_view_instead_of_byte_input() {
     Python::attach(|py| {
@@ -91,7 +104,7 @@ fn register_layers_rejects_existing_context_before_materializing() {
             &context,
             Vec::new(),
             &mut CudaCreditDisposition::Unknown,
-            None,
+            transfer_backend(),
         )
         .expect_err("existing context must be rejected");
     let message = Python::attach(|py| err.value(py).to_string());
@@ -146,7 +159,7 @@ async fn actor_cleanup_preserves_the_other_instances_registration() {
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         assert_eq!(actor.drop_instance("a".into()).await.unwrap(), 0);
         let message = actor
-            .register_layers(other, Vec::new(), None)
+            .register_layers(other, Vec::new(), transfer_backend())
             .await
             .unwrap_err();
         assert!(
@@ -169,7 +182,7 @@ fn explicit_invalid_exports_are_refused_before_device_discovery_or_import() {
             &context,
             vec![("kv".into(), invalid)],
             &mut CudaCreditDisposition::Unknown,
-            None,
+            transfer_backend(),
         )
         .unwrap_err();
     let message = Python::attach(|py| error.value(py).to_string());
@@ -206,7 +219,7 @@ fn explicit_export_batch_cannot_mix_retained_owner_generations() {
             &context,
             vec![("k".into(), first), ("v".into(), second)],
             &mut CudaCreditDisposition::Unknown,
-            None,
+            transfer_backend(),
         )
         .unwrap_err();
     let message = Python::attach(|py| error.value(py).to_string());
@@ -242,7 +255,7 @@ fn one_export_credit_cannot_create_two_importer_owners() {
             &context,
             vec![("k".into(), first.clone()), ("v".into(), first)],
             &mut CudaCreditDisposition::Unknown,
-            None,
+            transfer_backend(),
         )
         .unwrap_err();
     let message = Python::attach(|py| error.value(py).to_string());
@@ -273,14 +286,13 @@ fn duplicate_credit_refusal_keeps_disposition_unknown() {
                 &context,
                 vec![("a".into(), tensor.clone()), ("b".into(), tensor)],
                 &mut disposition,
-                None,
+                transfer_backend(),
             )
             .is_err()
     );
     assert_eq!(disposition, CudaCreditDisposition::Unknown);
 }
 
-#[cfg(feature = "orbite")]
 #[tokio::test]
 #[ignore = "requires the explicit CPU CUDA-driver fixture and real OrbiTE registration"]
 async fn tensor_owner_survives_registry_removal() {
@@ -364,7 +376,11 @@ async fn actor_failure_preserves_import_disposition() {
             None
         };
         let error = handle
-            .register_layers(key("lost-actor", 0, 0, "GPU-0"), Vec::new(), None)
+            .register_layers(
+                key("lost-actor", 0, 0, "GPU-0"),
+                Vec::new(),
+                transfer_backend(),
+            )
             .await
             .err()
             .unwrap();

@@ -13,6 +13,23 @@ Changes below apply to the next pre-release; nothing new is published by this PR
 
 ## Next pre-release (unreleased)
 
+### Breaking: required OrbiTE dependency
+
+Removed the `orbite` Cargo feature and the unavailable-backend implementation.
+Core, Manager and Python builds always include OrbiTE TCP/CUDA/io_uring;
+`orbite-rdma` and `orbite-gds` remain optional transport capabilities. Remove
+`orbite` from explicit Cargo feature lists. CUDA and storage SDKs are still
+loaded only when a configured path needs them.
+
+Engine construction now returns a required engine or an initialization error.
+`transfer_backend`, `transfer_endpoint` and `transfer_source_epoch` no longer
+return `Option`; `has_remote_transport` is removed. CUDA registrations, workers
+and codecs require their engine at construction. Host codec payload uploads
+require the caller's OrbiTE copy owner; standalone direct-copy fixtures live in
+tests. Closed registrations and uncertain cleanup retain their existing lifetime
+states. Local mode still rejects distributed admission without membership.
+This changes no wire or file format, and adds no hardware qualification.
+
 ### Breaking: cost subsystem removal
 
 Removed cost observations/selection, `ORBITKV_COST_OBSERVATIONS`,
@@ -148,7 +165,7 @@ CC=gcc CXX=g++ PYO3_PYTHON=/absolute/path/to/python3.11 \
 python3 scripts/check-wheel.py target/wheels/*.whl --install-smoke --require-orbite-rdma
 ```
 
-`orbite` is enabled by default; `orbite-rdma` adds the RDMA transport.
+OrbiTE is required in every build; `orbite-rdma` adds the RDMA transport.
 Use `--transfer-transport auto|tcp|rdma` to select an operator hint.
 These build options do not create a second Python distribution. The installed
 CLI smoke checks compiled RDMA arguments before any GPU access. Earlier

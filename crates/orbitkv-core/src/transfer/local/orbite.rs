@@ -49,7 +49,7 @@ pub(super) fn bind(
         registrations.push(
             unsafe {
                 CudaRegistration::new(
-                    Some(engine.clone()),
+                    engine.clone(),
                     address,
                     (end - address) as usize,
                     stream.context().ordinal() as i32,

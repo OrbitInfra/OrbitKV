@@ -5,7 +5,11 @@ into both upstream mainlines.** OrbiTE is the only byte mover. Engines own
 scheduling, HBM and native P/D; OrbitKV owns cache identity, storage, discovery,
 grants and resource lifetime. This is the only execution queue.
 
-The current delivery is **remove cost observations and cost-based selection**.
+The current delivery is **make OrbiTE a required dependency**: remove the base
+feature, unavailable backend and optional engine handles; preserve optional
+RDMA/GDS capabilities and physical-lifetime controls. Cost observations and
+cost-based selection were removed in #347. This source step requires independent
+review and the CPU/native build gates; installed profiles remain unqualified.
 Each coherent PR stops for review before dependent work starts. Research designs
 and simulator campaigns are removed from the maintained tree; Git history retains
 them and external artifacts are untouched. DeepInfer/OrbitInfer and an OrbiTE

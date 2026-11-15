@@ -11,7 +11,7 @@ use orbite::{EngineConfig, Permission, TransferEngine, TransferOp, TransferReque
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 #[test]
-#[ignore = "OrbiTE allocator hardware gate: requires a real CUDA runtime and GPU"]
+#[ignore = "explicit host-shim control or installed CUDA pinning gate"]
 fn pinned_aliases_transfer_bytes_and_release_the_actual_slot() {
     let allocator = PinnedAllocator::new_global(1024, 1, false, None).unwrap();
     let source_allocation = allocator
@@ -135,7 +135,7 @@ fn pinned_aliases_transfer_bytes_and_release_the_actual_slot() {
 }
 
 #[test]
-#[ignore = "OrbiTE allocator hardware gate: requires a real CUDA runtime and GPU"]
+#[ignore = "explicit host-shim control or installed CUDA pinning gate"]
 fn detached_transfer_retains_pinned_slot_after_cancel_unregister_and_wait_timeout() {
     let allocator = PinnedAllocator::new_global(512, 1, false, None).unwrap();
     let allocation = allocator
@@ -178,7 +178,12 @@ fn detached_transfer_retains_pinned_slot_after_cancel_unregister_and_wait_timeou
         batch.wait(Duration::from_millis(10)),
         Err(orbite::Error::Timeout)
     ));
-    assert!(batch.cancel(0).unwrap());
+    assert!(matches!(
+        batch.cancel(0),
+        Err(orbite::Error::Unavailable(
+            "running transport does not support cancellation"
+        ))
+    ));
     assert!(!batch.status().unwrap().locally_drained);
     assert!(batch.free().is_err());
     assert!(matches!(
@@ -198,6 +203,7 @@ fn detached_transfer_retains_pinned_slot_after_cancel_unregister_and_wait_timeou
     assert!(weak_pool.upgrade().is_some());
     gate.release();
     requester.close_requester(TIMEOUT).unwrap();
+    gate.join();
     assert!(weak_allocation.upgrade().is_none());
     assert!(weak_pool.upgrade().is_none());
     let stats = requester.stats().unwrap();
@@ -247,6 +253,9 @@ impl GatedPeer {
 
     fn release(&mut self) {
         self.release.take().unwrap().send(()).unwrap();
+    }
+
+    fn join(&mut self) {
         self.worker.take().unwrap().join().unwrap().unwrap();
     }
 }

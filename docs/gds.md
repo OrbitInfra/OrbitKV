@@ -73,7 +73,7 @@ for unsubmitted work.
 
 Run the two explicit `ssd_engine` GPU byte gates from
 [the transport guide](transport.md#ssd-file-transfers) with
-the `orbite`/`orbite-gds` build features and a test-owned directory on the
+the optional `orbite-gds` build feature and a test-owned directory on the
 qualification SSD. The broader `cufile` integration
 tests cover layouts, codec inputs, cancellation and extent lifetime under native
 GDS; compatibility-mode qualification of the removed implementation does not

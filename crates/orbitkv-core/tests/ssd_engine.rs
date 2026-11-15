@@ -1,5 +1,4 @@
 //! Explicit GPU byte gates. Compilation is not hardware qualification.
-#![cfg(feature = "orbite")]
 mod common;
 
 use common::TestEnvBuilder;

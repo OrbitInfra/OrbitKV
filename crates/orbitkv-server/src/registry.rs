@@ -90,7 +90,7 @@ impl CudaTensorRegistry {
         context_key: &ContextKey,
         layers: Vec<(String, CudaIpcTensorRegistration)>,
         disposition: &mut CudaCreditDisposition,
-        backend: Option<Arc<TransferEngine>>,
+        backend: Arc<TransferEngine>,
     ) -> PyResult<Vec<TensorMetadata>> {
         *disposition = CudaCreditDisposition::Unknown;
         if self.contexts.contains_key(context_key) {
@@ -401,7 +401,7 @@ enum RegistryCommand {
         context_key: ContextKey,
         /// Explicit tensor/storage exports for each layer in the batch.
         layers: Vec<(String, CudaIpcTensorRegistration)>,
-        backend: Option<Arc<TransferEngine>>,
+        backend: Arc<TransferEngine>,
         // The `PyErr` is stringified on the actor thread (which holds the GIL),
         // so callers never need to touch the GIL to read an error message.
         reply: oneshot::Sender<Result<Vec<TensorMetadata>, ImportFailure>>,
@@ -457,7 +457,7 @@ impl RegistryHandle {
         &self,
         context_key: ContextKey,
         layers: Vec<(String, CudaIpcTensorRegistration)>,
-        backend: Option<Arc<TransferEngine>>,
+        backend: Arc<TransferEngine>,
     ) -> Result<Vec<TensorMetadata>, ImportFailure> {
         let (reply, rx) = oneshot::channel();
         self.dispatch(RegistryCommand::RegisterLayers {

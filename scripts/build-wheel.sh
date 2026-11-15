@@ -27,7 +27,7 @@ if [[ "${1:-}" == "--release" ]]; then
 fi
 
 # Complete wheels always include CUDA 13 and OrbiTE; callers may add Cargo features.
-EXTRA_ARGS=(--features cuda-13,orbite "$@")
+EXTRA_ARGS=(--features cuda-13 "$@")
 
 echo "==> Building binaries ($PROFILE mode)..."
 cd "$PROJECT_ROOT"

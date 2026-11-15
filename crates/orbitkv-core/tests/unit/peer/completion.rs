@@ -224,7 +224,6 @@ impl Fixture {
         }
     }
 
-    #[cfg(feature = "orbite")]
     pub(in crate::peer) fn pins_and_releases(&self) -> (usize, usize) {
         (
             self.source.locks.accounting().0,

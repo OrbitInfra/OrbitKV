@@ -81,7 +81,7 @@ is a development build. See `docs/releases.md` for the CUDA 13 runtime, bundled 
 dependencies and installed-package checks. Freeze native artifacts before GPU tests. Preserve explicit
 CUDA library precedence, and keep the interpreter's standard library before the
 selected package/dependency roots in console and embedded-Python search paths.
-Complete wheels enable CUDA 13 and OrbiTE. Add `--features orbite-rdma` for RDMA;
+Complete wheels enable CUDA 13; OrbiTE is required in every build. Add `--features orbite-rdma` for RDMA;
 auto/tcp/rdma are transport hints, not engine families. See
 `python/tests/release/test_installed_orbite.py`
 for the separate installed IPC/peer-byte gate; its DRAM restore uses the local

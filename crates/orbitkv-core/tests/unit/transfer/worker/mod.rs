@@ -40,7 +40,7 @@ fn sealed_host_decode_trusts_ecc_and_rejects_unsealed_or_poisoned_sources() {
     // SAFETY: destination is initialized and retained until worker transfers drain.
     let anchor = unsafe {
         crate::transfer_engine::CudaRegistration::new(
-            storage.peer_transport().cloned(),
+            storage.peer_transport().clone(),
             address,
             1024,
             0,
@@ -52,7 +52,7 @@ fn sealed_host_decode_trusts_ecc_and_rejects_unsealed_or_poisoned_sources() {
         0,
         crate::TransferMode::Direct,
         Some(anchor.clone()),
-        storage.peer_transport().cloned(),
+        storage.peer_transport().clone(),
     )
     .unwrap();
     let read_destination = || {
@@ -149,7 +149,17 @@ fn sealed_host_decode_trusts_ecc_and_rejects_unsealed_or_poisoned_sources() {
 }
 
 fn empty_save_instance() -> Arc<InstanceContext> {
-    Arc::new(InstanceContext::new("cpu-save".into(), "cpu-save".into(), 1, 1, false, None).unwrap())
+    Arc::new(
+        InstanceContext::new(
+            "cpu-save".into(),
+            "cpu-save".into(),
+            1,
+            1,
+            false,
+            crate::transfer_engine::tests::engine(),
+        )
+        .unwrap(),
+    )
 }
 
 #[test]
@@ -295,7 +305,7 @@ async fn shared_admission_saturation_falls_back_before_worker_submission() {
         let (save_tx, mut save_rx) = mpsc::unbounded_channel();
         let pool = GpuWorkerPool {
             local_device: None,
-            engine: None,
+            engine: crate::transfer_engine::tests::engine(),
 
             device_id: i32::MAX - 3,
             numa_node: NumaNode::UNKNOWN,
@@ -345,7 +355,7 @@ fn managed_restore_rejects_overlapping_targets_before_dispatch() {
     let (save_tx, _save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
         local_device: None,
-        engine: None,
+        engine: crate::transfer_engine::tests::engine(),
         device_id: 0,
         numa_node: NumaNode::UNKNOWN,
         transfer_mode: TransferMode::Direct,
@@ -408,7 +418,7 @@ fn restore_plan_must_target_the_worker_device() {
     let (save_tx, _save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
         local_device: None,
-        engine: None,
+        engine: crate::transfer_engine::tests::engine(),
         device_id: 0,
         numa_node: NumaNode::UNKNOWN,
         transfer_mode: TransferMode::Direct,
@@ -455,7 +465,7 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     let cufile_owner = Arc::clone(&cufile_admission).try_acquire_owned().unwrap();
     let pool = Arc::new(GpuWorkerPool {
         local_device: None,
-        engine: None,
+        engine: crate::transfer_engine::tests::engine(),
         device_id: 0,
         numa_node: NumaNode::UNKNOWN,
         transfer_mode: TransferMode::Direct,
@@ -632,7 +642,7 @@ async fn save_queue_admission_child() {
     let (save_tx, mut save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
         local_device: None,
-        engine: None,
+        engine: crate::transfer_engine::tests::engine(),
         device_id: i32::MAX - 33,
         numa_node: NumaNode::UNKNOWN,
         transfer_mode: TransferMode::Direct,
@@ -648,15 +658,15 @@ async fn save_queue_admission_child() {
         closed: Mutex::new(false),
         drained: OnceCell::new(),
     };
+    let instance = empty_save_instance();
     let mut pending = Vec::new();
     for _ in 0..MAX_SAVE_OPERATIONS {
-        let mut saving =
-            Box::pin(pool.batch_save(empty_save_instance(), vec![], vec![], vec![], None));
+        let mut saving = Box::pin(pool.batch_save(instance.clone(), vec![], vec![], vec![], None));
         assert!(futures::poll!(saving.as_mut()).is_pending());
         pending.push(saving);
     }
     assert!(
-        pool.batch_save(empty_save_instance(), vec![], vec![], vec![], None)
+        pool.batch_save(instance.clone(), vec![], vec![], vec![], None)
             .await
             .is_err()
     );
@@ -669,8 +679,7 @@ async fn save_queue_admission_child() {
     task.admission.complete();
     assert!(task.reply.send(Ok(task.layers)).is_ok());
     assert!(pending.remove(0).await.is_ok());
-    let mut replacement =
-        Box::pin(pool.batch_save(empty_save_instance(), vec![], vec![], vec![], None));
+    let mut replacement = Box::pin(pool.batch_save(instance.clone(), vec![], vec![], vec![], None));
     assert!(futures::poll!(replacement.as_mut()).is_pending());
     drop(replacement);
     drop(pending);
@@ -678,24 +687,11 @@ async fn save_queue_admission_child() {
     assert_eq!(admission.usage.lock().operations, MAX_SAVE_OPERATIONS);
     assert_eq!(admission.usage.lock().retained, MAX_SAVE_OPERATIONS);
     assert!(
-        pool.batch_save(empty_save_instance(), vec![], vec![], vec![], None)
+        pool.batch_save(instance.clone(), vec![], vec![], vec![], None)
             .await
             .is_err()
     );
     println!("save_queue_saturation=1024 receipt_repaid=true lost_owner_charged=true no_DMA=true");
-}
-
-#[test]
-fn missing_orbite_worker_engine_is_rejected_before_cuda_initialization() {
-    let error = init_worker(i32::MAX, TransferMode::Direct, None, None)
-        .err()
-        .expect("a local worker requires OrbiTE");
-    assert!(
-        error
-            .to_string()
-            .contains("OrbiTE local copy is unavailable"),
-        "{error}"
-    );
 }
 
 #[test]

@@ -38,7 +38,7 @@ impl CudaRegistration {
         reason = "uncertain registration retains backing and its budget"
     )]
     pub unsafe fn new(
-        backend: Option<Arc<TransferEngine>>,
+        backend: Arc<TransferEngine>,
         address: u64,
         length: usize,
         device: i32,
@@ -51,12 +51,6 @@ impl CudaRegistration {
                 "invalid CUDA allocation",
             ));
         }
-        let backend = backend.ok_or_else(|| {
-            super::TransferError::new(
-                super::ErrorKind::Unavailable,
-                "OrbiTE CUDA registration is unavailable",
-            )
-        })?;
         let native = {
             let result = catch_unwind(AssertUnwindSafe(|| {
                 // SAFETY: actual backing is retained outside this unwind boundary.

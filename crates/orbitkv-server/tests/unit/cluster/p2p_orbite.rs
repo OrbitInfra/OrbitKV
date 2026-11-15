@@ -640,12 +640,9 @@ async fn peer_remote_fetch_roundtrip(backend: TransportHint) {
     assert_eq!(granted.blocks.len(), grant_blocks);
     assert_eq!(
         granted.native_source_epoch,
-        engine_a.transfer_source_epoch().unwrap()
+        engine_a.transfer_source_epoch()
     );
-    assert_eq!(
-        granted.transfer_endpoint,
-        engine_a.transfer_endpoint().unwrap()
-    );
+    assert_eq!(granted.transfer_endpoint, engine_a.transfer_endpoint());
     match backend {
         TransportHint::Auto => {
             assert!(granted.transfer_endpoint.starts_with("orbite://"));

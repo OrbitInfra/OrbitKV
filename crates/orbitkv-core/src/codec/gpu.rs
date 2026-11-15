@@ -85,7 +85,7 @@ pub(crate) struct GpuCodec {
     codebooks: Vec<f32>,
     ans: Option<ans::Library>,
     arena: Option<Arc<Arena>>,
-    transfer: Option<Arc<crate::transfer_engine::TransferEngine>>,
+    transfer: Arc<crate::transfer_engine::TransferEngine>,
     registration: Option<Arc<crate::transfer_engine::CudaRegistration>>,
     upload: Vec<u8>,
     readback: Vec<u8>,
@@ -368,7 +368,10 @@ impl GpuCodec {
         Ok(checksum.finalize())
     }
 
-    pub(crate) fn new(ctx: &Arc<CudaContext>) -> Result<Self, String> {
+    pub(crate) fn new(
+        ctx: &Arc<CudaContext>,
+        transfer: Arc<crate::transfer_engine::TransferEngine>,
+    ) -> Result<Self, String> {
         use cudarc::driver::sys::CUdevice_attribute::{
             CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR,
             CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR,
@@ -414,19 +417,11 @@ impl GpuCodec {
             codebooks,
             ans: None,
             arena: None,
-            transfer: None,
+            transfer,
             registration: None,
             upload: Vec::new(),
             readback: Vec::new(),
         })
-    }
-
-    pub(crate) fn with_transfer(
-        mut self,
-        transfer: Option<Arc<crate::transfer_engine::TransferEngine>>,
-    ) -> Self {
-        self.transfer = transfer;
-        self
     }
 
     fn release_arena(&mut self) -> Result<(), String> {
@@ -495,11 +490,11 @@ impl GpuCodec {
             crate::metrics::core_metrics()
                 .storage_codec_workspace_allocations
                 .add(1, &[]);
-            if let (Some(transfer), Some(arena)) = (&self.transfer, &self.arena) {
+            if let Some(arena) = &self.arena {
                 // SAFETY: registration retains the actual synchronous allocation and stream.
                 let registered = unsafe {
                     crate::transfer_engine::CudaRegistration::new(
-                        Some(transfer.clone()),
+                        self.transfer.clone(),
                         allocation,
                         bytes,
                         self.ctx.ordinal() as i32,
@@ -818,7 +813,7 @@ impl GpuCodec {
         stream: &Arc<CudaStream>,
         inputs: &[HostDecodeInput<'_>],
         budget: usize,
-        upload: Option<&PayloadUpload<'_>>,
+        upload: &PayloadUpload<'_>,
     ) -> Result<usize, String> {
         let mut inputs = &inputs[..inputs.len().min(MAX_BATCH_SEGMENTS)];
         let mut device_inputs: Vec<_> = inputs
@@ -883,17 +878,7 @@ impl GpuCodec {
                     .map(|input| (input.target, &input.source[..input.meta.stored_bytes])),
             )
             .collect();
-        if let Some(upload) = upload {
-            upload(&uploads)?;
-        } else if self.transfer.is_some() {
-            return Err("codec payload upload requires its selected transfer engine".into());
-        } else {
-            for (target, source) in &uploads {
-                // SAFETY: standalone codec controls retain inputs until this method drains.
-                unsafe { result::memcpy_htod_async(*target, source, stream.cu_stream()) }
-                    .map_err(|e| e.to_string())?;
-            }
-        }
+        upload(&uploads)?;
         record_batch("decode", inputs.len());
         if !entries.is_empty() {
             self.launch_groups(stream, &entries, &groups, &layout, base, false)?;

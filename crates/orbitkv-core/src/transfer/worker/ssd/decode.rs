@@ -120,7 +120,7 @@ pub(super) fn run(
                         input = Some(
                             unsafe {
                                 CudaRegistration::new(
-                                    Some(Arc::clone(&backend)),
+                                    Arc::clone(&backend),
                                     backing.pointer,
                                     bytes,
                                     stream.context().ordinal() as i32,
@@ -130,6 +130,9 @@ pub(super) fn run(
                             .map_err(|e| e.to_string())?,
                         );
                     }
+                    if codec.is_none() {
+                        codec = Some(GpuCodec::new(stream.context(), backend.clone())?);
+                    }
                     let registration = input.as_ref().ok_or("missing codec input")?;
                     let _loan = registration.loan(&backend).map_err(|e| e.to_string())?;
                     Ok(Arc::clone(registration))
@@ -138,10 +141,6 @@ pub(super) fn run(
             }
             DecodeCommand::Decode(ranges) => {
                 let decoded = (|| {
-                    if codec.is_none() {
-                        codec =
-                            Some(GpuCodec::new(stream.context()).map_err(DecodeError::Runtime)?);
-                    }
                     let inputs: Vec<_> = ranges
                         .iter()
                         .map(|range| DecodeInput {

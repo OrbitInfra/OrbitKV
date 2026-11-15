@@ -11,7 +11,7 @@ use super::layout::{KVCacheGeometry, KVCacheLayout};
 use super::{CopyDesc, TransferMode};
 use crate::PayloadArena;
 
-mod backend;
+mod orbite;
 mod trace;
 use crate::transfer_engine::local::{LocalCompletion, LocalCopy, LocalHost};
 use trace::LocalCopyTrace;
@@ -429,7 +429,7 @@ impl LocalRestoreExecutor {
             .new_event(Some(sys::CUevent_flags::CU_EVENT_BLOCKING_SYNC))
             .map_err(|e| e.to_string())?;
         let (backend, hosts, registrations) =
-            backend::bind(owner, &bindings, &imported, stream.clone(), mode)?;
+            orbite::bind(&bindings, &imported, stream.clone(), mode, owner)?;
         let limit = orbitkv_common::timeline::diagnostic_event_limit();
         let trace = (limit > 0).then(|| {
             LocalCopyTrace::new(
