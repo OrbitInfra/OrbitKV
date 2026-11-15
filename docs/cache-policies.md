@@ -32,8 +32,10 @@ No-progress passes wait for the next tick. Embedded Rust users schedule
 `OrbitKVEngine::maintain_memory_cache()` themselves; the method serializes
 concurrent passes without waiting for another maintenance caller.
 
-Usage includes **all actual pinned allocations**, including pending Publish,
-query/transfer owners and staging. Only cache-owned DRAM residents are selected
+Usage includes **all allocations charged to Storage's pinned pool**, including
+pending Publish, query/transfer owners and staging allocated from that pool.
+OrbiTE's separate native pools and other process memory are outside this budget.
+Only cache-owned DRAM residents are selected
 for removal. Removing an index entry does not prove its allocation was freed;
 shared allocation owners remain charged until release. Concurrent allocations
 and live holders can prevent reaching the low target. Watermarks never expire a

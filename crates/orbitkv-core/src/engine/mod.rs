@@ -568,8 +568,8 @@ impl OrbitKVEngine {
     /// Run one high/low-watermark eviction pass, scanning at most 512 residents per class.
     ///
     /// The Manager calls this once per second. Embedded users must schedule it themselves.
-    /// All pinned allocations count toward the watermarks; only unheld DRAM residents
-    /// can be evicted. Physical completion remains required before memory can be reused.
+    /// All allocations charged to Storage's pinned pool count; only unheld DRAM
+    /// residents can be evicted. Physical completion remains required before reuse.
     /// Disabled watermarks and a concurrent maintenance call return empty statistics.
     pub fn maintain_memory_cache(&self) -> MemoryCacheCleanupStats {
         self.storage.maintain_memory_cache()
