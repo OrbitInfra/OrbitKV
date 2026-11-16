@@ -209,31 +209,43 @@ async fn partial_publication_keeps_the_earliest_lifetime_through_late_slots() {
     let engine = Storage::new_with_config(1 << 20, false, EngineConfig::default(), &[]).unwrap();
     let mut worker = make_worker(&engine);
     let key = StateKey::new("ttl".into(), vec![1]);
-    let first = crate::storage::expiry::Expiration::new(Some(std::time::Duration::from_secs(60)))
+    for (next_secs, expire_first) in [(120, true), (30, true), (120, false)] {
+        let first =
+            crate::storage::expiry::Expiration::new(Some(std::time::Duration::from_secs(60)))
+                .unwrap()
+                .unwrap();
+        worker.insert(
+            vec![(key.clone(), vec![(0, make_raw_block(&engine, 512))])],
+            2,
+            NumaNode::UNKNOWN,
+            "ttl",
+            None,
+            Some(first.clone()),
+        );
+        let later = crate::storage::expiry::Expiration::new(Some(std::time::Duration::from_secs(
+            next_secs,
+        )))
         .unwrap()
         .unwrap();
-    worker.insert(
-        vec![(key.clone(), vec![(0, make_raw_block(&engine, 512))])],
-        2,
-        NumaNode::UNKNOWN,
-        "ttl",
-        None,
-        Some(first.clone()),
-    );
-    first.expire_for_test();
-    let later = crate::storage::expiry::Expiration::new(Some(std::time::Duration::from_secs(120)))
-        .unwrap()
-        .unwrap();
-    worker.insert(
-        vec![(key.clone(), vec![(1, make_raw_block(&engine, 512))])],
-        2,
-        NumaNode::UNKNOWN,
-        "ttl",
-        None,
-        Some(later),
-    );
-    assert!(!engine.dram.contains_keys(std::slice::from_ref(&key))[0]);
-    assert!(worker.inflight.is_empty());
+        if expire_first {
+            first.expire_for_test();
+        } else {
+            later.expire_for_test();
+        }
+        worker.insert(
+            vec![(key.clone(), vec![(1, make_raw_block(&engine, 512))])],
+            2,
+            NumaNode::UNKNOWN,
+            "ttl",
+            None,
+            Some(later),
+        );
+        assert!(
+            !engine.dram.contains_keys(std::slice::from_ref(&key))[0],
+            "next_secs={next_secs} expire_first={expire_first}"
+        );
+        assert!(worker.inflight.is_empty());
+    }
     let fresh = crate::storage::expiry::Expiration::new(Some(std::time::Duration::from_secs(60)))
         .unwrap()
         .unwrap();

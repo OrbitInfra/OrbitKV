@@ -17,7 +17,8 @@ The default is disabled. Rust uses `EngineConfig::cache_ttl: Option<Duration>`;
 values must be at least one millisecond and fit both the Unix and monotonic
 clocks. The deadline is fixed before GPU Save submission, shared by host and
 raw/encoded GPU-to-SSD writes. A fragmented publication keeps the earliest
-participating Save deadline. A slow publication may expire before it becomes a
+participating Save deadline. If wall and monotonic clocks disagree on which
+fragment expires first, that publication becomes a miss. A slow publication may expire before it becomes a
 cache hit. Reads, duplicate saves of a live resident, DRAM/SSD migration,
 peer copies and Manager restart never renew a deadline. A fresh Save after
 expiry can publish a new generation with a new lifetime.
@@ -43,8 +44,9 @@ logical removals, not physical frees. SSD journal recovery separately records
 `reason="expired"` drops.
 
 Publication stores absolute Unix-millisecond bounds and a local monotonic
-remaining-time deadline. An observed expiration is latched; a clock rollback
-cannot revive it in the same process. A clock before the recorded publication,
+remaining-time deadline. An expiration observed by the selected publication owner is latched; a clock
+rollback cannot revive that owner in the same process. Clock observations are
+not broadcast between independent publications or nodes. A clock before the recorded publication,
 or an unreadable clock, fails closed. Cross-node import and restart require
 correct UTC clocks: a rollback that stays between publication and expiry while
 the prior process is stopped cannot be detected from these records alone.

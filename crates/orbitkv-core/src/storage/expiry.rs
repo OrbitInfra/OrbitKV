@@ -93,6 +93,28 @@ impl Expiration {
         self.expired_at(unix_millis(), Instant::now())
     }
 
+    pub(crate) fn merge(self: Arc<Self>, next: Arc<Self>) -> Arc<Self> {
+        if self.is_expired() {
+            return self;
+        }
+        if next.is_expired() {
+            return next;
+        }
+        if self.deadline <= next.deadline
+            && self.record.expires_unix_millis <= next.record.expires_unix_millis
+        {
+            return self;
+        }
+        if next.deadline <= self.deadline
+            && next.record.expires_unix_millis <= self.record.expires_unix_millis
+        {
+            return next;
+        }
+        // Conflicting clock order cannot extend a partial publication's lifetime.
+        self.expired.store(true, Ordering::Release);
+        self
+    }
+
     fn expired_at(&self, now: Result<u64, String>, monotonic: Instant) -> bool {
         if self.expired.load(Ordering::Acquire) {
             return true;

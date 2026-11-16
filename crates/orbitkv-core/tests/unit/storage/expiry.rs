@@ -65,3 +65,43 @@ fn invalid_lifetimes_fail_without_enabling_a_default_ttl() {
         assert!(Expiration::at(record, 100, Instant::now()).is_err());
     }
 }
+
+#[test]
+fn partial_lifetimes_keep_the_owner_or_reject_conflicting_clock_order() {
+    let wall = unix_millis().unwrap();
+    let mono = Instant::now();
+    let make = |expires, observed| {
+        Arc::new(
+            Expiration::at(
+                CacheExpiry {
+                    published_unix_millis: wall - 60_000,
+                    expires_unix_millis: wall + expires,
+                },
+                observed,
+                mono,
+            )
+            .unwrap(),
+        )
+    };
+    for equal_wall in [false, true] {
+        for reverse in [false, true] {
+            let early = make(if equal_wall { 60_000 } else { 30_000 }, wall);
+            let late = make(60_000, if equal_wall { wall - 10_000 } else { wall });
+            let merged = if reverse {
+                late.merge(early.clone())
+            } else {
+                early.clone().merge(late)
+            };
+            assert!(Arc::ptr_eq(&merged, &early));
+            assert!(!merged.is_expired());
+        }
+    }
+    let old = make(60_000, wall);
+    let next = make(30_000, wall - 40_000);
+    assert!(!old.is_expired());
+    assert!(!next.is_expired());
+    let merged = old.clone().merge(next);
+    assert!(Arc::ptr_eq(&merged, &old));
+    assert!(merged.is_expired());
+    assert!(old.is_expired());
+}

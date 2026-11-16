@@ -779,13 +779,11 @@ impl InflightBlock {
         &mut self,
         next: Option<Arc<crate::storage::expiry::Expiration>>,
     ) {
-        if let Some(next) = next
-            && self
-                .expiration
-                .as_ref()
-                .is_none_or(|old| next.record.expires_unix_millis < old.record.expires_unix_millis)
-        {
-            self.expiration = Some(next);
+        if let Some(next) = next {
+            self.expiration = Some(match self.expiration.take() {
+                Some(old) => old.merge(next),
+                None => next,
+            });
         }
     }
 
