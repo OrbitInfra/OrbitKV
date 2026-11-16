@@ -1,4 +1,4 @@
-# Cache retention, watermarks and SSD admission
+# Cache lifetimes, retention, watermarks and SSD admission
 
 For artifact locations and verification limits, see [benchmark evidence](performance.md#evidence-and-instrumentation).
 The [pre-migration report](https://github.com/OrbitInfra/OrbitKV/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/cache-policies.md) retains full tables and historical run details.
@@ -9,6 +9,58 @@ configured watermarks, and avoid writing every new page to SSD. They use the exi
 adapters do not maintain another policy queue. Defaults remain
 `--cache-protected-percent 0 --ssd-write-policy all` until matched serving
 measurements justify a change.
+
+## Fixed data TTL
+
+Set `--cache-ttl-secs 3600` to give new publications a fixed one-hour lifetime.
+The default is disabled. Rust uses `EngineConfig::cache_ttl: Option<Duration>`;
+values must be at least one millisecond and fit both the Unix and monotonic
+clocks. The deadline is fixed before GPU Save submission, shared by host and
+raw/encoded GPU-to-SSD writes. A fragmented publication keeps the earliest
+participating Save deadline. A slow publication may expire before it becomes a
+cache hit. Reads, duplicate saves of a live resident, DRAM/SSD migration,
+peer copies and Manager restart never renew a deadline. A fresh Save after
+expiry can publish a new generation with a new lifetime.
+
+New local lookups, coalesced-query consumers and source grants reject expired
+entries independently of maintenance. Directory inventories remain hints;
+source authorization checks the current generation and deadline. Previously
+admitted query leases, SSD readers and native transfers retain their actual
+backing until physical completion. TTL does not cancel them or poison their
+bytes. Expired delayed writes and materialized copies cannot republish into a
+cache. An in-flight SSD write remains a protected reservation until its owner
+completes; only then can its extent be reused.
+
+The existing Manager task scans at most 512 finite-lived entries per tier each
+second. Each store has one scan entry per finite-lived resident/index entry;
+removal deletes it, so scan metadata is bounded by the existing store entries.
+The scan order is independent of DRAM replacement recency. Journal invalidations
+run on one awaited blocking task; slow syncs do not queue additional sweeps.
+Embedded users call `OrbitKVEngine::expire_cache()` from a blocking worker.
+Run this even with local TTL disabled: inherited and recovered deadlines still
+apply. `CacheExpirationStats` and `orbitkv_cache_expirations_total{medium}` count
+logical removals, not physical frees. SSD journal recovery separately records
+`reason="expired"` drops.
+
+Publication stores absolute Unix-millisecond bounds and a local monotonic
+remaining-time deadline. An observed expiration is latched; a clock rollback
+cannot revive it in the same process. A clock before the recorded publication,
+or an unreadable clock, fails closed. Cross-node import and restart require
+correct UTC clocks: a rollback that stays between publication and expiry while
+the prior process is stopped cannot be detected from these records alone.
+No distributed-clock or secure-erasure guarantee is implied.
+
+SSD format 3 persists these bounds and filters expired entries before checksum
+verification; the final visibility check also rejects entries expiring during
+verification. Earlier formats start cold. Peer protocol
+`orbitkv/inventory-stream/v6` requires the lifetime contract in both request and
+response, even when TTL is disabled. Stop and upgrade all Managers together;
+see [the cluster migration](distributed-cache.md).
+
+CPU controls cover clocks, held owners, bounded scans, late publication and
+coalesced reads. The real-file Manager SIGKILL gate adds TTL during write
+completion and recovery verification on ext4/tmpfs. Installed GPU/RDMA/GDS TTL
+behavior and serving performance remain unqualified.
 
 ## DRAM high/low watermarks
 
@@ -43,8 +95,9 @@ lease, cancel a transfer, or authorize memory reuse. Existing inventory removals
 fence later source grants, and existing SSD copies are preserved. Queued weak
 SSD writes can lose their source under eviction, as with allocation pressure.
 
-This substep does not add data TTL, SSD watermarks or persistent expiry. It
-changes no peer/channel protocol or SSD format. The CPU host-registration shim
+DRAM watermarks are independent of data TTL and preserve existing SSD copies.
+Coordinated SSD watermarks remain open. The watermark mechanism itself changes
+no peer/channel protocol or SSD format. The CPU host-registration shim
 exercises the real Rust allocation, replacement and inventory owners; it does
 not qualify GPU or RDMA transfers. No serving-performance gain is claimed.
 

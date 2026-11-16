@@ -117,11 +117,13 @@ fn queued_read_store_with_inventory(
                 NumaNode::UNKNOWN,
             )],
             index::Encoding::Raw,
+            None,
         )
         .unwrap();
     drop(inner);
     if commit {
-        store.commit_write(&key, true);
+        let expected = store.inner.lock().ring.write_entry(&key).cloned().unwrap();
+        store.commit_write(&key, true, Some(&expected));
     }
     (store, prefetch_rx)
 }
@@ -136,7 +138,9 @@ fn ssd_evidence_appears_only_after_commit_and_survives_dram_eviction() {
 
     assert!(inventory.page(None).unwrap().is_empty());
 
-    store.commit_write(&key, true);
+    let expected = store.inner.lock().ring.write_entry(&key).cloned().unwrap();
+
+    store.commit_write(&key, true, Some(&expected));
     let ssd = inventory.page(None).unwrap();
     assert_eq!(ssd.len(), 1);
     assert_eq!(
@@ -183,7 +187,7 @@ fn ssd_evidence_appears_only_after_commit_and_survives_dram_eviction() {
         }]);
         inner
             .ring
-            .reserve(&replacement, vec![slot], index::Encoding::Encoded)
+            .reserve(&replacement, vec![slot], index::Encoding::Encoded, None)
             .unwrap();
         inner.ring.take_retired()
     };
@@ -191,15 +195,77 @@ fn ssd_evidence_appears_only_after_commit_and_survives_dram_eviction() {
     store.retire_inventory(retired);
     assert!(inventory.page(None).unwrap().is_empty());
 
-    store.commit_write(&replacement, true);
+    let expected = store
+        .inner
+        .lock()
+        .ring
+        .write_entry(&replacement)
+        .cloned()
+        .unwrap();
+
+    store.commit_write(&replacement, true, Some(&expected));
 
     assert_eq!(
         inventory.page(None).unwrap()[0].metadata.unwrap().medium,
         orbitkv_state::ReplicaMedium::Ssd
     );
     let entry = store.inner.lock().ring.get(&replacement).unwrap().clone();
-    store.invalidate_corrupt_entry(&replacement, &entry);
+    store.invalidate_entry(&replacement, &entry);
     assert!(inventory.page(None).unwrap().is_empty());
+}
+
+#[test]
+fn expired_write_completion_cannot_remove_a_replacement_generation() {
+    let inventory = Arc::new(crate::storage::inventory::ResidencyInventory::new(
+        16 * 1024,
+    ));
+    let (store, _queued) = queued_read_store_with_inventory(Some(Arc::clone(&inventory)), false);
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let expiration =
+        crate::storage::expiry::Expiration::new(Some(std::time::Duration::from_secs(60)))
+            .unwrap()
+            .unwrap();
+    let old = {
+        let mut inner = store.inner.lock();
+        let slots = inner.ring.write_entry(&key).unwrap().slots.clone();
+        assert!(!inner.ring.commit(&key, false));
+        inner.pending_writes.insert(key.clone());
+        inner
+            .ring
+            .reserve(&key, slots, index::Encoding::Raw, Some(expiration.clone()))
+            .unwrap()
+    };
+    expiration.expire_for_test();
+    assert_eq!(store.expire(512), 0);
+    assert!(store.inner.lock().ring.write_entry(&key).is_some());
+    assert!(store.inner.lock().pending_writes.contains(&key));
+    store.commit_write(&key, true, Some(&old));
+    assert!(inventory.page(None).unwrap().is_empty());
+    assert!(!store.inner.lock().pending_writes.contains(&key));
+
+    let replacement = {
+        let mut inner = store.inner.lock();
+        inner.pending_writes.insert(key.clone());
+        inner
+            .ring
+            .reserve(&key, old.slots.clone(), index::Encoding::Raw, None)
+            .unwrap()
+    };
+    store.commit_write(&key, false, Some(&old));
+    assert!(!store.invalidate_entry(&key, &old));
+    assert!(store.inner.lock().pending_writes.contains(&key));
+    assert!(Arc::ptr_eq(
+        &store.inner.lock().ring.write_entry(&key).unwrap().readers,
+        &replacement.readers,
+    ));
+    store.commit_write(&key, true, Some(&replacement));
+    let published = inventory.page(None).unwrap();
+    assert_eq!(published.len(), 1);
+    assert!(published[0].present);
+    assert!(!store.invalidate_entry(&key, &old));
+    store.commit_write(&key, false, Some(&old));
+    assert_eq!(inventory.page(None).unwrap(), published);
+    assert!(store.inner.lock().ring.get(&key).is_some());
 }
 
 #[test]
@@ -343,7 +409,12 @@ async fn candidates_do_not_pin_and_cannot_authorize_a_replaced_generation() {
         assert!(
             inner
                 .ring
-                .reserve(next, candidate.entry.slots.clone(), index::Encoding::Raw)
+                .reserve(
+                    next,
+                    candidate.entry.slots.clone(),
+                    index::Encoding::Raw,
+                    None
+                )
                 .is_some()
         );
         assert!(inner.ring.commit(next, true));
@@ -469,7 +540,7 @@ async fn peer_ssd_route_is_explicit_and_follows_local_ssd_priority() {
         for next in [StateKey::new("queued-lease".into(), vec![1]), key.clone()] {
             inner
                 .ring
-                .reserve(&next, old.slots.clone(), index::Encoding::Raw)
+                .reserve(&next, old.slots.clone(), index::Encoding::Raw, None)
                 .unwrap();
             assert!(inner.ring.commit(&next, true));
         }
@@ -650,7 +721,7 @@ async fn ssd_plan_revalidates_versions_and_requires_complete_selected_prefixes()
     for next in [&missing, &key] {
         inner
             .ring
-            .reserve(next, old.slots.clone(), index::Encoding::Raw)
+            .reserve(next, old.slots.clone(), index::Encoding::Raw, None)
             .unwrap();
         assert!(inner.ring.commit(next, true));
     }
@@ -672,7 +743,7 @@ async fn ssd_plan_revalidates_versions_and_requires_complete_selected_prefixes()
     ] {
         inner
             .ring
-            .reserve(key, old.slots.clone(), encoding)
+            .reserve(key, old.slots.clone(), encoding, None)
             .unwrap();
         assert!(inner.ring.commit(key, true));
     }
@@ -717,7 +788,7 @@ async fn batched_host_reads_hold_selected_generations_and_reject_foreign_stores(
         for key in &keys {
             inner
                 .ring
-                .reserve(key, slots.clone(), index::Encoding::Raw)
+                .reserve(key, slots.clone(), index::Encoding::Raw, None)
                 .unwrap();
             assert!(inner.ring.commit(key, true));
         }
@@ -754,7 +825,8 @@ async fn batched_host_reads_hold_selected_generations_and_reject_foreign_stores(
             .reserve(
                 &StateKey::new("queued-lease".into(), vec![2]),
                 slots,
-                index::Encoding::Raw
+                index::Encoding::Raw,
+                None
             )
             .is_none()
     );

@@ -127,6 +127,7 @@ and [request preparation](request-preparation.md).
 
 - **orbitkv_cache_resident_bytes** (Gauge): Current sealed block bytes resident in cache (sum of footprints)
 
+- **orbitkv_cache_expirations_total** (Counter): Finite-lived generations logically removed by TTL, labelled `medium="dram"|"ssd"`. Held allocations/extents may remain charged after removal. Recovered entries rejected before visibility are counted by SSD recovery drops with `reason="expired"`.
 - **orbitkv_cache_protected_bytes** (Gauge): Bytes in the protected segment when `--cache-protected-percent` is enabled; bounded by that percentage of pool capacity. Zero with protection disabled. These bytes are part of residency, not an additional pool reservation.
 
 - **orbitkv_cache_policy_promotions_total**, **orbitkv_cache_policy_demotions_total** (Counters): Foreground promotions into the protected segment and capacity demotions back to probation. Speculative peeks do not promote. Pressure eviction and cleanup affect protected bytes but are not policy-capacity demotions.

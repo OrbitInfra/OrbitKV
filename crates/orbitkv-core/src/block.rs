@@ -65,6 +65,14 @@ impl fmt::Debug for RestoreSource {
 }
 
 impl RestoreSource {
+    pub(crate) fn is_expired(&self) -> bool {
+        match self {
+            Self::Memory(block) => block.is_expired(),
+            Self::Peer(block) => block.is_expired(),
+            Self::Ssd { lease, .. } => lease.entry.is_expired(),
+        }
+    }
+
     pub fn memory_footprint(&self) -> u64 {
         match self {
             Self::Memory(block) => block.memory_footprint(),
@@ -496,6 +504,7 @@ impl<'a> LayerBlock<'a> {
 /// Immutable block after all slots are filled. Exposed to callers.
 pub struct SealedBlock {
     corrupt: AtomicBool,
+    expiration: OnceLock<Option<Arc<crate::storage::expiry::Expiration>>>,
     slots: Box<[RawBlock]>,
     footprint: u64,
     /// Per-slot NUMA affinity; always covers every slot (`len == slots.len()`).
@@ -538,6 +547,34 @@ impl Drop for Warmup {
 }
 
 impl SealedBlock {
+    /// Original retention bounds, preserved by SSD and peer copies.
+    pub fn cache_expiry(&self) -> Option<crate::CacheExpiry> {
+        self.expiration
+            .get()
+            .and_then(Option::as_ref)
+            .map(|expiration| expiration.record)
+    }
+
+    pub(crate) fn expiration(&self) -> Option<Arc<crate::storage::expiry::Expiration>> {
+        self.expiration.get().cloned().flatten()
+    }
+
+    pub(crate) fn set_expiration(
+        &self,
+        expiration: Option<Arc<crate::storage::expiry::Expiration>>,
+    ) -> Result<(), String> {
+        self.expiration
+            .set(expiration)
+            .map_err(|_| "cache lifetime already assigned".into())
+    }
+
+    pub(crate) fn is_expired(&self) -> bool {
+        self.expiration
+            .get()
+            .and_then(Option::as_ref)
+            .is_some_and(|expiry| expiry.is_expired())
+    }
+
     pub(crate) fn is_verified(&self) -> bool {
         !self.corrupt.load(Ordering::Acquire)
     }
@@ -655,6 +692,7 @@ impl SealedBlock {
         }
         Self {
             corrupt: AtomicBool::new(false),
+            expiration: OnceLock::new(),
             slots,
             footprint,
             slot_numas,
@@ -713,6 +751,7 @@ pub(crate) enum SlotInsertResult {
 
 /// Block that is still being written. Internal to Storage.
 pub(crate) struct InflightBlock {
+    expiration: Option<Arc<crate::storage::expiry::Expiration>>,
     slots: Vec<Option<RawBlock>>,
     remaining: usize,
     total_slots: usize,
@@ -726,12 +765,27 @@ pub(crate) struct InflightBlock {
 impl InflightBlock {
     pub(crate) fn new(total_slots: usize) -> Self {
         Self {
+            expiration: None,
             slots: (0..total_slots).map(|_| None).collect(),
             remaining: total_slots,
             total_slots,
             footprint: 0,
             created_at: Instant::now(),
             slot_numas: vec![NumaNode::UNKNOWN; total_slots],
+        }
+    }
+
+    pub(crate) fn retain_expiration(
+        &mut self,
+        next: Option<Arc<crate::storage::expiry::Expiration>>,
+    ) {
+        if let Some(next) = next
+            && self
+                .expiration
+                .as_ref()
+                .is_none_or(|old| next.record.expires_unix_millis < old.record.expires_unix_millis)
+        {
+            self.expiration = Some(next);
         }
     }
 
@@ -797,10 +851,14 @@ impl InflightBlock {
             .into_iter()
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| crate::EngineError::Storage("cannot seal an incomplete block".into()))?;
-        Ok(SealedBlock::from_slots_with_footprint(
+        let block = SealedBlock::from_slots_with_footprint(
             slots.into_boxed_slice(),
             self.footprint,
             self.slot_numas,
-        ))
+        );
+        block
+            .set_expiration(self.expiration)
+            .map_err(crate::EngineError::Storage)?;
+        Ok(block)
     }
 }

@@ -244,8 +244,8 @@ async fn execute_write(task: WriteTask, store: Weak<SsdStore>, io: Arc<SsdIo>) -
     let Some(store) = store.upgrade() else {
         return (key, false, 0.0, 0);
     };
-    if !task.block.is_verified() {
-        store.commit_write(&key, false);
+    if !task.block.is_verified() || task.block.is_expired() {
+        store.commit_write(&key, false, None);
         return (key, false, start.elapsed().as_secs_f64(), 0);
     }
     let encoded = task.block.slots().iter().any(|s| s.encoding.is_some());
@@ -268,15 +268,16 @@ async fn execute_write(task: WriteTask, store: Weak<SsdStore>, io: Arc<SsdIo>) -
     } else {
         Encoding::Raw
     };
-    let (entry, retired) = {
+    let entry = {
         let mut inner = store.inner.lock();
-        let entry = inner.ring.reserve(&key, slots, encoding);
-        let retired = inner.ring.take_retired();
-        (entry, retired)
+        let entry = inner
+            .ring
+            .reserve(&key, slots, encoding, task.block.expiration());
+        store.retire_inventory(inner.ring.take_retired());
+        entry
     };
-    store.retire_inventory(retired);
     let Some(entry) = entry else {
-        store.commit_write(&key, false);
+        store.commit_write(&key, false, None);
         return (key, false, start.elapsed().as_secs_f64(), 0);
     };
     let lease = Arc::new(super::WriteLease {

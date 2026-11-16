@@ -1,4 +1,5 @@
 pub(crate) mod dram;
+pub(crate) mod expiry;
 pub(crate) mod inventory;
 pub(crate) mod publish;
 pub(crate) mod ssd;
@@ -30,6 +31,13 @@ pub(crate) type MaterializedBlocks = Vec<(StateKey, Arc<SealedBlock>)>;
 
 const RECLAIM_BATCH_SIZE: usize = 512;
 
+/// Logical TTL removals; held backing remains charged until its last owner drains.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct CacheExpirationStats {
+    pub dram_blocks: usize,
+    pub ssd_blocks: usize,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct MemoryCacheCleanupStats {
     pub evicted_blocks: usize,
@@ -49,7 +57,9 @@ pub(crate) struct Storage {
     peer_transport: Arc<TransferEngine>,
     blockwise_alloc: bool,
     memory_watermarks: Option<(u64, u64)>,
+    pub(crate) cache_ttl: Option<std::time::Duration>,
     watermark_reclaiming: Mutex<bool>,
+    expiration_sweep: Mutex<()>,
     pub(crate) global_index: Option<Arc<GlobalIndex>>,
     pub(crate) inventory: Option<Arc<inventory::ResidencyInventory>>,
     pub(crate) exports: crate::peer::export::PeerExports,
@@ -84,6 +94,7 @@ impl Storage {
                 );
             }
         };
+        expiry::Expiration::new(config.cache_ttl)?;
         let value_size_hint = config.hint_value_size_bytes.filter(|size| *size > 0);
         let unit_hint = value_size_hint.and_then(|size| NonZeroU64::new(size as u64));
         let ssd_cache_config = config.ssd_cache_config;
@@ -239,7 +250,9 @@ impl Storage {
                 peer_transport,
                 blockwise_alloc,
                 memory_watermarks,
+                cache_ttl: config.cache_ttl,
                 watermark_reclaiming: Mutex::new(false),
+                expiration_sweep: Mutex::new(()),
                 global_index,
                 inventory,
                 exports,
@@ -377,6 +390,19 @@ impl Storage {
         let stats = self.release_evicted(evicted, used);
         *reclaiming = self.allocator.usage().0 > low;
         stats
+    }
+
+    pub(crate) fn expire_cache(&self) -> CacheExpirationStats {
+        let Some(_sweep) = self.expiration_sweep.try_lock() else {
+            return CacheExpirationStats::default();
+        };
+        CacheExpirationStats {
+            dram_blocks: self.dram.expire(RECLAIM_BATCH_SIZE),
+            ssd_blocks: self
+                .ssd_store
+                .as_ref()
+                .map_or(0, |ssd| ssd.expire(RECLAIM_BATCH_SIZE)),
+        }
     }
 
     fn release_evicted(

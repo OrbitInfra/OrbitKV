@@ -575,6 +575,16 @@ impl OrbitKVEngine {
         self.storage.maintain_memory_cache()
     }
 
+    /// Examine at most 512 finite-lived entries per tier and retire expired generations.
+    ///
+    /// This may synchronize SSD journal invalidations. Call from a blocking worker.
+    /// The Manager schedules it once per second; embedded users schedule it themselves,
+    /// including when local TTL is disabled but recovered or peer replicas have deadlines.
+    /// A concurrent sweep returns empty statistics. Existing restore owners remain valid.
+    pub fn expire_cache(&self) -> crate::CacheExpirationStats {
+        self.storage.expire_cache()
+    }
+
     /// Wait until all previously submitted save batches have been processed
     /// by the insert worker.
     ///

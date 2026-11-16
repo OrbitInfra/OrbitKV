@@ -180,3 +180,64 @@ async fn peer_ready_prefix_never_becomes_a_dram_cache_insert() {
     assert!(matches!(result.ready_blocks[1], RestoreSource::Peer(_)));
     assert!(result.cache_inserts.is_empty());
 }
+
+#[tokio::test]
+async fn a_later_shared_read_cannot_reuse_expired_owners() {
+    let (store, _queued) = crate::storage::ssd::tests::query_store(None);
+    let cache = Arc::new(DramStore::new(4096, false, None, None, 0));
+    let coordinator = ReadCoordinator::new(cache, Some(store), None, 0);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let held = block();
+    let expiry = crate::storage::expiry::Expiration::new(Some(Duration::from_secs(60)))
+        .unwrap()
+        .unwrap();
+    held.set_expiration(Some(expiry.clone())).unwrap();
+    let shared = Arc::new(SharedRead::new());
+    shared
+        .set(MaterializedRead {
+            source: Some(AttributionSource::Ssd),
+            cache_inserts: Vec::new(),
+            ready_blocks: vec![RestoreSource::Memory(held.clone())],
+            missing: 0,
+        })
+        .ok()
+        .unwrap();
+    coordinator.reads.lock().insert(
+        ReadKey {
+            keys: vec![key(1)],
+            hit: 0,
+            wait_for_full_prefix: false,
+            allow_ssd_prefetch: true,
+            destination_nodes: vec![NumaNode::UNKNOWN],
+            host_ready: false,
+            deadline,
+        },
+        Arc::downgrade(&shared),
+    );
+    let before = coordinator
+        .read_prefix(
+            "before",
+            "ns",
+            &[vec![1]],
+            QueryMode::Demand,
+            &[NumaNode::UNKNOWN],
+            deadline,
+        )
+        .await;
+    assert_eq!(before.blocks.len(), 1);
+    expiry.expire_for_test();
+    let after = coordinator
+        .read_prefix(
+            "after",
+            "ns",
+            &[vec![1]],
+            QueryMode::Demand,
+            &[NumaNode::UNKNOWN],
+            deadline,
+        )
+        .await;
+    assert_eq!(after.missing, 1);
+    assert!(after.blocks.is_empty());
+    assert!(held.is_verified());
+    assert!(matches!(&before.blocks[0], RestoreSource::Memory(block) if Arc::ptr_eq(block, &held)));
+}

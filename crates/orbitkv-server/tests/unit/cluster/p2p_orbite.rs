@@ -598,6 +598,7 @@ async fn peer_remote_fetch_roundtrip(backend: TransportHint) {
         generation: 1,
     };
     let authorization = QueryBlocksForTransferRequest {
+        cache_protocol: orbitkv_state::INVENTORY_STREAM_PROTOCOL.into(),
         background_prefetch: false,
         transfer_timeout_millis: 30_000,
 
@@ -979,6 +980,7 @@ async fn peer_remote_fetch_roundtrip(backend: TransportHint) {
     // ── 10. Load from Engine B cache → GPU ──
     let fresh = locate(&stores, &cache_namespace, &stored_hashes);
     let fresh_authorization = QueryBlocksForTransferRequest {
+        cache_protocol: orbitkv_state::INVENTORY_STREAM_PROTOCOL.into(),
         background_prefetch: false,
         transfer_timeout_millis: 30_000,
 

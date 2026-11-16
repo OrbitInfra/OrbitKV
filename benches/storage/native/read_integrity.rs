@@ -121,6 +121,7 @@ impl Peer {
             _segments: segments,
             identity,
             blocks: vec![TransferBlockInfo {
+                cache_expiry: None,
                 block_hash: key(1).hash,
                 slots: vec![slot],
             }],

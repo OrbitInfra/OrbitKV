@@ -146,9 +146,15 @@ message TransferSlotInfo {
 }
 
 // Cross-node transfer: per-block authorization metadata.
+message CacheExpiry {
+  uint64 published_unix_millis = 1;
+  uint64 expires_unix_millis = 2;
+}
+
 message TransferBlockInfo {
   bytes block_hash = 1;
   repeated TransferSlotInfo slots = 2;  // One per TP slot
+  CacheExpiry cache_expiry = 3;         // Absent means no data TTL, never a renewed lifetime
 }
 
 // Opening a window pins no data. Unknown/evicted windows cannot be recreated
@@ -174,6 +180,7 @@ message QueryBlocksForTransferRequest {
   TransferTicket ticket = 5;           // Known before sending authorization
   bool background_prefetch = 6;       // Otherwise foreground_get
   uint32 transfer_timeout_millis = 7;  // Remaining requester budget; zero is rejected
+  string cache_protocol = 8;          // Required before source authorization
 }
 
 message QueryBlocksForTransferResponse {
@@ -182,6 +189,7 @@ message QueryBlocksForTransferResponse {
   uint32 lock_timeout_secs = 3;         // Source overdue threshold; expiry never releases pins
   string transfer_endpoint = 4;        // Transfer endpoint (scheme and host:port)
   string native_source_epoch = 5;      // Captured from the registered source engine, not discovery
+  string cache_protocol = 6;           // Required before consuming descriptors
 }
 
 message ReleaseTransferLockRequest {

@@ -126,6 +126,14 @@ query execution and storage. A granted source is held until authoritative drain,
 even if the caller times out or drops its Python handle. Storage policy cannot
 release a physically active allocation.
 
+Fixed data TTL belongs to the existing publication and storage owners. Each
+publication carries one immutable deadline across DRAM, SSD and peer copies;
+partial publications retain the earliest participating Save deadline. Lookup
+and source admission check expiry independently of the bounded maintenance
+scan. A query/transfer admitted before expiry retains its backing until drain.
+SSD reservations stay protected through physical completion, and persistent
+records preserve deadlines across recovery. See [TTL and clock semantics](cache-policies.md#fixed-data-ttl).
+
 Optional DRAM high/low watermarks use the same Storage allocator and replacement
 classes. The Manager schedules bounded passes in its existing maintenance task;
 physical pool usage, including held and staging allocations, controls hysteresis.

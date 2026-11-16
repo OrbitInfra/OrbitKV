@@ -5,13 +5,12 @@ into both upstream mainlines.** OrbiTE is the only byte mover. Engines own
 scheduling, HBM and native P/D; OrbitKV owns cache identity, storage, discovery,
 grants and resource lifetime. This is the only execution queue.
 
-The current delivery is **M2 DRAM watermarks**: optional high/low thresholds,
-bounded maintenance through the existing DRAM replacement owner, and physical
-pinned-pool accounting through held queries and transfers. Layerwise Save
-merged in #349; OrbiTE became required in #348 and cost selection was removed
-in #347. This source step requires independent review and CPU/native gates;
-installed GPU profiles remain unqualified. Data TTL, including persistent SSD
-expiry, and coordinated SSD watermarks follow in separate reviewed substeps.
+The current delivery is **M2 fixed data TTL and persistent expiry**: deadlines
+follow publication generations through DRAM, SSD, recovery and peer copies;
+expired visibility never releases a live backing owner. DRAM watermarks merged
+in #350. This source step requires independent review and CPU/native gates;
+installed GPU profiles remain unqualified. Coordinated SSD watermarks follow
+as a separate reviewed substep.
 Each coherent PR stops for review before dependent work starts. Research designs
 and simulator campaigns are removed from the maintained tree; Git history retains
 them and external artifacts are untouched. DeepInfer/OrbitInfer and an OrbiTE
@@ -201,8 +200,11 @@ commands and the distinction between fixture bytes and serving are in
 4. **TTL/watermark eviction (partial):** optional DRAM high/low-watermark
    maintenance is implemented, with per-pass scan bounds, physical usage
    hysteresis and held-owner controls. Defaults keep allocation-pressure
-   eviction only. Data TTL/persistent expiry and coordinated SSD watermarks
-   remain open. See [watermark semantics](cache-policies.md#dram-highlow-watermarks).
+   eviction only. Fixed data TTL and persistent expiry are implemented for
+   review, including expired lookup/source rejection, bounded cleanup and
+   deadline-preserving restart/copy paths. Coordinated SSD watermarks remain
+   open. See [TTL semantics](cache-policies.md#fixed-data-ttl) and
+   [watermarks](cache-policies.md#dram-highlow-watermarks).
 
 Reuse storage/lease owners and OrbiTE file I/O. Document
 commit/recovery ordering, orphan reclamation and corrupt-data misses. Never reuse

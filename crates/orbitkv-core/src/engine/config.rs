@@ -42,6 +42,9 @@ pub struct EngineConfig {
     /// Stop an active eviction cycle at this percentage, strictly below the high watermark.
     /// Leased and transfer-owned memory remains charged and may prevent reaching this target.
     pub cache_low_watermark_percent: Option<u8>,
+    /// Fixed lifetime of newly published blocks. Disabled by default; must be at least 1 ms.
+    /// Reads, tier migration and restart preserve the original deadline.
+    pub cache_ttl: Option<Duration>,
     /// Optional hint for expected value size in bytes (tunes cache + allocator granularity).
     pub hint_value_size_bytes: Option<usize>,
     /// Optional SSD cache for sealed blocks (single-node, FIFO).
@@ -80,6 +83,7 @@ impl Default for EngineConfig {
             cache_protected_percent: 0,
             cache_high_watermark_percent: None,
             cache_low_watermark_percent: None,
+            cache_ttl: None,
             hint_value_size_bytes: None,
             ssd_cache_config: None,
             codec: crate::StorageCodec::None,

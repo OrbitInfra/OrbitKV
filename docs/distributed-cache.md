@@ -35,9 +35,9 @@ flowchart LR
   DB -->|OrbiTE READ| D[Requester GPU Restore or DRAM fill]
 ```
 
-The current format is `orbitkv/inventory-stream/v5`. Stop all Managers before
+The current format is `orbitkv/inventory-stream/v6`. Stop all Managers before
 format migration. Use `scripts/migrate-metadata-format.py` to dry-run, archive
-and CAS the namespace. Mixed old etcd-block/v3/v4 metadata paths are unsupported.
+and CAS the namespace. Mixed old etcd-block/v3/v4/v5 metadata paths are unsupported.
 
 ## Owner inventory streams
 

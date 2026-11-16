@@ -22,6 +22,7 @@ struct Source {
     released_blocks: AtomicUsize,
     failures: AtomicUsize,
     lose_authorization: AtomicBool,
+    omit_cache_protocol: AtomicBool,
     lose_setup: AtomicBool,
     reject_when_pinned: AtomicBool,
     delay: Mutex<Option<Arc<Notify>>>,
@@ -43,6 +44,7 @@ impl Default for Source {
             released_blocks: AtomicUsize::new(0),
             failures: AtomicUsize::new(0),
             lose_authorization: AtomicBool::new(false),
+            omit_cache_protocol: AtomicBool::new(false),
             lose_setup: AtomicBool::new(false),
             reject_when_pinned: AtomicBool::new(false),
             delay: Mutex::new(None),
@@ -141,6 +143,11 @@ impl Engine for Service {
                 ));
             }
             Ok(Response::new(QueryBlocksForTransferResponse {
+                cache_protocol: if source.omit_cache_protocol.load(Ordering::Acquire) {
+                    String::new()
+                } else {
+                    orbitkv_state::INVENTORY_STREAM_PROTOCOL.into()
+                },
                 status: Some(ok()),
                 ..Default::default()
             }))
@@ -1086,4 +1093,28 @@ async fn source_authorization_carries_intent_and_remaining_deadline() {
         .unwrap();
     assert_eq!(error.code(), tonic::Code::DeadlineExceeded);
     assert_eq!(fixture.source.queries.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn old_peer_responses_are_rejected_and_their_grants_are_released() {
+    let fixture = Fixture::new().await;
+    fixture
+        .source
+        .omit_cache_protocol
+        .store(true, Ordering::Release);
+    let budget = Arc::new(TransferCompletions::default());
+    let result = budget
+        .authorize(
+            &fixture.segment(),
+            Uuid::new_v4(),
+            crate::transfer_engine::tests::demand(),
+        )
+        .await;
+    let Err(error) = result else {
+        panic!("missing lifetime contract accepted")
+    };
+    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+    settled(&budget).await;
+    assert_eq!(fixture.pins_and_releases(), (0, 1));
+    assert_eq!(fixture.source.released_blocks.load(Ordering::Acquire), 1);
 }

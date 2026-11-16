@@ -30,6 +30,7 @@ struct DramStoreInner {
     reclaimable: LruCache<StateKey, ResidentMetadata>,
     probationary: LruCache<StateKey, ResidentMetadata>,
     retained: LruCache<StateKey, ResidentMetadata>,
+    expirations: LruCache<StateKey, Weak<SealedBlock>>,
     retained_bytes: u64,
     protected_limit: u64,
 }
@@ -96,6 +97,7 @@ impl DramStore {
                 reclaimable: LruCache::new_unbounded(),
                 probationary: LruCache::new_unbounded(),
                 retained: LruCache::new_unbounded(),
+                expirations: LruCache::new_unbounded(),
                 retained_bytes: 0,
                 protected_limit,
             }),
@@ -104,13 +106,26 @@ impl DramStore {
 
     pub(crate) fn contains_keys(&self, keys: &[StateKey]) -> Vec<bool> {
         let inner = self.inner.lock();
-        keys.iter().map(|k| inner.cache.contains_key(k)).collect()
+        keys.iter()
+            .map(|key| {
+                inner
+                    .cache
+                    .peek(key)
+                    .is_some_and(|block| !block.is_expired())
+            })
+            .collect()
     }
 
     pub(crate) fn discover(&self, keys: &[StateKey]) -> Vec<Option<Weak<SealedBlock>>> {
         let inner = self.inner.lock();
         keys.iter()
-            .map(|key| inner.cache.peek(key).map(|block| Arc::downgrade(&block)))
+            .map(|key| {
+                inner
+                    .cache
+                    .peek(key)
+                    .filter(|block| !block.is_expired())
+                    .map(|block| Arc::downgrade(&block))
+            })
             .collect()
     }
 
@@ -129,7 +144,7 @@ impl DramStore {
                 } else {
                     inner.cache.get(key)
                 };
-                if let Some(block) = block {
+                if let Some(block) = block.filter(|block| !block.is_expired()) {
                     if !warming {
                         if let Err(error) = retain_demand(&mut inner, key, &block) {
                             log::error!("DRAM retention failed: {error}");
@@ -215,7 +230,10 @@ impl DramStore {
         }
         let mut found = Vec::with_capacity(records.len());
         for record in records {
-            let block = inner.cache.get(&record.key)?;
+            let block = inner
+                .cache
+                .get(&record.key)
+                .filter(|block| !block.is_expired())?;
             refresh_recency(&mut inner, &record.key);
             found.push((record.key.clone(), block));
         }
@@ -239,9 +257,13 @@ impl DramStore {
         let found: Vec<_> = keys
             .iter()
             .map(|key| {
-                inner.cache.get(key).inspect(|_| {
-                    refresh_recency(&mut inner, key);
-                })
+                inner
+                    .cache
+                    .get(key)
+                    .filter(|block| !block.is_expired())
+                    .inspect(|_| {
+                        refresh_recency(&mut inner, key);
+                    })
             })
             .collect();
         drop(inner);
@@ -261,43 +283,29 @@ impl DramStore {
             .collect()
     }
 
-    pub(crate) fn invalidate(&self, key: &StateKey, failed: &Arc<SealedBlock>) {
+    pub(crate) fn invalidate(&self, key: &StateKey, failed: &Arc<SealedBlock>) -> bool {
+        invalidate_locked(&mut self.inner.lock(), key, failed)
+    }
+
+    /// One scan entry per finite-lived resident, independent of replacement recency.
+    pub(crate) fn expire(&self, limit: usize) -> usize {
         let mut inner = self.inner.lock();
-        if !inner
-            .cache
-            .peek(key)
-            .is_some_and(|current| Arc::ptr_eq(&current, failed))
-        {
-            return;
-        }
-        inner.cache.remove(key);
-        for class in [
-            ResidentClass::Retained,
-            ResidentClass::Probationary,
-            ResidentClass::Reclaimable,
-        ] {
-            if let Some(meta) = class_lru(&mut inner, class).remove(key) {
-                if class == ResidentClass::Retained {
-                    inner.retained_bytes -= meta.bytes;
-                    if inner.protected_limit > 0 {
-                        core_metrics()
-                            .cache_protected_bytes
-                            .add(-(meta.bytes as i64), &[]);
-                    }
-                }
-                core_metrics()
-                    .cache_resident_blocks
-                    .add(-1, class.attributes());
-                core_metrics()
-                    .cache_resident_bytes
-                    .add(-(meta.bytes as i64), &[]);
+        let count = limit.min(inner.expirations.len());
+        let mut expired = 0;
+        for _ in 0..count {
+            let Some((key, weak)) = inner.expirations.remove_lru() else {
+                break;
+            };
+            let Some(block) = weak.upgrade() else {
+                continue;
+            };
+            if block.is_expired() {
+                expired += usize::from(invalidate_locked(&mut inner, &key, &block));
+            } else {
+                inner.expirations.insert(key, weak);
             }
         }
-        if let Some(inventory) = &inner.inventory
-            && let Err(error) = inventory.change(key, orbitkv_state::ReplicaMedium::Dram, None)
-        {
-            log::error!("Corrupt DRAM inventory invalidation failed: {error:?}");
-        }
+        expired
     }
 
     /// A restore grant carries owners rather than lookup keys. Only the rare
@@ -368,6 +376,7 @@ impl DramStore {
     pub(crate) fn remove_all(&self) -> Vec<(StateKey, Arc<SealedBlock>)> {
         let removed = {
             let mut inner = self.inner.lock();
+            inner.expirations.clear();
             let reclaimable_blocks = inner.reclaimable.len() as i64;
             let probationary_blocks = inner.probationary.len() as i64;
             let retained_blocks = inner.retained.len() as i64;
@@ -444,12 +453,67 @@ impl ResidentClass {
     }
 }
 
+fn invalidate_locked(
+    inner: &mut DramStoreInner,
+    key: &StateKey,
+    failed: &Arc<SealedBlock>,
+) -> bool {
+    if !inner
+        .cache
+        .peek(key)
+        .is_some_and(|current| Arc::ptr_eq(&current, failed))
+    {
+        return false;
+    }
+    inner.cache.remove(key);
+    inner.expirations.remove(key);
+    if failed.is_expired() {
+        core_metrics()
+            .cache_expirations
+            .add(1, &[opentelemetry::KeyValue::new("medium", "dram")]);
+    }
+    for class in [
+        ResidentClass::Retained,
+        ResidentClass::Probationary,
+        ResidentClass::Reclaimable,
+    ] {
+        if let Some(meta) = class_lru(inner, class).remove(key) {
+            if class == ResidentClass::Retained {
+                inner.retained_bytes -= meta.bytes;
+                if inner.protected_limit > 0 {
+                    core_metrics()
+                        .cache_protected_bytes
+                        .add(-(meta.bytes as i64), &[]);
+                }
+            }
+            core_metrics()
+                .cache_resident_blocks
+                .add(-1, class.attributes());
+            core_metrics()
+                .cache_resident_bytes
+                .add(-(meta.bytes as i64), &[]);
+        }
+    }
+    if let Some(inventory) = &inner.inventory
+        && let Err(error) = inventory.change(key, orbitkv_state::ReplicaMedium::Dram, None)
+    {
+        log::error!("DRAM inventory invalidation failed: {error:?}");
+    }
+    true
+}
+
 fn insert_block(
     inner: &mut DramStoreInner,
     key: StateKey,
     block: Arc<SealedBlock>,
     class: ResidentClass,
 ) -> CacheInsertOutcome {
+    if block.is_expired() {
+        return CacheInsertOutcome::Rejected;
+    }
+    if let Some(previous) = inner.cache.peek(&key).filter(|block| block.is_expired()) {
+        invalidate_locked(inner, &key, &previous);
+    }
     if block.was_warmed() && inner.cache.contains_key(&key) {
         return CacheInsertOutcome::AlreadyExists;
     }
@@ -460,9 +524,13 @@ fn insert_block(
     } else {
         class
     };
+    let expiration = block.expiration().map(|_| Arc::downgrade(&block));
     let outcome = inner.cache.insert(key.clone(), block);
     match outcome {
         CacheInsertOutcome::InsertedNew => {
+            if let Some(expiration) = expiration {
+                inner.expirations.insert(key.clone(), expiration);
+            }
             if let Some(inventory) = &mut inner.inventory
                 && let Err(error) = inventory.change(
                     &key,
@@ -594,6 +662,7 @@ fn refresh_recency(inner: &mut DramStoreInner, key: &StateKey) {
 fn remove_lru(inner: &mut DramStoreInner, class: ResidentClass) -> Option<RemovedResident> {
     while let Some((key, metadata)) = class_lru(inner, class).remove_lru() {
         let block = inner.cache.remove(&key);
+        inner.expirations.remove(&key);
         debug_assert!(
             block.is_some(),
             "replacement class contains a non-resident block"

@@ -357,6 +357,17 @@ type StagedBlock = (Vec<u8>, Vec<StagedSlot>);
     clippy::too_many_arguments,
     reason = "source authority and destination backing remain explicit across the blocking READ"
 )]
+pub(super) fn block_expiration(
+    block: &TransferBlockInfo,
+) -> Result<Option<Arc<crate::storage::expiry::Expiration>>, String> {
+    crate::storage::expiry::Expiration::from_record(block.cache_expiry.as_ref().map(|expiry| {
+        crate::CacheExpiry {
+            published_unix_millis: expiry.published_unix_millis,
+            expires_unix_millis: expiry.expires_unix_millis,
+        }
+    }))
+}
+
 async fn fetch_blocks_via_peer(
     transfer: &Arc<TransferEngine>,
     allocate_fn: &AllocateFn,
@@ -371,6 +382,17 @@ async fn fetch_blocks_via_peer(
         return Ok((Vec::new(), TransferTiming::default()));
     }
 
+    let expirations = blocks
+        .iter()
+        .map(block_expiration)
+        .collect::<Result<Vec<_>, _>>()?;
+    if expirations
+        .iter()
+        .flatten()
+        .any(|expiry| expiry.is_expired())
+    {
+        return Err("peer cache lifetime expired before read admission".into());
+    }
     let mut slabs = ChunkedSlabs::new(
         allocate_fn,
         FETCH_CHUNK_BYTES,
@@ -523,13 +545,14 @@ async fn fetch_blocks_via_peer(
     // Build SealedBlocks from allocated memory
     let rebuild_start = Instant::now();
     let mut result: MaterializedBlocks = Vec::with_capacity(block_allocs.len());
-    for (hash, slot_allocs) in block_allocs {
+    for ((hash, slot_allocs), expiration) in block_allocs.into_iter().zip(expirations) {
         let key = StateKey::new(namespace.to_string(), hash);
         let slots = slot_allocs
             .into_iter()
             .map(|(raw, numa, _)| (raw, numa))
             .collect();
         let sealed = Arc::new(SealedBlock::from_slots(slots));
+        sealed.set_expiration(expiration)?;
         result.push((key, sealed));
     }
     timing.rebuild = rebuild_start.elapsed();

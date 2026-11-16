@@ -26,6 +26,7 @@ use crate::{
 
 /// A complete independently restorable object, with blocks in storage-slot order.
 pub(crate) struct SaveGroup {
+    pub expiration: Option<Arc<crate::storage::expiry::Expiration>>,
     pub key: StateKey,
     pub blocks: Vec<(usize, usize)>,
 }
@@ -107,7 +108,7 @@ pub(super) fn save(
             storage,
             numa,
             &group.blocks,
-            Some(&group.key),
+            Some(group),
         )?;
     }
     let remaining: Vec<_> = layers
@@ -140,7 +141,7 @@ fn save_blocks(
     storage: &Storage,
     numa: NumaNode,
     blocks: &[(usize, usize)],
-    key: Option<&StateKey>,
+    group: Option<&SaveGroup>,
 ) -> Result<(), EngineError> {
     let stream = &runtime.stream;
     let alignment = if storage.is_ssd_enabled() { 512 } else { 1 };
@@ -358,14 +359,14 @@ fn save_blocks(
                 }
                 layers[layer].blocks[block].block = TransferPayload::Owned(raw);
             }
-            if let Some(key) = key {
+            if let Some(group) = group {
                 // A split batch or CPU fallback no longer has every encoded byte
                 // in the current arena. Its sealed DRAM object uses normal writeback.
                 if offset == 0 && devices.iter().all(Option::is_some) {
                     write_gpu(
                         runtime,
                         storage,
-                        key,
+                        group,
                         numa,
                         blocks,
                         layers,
@@ -393,7 +394,7 @@ fn save_blocks(
 fn write_gpu(
     runtime: &WorkerRuntime,
     storage: &Storage,
-    key: &StateKey,
+    group: &SaveGroup,
     numa: NumaNode,
     blocks: &[(usize, usize)],
     layers: &[LayerTransferData],
@@ -456,7 +457,8 @@ fn write_gpu(
         }
         metadata.push(meta);
     }
-    let Some(lease) = store.reserve_gpu(key.clone(), metadata) else {
+    let Some(lease) = store.reserve_gpu(group.key.clone(), metadata, group.expiration.clone())
+    else {
         return Ok(());
     };
     if offset < lease.entry.len {

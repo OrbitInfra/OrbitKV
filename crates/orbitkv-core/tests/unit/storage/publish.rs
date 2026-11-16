@@ -28,7 +28,7 @@ async fn single_slot_seals_immediately() {
 
     let entries: InsertEntries = vec![(key.clone(), vec![(0, block)])];
 
-    worker.insert(entries, 1, NumaNode::UNKNOWN, "ns", None);
+    worker.insert(entries, 1, NumaNode::UNKNOWN, "ns", None, None);
 
     assert!(worker.inflight.is_empty(), "block should have been sealed");
     assert!(
@@ -51,7 +51,7 @@ async fn ordered_multi_slot_batch_seals_immediately() {
 
     let entries: InsertEntries = vec![(key.clone(), vec![(0, block0), (1, block1), (2, block2)])];
 
-    let ordered_fast_path_seals = worker.insert(entries, 3, NumaNode(1), "ns", None);
+    let ordered_fast_path_seals = worker.insert(entries, 3, NumaNode(1), "ns", None, None);
 
     assert_eq!(ordered_fast_path_seals, 1);
     assert!(
@@ -76,18 +76,18 @@ async fn multi_slot_partial_then_complete() {
 
     let block0 = make_raw_block(&engine, 64);
     let entries: InsertEntries = vec![(key.clone(), vec![(0, block0)])];
-    worker.insert(entries, 3, NumaNode::UNKNOWN, "ns", None);
+    worker.insert(entries, 3, NumaNode::UNKNOWN, "ns", None, None);
     assert_eq!(worker.inflight.len(), 1, "block should still be inflight");
     assert!(!engine.dram.contains_keys(std::slice::from_ref(&key))[0]);
 
     let block1 = make_raw_block(&engine, 64);
     let entries: InsertEntries = vec![(key.clone(), vec![(1, block1)])];
-    worker.insert(entries, 3, NumaNode::UNKNOWN, "ns", None);
+    worker.insert(entries, 3, NumaNode::UNKNOWN, "ns", None, None);
     assert_eq!(worker.inflight.len(), 1, "still inflight after 2/3 slots");
 
     let block2 = make_raw_block(&engine, 64);
     let entries: InsertEntries = vec![(key.clone(), vec![(2, block2)])];
-    worker.insert(entries, 3, NumaNode::UNKNOWN, "ns", None);
+    worker.insert(entries, 3, NumaNode::UNKNOWN, "ns", None, None);
     assert!(
         worker.inflight.is_empty(),
         "block should be sealed after 3/3 slots"
@@ -106,7 +106,7 @@ async fn duplicate_slot_is_idempotent() {
     let block_b = make_raw_block(&engine, 64);
     let entries: InsertEntries = vec![(key.clone(), vec![(0, block_a), (0, block_b)])];
 
-    worker.insert(entries, 2, NumaNode::UNKNOWN, "ns", None);
+    worker.insert(entries, 2, NumaNode::UNKNOWN, "ns", None, None);
 
     assert_eq!(worker.inflight.len(), 1);
     let inflight_block = worker.inflight.get(&key).unwrap();
@@ -122,7 +122,7 @@ async fn slot_count_mismatch_skips_key() {
 
     let block0 = make_raw_block(&engine, 64);
     let entries: InsertEntries = vec![(key.clone(), vec![(0, block0)])];
-    worker.insert(entries, 2, NumaNode::UNKNOWN, "ns", None);
+    worker.insert(entries, 2, NumaNode::UNKNOWN, "ns", None, None);
     assert_eq!(worker.inflight.len(), 1);
 
     let block1 = make_raw_block(&engine, 64);
@@ -132,6 +132,7 @@ async fn slot_count_mismatch_skips_key() {
         4, // mismatch
         NumaNode::UNKNOWN,
         "ns",
+        None,
         None,
     );
 
@@ -153,7 +154,7 @@ async fn late_save_for_resident_block_is_dropped() {
     let block0 = make_raw_block(&engine, 64);
     let block1 = make_raw_block(&engine, 64);
     let entries: InsertEntries = vec![(key.clone(), vec![(0, block0), (1, block1)])];
-    worker.insert(entries, 2, NumaNode::UNKNOWN, "ns", None);
+    worker.insert(entries, 2, NumaNode::UNKNOWN, "ns", None, None);
     assert!(
         worker.inflight.is_empty(),
         "block should be sealed into read cache"
@@ -165,7 +166,7 @@ async fn late_save_for_resident_block_is_dropped() {
     // turned into a permanently-incomplete inflight block.
     let late = make_raw_block(&engine, 64);
     let entries: InsertEntries = vec![(key.clone(), vec![(0, late)])];
-    worker.insert(entries, 2, NumaNode::UNKNOWN, "ns", None);
+    worker.insert(entries, 2, NumaNode::UNKNOWN, "ns", None, None);
 
     assert!(
         worker.inflight.is_empty(),
@@ -197,8 +198,60 @@ async fn sealed_blocks_are_resident_without_backing_stores() {
     let block = make_raw_block(&engine, 64);
     let entries: InsertEntries = vec![(key.clone(), vec![(0, block)])];
 
-    worker.insert(entries, 1, NumaNode::UNKNOWN, "ns", None);
+    worker.insert(entries, 1, NumaNode::UNKNOWN, "ns", None, None);
 
     assert!(worker.inflight.is_empty());
     assert!(engine.dram.contains_keys(std::slice::from_ref(&key))[0]);
+}
+
+#[tokio::test]
+async fn partial_publication_keeps_the_earliest_lifetime_through_late_slots() {
+    let engine = Storage::new_with_config(1 << 20, false, EngineConfig::default(), &[]).unwrap();
+    let mut worker = make_worker(&engine);
+    let key = StateKey::new("ttl".into(), vec![1]);
+    let first = crate::storage::expiry::Expiration::new(Some(std::time::Duration::from_secs(60)))
+        .unwrap()
+        .unwrap();
+    worker.insert(
+        vec![(key.clone(), vec![(0, make_raw_block(&engine, 512))])],
+        2,
+        NumaNode::UNKNOWN,
+        "ttl",
+        None,
+        Some(first.clone()),
+    );
+    first.expire_for_test();
+    let later = crate::storage::expiry::Expiration::new(Some(std::time::Duration::from_secs(120)))
+        .unwrap()
+        .unwrap();
+    worker.insert(
+        vec![(key.clone(), vec![(1, make_raw_block(&engine, 512))])],
+        2,
+        NumaNode::UNKNOWN,
+        "ttl",
+        None,
+        Some(later),
+    );
+    assert!(!engine.dram.contains_keys(std::slice::from_ref(&key))[0]);
+    assert!(worker.inflight.is_empty());
+    let fresh = crate::storage::expiry::Expiration::new(Some(std::time::Duration::from_secs(60)))
+        .unwrap()
+        .unwrap();
+    worker.insert(
+        vec![(
+            key.clone(),
+            vec![
+                (0, make_raw_block(&engine, 512)),
+                (1, make_raw_block(&engine, 512)),
+            ],
+        )],
+        2,
+        NumaNode::UNKNOWN,
+        "ttl",
+        None,
+        Some(fresh.clone()),
+    );
+    let blocks = engine.dram.get_prefix_blocks(&[key], false).1;
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0].cache_expiry(), Some(fresh.record));
 }

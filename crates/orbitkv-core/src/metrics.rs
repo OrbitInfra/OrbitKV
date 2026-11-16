@@ -65,6 +65,7 @@ pub(crate) struct CoreMetrics {
     pub cache_block_insertions: Counter<u64>,
     pub cache_block_admission_rejections: Counter<u64>,
     pub cache_block_evictions: Counter<u64>,
+    pub cache_expirations: Counter<u64>,
     pub cache_resident_blocks: UpDownCounter<i64>,
     pub cache_protected_bytes: UpDownCounter<i64>,
     pub cache_policy_promotions: Counter<u64>,
@@ -358,6 +359,10 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
             cache_block_admission_rejections: meter
                 .u64_counter("orbitkv_cache_block_admission_rejections")
                 .with_description("Blocks rejected by cache admission policy")
+                .build(),
+            cache_expirations: meter
+                .u64_counter("orbitkv_cache_expirations")
+                .with_description("TTL-expired generations removed from visibility, by medium; not physical frees")
                 .build(),
             cache_block_evictions: meter
                 .u64_counter("orbitkv_cache_block_evictions")

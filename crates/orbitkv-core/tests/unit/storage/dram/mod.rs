@@ -643,3 +643,88 @@ fn inventory_excludes_lfu_rejections_and_duplicate_restores() {
         1
     );
 }
+
+#[test]
+fn ttl_hides_held_residents_and_fences_grants_without_revoking_owners() {
+    let cache = DramStore::new(4096, false, None, Some(4096), 0);
+    let key = StateKey::new("ttl".into(), vec![1]);
+    let block = make_block();
+    let expiry = crate::storage::expiry::Expiration::new(Some(Duration::from_secs(60)))
+        .unwrap()
+        .unwrap();
+    block.set_expiration(Some(expiry.clone())).unwrap();
+    cache.batch_insert(vec![(key.clone(), block.clone())]);
+    let records = cache
+        .inner
+        .lock()
+        .inventory
+        .as_ref()
+        .unwrap()
+        .page(None)
+        .unwrap();
+    let held = cache.pin_residencies(&records).unwrap();
+    expiry.expire_for_test();
+    assert_eq!(cache.contains_keys(std::slice::from_ref(&key)), [false]);
+    assert!(cache.discover(std::slice::from_ref(&key))[0].is_none());
+    assert_eq!(
+        cache.get_prefix_blocks(std::slice::from_ref(&key), false).0,
+        0
+    );
+    assert!(cache.get_blocks_aligned(std::slice::from_ref(&key))[0].is_none());
+    assert!(cache.pin_residencies(&records).is_none());
+    assert_eq!(cache.expire(1), 1);
+    assert!(
+        held[0].1.is_verified(),
+        "TTL does not poison an admitted restore"
+    );
+    cache.batch_insert(vec![(key.clone(), block.clone())]);
+    assert!(
+        !cache.contains_keys(std::slice::from_ref(&key))[0],
+        "a late copy cannot republish"
+    );
+    let replacement = make_block();
+    cache.batch_insert(vec![(key.clone(), replacement.clone())]);
+    assert!(
+        !cache.invalidate(&key, &block),
+        "old generation cannot remove its replacement"
+    );
+    assert!(cache.contains_keys(std::slice::from_ref(&key))[0]);
+    assert!(cache.pin_residencies(&records).is_none());
+}
+
+#[test]
+fn ttl_scans_are_bounded_and_do_not_change_replacement_recency() {
+    let cache = make_cache();
+    let expiry = crate::storage::expiry::Expiration::new(Some(Duration::from_secs(60)))
+        .unwrap()
+        .unwrap();
+    for id in 0u32..600 {
+        let block = make_block();
+        block.set_expiration(Some(expiry.clone())).unwrap();
+        cache.batch_insert(vec![(
+            StateKey::new("ttl".into(), id.to_le_bytes().to_vec()),
+            block,
+        )]);
+    }
+    let before: Vec<_> = cache
+        .inner
+        .lock()
+        .retained
+        .iter()
+        .map(|(key, _)| key.clone())
+        .collect();
+    assert_eq!(cache.expire(512), 0);
+    let after: Vec<_> = cache
+        .inner
+        .lock()
+        .retained
+        .iter()
+        .map(|(key, _)| key.clone())
+        .collect();
+    assert_eq!(before, after);
+    expiry.expire_for_test();
+    assert_eq!(cache.expire(512), 512);
+    assert_eq!(cache.expire(512), 88);
+    assert!(cache.inner.lock().expirations.is_empty());
+    assert_eq!(cache.expire(512), 0);
+}

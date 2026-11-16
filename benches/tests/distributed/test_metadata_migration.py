@@ -10,9 +10,9 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("version", [3, 4])
+@pytest.mark.parametrize("version", [3, 4, 5])
 @pytest.mark.parametrize("fault", [None, "live", "wrong_format"])
-def test_integrity_cutover_requires_the_exact_stopped_cluster(
+def test_ttl_cutover_requires_the_exact_stopped_cluster(
     monkeypatch, tmp_path, capsys, version, fault
 ):
     root = Path(__file__).resolve().parents[3]
@@ -65,9 +65,9 @@ def test_integrity_cutover_requires_the_exact_stopped_cluster(
         module.main()
         recorded = json.loads(capsys.readouterr().out)
         assert not archive.exists(), "dry run must not mutate the archive or cluster"
-        assert module.INTEGRITY_PROTOCOL == "orbitkv/inventory-stream/v5"
+        assert module.TTL_PROTOCOL == "orbitkv/inventory-stream/v6"
         assert (
-            module.INTEGRITY_PROTOCOL
+            module.TTL_PROTOCOL
             in (root / "crates/orbitkv-state/src/inventory.rs").read_text()
         )
         assert base64.b64decode(recorded["current_format_base64"]) == value

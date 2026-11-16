@@ -13,6 +13,22 @@ Changes below apply to the next pre-release; nothing new is published by this PR
 
 ## Next pre-release (unreleased)
 
+### Fixed data TTL and persistent expiry
+
+Added `--cache-ttl-secs`, optional `EngineConfig::cache_ttl`,
+`OrbitKVEngine::expire_cache()`, `CacheExpirationStats` and
+`SealedBlock::cache_expiry()` / `CacheExpiry` metadata. Rust exhaustive config
+literals must add the new field; defaults leave new publications without TTL.
+Inherited deadlines still apply. Cleanup uses existing owners and bounded scans;
+no timeout or expiry constitutes native drain. See [TTL semantics](cache-policies.md#fixed-data-ttl).
+
+Breaking changes: SSD format 3 persists deadlines and cold-starts formats 1/2.
+Peer request and response require `orbitkv/inventory-stream/v6`; upgrade all
+Managers together and migrate the stopped cluster marker from v3/v4/v5.
+The channel lifecycle and OrbiTE wire are unchanged. New metrics distinguish
+logical expirations from physical reclamation. Installed hardware profiles
+remain unqualified.
+
 ### Optional DRAM watermarks
 
 Added paired `--cache-high-watermark-percent` / `--cache-low-watermark-percent`
@@ -21,7 +37,7 @@ that specify every field must add them; `Default` keeps both disabled.
 The Manager runs bounded maintenance once per second; embedded callers schedule
 the new `OrbitKVEngine::maintain_memory_cache()` method. The existing residence
 histogram adds `reason="watermark"`. See [policy and lifetime semantics](cache-policies.md#dram-highlow-watermarks).
-No wire or persistent format changes. Data TTL and SSD watermarks remain open;
+The watermark substep changes no wire or persistent format. SSD watermarks remain open;
 GPU/RDMA/GDS and installed profiles remain unqualified.
 
 ### vLLM layerwise Save
@@ -65,20 +81,20 @@ readiness, grants, drain receipts and retained owners are unchanged. Historical
 
 ## Packages
 
-`--ssd-persistent` uses local SSD format version 2 as an opt-in cache.
+`--ssd-persistent` uses local SSD format version 3 as an opt-in cache.
 Keep data files and the checksummed sidecar together. Unknown or untrusted
 metadata starts cold; there is no migration or compatibility alias before 0.1.0.
 The default still truncates. Installed NVMe serving remains unqualified; see
 [the persistence contract](storage-persistence.md).
 
-The integrity revision changes the unpublished SSD format from 1 to 2 (IEEE
+The earlier integrity revision changed the unpublished SSD format from 1 to 2 (IEEE
 CRC32 source/range references; metadata frames still use CRC32C). Version 1
 starts cold. Peer protocol `orbitkv/inventory-stream/v5` requires checksum
 references and binds corruption reports to drained grant tickets. Upgrade all
 Managers together and replace the old cluster format marker only after stopping
-them; there is no compatibility alias. The migration tool now takes
-`--from-protocol orbitkv/inventory-stream/v4` (or v3), replacing `--direction`,
-and cuts over to v5. The published beta uses client lifecycle 13; the unreleased
+them; there is no compatibility alias. The migration tool takes
+`--from-protocol orbitkv/inventory-stream/v5` (or v3/v4), replacing `--direction`,
+and now cuts over to v6 with the TTL contract above. The published beta uses client lifecycle 13; the unreleased
 removal above advances it to 14.
 
 The `orbitkv` PyPI wheel is OrbitKV's only distribution. All Rust crates,

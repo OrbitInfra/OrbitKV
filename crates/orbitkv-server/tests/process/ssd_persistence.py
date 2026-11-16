@@ -279,6 +279,30 @@ class Gate:
         child.read()
         child.close()
 
+    def ttl(self, path, during_verification):
+        point = "ssd_before_verification" if during_verification else "ssd_data_written"
+        child = self.manager(path, pauses=[] if during_verification else [point])
+        child.send("write", id=1, ttl_millis=8000)
+        if during_verification:
+            assert child.reply()["present"]
+            child.close(kill=True)
+            child = self.manager(path, pauses=[point])
+        child.reached(point)
+        records = [value for value in frames(Path(str(path) + ".index")) if value.get("expiry")]
+        assert records, "publication lifetime must already be durable"
+        expires = records[-1]["expiry"]["expires_unix_millis"]
+        child.wait(lambda: time.time_ns() // 1_000_000 >= expires)
+        child.release(point)
+        if during_verification:
+            child.recovered()
+            child.read(present=False)
+        else:
+            assert not child.reply()["present"], "late write renewed its expired publication"
+        child.close(kill=True)
+        child = self.manager(path)
+        child.read(present=False)
+        child.close()
+
     def old_file_user(self, path):
         child = self.manager(path)
         assert child.call("write", id=1)["present"]
@@ -528,6 +552,8 @@ def main():
     gate.case("clean-restart", gate.clean)
     gate.case("default-truncates", lambda path: gate.clean(path, False))
     gate.case("verify-before-first-hit", gate.verify)
+    gate.case("ttl-late-write", lambda path: gate.ttl(path, False))
+    gate.case("ttl-during-recovery-verification", lambda path: gate.ttl(path, True))
     gate.case("prior-file-user-blocks-restart", gate.old_file_user)
     for kind in ["data", "torn", "checksum", "version", "namespace"]:
         gate.case(f"corrupt-{kind}", lambda path, k=kind: gate.corrupt(path, k))

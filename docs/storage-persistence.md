@@ -78,6 +78,7 @@ heads and sequence watermark. Every extent record contains:
 - complete `StateKey`: storage namespace and the full group-framed content hash;
 - shard, logical begin, aligned length and physical offset;
 - every slot's segment sizes, NUMA hint and encoding metadata;
+- optional original publication and expiry times in Unix milliseconds;
 - reservation/commit/invalidation kind, stored-byte IEEE CRC32 plus bounded
   layer/segment CRC references for commits, and a
   frame checksum covering the record.
@@ -106,6 +107,15 @@ Recovered payload verification below additionally catches ambiguous overlap.
 A bad header, unknown version, invalid identity, impossible sequence, geometry
 or encoding still cold-starts the set. Recovery never trusts later records after
 corruption.
+
+Format 3 preserves fixed data TTL. Recovery removes expired records before
+exposing candidates and checkpoints those removals; checksum completion checks
+the deadline again before publishing inventory. Neither restart nor SSD-to-DRAM
+materialization restarts a lifetime. An expired active write remains reserved
+until physical completion, then finishes without a visible replica. Logical
+expiry of a committed extent keeps existing reader pins. See the
+[clock assumptions and cleanup bounds](cache-policies.md#fixed-data-ttl).
+Earlier format versions start cold; there is no compatibility migration.
 
 Valid metadata initially creates **unverified** entries. They are invisible to
 queries and peer inventory. A bounded background pass pins each current

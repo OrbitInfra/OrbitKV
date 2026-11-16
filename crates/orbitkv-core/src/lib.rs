@@ -43,7 +43,7 @@ pub use orbitkv_state::{
 pub use peer::export::{PeerError, PeerExports, TransferTicket};
 pub use query::lease::QueryLeaseId;
 pub use query::{QueryAdmission, QueryMode, QueryOwner, QueryReservation};
-pub use storage::MemoryCacheCleanupStats;
+pub use storage::expiry::CacheExpiry;
 pub use storage::inventory::{
     DEFAULT_INVENTORY_JOURNAL_BYTES, InventoryDelta, InventoryReadError, InventoryStatus,
     ResidencyInventory,
@@ -54,6 +54,7 @@ pub use storage::ssd::{
     DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdReadLease, SsdReadPath,
     SsdWritePolicy,
 };
+pub use storage::{CacheExpirationStats, MemoryCacheCleanupStats};
 pub use trace::{set_trace_sample_rate, should_sample};
 pub use transfer::TransferMode;
 pub use transfer::worker::LoadOutcome;

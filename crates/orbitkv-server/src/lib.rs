@@ -132,6 +132,10 @@ pub struct Cli {
     #[arg(long, requires = "cache_high_watermark_percent", value_parser = clap::value_parser!(u8).range(0..=99))]
     pub cache_low_watermark_percent: Option<u8>,
 
+    /// Fixed data lifetime in seconds; reads and tier changes never renew it (default off).
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    pub cache_ttl_secs: Option<u64>,
+
     /// Disable NUMA-aware memory allocation (use single pool instead of per-node pools)
     #[arg(long, default_value_t = false)]
     pub disable_numa_affinity: bool,
@@ -771,6 +775,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         cache_protected_percent: cli.cache_protected_percent,
         cache_high_watermark_percent: cli.cache_high_watermark_percent,
         cache_low_watermark_percent: cli.cache_low_watermark_percent,
+        cache_ttl: cli.cache_ttl_secs.map(Duration::from_secs),
         hint_value_size_bytes: cli.hint_value_size,
         ssd_cache_config,
         codec: cli.storage_codec,
@@ -929,10 +934,21 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
                 loop {
                     tokio::select! {
-                        _ = memory_interval.tick(), if maintain_memory => {
-                            let stats = engine.maintain_memory_cache();
-                            if stats.evicted_blocks > 0 {
-                                log::debug!("Watermark eviction: {stats:?}");
+                        _ = memory_interval.tick() => {
+                            let maintenance = Arc::clone(&engine);
+                            // Await one bounded sweep; do not queue another while journal sync waits.
+                            match tokio::task::spawn_blocking(move || maintenance.expire_cache()).await {
+                                Ok(stats) if stats.dram_blocks != 0 || stats.ssd_blocks != 0 => {
+                                    log::debug!("Cache expiration: {stats:?}");
+                                }
+                                Err(error) => log::error!("Cache expiration worker failed: {error}"),
+                                _ => {}
+                            }
+                            if maintain_memory {
+                                let stats = engine.maintain_memory_cache();
+                                if stats.evicted_blocks > 0 {
+                                    log::debug!("Watermark eviction: {stats:?}");
+                                }
                             }
                         }
                         _ = interval.tick() => {
