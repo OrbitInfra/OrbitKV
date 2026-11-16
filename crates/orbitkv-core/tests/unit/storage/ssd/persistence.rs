@@ -170,13 +170,13 @@ fn malformed_metadata_cold_starts_the_whole_set() {
                 record.expiry = Some(crate::CacheExpiry {
                     published_unix_millis: 0,
                     expires_unix_millis: 1,
-                })
+                });
             }
             "expiry_reversed" => {
                 record.expiry = Some(crate::CacheExpiry {
                     published_unix_millis: 100,
                     expires_unix_millis: 99,
-                })
+                });
             }
             _ => {}
         }
