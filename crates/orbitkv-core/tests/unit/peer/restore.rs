@@ -193,6 +193,7 @@ pub(crate) fn source(
         .get(membership.lease(&source_owner).unwrap(), "control", "epoch")
         .unwrap();
     PeerRestoreBlock {
+        expiration: None,
         hash: vec![1],
         grant: Arc::new(Grant {
             _lock: TransferLockGuard::test_detached(),
@@ -347,4 +348,105 @@ fn release_waits_for_active_loans_and_failed_unregister_retains_backing() {
     drop(owner);
     assert_eq!(control.cleanups.load(Ordering::SeqCst), 1);
     assert!(weak.upgrade().is_some());
+}
+
+#[tokio::test]
+async fn direct_restore_preserves_expiry_and_rejects_expired_admission() {
+    use orbitkv_proto::proto::engine::{
+        CacheExpiry, QueryBlocksForTransferResponse, TransferBlockInfo, TransferSlotInfo,
+    };
+    let control = Arc::new(Control::default());
+    let owner = orbitkv_state::CacheOwner {
+        endpoint: "control".into(),
+        incarnation: uuid::Uuid::new_v4(),
+    };
+    let membership = Arc::new(orbitkv_catalog::MembershipView::new(owner.clone()));
+    membership.renew(Instant::now(), std::time::Duration::from_secs(120));
+    membership.replace_members([("control".into(), 1, owner.clone())]);
+    let index = Arc::new(orbitkv_catalog::GlobalIndex::new(
+        membership.clone(),
+        16 * 1024,
+        Arc::new(orbitkv_state::InventoryScope::AllNamespaces),
+    ));
+    let reader = PeerReader::new(
+        index,
+        control.engine(),
+        Arc::new(|_, _| None),
+        membership.clone(),
+    );
+    let segments = PeerSegments::new(control.engine(), membership.clone());
+    let peer = segments
+        .get(membership.lease(&owner).unwrap(), "control", "epoch")
+        .unwrap();
+    let segment = FetchSegment {
+        owner,
+        source: crate::planning::peer::PeerSource::Dram,
+        records: vec![orbitkv_state::InventoryRecord {
+            key: StateKey::new("ns".into(), vec![1]),
+            sequence: 1,
+            present: true,
+            metadata: None,
+        }],
+    };
+    let expiry = crate::storage::expiry::Expiration::new(Some(std::time::Duration::from_secs(60)))
+        .unwrap()
+        .unwrap()
+        .record;
+    let response = |cache_expiry| QueryBlocksForTransferResponse {
+        cache_protocol: orbitkv_state::INVENTORY_STREAM_PROTOCOL.into(),
+        blocks: vec![TransferBlockInfo {
+            cache_expiry,
+            block_hash: vec![1],
+            slots: vec![TransferSlotInfo {
+                k_ptr: 4096,
+                k_size: 512,
+                checksums: serde_json::to_vec(&vec![crate::integrity::Checksum {
+                    end: 512,
+                    crc: 0,
+                }])
+                .unwrap(),
+                ..Default::default()
+            }],
+        }],
+        ..Default::default()
+    };
+    let grant = AuthorizedSegment::for_restore_test(
+        segments.clone(),
+        peer.clone(),
+        response(Some(CacheExpiry {
+            published_unix_millis: expiry.published_unix_millis(),
+            expires_unix_millis: expiry.expires_unix_millis(),
+        })),
+    );
+    let restored = RestoreReader(&reader)
+        .fetch_segment(&segment, grant, "ttl", &[NumaNode::UNKNOWN])
+        .await
+        .unwrap();
+    let block = &restored[0].1;
+    let held = Arc::downgrade(&block.grant);
+    assert_eq!(block.expiration.as_ref().unwrap().record, expiry);
+    assert!(!block.is_expired());
+    block.expiration.as_ref().unwrap().expire_for_test();
+    assert!(block.is_expired());
+    assert!(held.upgrade().is_some());
+    assert_eq!(block.slots[0].range(0, 0, 512).unwrap(), 4096);
+    assert_eq!(control.reads.load(Ordering::Acquire), 0);
+    drop(restored);
+    assert!(held.upgrade().is_none());
+    for (birth, deadline) in [(1, 2), (0, 2), (2, 1)] {
+        let grant = AuthorizedSegment::for_restore_test(
+            segments.clone(),
+            peer.clone(),
+            response(Some(CacheExpiry {
+                published_unix_millis: birth,
+                expires_unix_millis: deadline,
+            })),
+        );
+        assert!(
+            RestoreReader(&reader)
+                .fetch_segment(&segment, grant, "expired", &[NumaNode::UNKNOWN])
+                .await
+                .is_err()
+        );
+    }
 }

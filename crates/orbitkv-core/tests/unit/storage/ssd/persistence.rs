@@ -147,6 +147,8 @@ fn malformed_metadata_cold_starts_the_whole_set() {
         "namespace",
         "extent",
         "sequence",
+        "expiry_zero",
+        "expiry_reversed",
         "record_limit",
         "journal_limit",
     ] {
@@ -164,6 +166,18 @@ fn malformed_metadata_cold_starts_the_whole_set() {
             "namespace" => record.key.namespace = "unbound-model".into(),
             "extent" => record.offset = 512,
             "sequence" => record.sequence = 0,
+            "expiry_zero" => {
+                record.expiry = Some(crate::CacheExpiry {
+                    published_unix_millis: 0,
+                    expires_unix_millis: 1,
+                })
+            }
+            "expiry_reversed" => {
+                record.expiry = Some(crate::CacheExpiry {
+                    published_unix_millis: 100,
+                    expires_unix_millis: 99,
+                })
+            }
             _ => {}
         }
         // Preserve the second current entry only if the complete log is trusted.

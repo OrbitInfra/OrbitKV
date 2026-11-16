@@ -352,11 +352,6 @@ type StagedSlot = (RawBlock, NumaNode, Vec<crate::integrity::Checksum>);
 /// A staged block awaiting SealedBlock rebuild: its hash and per-slot allocations.
 type StagedBlock = (Vec<u8>, Vec<StagedSlot>);
 
-/// Allocate local memory, execute one peer READ batch, and rebuild blocks.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "source authority and destination backing remain explicit across the blocking READ"
-)]
 pub(super) fn block_expiration(
     block: &TransferBlockInfo,
 ) -> Result<Option<Arc<crate::storage::expiry::Expiration>>, String> {
@@ -368,6 +363,11 @@ pub(super) fn block_expiration(
     }))
 }
 
+/// Allocate local memory, execute one peer READ batch, and rebuild blocks.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "source authority and destination backing remain explicit across the blocking READ"
+)]
 async fn fetch_blocks_via_peer(
     transfer: &Arc<TransferEngine>,
     allocate_fn: &AllocateFn,

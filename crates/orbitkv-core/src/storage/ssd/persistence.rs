@@ -148,7 +148,7 @@ impl Record {
 
     fn validate(&self, header: &Header) -> io::Result<()> {
         if let Some(expiry) = self.expiry {
-            expiry.validate().map_err(io::Error::other)?;
+            expiry.validate().map_err(|_| invalid("expiry"))?;
         }
         if self.version != VERSION {
             return Err(invalid("metadata_version"));
