@@ -157,8 +157,8 @@ fallback.
 
 The versioned prefix remains `/orbitkv/v2/<cluster>/` so old and new Managers
 cannot form disjoint populations. Its format record is now
-`orbitkv/inventory-stream/v5` plus a persistent cluster UUID. Version 3 lacks scoped inventory; version 4 lacks required peer checksum
-references. Both are rejected. Upgrade all Managers together using
+`orbitkv/inventory-stream/v6` plus a persistent cluster UUID. Version 3 lacks scoped inventory; version 4 lacks required peer checksum
+references; version 5 lacks the data-TTL request/response contract. All are rejected. Upgrade all Managers together using
 `scripts/migrate-metadata-format.py`; mixed formats are rejected.
 
 ## Limits and observability

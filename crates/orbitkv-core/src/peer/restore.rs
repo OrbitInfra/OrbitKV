@@ -24,6 +24,7 @@ use crate::{SlotMeta, block::StateKey, memory::numa::NumaNode};
 /// share one ticket across query leases and all TP/layer restore consumers.
 #[derive(Clone)]
 pub struct PeerRestoreBlock {
+    expiration: Option<Arc<crate::storage::expiry::Expiration>>,
     grant: Arc<Grant>,
     pub(crate) slots: Arc<[PeerSlot]>,
     hash: Vec<u8>,
@@ -75,6 +76,12 @@ impl PeerSlot {
 }
 
 impl PeerRestoreBlock {
+    pub(crate) fn is_expired(&self) -> bool {
+        self.expiration
+            .as_ref()
+            .is_some_and(|expiry| expiry.is_expired())
+    }
+
     pub(crate) fn invalidate_corrupt(&self) {
         let mut bad = self.grant._lock.corrupt.lock();
         // Each grant contains at most DISCOVERY_MAX_KEYS distinct hashes.
@@ -194,6 +201,20 @@ impl SegmentFetcher for RestoreReader<'_> {
                 grant.response.lock_timeout_secs,
             ))
             .ok_or(())?;
+        let expirations = grant
+            .response
+            .blocks
+            .iter()
+            .map(super::read::block_expiration)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| log::warn!("Invalid peer cache lifetime: {error}"))?;
+        if expirations
+            .iter()
+            .flatten()
+            .any(|expiry| expiry.is_expired())
+        {
+            return Err(());
+        }
         let slots = grant
             .response
             .blocks
@@ -224,10 +245,12 @@ impl SegmentFetcher for RestoreReader<'_> {
             .records
             .iter()
             .zip(slots)
-            .map(|(record, slots)| {
+            .zip(expirations)
+            .map(|((record, slots), expiration)| {
                 (
                     record.key.clone(),
                     PeerRestoreBlock {
+                        expiration,
                         grant: Arc::clone(&owner),
                         slots: slots.into(),
                         hash: record.key.hash.clone(),

@@ -125,6 +125,11 @@ impl Engine for P2pTransferService {
         request: Request<QueryBlocksForTransferRequest>,
     ) -> Result<Response<QueryBlocksForTransferResponse>, Status> {
         let req = request.into_inner();
+        if req.cache_protocol != orbitkv_state::INVENTORY_STREAM_PROTOCOL {
+            return Err(Status::failed_precondition(
+                "incompatible cache lifetime protocol; upgrade peers together",
+            ));
+        }
         if req.transfer_timeout_millis == 0 {
             return Err(Status::invalid_argument(
                 "missing transfer deadline; upgrade peers together",
@@ -179,6 +184,12 @@ impl Engine for P2pTransferService {
                     .map(|(raw, &numa)| Self::build_transfer_slot_info(raw, numa))
                     .collect::<Result<_, _>>()?;
                 Ok(TransferBlockInfo {
+                    cache_expiry: block.cache_expiry().map(|expiry| {
+                        orbitkv_proto::proto::engine::CacheExpiry {
+                            published_unix_millis: expiry.published_unix_millis(),
+                            expires_unix_millis: expiry.expires_unix_millis(),
+                        }
+                    }),
                     block_hash: key.hash.clone(),
                     slots,
                 })
@@ -193,6 +204,7 @@ impl Engine for P2pTransferService {
         );
 
         Ok(Response::new(QueryBlocksForTransferResponse {
+            cache_protocol: orbitkv_state::INVENTORY_STREAM_PROTOCOL.into(),
             status: Some(Self::ok_status()),
             blocks,
             lock_timeout_secs: self.engine.peer_exports().lock_timeout().as_secs() as u32,

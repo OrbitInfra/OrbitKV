@@ -327,6 +327,7 @@ async fn shared_admission_saturation_falls_back_before_worker_submission() {
             Vec::new(),
             Vec::new(),
             vec![SaveGroup {
+                expiration: None,
                 key: crate::block::StateKey::new("shared-admission".into(), vec![1]),
                 blocks: Vec::new(),
             }],

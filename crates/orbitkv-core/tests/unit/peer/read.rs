@@ -12,8 +12,10 @@ fn transfer_authorization_requires_the_source_epoch_before_destination_use() {
         metadata: None,
     }];
     let mut response = QueryBlocksForTransferResponse {
+        cache_protocol: orbitkv_state::INVENTORY_STREAM_PROTOCOL.into(),
         transfer_endpoint: "127.0.0.1:15123".into(),
         blocks: vec![TransferBlockInfo {
+            cache_expiry: None,
             block_hash: vec![1],
             slots: vec![],
         }],
@@ -120,6 +122,7 @@ fn fetch_slabs_follow_receiver_slots_instead_of_source_numa() {
     use orbitkv_proto::proto::engine::TransferSlotInfo;
 
     let blocks = vec![TransferBlockInfo {
+        cache_expiry: None,
         block_hash: vec![1],
         slots: vec![
             TransferSlotInfo {
@@ -183,3 +186,21 @@ fn fetch_slabs_follow_receiver_slots_instead_of_source_numa() {
 
 #[path = "../../../../../benches/storage/native/read_integrity.rs"]
 mod path_bench;
+
+impl AuthorizedSegment {
+    pub(crate) fn for_restore_test(
+        segments: Arc<PeerSegments>,
+        peer: Arc<PeerIdentity>,
+        response: QueryBlocksForTransferResponse,
+    ) -> Self {
+        Self {
+            segments,
+            peer,
+            options: crate::transfer_engine::tests::demand(),
+            response,
+            lock_guard: TransferLockGuard::test_detached(),
+            authorized_at: Instant::now(),
+            query_elapsed: Duration::ZERO,
+        }
+    }
+}

@@ -274,6 +274,7 @@ impl TransferCompletions {
             .as_ref()
             .ok_or_else(|| Status::internal("missing transfer guard"))?;
         let request = QueryBlocksForTransferRequest {
+            cache_protocol: orbitkv_state::INVENTORY_STREAM_PROTOCOL.into(),
             namespace: segment.records[0].key.namespace.clone(),
             block_hashes: segment.records.iter().map(|r| r.key.hash.clone()).collect(),
             owner_incarnation: segment.owner.incarnation.to_string(),
@@ -312,6 +313,11 @@ impl TransferCompletions {
                 return Err(error);
             }
         };
+        if response.cache_protocol != orbitkv_state::INVENTORY_STREAM_PROTOCOL {
+            return Err(Status::failed_precondition(
+                "incompatible cache lifetime protocol; upgrade peers together",
+            ));
+        }
         if !response.status.as_ref().is_some_and(|status| status.ok) {
             return Err(Status::data_loss("missing transfer authorization"));
         }

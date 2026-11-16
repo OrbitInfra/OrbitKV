@@ -96,6 +96,7 @@ async fn raw_gpu_corruption_invalidates_completion_and_retains_the_extent_until_
                 smallvec::smallvec![512],
                 crate::memory::numa::NumaNode::UNKNOWN,
             )],
+            None,
         )
         .unwrap();
     let (reply, _reply_rx) = oneshot::channel();

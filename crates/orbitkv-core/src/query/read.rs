@@ -189,10 +189,18 @@ impl ReadCoordinator {
                 result
             })
             .await;
+        // Every coalesced consumer needs fresh admission; existing restore leases
+        // retain their owners and are not revoked by data TTL.
+        let ready: Vec<_> = result
+            .ready_blocks
+            .iter()
+            .take_while(|source| !source.is_expired())
+            .cloned()
+            .collect();
         if !warming {
             let (resident_keys, resident): (Vec<_>, Vec<_>) = keys
                 .iter()
-                .zip(&result.ready_blocks)
+                .zip(&ready)
                 .filter_map(|(key, source)| match source {
                     RestoreSource::Memory(block) => Some((key.clone(), Arc::clone(block))),
                     _ => None,
@@ -205,13 +213,13 @@ impl ReadCoordinator {
         }
         record_tier_attribution(
             keys.len(),
-            hit,
-            result.ready_blocks.len() - hit,
+            hit.min(ready.len()),
+            ready.len().saturating_sub(hit),
             result.source,
         );
         QueryResult {
-            blocks: result.ready_blocks.clone(),
-            missing: result.missing,
+            missing: result.missing + result.ready_blocks.len() - ready.len(),
+            blocks: ready,
         }
     }
 

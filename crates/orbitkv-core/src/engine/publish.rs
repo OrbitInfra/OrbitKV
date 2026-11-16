@@ -62,6 +62,7 @@ fn prepare_gpu_writes(
     topology: &crate::engine::instance::LayerTopology,
     layers: &[LayerContext],
     numa: NumaNode,
+    expiration: Option<Arc<crate::storage::expiry::Expiration>>,
 ) -> Result<Vec<GpuWrite>, EngineError> {
     use std::collections::BTreeMap;
     type SlotCopies = BTreeMap<usize, (SlotMeta, Vec<CopyRange>)>;
@@ -138,7 +139,7 @@ fn prepare_gpu_writes(
             metadata.push(meta);
         }
         let key = StateKey::new(namespace.to_owned(), group_hash(&hash, group));
-        let Some(lease) = store.reserve_gpu(key, metadata) else {
+        let Some(lease) = store.reserve_gpu(key, metadata, expiration.clone()) else {
             continue;
         };
         for copy in &mut copies {
@@ -157,6 +158,7 @@ fn prepare_codec_groups(
     namespace: &str,
     topology: &crate::engine::instance::LayerTopology,
     layers: &[LayerContext],
+    expiration: Option<Arc<crate::storage::expiry::Expiration>>,
 ) -> Result<Vec<SaveGroup>, EngineError> {
     let mut groups = HashMap::new();
     for (layer_index, layer) in layers.iter().enumerate() {
@@ -172,6 +174,7 @@ fn prepare_codec_groups(
         let expected = topology.group_total_slots(group)?;
         if slots.len() == expected && slots.keys().copied().eq(0..expected) {
             result.push(SaveGroup {
+                expiration: expiration.clone(),
                 key: StateKey::new(namespace.to_owned(), group_hash(&hash, group)),
                 blocks: slots.into_values().collect(),
             });
@@ -721,6 +724,8 @@ impl OrbitKVEngine {
 
         // ── Phase 3: Submit GPU encoding/copies while retaining source ownership ──
 
+        let expiration = crate::storage::expiry::Expiration::new(self.storage.cache_ttl)
+            .map_err(EngineError::Storage)?;
         let ssd_writes = match &self.storage.ssd_store {
             Some(store)
                 if store.gpu_io.available() && self.storage.codec == crate::StorageCodec::None =>
@@ -731,6 +736,7 @@ impl OrbitKVEngine {
                     &topology,
                     &layer_contexts,
                     save_numa_node,
+                    expiration.clone(),
                 )?
             }
             _ => Vec::new(),
@@ -742,7 +748,7 @@ impl OrbitKVEngine {
                 .as_ref()
                 .is_some_and(|store| store.gpu_io.available())
         {
-            prepare_codec_groups(&namespace, &topology, &layer_contexts)?
+            prepare_codec_groups(&namespace, &topology, &layer_contexts, expiration.clone())?
         } else {
             Vec::new()
         };
@@ -876,6 +882,7 @@ impl OrbitKVEngine {
                 );
             }
             self.storage.writes.insert(RawSaveBatch {
+                expiration: expiration.clone(),
                 namespace,
                 total_slots: topology.total_slots(),
                 numa_node: save_numa_node,
@@ -923,6 +930,7 @@ impl OrbitKVEngine {
                     );
                 }
                 self.storage.writes.insert(RawSaveBatch {
+                    expiration: expiration.clone(),
                     namespace: namespace.clone(),
                     total_slots: topology.group_total_slots(group)?,
                     numa_node: save_numa_node,

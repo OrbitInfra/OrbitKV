@@ -151,6 +151,8 @@ Required cases fail on missing prerequisites; they never substitute a filesystem
 | Reader held; file receipt withheld | Eviction pressure cannot reuse the leased extent; releasing the receipt restores admission |
 | Prior file user survives Manager SIGKILL | Startup fails without changing data/metadata; only releasing that description permits recovery |
 | Capacity shrink; checkpoint replacement killed | Only fitting entries survive; old or new complete checkpoint remains usable |
+| TTL expires while a file write is held | Original deadline survives the queue; late completion and restart are misses |
+| TTL expires during recovery verification | No inventory publication after the checksum receipt; the miss survives another restart |
 | Real ENOSPC during commit | No published entry, no pending writer/reader leak; writes remain fenced until restart |
 | Default restart; clean persistent restart | Default truncates; opt-in recovers exact bytes and isolates namespaces |
 | Raw/encoded SSD payload/tail bit flips after commit and after recovery | Counted integrity miss, no returned slots, exact replica eviction; correct bytes still hit |

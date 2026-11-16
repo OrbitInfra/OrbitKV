@@ -12,6 +12,7 @@ import requests
 ALL_NAMESPACE_PROTOCOL = "orbitkv/inventory-stream/v3"
 SCOPED_PROTOCOL = "orbitkv/inventory-stream/v4"
 INTEGRITY_PROTOCOL = "orbitkv/inventory-stream/v5"
+TTL_PROTOCOL = "orbitkv/inventory-stream/v6"
 
 
 def encode(value: bytes) -> str:
@@ -52,7 +53,7 @@ def main() -> None:
     parser.add_argument("--cluster", required=True)
     parser.add_argument(
         "--from-protocol",
-        choices=(ALL_NAMESPACE_PROTOCOL, SCOPED_PROTOCOL),
+        choices=(ALL_NAMESPACE_PROTOCOL, SCOPED_PROTOCOL, INTEGRITY_PROTOCOL),
         required=True,
     )
     parser.add_argument("--cluster-uuid", type=uuid.UUID)
@@ -78,7 +79,7 @@ def main() -> None:
     if args.cluster_uuid is None:
         raise SystemExit("--cluster-uuid is required for a reproducible cutover")
     current_protocol = args.from_protocol
-    replacement_protocol = INTEGRITY_PROTOCOL
+    replacement_protocol = TTL_PROTOCOL
     try:
         current_stream = json.loads(current_value)
     except (UnicodeDecodeError, json.JSONDecodeError):

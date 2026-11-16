@@ -10,6 +10,7 @@ fn key(id: u8) -> StateKey {
 
 fn entry(begin: u64, capacity: u64) -> SsdIndexEntry {
     SsdIndexEntry {
+        expiration: None,
         shard_id: 0,
         begin,
         len: 512,
@@ -146,6 +147,8 @@ fn malformed_metadata_cold_starts_the_whole_set() {
         "namespace",
         "extent",
         "sequence",
+        "expiry_zero",
+        "expiry_reversed",
         "record_limit",
         "journal_limit",
     ] {
@@ -163,6 +166,18 @@ fn malformed_metadata_cold_starts_the_whole_set() {
             "namespace" => record.key.namespace = "unbound-model".into(),
             "extent" => record.offset = 512,
             "sequence" => record.sequence = 0,
+            "expiry_zero" => {
+                record.expiry = Some(crate::CacheExpiry {
+                    published_unix_millis: 0,
+                    expires_unix_millis: 1,
+                });
+            }
+            "expiry_reversed" => {
+                record.expiry = Some(crate::CacheExpiry {
+                    published_unix_millis: 100,
+                    expires_unix_millis: 99,
+                });
+            }
             _ => {}
         }
         // Preserve the second current entry only if the complete log is trusted.
@@ -330,4 +345,43 @@ fn metadata_admission_rejects_without_appending_and_fences_only_durability_error
             .is_err()
     );
     assert_eq!(journal.file.metadata().unwrap().len(), length);
+}
+
+#[test]
+fn restart_preserves_live_deadlines_and_durably_drops_expired_records() {
+    use crate::storage::expiry::{Expiration, unix_millis};
+    let dir = tempfile::tempdir().unwrap();
+    let files = files(dir.path(), 4096);
+    let path = dir.path().join("index");
+    let (mut journal, _) = Journal::open(path.clone(), &files, 4096, 512).unwrap();
+    let now = unix_millis().unwrap();
+    let mut expired = entry(0, 4096);
+    expired.expiration = Expiration::from_record(Some(crate::CacheExpiry {
+        published_unix_millis: now - 2000,
+        expires_unix_millis: now - 1000,
+    }))
+    .unwrap();
+    let mut live = entry(512, 4096);
+    live.expiration = Expiration::new(Some(Duration::from_secs(60))).unwrap();
+    let expected = live.expiration.as_ref().unwrap().record;
+    journal.append(&key(1), &expired, Some(42)).unwrap();
+    journal.append(&key(2), &live, Some(42)).unwrap();
+    drop(journal);
+    let (journal, recovered) = Journal::open(path.clone(), &files, 4096, 512).unwrap();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].key, key(2));
+    assert_eq!(
+        recovered[0].entry.expiration.as_ref().unwrap().record,
+        expected
+    );
+    assert_eq!(journal.report.lock().drops["expired"], 1);
+    assert!(!journal.records.contains_key(&key(1)));
+    drop(journal);
+    let (journal, recovered) = Journal::open(path, &files, 4096, 512).unwrap();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(
+        recovered[0].entry.expiration.as_ref().unwrap().record,
+        expected
+    );
+    assert!(!journal.records.contains_key(&key(1)));
 }

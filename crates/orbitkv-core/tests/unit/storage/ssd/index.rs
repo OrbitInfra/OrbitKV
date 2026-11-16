@@ -11,18 +11,18 @@ fn failed_decode_hides_pinned_generation_until_drain_and_preserves_replacements(
             crate::NumaNode::UNKNOWN,
         )]
     };
-    let first = ring.reserve(&key, slots(), encoding()).unwrap();
+    let first = ring.reserve(&key, slots(), encoding(), None).unwrap();
     assert!(ring.commit(&key, true));
     ring.invalidate(&key, &first);
     assert!(ring.get(&key).is_none());
-    let repaired = ring.reserve(&key, slots(), encoding()).unwrap();
+    let repaired = ring.reserve(&key, slots(), encoding(), None).unwrap();
     assert!(ring.commit(&key, true));
     ring.invalidate(&key, &first);
     assert!(ring.get(&key).is_some());
     repaired.readers.store(2, Ordering::Release);
     ring.invalidate(&key, &repaired);
     assert!(ring.get(&key).is_none());
-    assert!(ring.reserve(&key, slots(), encoding()).is_none());
+    assert!(ring.reserve(&key, slots(), encoding(), None).is_none());
     assert!(matches!(
         ring.entries.get(&key),
         Some(SsdEntryState::Invalid(_))
@@ -33,7 +33,7 @@ fn failed_decode_hides_pinned_generation_until_drain_and_preserves_replacements(
     repaired.readers.store(0, Ordering::Release);
     ring.release_invalid(&key, &repaired);
     assert!(ring.get(&key).is_none());
-    let next = ring.reserve(&key, slots(), encoding()).unwrap();
+    let next = ring.reserve(&key, slots(), encoding(), None).unwrap();
     assert!(ring.commit(&key, true));
     assert_eq!(next.shard_id, first.shard_id);
     ring.invalidate(&key, &first);
@@ -51,16 +51,23 @@ fn invalidated_extent_cannot_be_overwritten_until_gpu_leases_drain() {
         )]
     };
     let key = make_key(1);
-    let entry = ring.reserve(&key, slots(), Encoding::Encoded).unwrap();
+    let entry = ring
+        .reserve(&key, slots(), Encoding::Encoded, None)
+        .unwrap();
     ring.commit(&key, true);
     entry.readers.store(1, Ordering::Release);
     ring.invalidate(&key, &entry);
     assert!(ring.get(&key).is_none());
-    assert!(ring.reserve(&make_key(2), slots(), Encoding::Raw).is_none());
+    assert!(
+        ring.reserve(&make_key(2), slots(), Encoding::Raw, None)
+            .is_none()
+    );
     assert_eq!((ring.shards[0].head, ring.shards[0].tail), (4096, 0));
     entry.readers.store(0, Ordering::Release);
     ring.release_invalid(&key, &entry);
-    let repaired = ring.reserve(&key, slots(), Encoding::Encoded).unwrap();
+    let repaired = ring
+        .reserve(&key, slots(), Encoding::Encoded, None)
+        .unwrap();
     ring.commit(&key, true);
     assert_ne!(repaired.begin, entry.begin);
     ring.invalidate(&key, &entry);
@@ -78,13 +85,13 @@ fn failed_write_retry_does_not_hide_or_evict_another_generation() {
         )]
     };
     let key = make_key(1);
-    let first = ring.reserve(&key, slots(), Encoding::Raw).unwrap();
+    let first = ring.reserve(&key, slots(), Encoding::Raw, None).unwrap();
     assert_eq!(first.len, 4096);
     assert_eq!(first.slots[0].total_size(), 512);
     assert!(ring.get(&key).is_none());
-    assert!(ring.reserve(&key, slots(), Encoding::Raw).is_none());
+    assert!(ring.reserve(&key, slots(), Encoding::Raw, None).is_none());
     assert!(!ring.commit(&key, false));
-    let retry = ring.reserve(&key, slots(), Encoding::Raw).unwrap();
+    let retry = ring.reserve(&key, slots(), Encoding::Raw, None).unwrap();
     assert_ne!(first.shard_id, retry.shard_id);
     assert!(ring.commit(&key, true));
     ring.advance_tail(first.shard_id, 4096);
@@ -132,6 +139,7 @@ impl SsdRingBuffer {
 
     fn test_entry(&self, shard_id: usize, begin: u64, len: u64) -> SsdIndexEntry {
         SsdIndexEntry {
+            expiration: None,
             shard_id,
             begin,
             len,
@@ -371,4 +379,56 @@ fn test_duplicate_key_filtered() {
         .collect();
 
     assert!(filtered.is_empty());
+}
+
+#[test]
+fn ttl_never_releases_a_writing_or_pinned_extent() {
+    let slots = || {
+        vec![SlotMeta::new(
+            smallvec::smallvec![512],
+            crate::NumaNode::UNKNOWN,
+        )]
+    };
+    let mut ring = SsdRingBuffer::new(512);
+    let key = make_key(1);
+    let replacement = make_key(2);
+    let expiry = crate::storage::expiry::Expiration::new(Some(std::time::Duration::from_secs(60)))
+        .unwrap()
+        .unwrap();
+    let entry = ring
+        .reserve(&key, slots(), Encoding::Raw, Some(expiry.clone()))
+        .unwrap();
+    expiry.expire_for_test();
+    assert!(
+        ring.expired_candidates(512).is_empty(),
+        "Writing remains owned through I/O completion"
+    );
+    assert!(
+        !ring.invalidate(&key, &entry),
+        "logical invalidation cannot free Writing"
+    );
+    assert!(
+        ring.reserve(&replacement, slots(), Encoding::Raw, None)
+            .is_none()
+    );
+    assert!(
+        !ring.commit(&key, true),
+        "a delayed write cannot publish expired bytes"
+    );
+    let expiry = crate::storage::expiry::Expiration::new(Some(std::time::Duration::from_secs(60)))
+        .unwrap()
+        .unwrap();
+    let entry = ring
+        .reserve(&replacement, slots(), Encoding::Raw, Some(expiry.clone()))
+        .unwrap();
+    assert!(ring.commit(&replacement, true));
+    entry.readers.fetch_add(1, Ordering::Relaxed);
+    expiry.expire_for_test();
+    assert!(ring.get(&replacement).is_none());
+    assert_eq!(ring.expired_candidates(1).len(), 1);
+    assert!(ring.invalidate(&replacement, &entry));
+    assert!(ring.reserve(&key, slots(), Encoding::Raw, None).is_none());
+    entry.readers.fetch_sub(1, Ordering::Relaxed);
+    ring.release_invalid(&replacement, &entry);
+    assert!(ring.reserve(&key, slots(), Encoding::Raw, None).is_some());
 }

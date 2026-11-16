@@ -183,6 +183,11 @@ pub(super) mod engine {
         for (encoded, value) in [(false, 0x31), (true, 0x72)] {
             let key = StateKey::new("engine-file".into(), vec![value]);
             let source = block(&storage, encoded, value);
+            let expiration =
+                crate::storage::expiry::Expiration::new(Some(std::time::Duration::from_secs(60)))
+                    .unwrap();
+            source.set_expiration(expiration.clone()).unwrap();
+            let cache_expiry = source.cache_expiry();
             store.ingest_batch(std::iter::once((&key, &source)), false);
             store.flush().await;
             let lease = store
@@ -206,6 +211,11 @@ pub(super) mod engine {
                 .unwrap()
                 .remove(0)
                 .1;
+            assert_eq!(restored.cache_expiry(), cache_expiry);
+            assert!(Arc::ptr_eq(
+                &restored.expiration().unwrap(),
+                expiration.as_ref().unwrap()
+            ));
             for (index, slot) in restored.slots().iter().enumerate() {
                 // SAFETY: the read receipt initialized and drained this complete allocation.
                 let bytes = unsafe {
@@ -227,7 +237,8 @@ pub(super) mod engine {
                 .reserve(
                     &next,
                     slots.clone(),
-                    crate::storage::ssd::index::Encoding::Raw
+                    crate::storage::ssd::index::Encoding::Raw,
+                    None
                 )
                 .is_none()
         );
@@ -237,10 +248,16 @@ pub(super) mod engine {
                 .inner
                 .lock()
                 .ring
-                .reserve(&next, slots, crate::storage::ssd::index::Encoding::Raw)
+                .reserve(
+                    &next,
+                    slots,
+                    crate::storage::ssd::index::Encoding::Raw,
+                    None
+                )
                 .is_some()
         );
-        store.commit_write(&next, false);
+        let expected = store.inner.lock().ring.write_entry(&next).cloned().unwrap();
+        store.commit_write(&next, false, Some(&expected));
     }
 
     #[tokio::test]
@@ -682,6 +699,7 @@ pub(super) mod engine {
                         &key,
                         slots.clone(),
                         crate::storage::ssd::index::Encoding::Raw,
+                        None,
                     )
                     .unwrap()
             };
@@ -735,6 +753,7 @@ pub(super) mod engine {
                 &replacement,
                 slots,
                 crate::storage::ssd::index::Encoding::Raw,
+                None,
             );
             assert_eq!(
                 reserved.is_none(),
@@ -742,7 +761,14 @@ pub(super) mod engine {
                 "unknown drain must prevent extent reuse"
             );
             if reserved.is_some() {
-                store.commit_write(&replacement, false);
+                let expected = store
+                    .inner
+                    .lock()
+                    .ring
+                    .write_entry(&replacement)
+                    .cloned()
+                    .unwrap();
+                store.commit_write(&replacement, false, Some(&expected));
             }
         }
     }

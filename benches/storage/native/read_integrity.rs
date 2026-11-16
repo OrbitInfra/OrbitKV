@@ -121,6 +121,12 @@ impl Peer {
             _segments: segments,
             identity,
             blocks: vec![TransferBlockInfo {
+                cache_expiry: source.cache_expiry().map(|expiry| {
+                    orbitkv_proto::proto::engine::CacheExpiry {
+                        published_unix_millis: expiry.published_unix_millis(),
+                        expires_unix_millis: expiry.expires_unix_millis(),
+                    }
+                }),
                 block_hash: key(1).hash,
                 slots: vec![slot],
             }],
@@ -290,6 +296,11 @@ async fn tier_crossings_scan_once_and_never_publish_corrupt_receives() {
         }
         let before = crate::integrity::tests::bytes(&metrics, "seal");
         let source = Arc::new(SealedBlock::from_slots(vec![(raw, NumaNode::UNKNOWN)]));
+        source
+            .set_expiration(
+                crate::storage::expiry::Expiration::new(Some(Duration::from_secs(60))).unwrap(),
+            )
+            .unwrap();
         assert_eq!(
             crate::integrity::tests::bytes(&metrics, "seal") - before,
             4096
@@ -340,7 +351,12 @@ async fn tier_crossings_scan_once_and_never_publish_corrupt_receives() {
         );
         let peer = Peer::new(&storage, &source);
         let before = crate::integrity::tests::bytes(&metrics, "peer");
-        assert_eq!(peer.read().await.unwrap().len(), 1);
+        let fetched = peer.read().await.unwrap();
+        assert_eq!(fetched.len(), 1);
+        assert_eq!(fetched[0].1.cache_expiry(), source.cache_expiry());
+        let repeated = Peer::new(&storage, &fetched[0].1);
+        assert_eq!(repeated.blocks[0].cache_expiry, peer.blocks[0].cache_expiry);
+        repeated.close();
         assert_eq!(
             crate::integrity::tests::bytes(&metrics, "peer") - before,
             4096

@@ -26,12 +26,19 @@ pub(crate) struct SsdIndexEntry {
     /// Per-slot metadata for rebuilding SealedBlock
     pub slots: Vec<SlotMeta>,
     pub encoding: Encoding,
+    pub expiration: Option<Arc<crate::storage::expiry::Expiration>>,
     pub readers: Arc<AtomicUsize>,
     pub checksum: Arc<std::sync::OnceLock<u32>>,
     pub checksums: Arc<std::sync::OnceLock<Vec<crate::integrity::Checksum>>>,
 }
 
 impl SsdIndexEntry {
+    pub(crate) fn is_expired(&self) -> bool {
+        self.expiration
+            .as_ref()
+            .is_some_and(|expiry| expiry.is_expired())
+    }
+
     pub(crate) fn segment_ends(&self) -> Vec<u64> {
         let mut end = 0;
         self.slots
@@ -149,6 +156,7 @@ pub(super) struct SsdRingBuffer {
     /// Fast lookup: key -> state (Writing or Committed)
     entries: HashMap<StateKey, SsdEntryState>,
     retired: Vec<StateKey>,
+    expirations: hashlink::LruCache<StateKey, ()>,
 }
 
 impl SsdRingBuffer {
@@ -171,6 +179,9 @@ impl SsdRingBuffer {
             self.shards[entry.shard_id]
                 .order
                 .push_back((recovered.key.clone(), entry.begin));
+            if entry.expiration.is_some() {
+                self.expirations.insert(recovered.key.clone(), ());
+            }
             self.entries
                 .insert(recovered.key.clone(), SsdEntryState::Unverified(entry));
         }
@@ -182,7 +193,7 @@ impl SsdRingBuffer {
     }
 
     pub(super) fn verify(&mut self, key: &StateKey, entry: &SsdIndexEntry) -> bool {
-        if !self.unverified(key, entry) || !self.is_offset_valid(entry) {
+        if !self.unverified(key, entry) || !self.is_offset_valid(entry) || entry.is_expired() {
             return false;
         }
         self.entries
@@ -192,13 +203,13 @@ impl SsdRingBuffer {
 
     /// Hide exactly the failed generation, retaining its extent while leased.
     pub(super) fn invalidate(&mut self, key: &StateKey, failed: &SsdIndexEntry) -> bool {
-        if self
-            .entries
-            .get(key)
-            .is_none_or(|state| !Arc::ptr_eq(&state.entry().readers, &failed.readers))
-        {
+        if self.entries.get(key).is_none_or(|state| {
+            matches!(state, SsdEntryState::Writing(_) | SsdEntryState::Invalid(_))
+                || !Arc::ptr_eq(&state.entry().readers, &failed.readers)
+        }) {
             return false;
         }
+        self.expirations.remove(key);
         if failed.readers.load(Ordering::Acquire) == 0 {
             self.entries.remove(key);
         } else {
@@ -206,6 +217,31 @@ impl SsdRingBuffer {
                 .insert(key.clone(), SsdEntryState::Invalid(failed.clone()));
         }
         true
+    }
+
+    pub(super) fn write_entry(&self, key: &StateKey) -> Option<&SsdIndexEntry> {
+        match self.entries.get(key) {
+            Some(SsdEntryState::Writing(entry)) => Some(entry),
+            _ => None,
+        }
+    }
+
+    pub(super) fn expired_candidates(&mut self, limit: usize) -> Vec<(StateKey, SsdIndexEntry)> {
+        let mut expired = Vec::new();
+        for _ in 0..limit.min(self.expirations.len()) {
+            let Some((key, ())) = self.expirations.remove_lru() else {
+                break;
+            };
+            let Some(state) = self.entries.get(&key) else {
+                continue;
+            };
+            if !matches!(state, SsdEntryState::Writing(_)) && state.entry().is_expired() {
+                expired.push((key, state.entry().clone()));
+            } else {
+                self.expirations.insert(key, ());
+            }
+        }
+        expired
     }
 
     pub(super) fn new_sharded(shard_capacities: Vec<u64>, alignment: u64) -> Self {
@@ -227,13 +263,16 @@ impl SsdRingBuffer {
             alignment,
             entries: HashMap::new(),
             retired: Vec::new(),
+            expirations: hashlink::LruCache::new_unbounded(),
         }
     }
 
-    /// Lookup a Committed entry by key, returning None if Writing or expired.
+    /// Lookup a Committed entry by key, returning None if Writing, overwritten or past its data TTL.
     pub(super) fn get(&self, key: &StateKey) -> Option<&SsdIndexEntry> {
         match self.entries.get(key) {
-            Some(SsdEntryState::Committed(e)) if self.is_offset_valid(e) => Some(e),
+            Some(SsdEntryState::Committed(e)) if self.is_offset_valid(e) && !e.is_expired() => {
+                Some(e)
+            }
             _ => None,
         }
     }
@@ -244,6 +283,7 @@ impl SsdRingBuffer {
                 && entry.readers.load(Ordering::Acquire) == 0)
         {
             self.entries.remove(key);
+            self.expirations.remove(key);
         }
     }
 
@@ -297,7 +337,7 @@ impl SsdRingBuffer {
         Some((begin, begin % capacity))
     }
 
-    /// Advance tail and prune expired entries (FIFO order).
+    /// Advance tail and prune overwritten entries (FIFO order).
     /// Handles both Writing and Committed states uniformly.
     fn advance_tail(&mut self, shard_id: usize, new_tail: u64) {
         if new_tail <= self.shards[shard_id].tail {
@@ -316,6 +356,7 @@ impl SsdRingBuffer {
             self.shards[shard_id].order.pop_front();
             if current {
                 self.entries.remove(&key);
+                self.expirations.remove(&key);
                 self.retired.push(key);
             }
         }
@@ -326,7 +367,7 @@ impl SsdRingBuffer {
     }
 
     /// Commit a write: success=true transitions Writing→Committed, success=false removes.
-    /// Returns false if entry was already expired or missing.
+    /// Returns false if entry was already overwritten or missing.
     pub(super) fn commit(&mut self, key: &StateKey, success: bool) -> bool {
         let Some(state) = self.entries.get(key) else {
             // Already removed by advance_tail or previous abort
@@ -343,10 +384,11 @@ impl SsdRingBuffer {
             SsdEntryState::Invalid(_) | SsdEntryState::Unverified(_) => return false,
         };
 
-        // Check if expired (eviction faster than write)
-        if !self.is_offset_valid(entry) {
-            warn!("SSD commit: entry expired before IO completed");
+        // A completed write cannot publish an overwritten or TTL-expired generation.
+        if !self.is_offset_valid(entry) || entry.is_expired() {
+            debug!("SSD commit: entry unavailable before publication");
             self.entries.remove(key);
+            self.expirations.remove(key);
             return false;
         }
 
@@ -359,6 +401,7 @@ impl SsdRingBuffer {
         } else {
             // Write failed, remove entry (order will be cleaned by advance_tail)
             self.entries.remove(key);
+            self.expirations.remove(key);
             false
         }
     }
@@ -369,8 +412,13 @@ impl SsdRingBuffer {
         key: &StateKey,
         slots: Vec<SlotMeta>,
         encoding: Encoding,
+        expiration: Option<Arc<crate::storage::expiry::Expiration>>,
     ) -> Option<SsdIndexEntry> {
-        if self.entries.contains_key(key) {
+        if self.entries.contains_key(key)
+            || expiration
+                .as_ref()
+                .is_some_and(|expiry| expiry.is_expired())
+        {
             return None;
         }
         let payload = slots
@@ -394,10 +442,14 @@ impl SsdRingBuffer {
             file_offset,
             slots,
             encoding,
+            expiration,
             readers: Arc::new(AtomicUsize::new(0)),
             checksum: Arc::default(),
             checksums: Arc::default(),
         };
+        if entry.expiration.is_some() {
+            self.expirations.insert(key.clone(), ());
+        }
         self.entries
             .insert(key.clone(), SsdEntryState::Writing(entry.clone()));
         self.shards[shard_id].order.push_back((key.clone(), begin));

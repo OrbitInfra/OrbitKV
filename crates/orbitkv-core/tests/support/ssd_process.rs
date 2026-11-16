@@ -47,6 +47,8 @@ struct Command {
     encoded: bool,
     #[serde(default)]
     wide: bool,
+    #[serde(default)]
+    ttl_millis: Option<u64>,
 }
 
 fn key(command: &Command) -> StateKey {
@@ -171,6 +173,14 @@ pub fn spawn(engine: Arc<crate::OrbitKVEngine>) {
             let mut result = match command.operation.as_str() {
                 "write" => {
                     let block = fixture(&engine.storage, command.id, command.encoded, command.wide);
+                    block
+                        .set_expiration(
+                            crate::storage::expiry::Expiration::new(
+                                command.ttl_millis.map(Duration::from_millis),
+                            )
+                            .unwrap(),
+                        )
+                        .unwrap();
                     store.ingest_batch(std::iter::once((&key, &block)), false);
                     store.flush().await;
                     drop(block);

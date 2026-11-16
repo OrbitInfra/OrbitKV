@@ -411,3 +411,48 @@ async fn local_storage_owns_orbite_without_enabling_distributed_admission() {
         );
     }
 }
+
+#[test]
+fn invalid_data_ttl_is_rejected_before_allocating_pinned_memory() {
+    for ttl in [std::time::Duration::ZERO, std::time::Duration::MAX] {
+        let result = Storage::new_with_config(
+            4096,
+            false,
+            EngineConfig {
+                cache_ttl: Some(ttl),
+                ..EngineConfig::default()
+            },
+            &[],
+        );
+        let Err(error) = result else {
+            panic!("invalid TTL accepted")
+        };
+        assert!(error.contains("cache TTL"), "{error}");
+    }
+}
+
+#[tokio::test]
+async fn ttl_sweep_keeps_physical_allocation_charged_until_the_reader_releases_it() {
+    let storage = make_engine(); // No local TTL: imported deadlines still apply.
+    let key = insert_allocated_resident(&storage, 1, 4096);
+    let held = storage
+        .dram
+        .get_prefix_blocks(std::slice::from_ref(&key), false)
+        .1;
+    storage.dram.remove_all();
+    let expiry = expiry::Expiration::new(Some(std::time::Duration::from_secs(60)))
+        .unwrap()
+        .unwrap();
+    held[0].set_expiration(Some(expiry.clone())).unwrap();
+    storage
+        .dram
+        .batch_insert(vec![(key.clone(), held[0].clone())]);
+    let used = storage.allocator.usage().0;
+    expiry.expire_for_test();
+    assert_eq!(storage.expire_cache().dram_blocks, 1);
+    assert!(!storage.dram.contains_keys(&[key])[0]);
+    assert!(held[0].is_verified());
+    assert_eq!(storage.allocator.usage().0, used);
+    drop(held);
+    assert_eq!(storage.allocator.usage().0, 0);
+}

@@ -16,7 +16,7 @@ use uuid::Uuid;
 use super::index::{Encoding, SsdIndexEntry};
 use crate::{SlotMeta, StateKey};
 
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const MAX_JOURNAL: u64 = 4 * 1024 * 1024 * 1024;
 pub(super) const VERIFY_CHUNK: usize = 1024 * 1024;
 
@@ -105,6 +105,7 @@ struct Record {
     length: u64,
     slots: Vec<SlotMeta>,
     encoding: Encoding,
+    expiry: Option<crate::CacheExpiry>,
     // None is a durable reservation/invalidation, never a readable replica.
     checksum: Option<u32>,
     checksums: Vec<crate::integrity::Checksum>,
@@ -126,24 +127,29 @@ impl Record {
             }).sum::<usize>()
     }
 
-    fn entry(&self) -> SsdIndexEntry {
-        SsdIndexEntry {
+    fn entry(&self) -> io::Result<SsdIndexEntry> {
+        Ok(SsdIndexEntry {
             shard_id: self.shard,
             begin: self.begin,
             len: self.length,
             file_offset: self.offset,
             slots: self.slots.clone(),
             encoding: self.encoding.clone(),
+            expiration: crate::storage::expiry::Expiration::from_record(self.expiry)
+                .map_err(io::Error::other)?,
             readers: Arc::new(AtomicUsize::new(0)),
             checksums: Arc::new(std::sync::OnceLock::from(self.checksums.clone())),
             checksum: Arc::new(
                 self.checksum
                     .map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from),
             ),
-        }
+        })
     }
 
     fn validate(&self, header: &Header) -> io::Result<()> {
+        if let Some(expiry) = self.expiry {
+            expiry.validate().map_err(|_| invalid("expiry"))?;
+        }
         if self.version != VERSION {
             return Err(invalid("metadata_version"));
         }
@@ -377,6 +383,12 @@ impl Journal {
         journal.records.retain(|_, record| {
             let reason = if record.checksum.is_none() {
                 Some("orphan")
+            } else if crate::storage::expiry::Expiration::from_record(record.expiry)
+                .map_or(true, |expiry| {
+                    expiry.is_some_and(|expiry| expiry.is_expired())
+                })
+            {
+                Some("expired")
             } else if record
                 .offset
                 .checked_add(record.length)
@@ -438,7 +450,7 @@ impl Journal {
             if let Some(checksum) = record.checksum {
                 recovered.push(Recovered {
                     key: record.key.clone(),
-                    entry: record.entry(),
+                    entry: record.entry()?,
                     checksum,
                 });
             }
@@ -662,6 +674,7 @@ impl Journal {
             length: entry.len,
             slots: entry.slots.clone(),
             encoding: entry.encoding.clone(),
+            expiry: entry.expiration.as_ref().map(|expiry| expiry.record),
             checksums: entry.checksums.get().cloned().unwrap_or_default(),
             checksum,
         };

@@ -36,6 +36,7 @@ pub(crate) struct RawSaveBatch {
     pub total_slots: usize,
     pub numa_node: NumaNode,
     pub diagnostic: Option<PublishDiagnostic>,
+    pub expiration: Option<Arc<super::expiry::Expiration>>,
     pub layers: Vec<RawSaveLayer>,
 }
 
@@ -209,6 +210,7 @@ impl PublishWorker {
 
     fn save(&mut self, batch: RawSaveBatch) {
         let diagnostic = batch.diagnostic;
+        let expiration = batch.expiration.clone();
         if let Some(diagnostic) = diagnostic {
             diagnostic.record(
                 "publish_storage_dequeue",
@@ -222,7 +224,14 @@ impl PublishWorker {
 
         let (entries, total_bytes, total_blocks) = build_insert_entries(batch);
 
-        self.insert(entries, total_slots, numa_node, &namespace, diagnostic);
+        self.insert(
+            entries,
+            total_slots,
+            numa_node,
+            &namespace,
+            diagnostic,
+            expiration,
+        );
 
         if let Some(diagnostic) = diagnostic {
             diagnostic.record(
@@ -249,6 +258,7 @@ impl PublishWorker {
         numa_node: NumaNode,
         namespace: &str,
         diagnostic: Option<PublishDiagnostic>,
+        expiration: Option<Arc<super::expiry::Expiration>>,
     ) -> usize {
         let mut sealed_blocks: Vec<(StateKey, Arc<SealedBlock>)> = Vec::new();
         let mut inflight_bytes_added: u64 = 0;
@@ -266,6 +276,9 @@ impl PublishWorker {
             if !inflight.contains_key(&key) {
                 match SealedBlock::from_ordered_slot_inserts(slots, total_slots, numa_node) {
                     Ok(sealed) => {
+                        if sealed.set_expiration(expiration.clone()).is_err() {
+                            continue;
+                        }
                         ordered_fast_path_seals += 1;
                         sealed_blocks.push((key, Arc::new(sealed)));
                         continue;
@@ -278,6 +291,7 @@ impl PublishWorker {
                             total_slots,
                             numa_node,
                             namespace,
+                            expiration.clone(),
                             &mut sealed_blocks,
                             &mut inflight_bytes_added,
                             &mut inflight_bytes_removed,
@@ -294,6 +308,7 @@ impl PublishWorker {
                 total_slots,
                 numa_node,
                 namespace,
+                expiration.clone(),
                 &mut sealed_blocks,
                 &mut inflight_bytes_added,
                 &mut inflight_bytes_removed,
@@ -337,6 +352,7 @@ fn insert_partial_slots(
     total_slots: usize,
     numa_node: NumaNode,
     namespace: &str,
+    expiration: Option<Arc<super::expiry::Expiration>>,
     sealed_blocks: &mut Vec<(StateKey, Arc<SealedBlock>)>,
     inflight_bytes_added: &mut u64,
     inflight_bytes_removed: &mut u64,
@@ -358,6 +374,7 @@ fn insert_partial_slots(
         }
     };
 
+    inflight_block.retain_expiration(expiration);
     let mut completed = false;
     for (slot_id, block) in slots {
         match inflight_block.insert_slot(slot_id, block, numa_node) {

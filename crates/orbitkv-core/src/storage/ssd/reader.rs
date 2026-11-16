@@ -454,21 +454,23 @@ async fn execute_prefetch(mut task: PrefetchTask, io: Arc<SsdIo>) -> SingleMater
     };
     let slots = if let Err(error) = verified {
         if read_ok {
-            task.store.invalidate_corrupt_entry(&key, &task.entry);
+            task.store.invalidate_entry(&key, &task.entry);
         }
         warn!("SSD prefetch rejected {key:?}: {error}");
         None
     } else {
         Some(task.slots)
     };
-    let block = slots.map(|slots| {
-        Arc::new(SealedBlock::from_slots(
+    let block = slots.and_then(|slots| {
+        let block = Arc::new(SealedBlock::from_slots(
             slots
                 .into_iter()
                 .zip(&task.entry.slots)
                 .map(|(slot, meta)| (slot, meta.numa_node))
                 .collect(),
-        ))
+        ));
+        block.set_expiration(task.entry.expiration.clone()).ok()?;
+        Some(block)
     });
     (key, task.entry, block, duration_secs(), block_size, ctx)
 }

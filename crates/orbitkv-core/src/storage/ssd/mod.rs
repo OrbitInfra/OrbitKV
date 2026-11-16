@@ -123,7 +123,7 @@ impl SsdReadLease {
     }
 
     pub(crate) fn invalidate_corrupt(&self) {
-        self.store.invalidate_corrupt_entry(&self.key, &self.entry);
+        self.store.invalidate_entry(&self.key, &self.entry);
     }
 }
 
@@ -214,9 +214,15 @@ impl WriteLease {
                 .get()
                 .ok_or_else(|| std::io::Error::other("SSD commit lacks source checksum"))?;
             if let Some(journal) = &self.store.journal {
-                journal
-                    .lock()
-                    .append(&self.key, &self.entry, Some(checksum))?;
+                let mut journal = journal.lock();
+                if self.entry.is_expired() {
+                    journal.invalidate(&self.key, &self.entry)?;
+                } else {
+                    journal.append(&self.key, &self.entry, Some(checksum))?;
+                    if self.entry.is_expired() {
+                        journal.invalidate(&self.key, &self.entry)?;
+                    }
+                }
             }
             Ok::<(), std::io::Error>(())
         })();
@@ -228,7 +234,7 @@ impl WriteLease {
             return false;
         }
         if !self.committed.swap(true, Ordering::AcqRel) {
-            self.store.commit_write(&self.key, true);
+            self.store.commit_write(&self.key, true, Some(&self.entry));
             if self.gpu {
                 core_metrics().ssd_write_bytes.add(self.entry.len, &[]);
             }
@@ -241,7 +247,7 @@ impl WriteLease {
 impl Drop for WriteLease {
     fn drop(&mut self) {
         if !self.committed.load(Ordering::Acquire) {
-            self.store.commit_write(&self.key, false);
+            self.store.commit_write(&self.key, false, Some(&self.entry));
             if let Some(journal) = &self.store.journal {
                 journal.lock().abandon(&self.key, &self.entry);
             }
@@ -383,6 +389,11 @@ impl SsdStore {
                         .invalidate(&recovered.key, &recovered.entry);
                     continue;
                 }
+                if recovered.entry.is_expired() {
+                    store.invalidate_entry(&recovered.key, &recovered.entry);
+                    report.lock().drop_entry("expired");
+                    continue;
+                }
                 let lease = {
                     let inner = store.inner.lock();
                     if !inner.ring.unverified(&recovered.key, &recovered.entry) {
@@ -406,11 +417,8 @@ impl SsdStore {
                 let result =
                     store.checksum(&recovered.entry, lease.clone(), lease.options.deadline);
                 if matches!(result, Ok(checksum) if checksum == recovered.checksum) {
-                    let visible = store
-                        .inner
-                        .lock()
-                        .ring
-                        .verify(&recovered.key, &recovered.entry);
+                    let mut inner = store.inner.lock();
+                    let visible = inner.ring.verify(&recovered.key, &recovered.entry);
                     if visible {
                         report.lock().verified_bytes += recovered.entry.len;
                         if let Some(inventory) = &store.inventory
@@ -422,6 +430,10 @@ impl SsdStore {
                         {
                             log::error!("Recovered SSD inventory mutation rejected: {error:?}");
                         }
+                    } else if recovered.entry.is_expired() {
+                        drop(inner);
+                        store.invalidate_entry(&recovered.key, &recovered.entry);
+                        report.lock().drop_entry("expired");
                     }
                 } else {
                     let reason = if result.is_ok() {
@@ -482,6 +494,7 @@ impl SsdStore {
         self: &Arc<Self>,
         key: StateKey,
         slots: Vec<crate::SlotMeta>,
+        expiration: Option<Arc<super::expiry::Expiration>>,
     ) -> Option<Arc<WriteLease>> {
         if !self.gpu_io.available() {
             return None;
@@ -501,12 +514,12 @@ impl SsdStore {
         } else {
             index::Encoding::Raw
         };
-        let entry = inner.ring.reserve(&key, slots, encoding)?;
+        let entry = inner.ring.reserve(&key, slots, encoding, expiration)?;
         let retired = inner.ring.take_retired();
         inner.pending_writes.insert(key.clone());
         core_metrics().ssd_write_inflight.add(1, &[]);
-        drop(inner);
         self.retire_inventory(retired);
+        drop(inner);
         Some(Arc::new(WriteLease {
             options: crate::transfer_engine::TransferOptions::checkpoint(
                 std::time::Instant::now() + io::DEADLINE,
@@ -791,8 +804,25 @@ impl SsdStore {
         (self.allocate_fn)(size, numa_node)
     }
 
-    pub(super) fn commit_write(&self, key: &StateKey, success: bool) {
+    pub(super) fn commit_write(
+        &self,
+        key: &StateKey,
+        success: bool,
+        expected: Option<&SsdIndexEntry>,
+    ) {
         let mut inner = self.inner.lock();
+        let Some(expected) = expected else {
+            // No reservation was submitted. Only release this queued write's admission.
+            inner.pending_writes.remove(key);
+            return;
+        };
+        if inner
+            .ring
+            .write_entry(key)
+            .is_none_or(|current| !Arc::ptr_eq(&current.readers, &expected.readers))
+        {
+            return;
+        }
         let committed = inner.ring.commit(key, success);
         let metadata = if committed {
             inner.ring.get(key).map(SsdIndexEntry::replica_metadata)
@@ -801,7 +831,6 @@ impl SsdStore {
         };
         let retired = inner.ring.take_retired();
         inner.pending_writes.remove(key);
-        drop(inner);
         self.retire_inventory(retired);
         if let (Some(inventory), Some(metadata)) = (&self.inventory, metadata)
             && let Err(error) =
@@ -811,21 +840,36 @@ impl SsdStore {
         }
     }
 
-    pub(super) fn invalidate_corrupt_entry(&self, key: &StateKey, entry: &SsdIndexEntry) {
-        let invalidated = self.inner.lock().ring.invalidate(key, entry);
+    pub(super) fn invalidate_entry(&self, key: &StateKey, entry: &SsdIndexEntry) -> bool {
+        let invalidated = {
+            let mut inner = self.inner.lock();
+            let invalidated = inner.ring.invalidate(key, entry);
+            if invalidated {
+                if entry.is_expired() {
+                    core_metrics()
+                        .cache_expirations
+                        .add(1, &[opentelemetry::KeyValue::new("medium", "ssd")]);
+                }
+                self.retire_inventory(vec![key.clone()]);
+            }
+            invalidated
+        };
         if invalidated && let Some(journal) = &self.journal {
             let mut journal = journal.lock();
             if let Err(error) = journal.invalidate(key, entry) {
                 journal.fence();
-                warn!("SSD corrupt-entry invalidation could not be persisted: {error}");
+                warn!("SSD invalidation could not be persisted: {error}");
             }
         }
-        if invalidated
-            && let Some(inventory) = &self.inventory
-            && let Err(error) = inventory.change(key, orbitkv_state::ReplicaMedium::Ssd, None)
-        {
-            log::error!("Inventory mutation rejected: {error:?}");
-        }
+        invalidated
+    }
+
+    pub(crate) fn expire(&self, limit: usize) -> usize {
+        let candidates = self.inner.lock().ring.expired_candidates(limit);
+        candidates
+            .into_iter()
+            .filter(|(key, entry)| self.invalidate_entry(key, entry))
+            .count()
     }
 
     pub(super) fn retire_inventory(&self, keys: Vec<StateKey>) {

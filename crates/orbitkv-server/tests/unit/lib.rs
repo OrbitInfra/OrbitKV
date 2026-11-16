@@ -420,3 +420,48 @@ fn auto_is_default_and_explicit_transport_hints_remain_available() {
         TransportHint::Auto
     );
 }
+
+#[test]
+fn data_ttl_is_optional_and_requires_positive_seconds() {
+    assert_eq!(
+        Cli::try_parse_from(["orbitkv-cache-manager"])
+            .unwrap()
+            .cache_ttl_secs,
+        None
+    );
+    assert!(Cli::try_parse_from(["orbitkv-cache-manager", "--cache-ttl-secs", "0"]).is_err());
+    assert_eq!(
+        Cli::try_parse_from(["orbitkv-cache-manager", "--cache-ttl-secs", "3600"])
+            .unwrap()
+            .cache_ttl_secs,
+        Some(3600)
+    );
+}
+
+#[tokio::test]
+async fn old_peer_requests_are_rejected_before_source_authorization() {
+    use orbitkv_proto::proto::engine::engine_server::Engine;
+    let engine = orbitkv_core::OrbitKVEngine::new_with_config(
+        1 << 20,
+        false,
+        orbitkv_core::EngineConfig {
+            enable_numa_affinity: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let service = P2pTransferService::new(Arc::new(engine));
+    for protocol in ["", "orbitkv/inventory-stream/v5", "unknown"] {
+        let request = orbitkv_proto::proto::engine::QueryBlocksForTransferRequest {
+            cache_protocol: protocol.into(),
+            transfer_timeout_millis: 1,
+            ..Default::default()
+        };
+        let error = service
+            .query_blocks_for_transfer(tonic::Request::new(request))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+        assert!(error.message().contains("cache lifetime protocol"));
+    }
+}
