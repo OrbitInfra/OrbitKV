@@ -137,7 +137,15 @@ struct SsdShardRing {
     capacity: u64,
     head: u64,
     tail: u64,
+    reclaiming: bool,
     order: VecDeque<(StateKey, u64)>,
+}
+
+pub(super) enum WatermarkStep {
+    Idle,
+    Blocked,
+    Pruned(u64),
+    Evict(StateKey, SsdIndexEntry),
 }
 
 /// SSD ring buffer: unified state for space allocation + block index.
@@ -256,6 +264,7 @@ impl SsdRingBuffer {
                     capacity,
                     head: 0,
                     tail: 0,
+                    reclaiming: false,
                     order: VecDeque::new(),
                 })
                 .collect(),
@@ -360,6 +369,81 @@ impl SsdRingBuffer {
                 self.retired.push(key);
             }
         }
+    }
+
+    pub(super) fn shard_count(&self) -> usize {
+        self.shards.len()
+    }
+
+    /// Check one FIFO front. Gaps and stale generations consume the same scan
+    /// budget as live entries; a held front cannot be bypassed within its shard.
+    pub(super) fn watermark_step(&mut self, shard_id: usize, low: u8, high: u8) -> WatermarkStep {
+        let shard = &mut self.shards[shard_id];
+        let used = shard.head - shard.tail;
+        let low = (u128::from(shard.capacity) * u128::from(low) / 100) as u64;
+        let high = (u128::from(shard.capacity) * u128::from(high) / 100) as u64;
+        if used <= low {
+            shard.reclaiming = false;
+            return WatermarkStep::Idle;
+        }
+        if !shard.reclaiming && used < high {
+            return WatermarkStep::Idle;
+        }
+        shard.reclaiming = true;
+        let Some((key, generation)) = shard.order.front() else {
+            shard.tail = shard.head;
+            return WatermarkStep::Pruned(used);
+        };
+        let Some(state) = self.entries.get(key).filter(|state| {
+            state.entry().shard_id == shard_id && state.entry().begin == *generation
+        }) else {
+            return WatermarkStep::Pruned(self.prune_watermark_front(shard_id));
+        };
+        let entry = state.entry();
+        if entry.begin > shard.tail {
+            let bytes = entry.begin - shard.tail;
+            shard.tail = entry.begin;
+            return WatermarkStep::Pruned(bytes);
+        }
+        if matches!(state, SsdEntryState::Writing(_)) || entry.readers.load(Ordering::Acquire) != 0
+        {
+            return WatermarkStep::Blocked;
+        }
+        WatermarkStep::Evict(key.clone(), entry.clone())
+    }
+
+    fn prune_watermark_front(&mut self, shard_id: usize) -> u64 {
+        let shard = &mut self.shards[shard_id];
+        shard.order.pop_front();
+        let old_tail = shard.tail;
+        shard.tail = shard
+            .tail
+            .max(shard.order.front().map_or(shard.head, |(_, begin)| *begin));
+        shard.tail - old_tail
+    }
+
+    /// Called only after persistent invalidation, under the same ring lock used
+    /// to select the candidate. Recheck identity for stale completion controls.
+    pub(super) fn retire_watermark(
+        &mut self,
+        key: &StateKey,
+        entry: &SsdIndexEntry,
+    ) -> Option<u64> {
+        if !self.shards[entry.shard_id]
+            .order
+            .front()
+            .is_some_and(|(front, begin)| front == key && *begin == entry.begin)
+            || !self.entries.get(key).is_some_and(|state| {
+                !matches!(state, SsdEntryState::Writing(_))
+                    && Arc::ptr_eq(&state.entry().readers, &entry.readers)
+                    && state.entry().readers.load(Ordering::Acquire) == 0
+            })
+        {
+            return None;
+        }
+        self.entries.remove(key);
+        self.expirations.remove(key);
+        Some(self.prune_watermark_front(entry.shard_id))
     }
 
     pub(super) fn take_retired(&mut self) -> Vec<StateKey> {

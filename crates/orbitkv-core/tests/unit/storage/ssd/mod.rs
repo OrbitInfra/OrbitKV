@@ -92,6 +92,8 @@ fn queued_read_store_with_inventory(
         io,
         write_tx,
         write_policy: SsdWritePolicy::All,
+        watermarks: None,
+        watermark_sweep: Mutex::new(0),
         prefetch_tx,
         inner: Mutex::new(SsdInner {
             ring: SsdRingBuffer::new_sharded(vec![SSD_ALIGNMENT as u64], SSD_ALIGNMENT as u64),

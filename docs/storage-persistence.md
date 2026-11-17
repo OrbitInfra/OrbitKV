@@ -117,6 +117,12 @@ expiry of a committed extent keeps existing reader pins. See the
 [clock assumptions and cleanup bounds](cache-policies.md#fixed-data-ttl).
 Earlier format versions start cold; there is no compatibility migration.
 
+Optional [SSD watermarks](cache-policies.md#ssd-highlow-watermarks) use the same
+invalidation record. Each victim is durably removed before inventory retirement
+and FIFO reuse; an invalidation error retains the range and fences persistent
+writes. Held readers and active writes block their shard. Maintenance does not
+truncate files, change alignment or introduce another persistent format.
+
 Valid metadata initially creates **unverified** entries. They are invisible to
 queries and peer inventory. A bounded background pass pins each current
 generation and verifies the entire stored-byte CRC through OrbiTE. Only a

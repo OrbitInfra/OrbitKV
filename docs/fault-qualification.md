@@ -153,6 +153,9 @@ Required cases fail on missing prerequisites; they never substitute a filesystem
 | Capacity shrink; checkpoint replacement killed | Only fitting entries survive; old or new complete checkpoint remains usable |
 | TTL expires while a file write is held | Original deadline survives the queue; late completion and restart are misses |
 | TTL expires during recovery verification | No inventory publication after the checksum receipt; the miss survives another restart |
+| SSD watermark with held reader or withheld read receipt | Front blocks only its shard; exact bytes survive the hold, then oldest entries retire and remain absent after restart |
+| SSD watermark with a pending write | No reuse before commit/drain; background maintenance removes the completed generation afterward |
+| SIGKILL after watermark invalidation sync, before ring retirement | Victim stays absent after restart; remaining generations retain exact bytes |
 | Real ENOSPC during commit | No published entry, no pending writer/reader leak; writes remain fenced until restart |
 | Default restart; clean persistent restart | Default truncates; opt-in recovers exact bytes and isolates namespaces |
 | Raw/encoded SSD payload/tail bit flips after commit and after recovery | Counted integrity miss, no returned slots, exact replica eviction; correct bytes still hit |

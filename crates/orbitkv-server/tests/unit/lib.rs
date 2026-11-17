@@ -465,3 +465,52 @@ async fn old_peer_requests_are_rejected_before_source_authorization() {
         assert!(error.message().contains("cache lifetime protocol"));
     }
 }
+
+#[test]
+fn ssd_watermark_flags_require_a_cache_and_both_percentages() {
+    let default = Cli::try_parse_from(["manager"]).unwrap();
+    assert_eq!(default.ssd_high_watermark_percent, None);
+    assert_eq!(default.ssd_low_watermark_percent, None);
+    for args in [
+        vec![
+            "--ssd-high-watermark-percent",
+            "80",
+            "--ssd-low-watermark-percent",
+            "60",
+        ],
+        vec![
+            "--ssd-cache-path",
+            "/tmp/cache",
+            "--ssd-high-watermark-percent",
+            "80",
+        ],
+        vec![
+            "--ssd-cache-path",
+            "/tmp/cache",
+            "--ssd-low-watermark-percent",
+            "60",
+        ],
+        vec![
+            "--ssd-cache-path",
+            "/tmp/cache",
+            "--ssd-high-watermark-percent",
+            "101",
+            "--ssd-low-watermark-percent",
+            "60",
+        ],
+    ] {
+        assert!(Cli::try_parse_from(std::iter::once("manager").chain(args)).is_err());
+    }
+    let cli = Cli::try_parse_from([
+        "manager",
+        "--ssd-cache-path",
+        "/tmp/cache",
+        "--ssd-high-watermark-percent",
+        "80",
+        "--ssd-low-watermark-percent",
+        "60",
+    ])
+    .unwrap();
+    assert_eq!(cli.ssd_high_watermark_percent, Some(80));
+    assert_eq!(cli.ssd_low_watermark_percent, Some(60));
+}

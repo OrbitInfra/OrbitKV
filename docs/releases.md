@@ -13,6 +13,17 @@ Changes below apply to the next pre-release; nothing new is published by this PR
 
 ## Next pre-release (unreleased)
 
+### Optional SSD watermarks
+
+Added paired `--ssd-high-watermark-percent` / `--ssd-low-watermark-percent`,
+`SsdCacheConfig::{high_watermark_percent, low_watermark_percent}`,
+`OrbitKVEngine::maintain_ssd_cache()` and `SsdCacheCleanupStats`. Exhaustive Rust
+config literals must add the two fields; defaults keep watermarks disabled.
+Bounded per-shard FIFO maintenance follows TTL/DRAM maintenance, retains live
+read/write ranges and syncs persistent invalidation before reuse. It changes
+no wire or file format. See [semantics and limits](cache-policies.md#ssd-highlow-watermarks).
+Installed NVMe/GPU/GDS and serving profiles remain unqualified.
+
 ### Fixed data TTL and persistent expiry
 
 Added `--cache-ttl-secs`, optional `EngineConfig::cache_ttl`,
@@ -37,7 +48,7 @@ that specify every field must add them; `Default` keeps both disabled.
 The Manager runs bounded maintenance once per second; embedded callers schedule
 the new `OrbitKVEngine::maintain_memory_cache()` method. The existing residence
 histogram adds `reason="watermark"`. See [policy and lifetime semantics](cache-policies.md#dram-highlow-watermarks).
-The watermark substep changes no wire or persistent format. SSD watermarks remain open;
+The watermark substep changes no wire or persistent format;
 GPU/RDMA/GDS and installed profiles remain unqualified.
 
 ### vLLM layerwise Save

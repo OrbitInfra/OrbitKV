@@ -98,7 +98,7 @@ fence later source grants, and existing SSD copies are preserved. Queued weak
 SSD writes can lose their source under eviction, as with allocation pressure.
 
 DRAM watermarks are independent of data TTL and preserve existing SSD copies.
-Coordinated SSD watermarks remain open. The watermark mechanism itself changes
+The watermark mechanism itself changes
 no peer/channel protocol or SSD format. The CPU host-registration shim
 exercises the real Rust allocation, replacement and inventory owners; it does
 not qualify GPU or RDMA transfers. No serving-performance gain is claimed.
@@ -108,6 +108,56 @@ The reference is LMCache's
 periodic physical-usage checks and eligibility-filtered eviction. OrbitKV uses
 its existing maintenance task and replacement classes, with explicit high/low
 hysteresis and bounded passes instead of an eviction ratio or another controller.
+
+## SSD high/low watermarks
+
+With an SSD cache configured, set `--ssd-high-watermark-percent 80` and
+`--ssd-low-watermark-percent 60`. Rust uses the corresponding
+`SsdCacheConfig::{high_watermark_percent, low_watermark_percent}` fields.
+Both default to `None`; values must satisfy `0 <= low < high <= 100`.
+Each shard starts a FIFO reclaim cycle at high and keeps it active until its
+occupied ring window reaches low. Thresholds use the aligned shard capacity,
+with percentages rounded down to bytes. Whole extents can take usage below low.
+
+The occupied window includes committed and unverified entries, active writes,
+held invalid generations, alignment padding and wrap/aborted-write gaps. It is
+`head - tail`, not a count of visible hits or filesystem free space. Maintenance
+advances the oldest reusable boundary; it neither truncates the cache files nor
+punches holes. Reclaimed-byte statistics can include gaps and exceed the sum of
+evicted payloads. A live WRITE or reader at the front stops that shard. Other
+shards continue; no live owner is revoked or bypassed. Recovery verification also
+holds a reader and therefore blocks reuse until its read drains.
+
+The existing Manager task runs expiry, DRAM watermarks and SSD watermarks in
+that order once per second, awaiting one blocking worker before scheduling the
+next pass. SSD maintenance visits at most 512 shard fronts in total, counting
+empty fronts and stale-generation/gap cleanup. The shard cursor and active
+cycles survive partial progress. At most 256 shard flags are held for a pass.
+A blocked shard is tried again on the next tick; new writes and held readers can
+keep usage above low. This is a soft target, not write admission control, a
+reserved-capacity guarantee or a policy to preserve the last replica across tiers.
+DRAM eviction preserves committed SSD copies; SSD eviction leaves DRAM copies
+alone. TTL still removes expired visibility independently of either watermark.
+
+Persistent mode syncs the existing generation-specific invalidation record
+before removing inventory and advancing the reusable boundary. One candidate
+holds the ring lock across this sync to fence new pins; no batch holds it across
+multiple records. A journal error retains that candidate and its range, returns
+an error and fences persistent writes. A crash after sync cannot resurrect the
+evicted record. The existing journal format and peer/channel protocols do not
+change. Reopen reconstructs window usage and starts fresh watermark hysteresis.
+
+Embedded users schedule `OrbitKVEngine::maintain_ssd_cache()` on a blocking
+worker after their expiry/DRAM maintenance. It returns `SsdCacheCleanupStats`;
+concurrent calls and disabled watermarks return empty statistics. Counters
+`orbitkv_ssd_watermark_evictions`, `orbitkv_ssd_watermark_reclaimed_bytes` and
+`orbitkv_ssd_watermark_blocked` expose logical evictions, reusable window bytes
+and blocked shard passes. These are capacity diagnostics, not performance claims.
+
+The CPU controls drive the production ring, journal and lease owners. Required
+Linux CI adds real Manager/io_uring held-reader, delayed-read-receipt, pending
+write and durable-invalidation SIGKILL cases on ext4 and tmpfs. Installed NVMe,
+GPU/GDS and serving behavior remains unqualified.
 
 ## Protect reused pages
 
