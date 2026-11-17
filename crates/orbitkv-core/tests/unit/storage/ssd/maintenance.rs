@@ -127,6 +127,20 @@ fn watermark_pass_is_bounded_and_keeps_hysteresis_until_low() {
 }
 
 #[test]
+fn reaching_low_at_the_scan_limit_ends_the_cycle_before_new_writes() {
+    let mut store = store(512 * 512, 1);
+    Arc::get_mut(&mut store).unwrap().watermarks = Some((0, 100));
+    for id in 0..512 {
+        insert(&store, id, true);
+    }
+    let stats = store.maintain_cache().unwrap();
+    assert_eq!((stats.scanned_entries, stats.evicted_blocks), (512, 512));
+    insert(&store, 512, true);
+    assert_eq!(store.maintain_cache().unwrap().evicted_blocks, 0);
+    assert!(store.discover(&[key(512)])[0].is_some());
+}
+
+#[test]
 fn held_and_writing_fronts_block_only_their_shard_until_drain() {
     for barrier in ["writing", "reader", "invalid_reader"] {
         let store = store(2048, 2);

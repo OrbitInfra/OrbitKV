@@ -137,7 +137,7 @@ struct SsdShardRing {
     capacity: u64,
     head: u64,
     tail: u64,
-    reclaiming: bool,
+    reclaim_target: Option<u64>,
     order: VecDeque<(StateKey, u64)>,
 }
 
@@ -264,7 +264,7 @@ impl SsdRingBuffer {
                     capacity,
                     head: 0,
                     tail: 0,
-                    reclaiming: false,
+                    reclaim_target: None,
                     order: VecDeque::new(),
                 })
                 .collect(),
@@ -383,15 +383,16 @@ impl SsdRingBuffer {
         let low = (u128::from(shard.capacity) * u128::from(low) / 100) as u64;
         let high = (u128::from(shard.capacity) * u128::from(high) / 100) as u64;
         if used <= low {
-            shard.reclaiming = false;
+            shard.reclaim_target = None;
             return WatermarkStep::Idle;
         }
-        if !shard.reclaiming && used < high {
+        if shard.reclaim_target.is_none() && used < high {
             return WatermarkStep::Idle;
         }
-        shard.reclaiming = true;
+        shard.reclaim_target = Some(low);
         let Some((key, generation)) = shard.order.front() else {
             shard.tail = shard.head;
+            shard.reclaim_target = None;
             return WatermarkStep::Pruned(used);
         };
         let Some(state) = self.entries.get(key).filter(|state| {
@@ -403,6 +404,9 @@ impl SsdRingBuffer {
         if entry.begin > shard.tail {
             let bytes = entry.begin - shard.tail;
             shard.tail = entry.begin;
+            if shard.head - shard.tail <= low {
+                shard.reclaim_target = None;
+            }
             return WatermarkStep::Pruned(bytes);
         }
         if matches!(state, SsdEntryState::Writing(_)) || entry.readers.load(Ordering::Acquire) != 0
@@ -419,6 +423,12 @@ impl SsdRingBuffer {
         shard.tail = shard
             .tail
             .max(shard.order.front().map_or(shard.head, |(_, begin)| *begin));
+        if shard
+            .reclaim_target
+            .is_some_and(|low| shard.head - shard.tail <= low)
+        {
+            shard.reclaim_target = None;
+        }
         shard.tail - old_tail
     }
 
