@@ -44,7 +44,10 @@ while not Path(child_ready).exists():
     if time.monotonic() >= deadline:
         raise RuntimeError('worker readiness timed out')
     time.sleep(0.01)
-Path(ready).write_text(json.dumps({'child': child.pid}))
+ready = Path(ready)
+temporary = ready.with_suffix('.tmp')
+temporary.write_text(json.dumps({'child': child.pid}))
+temporary.replace(ready)
 while True:
     time.sleep(1)
 """
