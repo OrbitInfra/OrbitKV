@@ -174,6 +174,14 @@ pub struct Cli {
     #[arg(long, requires = "ssd_cache_path")]
     pub ssd_persistent: bool,
 
+    /// Start per-shard SSD FIFO reclamation at this percentage (default off).
+    #[arg(long, requires_all = ["ssd_cache_path", "ssd_low_watermark_percent"], value_parser = clap::value_parser!(u8).range(1..=100))]
+    pub ssd_high_watermark_percent: Option<u8>,
+
+    /// Target percent for an active SSD reclamation cycle; must be below high.
+    #[arg(long, requires_all = ["ssd_cache_path", "ssd_high_watermark_percent"], value_parser = clap::value_parser!(u8).range(0..=99))]
+    pub ssd_low_watermark_percent: Option<u8>,
+
     /// SSD cache file shards per path. Use >1 for parallel filesystems such as GPFS.
     /// When multiple --ssd-cache-path values are given each path receives this many
     /// shards so that every device is utilised. Default: 1
@@ -666,6 +674,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         orbitkv_core::SsdCacheConfig {
             backend: cli.ssd_backend,
             persistent: cli.ssd_persistent,
+            high_watermark_percent: cli.ssd_high_watermark_percent,
+            low_watermark_percent: cli.ssd_low_watermark_percent,
             ..Default::default()
         }
         .validate_transfer_engine()?;
@@ -715,6 +725,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             cache_paths: cli.ssd_cache_path.iter().map(|p| p.into()).collect(),
             capacity_bytes: cli.ssd_cache_capacity as u64,
             persistent: cli.ssd_persistent,
+            high_watermark_percent: cli.ssd_high_watermark_percent,
+            low_watermark_percent: cli.ssd_low_watermark_percent,
             shards: cli.ssd_cache_shards,
             write_queue_depth: cli.ssd_write_queue_depth,
             write_policy: cli.ssd_write_policy,
@@ -922,7 +934,6 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         {
             let engine = Arc::clone(&engine);
             let shutdown = Arc::clone(&shutdown);
-            let maintain_memory = cli.cache_high_watermark_percent.is_some();
             tokio::spawn(async move {
                 const GC_INTERVAL: Duration = Duration::from_secs(60);
                 const INFLIGHT_MAX_AGE: Duration = Duration::from_secs(300); // 5 min
@@ -937,18 +948,24 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                         _ = memory_interval.tick() => {
                             let maintenance = Arc::clone(&engine);
                             // Await one bounded sweep; do not queue another while journal sync waits.
-                            match tokio::task::spawn_blocking(move || maintenance.expire_cache()).await {
-                                Ok(stats) if stats.dram_blocks != 0 || stats.ssd_blocks != 0 => {
-                                    log::debug!("Cache expiration: {stats:?}");
+                            if let Err(error) = tokio::task::spawn_blocking(move || {
+                                let expired = maintenance.expire_cache();
+                                if expired.dram_blocks != 0 || expired.ssd_blocks != 0 {
+                                    log::debug!("Cache expiration: {expired:?}");
                                 }
-                                Err(error) => log::error!("Cache expiration worker failed: {error}"),
-                                _ => {}
-                            }
-                            if maintain_memory {
-                                let stats = engine.maintain_memory_cache();
-                                if stats.evicted_blocks > 0 {
-                                    log::debug!("Watermark eviction: {stats:?}");
+                                let memory = maintenance.maintain_memory_cache();
+                                if memory.evicted_blocks != 0 {
+                                    log::debug!("DRAM watermark eviction: {memory:?}");
                                 }
+                                match maintenance.maintain_ssd_cache() {
+                                    Ok(stats) if stats.scanned_entries != 0 => {
+                                        log::debug!("SSD watermark eviction: {stats:?}");
+                                    }
+                                    Err(error) => log::error!("SSD watermark maintenance failed: {error}"),
+                                    _ => {}
+                                }
+                            }).await {
+                                log::error!("Cache maintenance worker failed: {error}");
                             }
                         }
                         _ = interval.tick() => {

@@ -432,3 +432,65 @@ fn ttl_never_releases_a_writing_or_pinned_extent() {
     ring.release_invalid(&replacement, &entry);
     assert!(ring.reserve(&key, slots(), Encoding::Raw, None).is_some());
 }
+
+#[test]
+fn watermark_gaps_wraps_and_stale_candidates_preserve_current_generations() {
+    let mut ring = SsdRingBuffer::new_sharded(vec![4096], 512);
+    let slots = |bytes| {
+        vec![SlotMeta::new(
+            smallvec::smallvec![bytes],
+            crate::NumaNode::UNKNOWN,
+        )]
+    };
+    let old = ring
+        .reserve(&make_key(1), slots(3072), Encoding::Raw, None)
+        .unwrap();
+    assert!(ring.commit(&make_key(1), true));
+    assert!(ring.invalidate(&make_key(1), &old));
+    let replacement = ring
+        .reserve(&make_key(1), slots(2048), Encoding::Raw, None)
+        .unwrap();
+    assert!(ring.commit(&make_key(1), true));
+    assert_eq!(
+        replacement.file_offset, 0,
+        "reservation skipped the wrap gap"
+    );
+    assert!(ring.retire_watermark(&make_key(1), &old).is_none());
+    assert!(matches!(
+        ring.watermark_step(0, 50, 75),
+        WatermarkStep::Pruned(2048)
+    ));
+    assert!(matches!(
+        ring.watermark_step(0, 50, 75),
+        WatermarkStep::Idle
+    ));
+    assert!(Arc::ptr_eq(
+        &ring.get(&make_key(1)).unwrap().readers,
+        &replacement.readers
+    ));
+    assert_eq!((ring.shards[0].head, ring.shards[0].tail), (6144, 4096));
+
+    // A failed write leaves no visible generation but its gap is counted and reclaimed.
+    let failed = ring
+        .reserve(&make_key(2), slots(2048), Encoding::Raw, None)
+        .unwrap();
+    assert!(!ring.commit(&make_key(2), false));
+    assert_eq!(failed.begin, 6144);
+    assert!(matches!(
+        ring.watermark_step(0, 0, 100),
+        WatermarkStep::Evict(..)
+    ));
+    assert_eq!(
+        ring.retire_watermark(&make_key(1), &replacement),
+        Some(2048)
+    );
+    assert!(matches!(
+        ring.watermark_step(0, 0, 100),
+        WatermarkStep::Pruned(2048)
+    ));
+    assert!(matches!(
+        ring.watermark_step(0, 0, 100),
+        WatermarkStep::Idle
+    ));
+    assert_eq!(ring.shards[0].head, ring.shards[0].tail);
+}

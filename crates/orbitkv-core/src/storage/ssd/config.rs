@@ -98,6 +98,11 @@ pub struct SsdCacheConfig {
     pub capacity_bytes: u64,
     /// Recover committed, checksum-verified SSD entries after Manager restart.
     pub persistent: bool,
+    /// Start FIFO reclamation at this percent of each shard's occupied ring window.
+    /// Both watermarks are required; omission keeps overwrite-pressure eviction only.
+    pub high_watermark_percent: Option<u8>,
+    /// Stop an active cycle at this percent; requires 0 <= low < high <= 100.
+    pub low_watermark_percent: Option<u8>,
     /// Number of cache files per path. 1 keeps the existing single-file SSD layout
     /// when only one path is configured. With multiple paths each path receives this
     /// many shards so that every device is utilised.
@@ -123,6 +128,8 @@ impl Default for SsdCacheConfig {
             cache_paths: vec![PathBuf::from("/tmp/orbitkv-ssd-cache/cache.bin")],
             capacity_bytes: 512 * 1024 * 1024 * 1024, // 512GB
             persistent: false,
+            high_watermark_percent: None,
+            low_watermark_percent: None,
             shards: NonZeroUsize::MIN,
             write_queue_depth: DEFAULT_SSD_WRITE_QUEUE_DEPTH,
             write_policy: SsdWritePolicy::All,
@@ -131,6 +138,16 @@ impl Default for SsdCacheConfig {
             prefetch_inflight: DEFAULT_SSD_PREFETCH_INFLIGHT,
             backend: SsdBackend::Auto,
             read_path: None,
+        }
+    }
+}
+
+impl SsdCacheConfig {
+    pub(crate) fn watermarks(&self) -> Result<Option<(u8, u8)>, String> {
+        match (self.low_watermark_percent, self.high_watermark_percent) {
+            (None, None) => Ok(None),
+            (Some(low), Some(high)) if low < high && high <= 100 => Ok(Some((low, high))),
+            _ => Err("SSD watermarks require both percentages with 0 <= low < high <= 100".into()),
         }
     }
 }

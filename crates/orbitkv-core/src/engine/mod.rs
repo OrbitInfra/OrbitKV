@@ -575,6 +575,25 @@ impl OrbitKVEngine {
         self.storage.maintain_memory_cache()
     }
 
+    /// Reclaim SSD FIFO windows toward their configured low watermarks.
+    ///
+    /// Examines at most 512 shard fronts per call; active writes and readers stop
+    /// their shard, while other shards can progress. Persistent eviction is synced
+    /// before reuse, so call from a blocking worker. A durability failure returns
+    /// an error and fences persistent writes. The Manager schedules this after TTL
+    /// and DRAM maintenance; embedded callers must schedule it themselves.
+    /// Disabled watermarks or a concurrent pass return empty statistics.
+    pub fn maintain_ssd_cache(&self) -> Result<crate::SsdCacheCleanupStats, EngineError> {
+        self.storage.ssd_store.as_ref().map_or_else(
+            || Ok(crate::SsdCacheCleanupStats::default()),
+            |store| {
+                store
+                    .maintain_cache()
+                    .map_err(|error| EngineError::Storage(error.to_string()))
+            },
+        )
+    }
+
     /// Examine at most 512 finite-lived entries per tier and retire expired generations.
     ///
     /// This may synchronize SSD journal invalidations. Call from a blocking worker.

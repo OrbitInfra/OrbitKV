@@ -138,7 +138,11 @@ Optional DRAM high/low watermarks use the same Storage allocator and replacement
 classes. The Manager schedules bounded passes in its existing maintenance task;
 physical pool usage, including held and staging allocations, controls hysteresis.
 Inventory removal does not establish memory release. These soft targets add no
-independent cache queue or lease expiry. See [cache policies](cache-policies.md).
+independent cache queue or lease expiry. The same task then maintains optional
+SSD per-shard watermarks over occupied FIFO windows. Active writes and readers
+block their shard; generation-specific journal invalidation precedes persistent
+reuse. DRAM and SSD eviction remove only their own replicas. See
+[cache policies](cache-policies.md#ssd-highlow-watermarks).
 
 ### Transfer and backing domains
 

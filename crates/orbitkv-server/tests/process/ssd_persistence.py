@@ -54,7 +54,15 @@ def port():
 
 class Manager:
     def __init__(
-        self, gate, path, *, capacity=4096, persistent=True, pauses=(), rejected=False
+        self,
+        gate,
+        path,
+        *,
+        capacity=4096,
+        persistent=True,
+        pauses=(),
+        rejected=False,
+        watermarks=None,
     ):
         self.gate, self.sequence = gate, 0
         self.root = Path(tempfile.mkdtemp(prefix="okv-ssd-"))
@@ -93,6 +101,16 @@ class Manager:
             "--bootstrap-socket",
             str(self.root / "m.sock"),
         ]
+        if watermarks is not None:
+            low, high = watermarks
+            command.extend(
+                [
+                    "--ssd-low-watermark-percent",
+                    str(low),
+                    "--ssd-high-watermark-percent",
+                    str(high),
+                ]
+            )
         if persistent:
             command.append("--ssd-persistent")
         self.process = subprocess.Popen(
@@ -113,7 +131,9 @@ class Manager:
             return
         self.wait(lambda: (self.control / "ready").exists())
         self.wait(lambda: "Standalone Cache Manager ready" in self.log_path.read_text())
-        if "ssd_before_verification" not in pauses:
+        if not {"ssd_before_verification", "ssd_watermark_invalidated"}.intersection(
+            pauses
+        ):
             self.recovered()
 
     def wait(self, condition, timeout=90):
@@ -288,7 +308,9 @@ class Gate:
             child.close(kill=True)
             child = self.manager(path, pauses=[point])
         child.reached(point)
-        records = [value for value in frames(Path(str(path) + ".index")) if value.get("expiry")]
+        records = [
+            value for value in frames(Path(str(path) + ".index")) if value.get("expiry")
+        ]
         assert records, "publication lifetime must already be durable"
         expires = records[-1]["expiry"]["expires_unix_millis"]
         child.wait(lambda: time.time_ns() // 1_000_000 >= expires)
@@ -297,7 +319,9 @@ class Gate:
             child.recovered()
             child.read(present=False)
         else:
-            assert not child.reply()["present"], "late write renewed its expired publication"
+            assert not child.reply()["present"], (
+                "late write renewed its expired publication"
+            )
         child.close(kill=True)
         child = self.manager(path)
         child.read(present=False)
@@ -460,6 +484,83 @@ class Gate:
         child.read(present=False)
         child.close()
 
+    def watermark_blocked(self, child):
+        from urllib.request import urlopen
+
+        def blocked():
+            with urlopen(f"http://{child.http}/metrics", timeout=10) as response:
+                lines = response.read().decode().splitlines()
+            return any(
+                line.split("{", 1)[0].split(" ", 1)[0]
+                == "orbitkv_ssd_watermark_blocked_total"
+                and float(line.split()[-1]) > 0
+                for line in lines
+            )
+
+        child.wait(blocked)
+
+    def watermark_reader(self, path, receipt):
+        child = self.manager(path, watermarks=(25, 75))
+        assert child.call("write", id=1)["present"]
+        if receipt:
+            child.pause("ssd_read_receipt")
+            child.call("read_start", id=1)
+            child.reached("ssd_read_receipt")
+        else:
+            assert child.call("hold", id=1)["present"]
+        for id in (2, 3):
+            assert child.call("write", id=id)["present"]
+        self.watermark_blocked(child)
+        state = child.call("report")["state"]["ring"]
+        assert state["entries"] == 3 and state["readers"] > 0, state
+        if receipt:
+            child.release("ssd_read_receipt")
+            result = child.call("read_finish")
+            assert [slot["bytes"] for slot in result["slots"]] == [[1] * 137, [2] * 631]
+        else:
+            child.call("release")
+        child.wait(lambda: child.call("report")["state"]["ring"]["entries"] == 1)
+        child.read(1, present=False)
+        child.read(2, present=False)
+        child.read(3)
+        child.close(kill=True)
+        restarted = self.manager(path)
+        restarted.read(1, present=False)
+        restarted.read(2, present=False)
+        restarted.read(3)
+        restarted.close()
+
+    def watermark_writing(self, path):
+        child = self.manager(
+            path, capacity=1024, watermarks=(0, 100), pauses=["ssd_data_written"]
+        )
+        child.send("write", id=1)
+        child.reached("ssd_data_written")
+        self.watermark_blocked(child)
+        child.release("ssd_data_written")
+        child.reply()  # Visibility may already be removed by the next maintenance tick.
+        child.wait(lambda: child.call("report")["state"]["ring"]["entries"] == 0)
+        child.close(kill=True)
+        restarted = self.manager(path, capacity=1024)
+        restarted.read(1, present=False)
+        restarted.close()
+
+    def watermark_crash(self, path):
+        child = self.manager(path)
+        for id in (1, 2, 3):
+            assert child.call("write", id=id)["present"]
+        child.close()
+        child = self.manager(
+            path, watermarks=(25, 75), pauses=["ssd_watermark_invalidated"]
+        )
+        child.reached("ssd_watermark_invalidated")
+        child.close(kill=True)
+        restarted = self.manager(path)
+        restarted.read(1, present=False)
+        restarted.read(2)
+        restarted.read(3)
+        restarted.close()
+
     def shrink(self, path):
         child = self.manager(path, capacity=3072)
         for id in range(1, 4):
@@ -568,6 +669,10 @@ def main():
         gate.case(f"wrap-{point}", lambda path, p=point: gate.wrap(path, p))
     gate.case("reader-protects-reuse", lambda path: gate.owners(path, False))
     gate.case("receipt-protects-reuse", lambda path: gate.owners(path, True))
+    gate.case("watermark-held-reader", lambda path: gate.watermark_reader(path, False))
+    gate.case("watermark-read-receipt", lambda path: gate.watermark_reader(path, True))
+    gate.case("watermark-writing", gate.watermark_writing)
+    gate.case("watermark-invalidation-crash", gate.watermark_crash)
     gate.case("capacity-shrink", gate.shrink)
     for point in ["ssd_checkpoint_synced", "ssd_checkpoint_replaced"]:
         gate.case(point, lambda path, p=point: gate.checkpoint(path, p))

@@ -18,8 +18,10 @@ mod files;
 pub(crate) mod index;
 pub(crate) mod io;
 pub(crate) mod layout;
+mod maintenance;
 pub(crate) mod metadata;
 mod persistence;
+pub use maintenance::SsdCacheCleanupStats;
 #[cfg(feature = "test-hooks")]
 #[path = "../../../tests/support/ssd_process.rs"]
 pub(crate) mod process_test;
@@ -321,6 +323,8 @@ pub(crate) struct SsdStore {
     io: Arc<SsdIo>,
     write_tx: tokio::sync::mpsc::Sender<SsdWriteCommand>,
     write_policy: SsdWritePolicy,
+    watermarks: Option<(u8, u8)>,
+    watermark_sweep: Mutex<usize>,
     prefetch_tx: tokio::sync::mpsc::Sender<PrefetchBatch>,
     inner: Mutex<SsdInner>,
     allocate_fn: AllocateFn,
@@ -543,6 +547,7 @@ impl SsdStore {
     ) -> std::io::Result<Arc<Self>> {
         use std::fs::OpenOptions;
 
+        let watermarks = config.watermarks().map_err(std::io::Error::other)?;
         let shards_per_path = config.shards.get();
         let total_shards = config
             .cache_paths
@@ -682,6 +687,8 @@ impl SsdStore {
             io: Arc::clone(&io),
             write_tx,
             write_policy: config.write_policy,
+            watermarks,
+            watermark_sweep: Mutex::new(0),
             prefetch_tx,
             inner: Mutex::new(SsdInner {
                 ring,
