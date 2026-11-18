@@ -236,7 +236,7 @@ jobs:
         uses: ./.github/actions/install-cuda
       - name: Install native build dependencies
         run: |
-          bash .github/scripts/retry-install.sh apt-get install -y pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev liburing-dev patchelf
+          bash .github/scripts/retry-install.sh apt-get install -y pkg-config clang-18 libclang-18-dev libibverbs-dev librdmacm-dev libnuma-dev liburing-dev patchelf etcd-server
       - name: Install protocol compiler
         run: bash scripts/install-protoc.sh
 
@@ -249,6 +249,22 @@ jobs:
         continue-on-error: true # The next step requires working cached or direct rustc.
       - name: Validate sccache or select direct rustc
         run: scripts/configure-rustc-wrapper.sh
+      - name: Exercise membership and inventory over real etcd and gRPC
+        shell: bash
+        env:
+          ETCD_BIN: /usr/bin/etcd
+        run: |
+          for test_name in \
+            stream_installs_exact_owner_views_and_recovers_overflow_without_etcd_blocks \
+            scoped_streams_filter_at_source_and_install_complete_empty_views \
+            scope_change_restart_never_reuses_the_old_view_or_cursor
+          do
+            test_path="cluster::inventory::tests::$test_name"
+            log="$RUNNER_TEMP/$test_name.log"
+            cargo test --locked -p orbitkv-server --no-default-features --features cuda-13,test-hooks \
+              --lib "$test_path" -- --exact --ignored | tee "$log"
+            grep -Fx "test $test_path ... ok" "$log"
+          done
       - name: Run cargo check
         run: |
           cargo check -p orbitkv-core

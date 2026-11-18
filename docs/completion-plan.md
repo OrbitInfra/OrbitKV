@@ -228,8 +228,9 @@ SIGKILL or clean restart.
 ### M3 — A complete cluster
 
 The local lookup contract is implemented. CPU controls cover expired receipts,
-duplicate updates, independent owner progress and the interval between revoking
-an old incarnation and installing the replacement inventory.
+duplicate updates, independent owner progress and delayed frames across member
+replacement. The Linux gate exercises scoped inventory streams, journal overflow
+and scope-changing restarts over real etcd and gRPC.
 
 Separate PRs for bounded-stale placement discovery and router lookup/events;
 a shared filesystem/3FS tier; node-loss recovery; MLA TP deduplication and hybrid

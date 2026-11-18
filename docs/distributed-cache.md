@@ -97,6 +97,9 @@ Frames are limited to 1,024 records and 512 KiB encoded/decoded content. Current
 bounds include 1 MiB messages/per-stream credit, 32 MiB aggregate outbound credit,
 128 sessions per direction, two served/received snapshots, 64 fence awaiters and
 16 MiB/s source pacing with a 1 MiB burst. Reconnect backoff is 100 ms to 3 s.
+Each follower holds its receiver slot across reconnects. With more than 128
+remote owners, some streams can wait indefinitely while the admitted peers stay
+present. A fresh requester cannot promise complete coverage in that topology.
 Scopes allow at most 256 namespaces and a 64 KiB encoded Open.
 
 `--index-budget` charges active and hidden staging views together. Incomplete
