@@ -1,3 +1,5 @@
+pub(crate) mod router;
+
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::pin::Pin;
 use std::sync::Arc;

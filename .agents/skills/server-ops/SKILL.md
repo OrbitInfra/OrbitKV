@@ -48,6 +48,10 @@ registration, or use `--metadata-empty-scope` for an explicit empty set. Scope i
 startup configuration: change it by restarting and fully bootstrapping the
 Manager. Never infer it from model display names, prefixes or query misses. The
 allowlist reduces record bytes, not peer-session fanout, and is not tenant auth.
+The optional loopback router API binds each bearer fingerprint to one exact
+namespace. Its source cursor is independent of peer hint freshness. After an
+event gap or incarnation change, relookup the tracked hashes and resume from
+the fresh source sequence. See the [router contract](../../../docs/distributed-cache.md#router-lookups-and-source-events).
 
 Trace an incident through its owner:
 

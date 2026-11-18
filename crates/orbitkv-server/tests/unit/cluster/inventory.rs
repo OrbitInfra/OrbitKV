@@ -768,3 +768,7 @@ async fn aborted_receiver_session_releases_the_active_diagnostic() {
     let _ = task.await;
     assert_eq!(runtime.status().receiver_sessions, 0);
 }
+
+#[cfg(feature = "test-hooks")]
+#[path = "router.rs"]
+mod router;

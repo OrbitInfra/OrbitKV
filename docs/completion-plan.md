@@ -8,8 +8,9 @@ grants and resource lifetime. This is the only execution queue.
 M2 coordinated SSD watermarks are implemented. M3 discovery now applies the
 [placement lookup contract](distributed-cache.md#placement-lookup-contract) to
 the Manager's existing catalog. Complete coverage requires matching membership
-and recent receipts from every expected owner. The next M3 delivery is the
-bounded router lookup and event contract, including cursor loss and resync.
+and recent receipts from every expected owner. The read-only router API serves bounded placement batches and replays source
+events from the retained journal. The next M3 delivery is shared-file storage
+and recovery after losing an owner.
 Source implementation and CPU controls do not qualify installed GPU profiles,
 which remain unqualified.
 Each coherent PR stops for review before dependent work starts. Research designs
@@ -96,7 +97,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 | --- | --- | --- |
 | Membership | **Have:** etcd leases, persistent epochs and Watch fencing. [Membership](distributed-cache.md#local-global-index-and-etcd-metadata). | F/M coordination |
 | Bounded-stale placement directory | **Partial:** requester-local coverage uses one membership cut and a three-second receipt limit. Source grants authorize payload access. External directory access and publication-to-visibility bounds under pressure remain open. [Coverage](distributed-cache.md#placement-lookup-contract). | F metadata service, L coordinator, M master |
-| Router lookup / KV events | **Missing:** diagnostics are not a router API. Target [llm-d's event index](https://github.com/llm-d/llm-d/blob/main/docs/architecture/advanced/kv-management/kv-indexer.md) and [Dynamo's selection interface](https://docs.nvidia.com/dynamo/dev/knowledge-base/modular-components/router/standalone-selection). | L coordination and V KV events; no new inference router |
+| Router lookup / KV events | [Authenticated batch lookup and source-event replay](distributed-cache.md#router-lookups-and-source-events) implemented. An external router can consume placements as in [llm-d’s KV indexer](https://llm-d.ai/docs/dev/architecture/advanced/kv-management/kv-indexer/) or [Dynamo’s standalone selection](https://docs.nvidia.com/dynamo/dev/knowledge-base/modular-components/router/standalone-selection). | L coordination and V KV events; no new inference router |
 | Replica selection | **Have:** deterministic, coverage-first [fixed medium and owner ordering](architecture.md#planning). Cost-based selection is removed by design until hardware evidence warrants reconsideration; no blind replay on failure. | L/F/M replica lookup |
 | Node loss | **Partial:** retired epochs are fenced and uncertain owners retained; permanent-loss reclamation/cache HA unqualified. [Retirement](transport.md#peer-departure). | F distributed reuse, M leases/replicas |
 | LRU / TTL / watermarks | **Partial:** LRU/protected retention, SSD admission and optional bounded DRAM high/low watermarks and fixed data TTL across DRAM, SSD and peers; per-shard SSD watermarks with durable FIFO retirement are implemented. Membership TTL is separate. [Policies](cache-policies.md). | L/F LRU, V LRU/ARC, M watermarks/soft pinning |
@@ -232,12 +233,16 @@ duplicate updates, independent owner progress and delayed frames across member
 replacement. The Linux gate exercises scoped inventory streams, journal overflow
 and scope-changing restarts over real etcd and gRPC.
 
-Separate PRs for bounded-stale placement discovery and router lookup/events;
-a shared filesystem/3FS tier; node-loss recovery; MLA TP deduplication and hybrid
-coverage allowed by engines. Extend existing inventory/source owners. Define
-staleness, missed-event resync, replica fallback, tenant isolation, authentication
-and exact capacity accounting before exposing APIs. An index is a hint; only a
-current grant authorizes bytes.
+The router's read-only HTTP contract exposes scoped batch hints and per-source
+journal replay. It authenticates before reading the body and bounds lookups,
+event polls and encoded replies separately from source grants. The Linux gate
+covers source replacement, missed-event recovery and namespace isolation over
+real HTTP, gRPC and etcd. See the [consumer protocol](distributed-cache.md#router-lookups-and-source-events).
+
+Remaining M3 work includes a shared filesystem/3FS tier, node-loss recovery,
+MLA TP deduplication and hybrid coverage allowed by engines. Shared-tier work
+must establish tenant isolation, capacity accounting and recovery after an
+owner disappears. Only a current grant authorizes payload access.
 
 **CPU now:** multi-process etcd/TCP faults, epochs, bounded snapshots/events,
 router contracts, shared-file races/GC, tenant isolation and dedup accounting.

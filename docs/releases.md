@@ -26,6 +26,14 @@ Inventory mutations, cursor reads and fence status now take the original
 `retire_owner` reports whether that lease needs bounded cleanup.
 See the [lookup contract](distributed-cache.md#placement-lookup-contract).
 
+Distributed Managers can now enable a read-only, namespace-bound router API on
+loopback with `--router-credentials`. Lookup returns local placements and
+bounded peer hints. Polls replay coalesced local residency changes and require
+a new lookup after a history gap or source replacement.
+The internal, unpublished Manager crate removes the unused public
+`http_server::start_http_server` wrapper. Manager startup owns the HTTP listener.
+See the [router protocol](distributed-cache.md#router-lookups-and-source-events).
+
 ### Optional SSD watermarks
 
 Added paired `--ssd-high-watermark-percent` / `--ssd-low-watermark-percent`,

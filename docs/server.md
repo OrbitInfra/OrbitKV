@@ -29,6 +29,11 @@ orbitkv-cache-manager
 - `--metrics-otel-endpoint`: OTLP metrics export endpoint (optional, leave unset to disable)
 - `--metrics-period-secs`: Metrics export period in seconds (default: `10`, only used with OTLP)
 
+With distributed membership enabled, `--router-credentials <file>` adds
+authenticated `POST /v1/router/lookup` and `POST /v1/router/events`. Set
+`--http-addr` to a loopback address. The [router contract](distributed-cache.md#router-lookups-and-source-events)
+describes the credential file, request bounds, response fields and recovery.
+
 ### HTTP Endpoints
 
 - `GET /health`: Health check.

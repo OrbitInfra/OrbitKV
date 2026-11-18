@@ -88,7 +88,7 @@ pub struct ReplicaMetadata {
     pub stored_bytes: Option<u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ReplicaLocation {
     pub owner: CacheOwner,
     /// Sequence of the insertion in this owner's current runtime inventory.

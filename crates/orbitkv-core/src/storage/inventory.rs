@@ -182,6 +182,29 @@ impl ResidencyInventory {
         self.change(key, medium, metadata)
     }
 
+    /// Sample the requested host residences and the journal watermark under one lock.
+    pub fn lookup_at_sequence(
+        &self,
+        keys: &[StateKey],
+    ) -> Result<(u64, Vec<InventoryRecord>), InventoryReadError> {
+        if keys.len() > orbitkv_state::DISCOVERY_MAX_KEYS {
+            return Err(InventoryReadError::InvalidRecord);
+        }
+        let state = self.state.lock();
+        if state.sequence == u64::MAX {
+            return Err(InventoryReadError::SequenceExhausted);
+        }
+        let mut residents = Vec::new();
+        for key in keys {
+            for medium in [ReplicaMedium::Dram, ReplicaMedium::Ssd] {
+                if let Some(record) = state.residents.get(&(key.clone(), medium)) {
+                    residents.push(record.clone());
+                }
+            }
+        }
+        Ok((state.sequence, residents))
+    }
+
     pub fn sequence(&self) -> u64 {
         self.state.lock().sequence
     }

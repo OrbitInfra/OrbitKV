@@ -399,3 +399,46 @@ fn exhausted_sequence_rejects_mutation_and_advertisement() {
     );
     assert_eq!(inventory.sequence(), u64::MAX);
 }
+
+#[test]
+fn batch_baseline_and_resume_share_the_source_sequence() {
+    let inventory = ResidencyInventory::new(4096);
+    let first = key(1);
+    let second = key(2);
+    inventory
+        .change(
+            &first,
+            ReplicaMedium::Dram,
+            Some(metadata(ReplicaMedium::Dram)),
+        )
+        .unwrap();
+    inventory
+        .change(
+            &first,
+            ReplicaMedium::Ssd,
+            Some(metadata(ReplicaMedium::Ssd)),
+        )
+        .unwrap();
+    let (cut, rows) = inventory
+        .lookup_at_sequence(&[second.clone(), first.clone()])
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(
+        rows.iter()
+            .all(|r| r.key == first && r.present && r.sequence <= cut)
+    );
+    inventory.change(&first, ReplicaMedium::Dram, None).unwrap();
+    inventory
+        .change(
+            &second,
+            ReplicaMedium::Dram,
+            Some(metadata(ReplicaMedium::Dram)),
+        )
+        .unwrap();
+    let (next, current) = inventory.lookup_at_sequence(&[first, second]).unwrap();
+    let changes = inventory.changes(cut, next).unwrap();
+    assert_eq!(changes.len(), 2);
+    assert!(!changes[0].present);
+    assert_eq!(changes[1], current[1]);
+    assert_eq!(current[0], rows[1]);
+}
