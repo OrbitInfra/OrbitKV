@@ -129,8 +129,9 @@ two paths. Other Manager HTTP endpoints are operational controls.
    retain each batch's baseline sequence, including for absent rows. Apply only
    changes newer than that baseline. Restart on any stream change or gap.
    A cursor binds cluster, source epoch/incarnation, membership generation,
-   exact namespace and the last source sequence. `503 membership_unavailable`
-   suspends use of that source until a fresh lookup succeeds.
+   exact namespace and the last source sequence. Suspend that source on
+   `503 membership_unavailable`, a connection failure or a timeout. Resume
+   using it after a fresh lookup succeeds.
 
 Each request accepts at most 320 KiB of JSON with a one-second body deadline.
 Lookup accepts 1–128 hashes and 64 KiB of namespace plus raw hash bytes.

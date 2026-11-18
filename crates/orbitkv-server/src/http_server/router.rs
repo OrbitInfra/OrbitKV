@@ -73,8 +73,12 @@ impl Credentials {
 
     fn authenticate(&self, headers: &HeaderMap) -> Option<&InventoryScope> {
         let mut values = headers.get_all(header::AUTHORIZATION).iter();
-        let token = values.next()?.as_bytes().strip_prefix(b"Bearer ")?;
-        if values.next().is_some() || !is_lower_hex_64(token) {
+        let (scheme, rest) = values.next()?.to_str().ok()?.split_once(' ')?;
+        let token = rest.trim_start_matches(' ').as_bytes();
+        if !scheme.eq_ignore_ascii_case("Bearer")
+            || values.next().is_some()
+            || !is_lower_hex_64(token)
+        {
             return None;
         }
         self.0.get(&format!("{:x}", Sha256::digest(token)))
@@ -122,15 +126,33 @@ struct EventsRequest {
     wait_ms: u64,
 }
 
-type HttpError = (StatusCode, &'static str);
+#[derive(Debug)]
+struct HttpError(StatusCode, &'static str);
+
+impl IntoResponse for HttpError {
+    fn into_response(self) -> Response {
+        let mut response = (self.0, self.1).into_response();
+        if self.0 == StatusCode::UNAUTHORIZED {
+            response.headers_mut().insert(
+                header::WWW_AUTHENTICATE,
+                header::HeaderValue::from_static("Bearer"),
+            );
+        }
+        response
+    }
+}
 
 impl From<RouterError> for HttpError {
     fn from(error: RouterError) -> Self {
         match error {
-            RouterError::Invalid(reason) => (StatusCode::BAD_REQUEST, reason),
-            RouterError::Resync => (StatusCode::CONFLICT, "resync_required"),
-            RouterError::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "membership_unavailable"),
-            RouterError::Inventory => (StatusCode::SERVICE_UNAVAILABLE, "inventory_unavailable"),
+            RouterError::Invalid(reason) => HttpError(StatusCode::BAD_REQUEST, reason),
+            RouterError::Resync => HttpError(StatusCode::CONFLICT, "resync_required"),
+            RouterError::Unavailable => {
+                HttpError(StatusCode::SERVICE_UNAVAILABLE, "membership_unavailable")
+            }
+            RouterError::Inventory => {
+                HttpError(StatusCode::SERVICE_UNAVAILABLE, "inventory_unavailable")
+            }
         }
     }
 }
@@ -144,18 +166,18 @@ impl RouterState {
         let scope = self
             .credentials
             .authenticate(request.headers())
-            .ok_or((StatusCode::UNAUTHORIZED, "unauthorized"))?;
+            .ok_or(HttpError(StatusCode::UNAUTHORIZED, "unauthorized"))?;
         let slot = slots
             .clone()
             .try_acquire_owned()
-            .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "busy"))?;
+            .map_err(|_| HttpError(StatusCode::TOO_MANY_REQUESTS, "busy"))?;
         let Json(query) = tokio::time::timeout(
             Duration::from_secs(1),
             Json::<T>::from_request(request, &()),
         )
         .await
-        .map_err(|_| (StatusCode::REQUEST_TIMEOUT, "request_body_timeout"))?
-        .map_err(|rejection| (rejection.status(), "invalid_request"))?;
+        .map_err(|_| HttpError(StatusCode::REQUEST_TIMEOUT, "request_body_timeout"))?
+        .map_err(|rejection| HttpError(rejection.status(), "invalid_request"))?;
         Ok((scope, query, slot))
     }
 }
@@ -212,7 +234,7 @@ fn reply<T: Serialize>(value: &T, slot: OwnedSemaphorePermit) -> Result<Response
         _slot: slot,
     };
     serde_json::to_writer(&mut body, value).map_err(|_| {
-        (
+        HttpError(
             StatusCode::INTERNAL_SERVER_ERROR,
             "response_encoding_failed",
         )

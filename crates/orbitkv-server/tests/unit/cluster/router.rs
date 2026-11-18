@@ -53,6 +53,13 @@ async fn post(address: SocketAddr, path: &str, token: char, body: Value, expecte
         headers.starts_with(&format!("HTTP/1.1 {expected} ")),
         "{response}"
     );
+    if expected == 401 {
+        assert!(
+            headers
+                .to_ascii_lowercase()
+                .contains("\r\nwww-authenticate: bearer")
+        );
+    }
     if expected == 200 {
         serde_json::from_str(body).unwrap()
     } else {
@@ -118,6 +125,14 @@ async fn http_router_recovers_scoped_events_after_gaps_and_owner_restart() {
         400,
     )
     .await;
+    post(
+        addr,
+        "lookup",
+        'a',
+        json!({"hashes":[vec![255u8; 100_000]]}),
+        413,
+    )
+    .await;
     let baseline = post(addr, "lookup", 'a', query.clone(), 200).await;
     assert_eq!(
         baseline["source"]["incarnation"],
@@ -136,6 +151,17 @@ async fn http_router_recovers_scoped_events_after_gaps_and_owner_restart() {
     assert_eq!(remote["placements"][1]["peers"], json!([]));
     assert_eq!(remote["local"], json!([]));
     let initial = json!({"cursor":baseline["cursor"]});
+    let mut future = initial.clone();
+    future["cursor"]["sequence"] = json!(u64::MAX);
+    post(addr, "events", 'a', future, 409).await;
+    post(
+        addr,
+        "events",
+        'a',
+        json!({"cursor":baseline["cursor"], "wait_ms":1001}),
+        400,
+    )
+    .await;
     post(peer, "events", 'a', initial.clone(), 409).await;
     post(addr, "events", 'b', initial.clone(), 409).await;
     inventory
@@ -207,6 +233,13 @@ async fn http_router_recovers_scoped_events_after_gaps_and_owner_restart() {
         port,
         InventoryScope::AllNamespaces,
     )
+    .await;
+    wait_for(|| {
+        replacement
+            .cluster
+            .view
+            .permits(replacement.cluster.view.owner())
+    })
     .await;
     let (addr, http_rejoined) = http(replacement.runtime.clone()).await;
     post(addr, "events", 'a', json!({"cursor":fresh["cursor"]}), 409).await;

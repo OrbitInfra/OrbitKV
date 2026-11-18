@@ -157,12 +157,14 @@ impl MembershipView {
                 (owner.incarnation, member)
             })
             .collect();
+        let mut changed = !state.ready || next.len() != state.members.len();
         for (incarnation, member) in &state.members {
             if next.get(incarnation) != Some(member) {
+                changed = true;
                 member.0.revoked.store(true, Ordering::Release);
             }
         }
-        if !state.ready || state.members != next {
+        if changed {
             state.generation += 1;
         }
         state.members = next;

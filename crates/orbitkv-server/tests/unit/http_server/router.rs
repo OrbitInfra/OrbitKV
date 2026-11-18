@@ -26,6 +26,11 @@ fn credentials_require_one_admitted_namespace_per_fingerprint() {
             .unwrap(),
         [namespace]
     );
+    headers.insert(
+        header::AUTHORIZATION,
+        HeaderValue::from_str(&format!("bEaReR   {token}")).unwrap(),
+    );
+    assert!(credentials.authenticate(&headers).is_some());
     headers.append(header::AUTHORIZATION, bearer);
     assert!(credentials.authenticate(&headers).is_none());
     assert!(
