@@ -4,7 +4,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use orbitkv_catalog::{DeltaApply, GlobalIndex, INVENTORY_RECEIPT_TIMEOUT, MembershipView};
+use orbitkv_catalog::{
+    DeltaApply, GlobalIndex, INVENTORY_RECEIPT_TIMEOUT, MemberLease, MembershipView,
+};
 use orbitkv_core::{InventoryReadError, ResidencyInventory};
 use orbitkv_proto::proto::engine::inventory_client::InventoryClient;
 use orbitkv_proto::proto::engine::inventory_server::Inventory;
@@ -137,7 +139,6 @@ struct Shared {
     members: RwLock<MemberState>,
     member_changes: watch::Sender<u64>,
     controls: Mutex<HashMap<Uuid, (Uuid, mpsc::Sender<InventoryClientFrame>)>>,
-    force_bootstrap: Mutex<std::collections::HashSet<Uuid>>,
     source_sessions: Arc<Semaphore>,
     receiver_sessions: Arc<Semaphore>,
     served_snapshots: Arc<Semaphore>,
@@ -173,7 +174,6 @@ impl InventoryRuntime {
                 members: RwLock::new(MemberState::default()),
                 member_changes: watch::channel(0).0,
                 controls: Mutex::new(HashMap::new()),
-                force_bootstrap: Mutex::new(std::collections::HashSet::new()),
                 source_sessions: Arc::new(Semaphore::new(MAX_SOURCE_SESSIONS)),
                 receiver_sessions: Arc::new(Semaphore::new(MAX_RECEIVER_SESSIONS)),
                 served_snapshots: Arc::new(Semaphore::new(SNAPSHOT_SESSIONS)),
@@ -202,12 +202,12 @@ impl InventoryRuntime {
             .values()
             .map(|member| member.owner.incarnation)
             .collect::<Vec<_>>();
-        self.shared.index.set_expected_owners(revision, owners);
         for old in previous.values() {
-            if !members.values().any(|member| member == old) {
+            if members.get(&old.node_id) != Some(old) {
                 self.retire(old.owner.incarnation);
             }
         }
+        self.shared.index.set_expected_owners(revision, owners);
         self.shared.member_changes.send_replace(revision as u64);
     }
 
@@ -217,19 +217,15 @@ impl InventoryRuntime {
         });
     }
 
-    fn retire(&self, owner: Uuid) {
-        self.shared.index.retire_owner(owner);
+    pub(super) fn retire(&self, owner: Uuid) {
         self.shared.controls.lock().remove(&owner);
-        let index = Arc::clone(&self.shared.index);
-        tokio::spawn(async move {
-            while !index.cleanup_owner(owner, RETIRE_BATCH) {
-                tokio::task::yield_now().await;
-            }
-        });
+        self.withdraw_for_rebuild(owner);
     }
 
     fn withdraw_for_rebuild(&self, owner: Uuid) {
-        self.shared.index.retire_owner(owner);
+        if !self.shared.index.retire_owner(owner) {
+            return;
+        }
         let index = Arc::clone(&self.shared.index);
         tokio::spawn(async move {
             while !index.cleanup_owner(owner, RETIRE_BATCH) {
@@ -983,6 +979,11 @@ async fn follow_source(runtime: InventoryRuntime, source: Member) {
 }
 
 async fn follow_source_once(runtime: InventoryRuntime, source: Member) -> Result<(), String> {
+    let lease = runtime
+        .shared
+        .membership
+        .lease(&source.owner)
+        .ok_or("source membership changed")?;
     let session_id = Uuid::new_v4();
     let endpoint = format!("http://{}", source.owner.endpoint);
     let channel = tonic::transport::Endpoint::from_shared(endpoint)
@@ -996,19 +997,10 @@ async fn follow_source_once(runtime: InventoryRuntime, source: Member) -> Result
         .max_decoding_message_size(MESSAGE_BYTES)
         .max_encoding_message_size(MESSAGE_BYTES);
     let (control, request) = mpsc::channel(64);
-    let installed = if runtime
+    let installed = runtime
         .shared
-        .force_bootstrap
-        .lock()
-        .contains(&source.owner.incarnation)
-    {
-        None
-    } else {
-        runtime
-            .shared
-            .index
-            .owner_watermark(source.owner.incarnation)
-    };
+        .index
+        .owner_watermark(source.owner.incarnation);
     let (scope_mode, scope_namespaces) = encode_scope(&runtime.shared.scope);
     let open = InventoryOpen {
         protocol: INVENTORY_STREAM_PROTOCOL.into(),
@@ -1045,25 +1037,29 @@ async fn follow_source_once(runtime: InventoryRuntime, source: Member) -> Result
         .controls
         .lock()
         .insert(source.owner.incarnation, (session_id, control.clone()));
-    let result = receive_frames(&runtime, &source, session_id, &control, &mut response).await;
+    let result = receive_frames(
+        &runtime,
+        &source,
+        &lease,
+        session_id,
+        &control,
+        &mut response,
+    )
+    .await;
     if result
         .as_ref()
         .is_err_and(|error| error.contains("metadata budget"))
     {
         runtime.withdraw_for_rebuild(source.owner.incarnation);
     }
-    if runtime
-        .shared
-        .controls
-        .lock()
-        .get(&source.owner.incarnation)
-        .is_some_and(|(registered, _)| *registered == session_id)
     {
-        runtime
-            .shared
-            .controls
-            .lock()
-            .remove(&source.owner.incarnation);
+        let mut controls = runtime.shared.controls.lock();
+        if controls
+            .get(&source.owner.incarnation)
+            .is_some_and(|(registered, _)| *registered == session_id)
+        {
+            controls.remove(&source.owner.incarnation);
+        }
     }
     runtime
         .shared
@@ -1075,6 +1071,7 @@ async fn follow_source_once(runtime: InventoryRuntime, source: Member) -> Result
 async fn receive_frames(
     runtime: &InventoryRuntime,
     source: &Member,
+    lease: &MemberLease,
     session_id: Uuid,
     control: &mpsc::Sender<InventoryClientFrame>,
     response: &mut Streaming<InventoryServerFrame>,
@@ -1088,7 +1085,7 @@ async fn receive_frames(
         .map_err(|_| "inventory response timed out")?
         .map_err(|error| error.to_string())?
     {
-        if !runtime.exact_member(source) {
+        if lease.revoked() || !runtime.exact_member(source) {
             return Err("source membership changed".into());
         }
         if frame.encoded_len() > MESSAGE_BYTES
@@ -1213,11 +1210,6 @@ async fn receive_frames(
                     commit.page_count,
                 )?;
                 debug_assert_eq!(installed, view_id);
-                runtime
-                    .shared
-                    .force_bootstrap
-                    .lock()
-                    .remove(&source.owner.incarnation);
                 snapshot_id = None;
                 snapshot_permit = None;
             }
@@ -1269,11 +1261,7 @@ async fn receive_frames(
                     .counters
                     .resets
                     .fetch_add(1, Ordering::Relaxed);
-                runtime
-                    .shared
-                    .force_bootstrap
-                    .lock()
-                    .insert(source.owner.incarnation);
+                runtime.shared.index.require_snapshot(lease);
                 return Err(format!(
                     "source requested inventory reset: {}",
                     reset.reason

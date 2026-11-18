@@ -310,6 +310,83 @@ fn lookup_suspends_between_member_replacement_and_inventory_installation() {
 }
 
 #[test]
+fn revoked_then_rejoined_identity_cannot_reuse_an_inventory_or_staging_cursor() {
+    let (index, members, peer) = setup(1 << 20);
+    let row = record(1, 1, ReplicaMedium::Dram, true);
+    let keys = [row.key.clone()];
+    let old_view = install(&index, &peer, vec![row], 1);
+    let old_lease = members.lease(&peer).unwrap();
+    let (session, snapshot, staging_view) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    index
+        .begin_snapshot(peer.incarnation, session, snapshot, staging_view, 1)
+        .unwrap();
+
+    // One Watch response can delete and reinsert even the identical member record.
+    members.revoke(&peer);
+    members.replace_members([
+        ("local".into(), 1, members.owner().clone()),
+        ("remote".into(), 1, peer.clone()),
+    ]);
+    index.set_expected_owners(11, [peer.incarnation]);
+    assert!(old_lease.revoked());
+    assert!(index.owner_watermark(peer.incarnation).is_none());
+    assert!(
+        index
+            .confirm_progress(peer.incarnation, old_view, 1)
+            .is_err()
+    );
+    assert!(
+        index
+            .commit_snapshot(peer.incarnation, session, snapshot, staging_view, 1, 0)
+            .is_err()
+    );
+    let pending = index.lookup(&keys);
+    assert_eq!(pending[0].coverage, DiscoveryCoverage::Unavailable);
+    assert!(pending[0].replicas.is_empty());
+
+    let replacement = install(&index, &peer, Vec::new(), 0);
+    index.require_snapshot(&old_lease);
+    assert_eq!(
+        index.owner_watermark(peer.incarnation),
+        Some((replacement, 0))
+    );
+    assert_eq!(
+        index.lookup(&keys)[0].coverage,
+        DiscoveryCoverage::CompleteAtWatermarks
+    );
+}
+
+#[test]
+fn journal_reset_keeps_hints_and_discards_its_cursor_with_the_owner() {
+    let (index, members, peer) = setup(1 << 20);
+    let row = record(1, 1, ReplicaMedium::Dram, true);
+    let keys = [row.key.clone()];
+    let view = install(&index, &peer, vec![row], 1);
+    let lease = members.lease(&peer).unwrap();
+    index.require_snapshot(&lease);
+    let hints = index.lookup(&keys);
+    assert_eq!(hints[0].coverage, DiscoveryCoverage::PartialHints);
+    assert_eq!(hints[0].replicas[0].owner, peer);
+    assert!(index.owner_watermark(peer.incarnation).is_none());
+    assert!(index.confirm_progress(peer.incarnation, view, 1).is_err());
+    assert!(
+        index
+            .apply_delta(peer.incarnation, view, 1, 2, Vec::new())
+            .is_err()
+    );
+    assert!(index.retire_owner(peer.incarnation));
+    assert!(!index.retire_owner(peer.incarnation));
+    assert!(index.cleanup_owner(peer.incarnation, 1));
+    index.require_snapshot(&lease);
+    assert_eq!(index.bytes(), 0);
+    let replacement = install(&index, &peer, Vec::new(), 0);
+    assert_eq!(
+        index.owner_watermark(peer.incarnation),
+        Some((replacement, 0))
+    );
+}
+
+#[test]
 fn hidden_snapshot_installs_both_media_atomically() {
     let (index, _, remote) = setup(1 << 20);
     let session = Uuid::new_v4();

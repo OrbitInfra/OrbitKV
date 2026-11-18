@@ -73,10 +73,13 @@ key has a bounded list of candidate replicas and one coverage result.
 
 The three seconds bound **requester receipt age**. Network delay and a backlog
 can make a recently applied source sequence older than that. The source emits
-idle progress every second. Duplicate deltas do not renew a receipt. A commit,
-contiguous advance or matching head confirmation does. Replacing a member at the
-same address invalidates the old cut and its grants. Rebuilding the new member's
-view restores coverage. A router consuming these results must bind any cursor to
+idle progress every second. A commit, contiguous advance or matching head
+confirmation renews a receipt. Duplicate deltas preserve its original age.
+Active and staged views retain the membership lease that admitted them. Revocation
+invalidates both even when a node rejoins with the same UUID. A journal reset
+preserves positive hints while clearing the resume cursor until the replacement
+snapshot commits. Retiring the view also reclaims its reset state. A router
+consuming these results must bind any cursor to
 the membership cut, source incarnation, namespace scope and applied sequence.
 The external lookup and event interfaces remain planned.
 

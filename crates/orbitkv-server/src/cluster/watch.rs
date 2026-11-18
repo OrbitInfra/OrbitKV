@@ -263,6 +263,7 @@ async fn follow(
             .map_err(FollowError::Rebuild)?
             {
                 view.revoke(&previous);
+                inventory.retire(previous.incarnation);
             }
             if !format_valid || members.get(&registration.node_id) != Some(registration) {
                 view.fence();

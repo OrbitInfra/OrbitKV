@@ -75,10 +75,13 @@ impl MembershipSnapshot {
     }
 
     pub(super) fn resolve(&self, incarnation: uuid::Uuid) -> Option<&CacheOwner> {
+        self.member(incarnation).map(MemberLease::owner)
+    }
+
+    pub(super) fn member(&self, incarnation: uuid::Uuid) -> Option<&MemberLease> {
         self.members
             .get(&incarnation)
             .filter(|member| !member.revoked())
-            .map(MemberLease::owner)
     }
 }
 

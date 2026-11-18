@@ -17,9 +17,11 @@ Changes below apply to the next pre-release; nothing new is published by this PR
 
 Manager queries now report partial coverage when any expected owner's last
 inventory receipt reaches three seconds. Queries during membership replacement
-report unavailable until the matching index cut is installed. The internal
-Rust crates removed the duplicate `GlobalIndex::mark_syncing` entry point and
-the unused `BlockCandidates::estimated_size` and `DISCOVERY_MAX_ENDPOINT_BYTES`.
+report unavailable until the matching index cut is installed. Journal-reset
+state retires with its owner view. The internal Rust crates removed the duplicate
+`GlobalIndex::mark_syncing` and unused `GlobalIndex::reset`,
+`BlockCandidates::estimated_size` and `DISCOVERY_MAX_ENDPOINT_BYTES`.
+`retire_owner` reports whether an installed view needs bounded cleanup.
 See the [lookup contract](distributed-cache.md#placement-lookup-contract).
 
 ### Optional SSD watermarks
