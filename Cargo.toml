@@ -59,8 +59,6 @@ opentelemetry_sdk = { version = "0.32.1", features = [
 opentelemetry-prometheus = "0.32"
 prometheus = "0.14"
 bytesize = "2.3.1"
-anyhow = "1.0"
-bytes = { version = "1.10", features = ["serde"] }
 ahash = "0.8"
 futures = "0.3"
 smallvec = { version = "1.15", features = ["serde", "union"] }
@@ -71,7 +69,6 @@ rustix = { version = "1.1", features = ["event", "fs", "net", "process"] }
 
 # HTTP/Web
 axum = "0.8"
-reqwest = { version = "0.13", features = ["json", "stream"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio-stream = "0.1"
@@ -85,7 +82,6 @@ etcd-client = "0.20.0"
 # Python bindings
 pyo3 = { version = "0.29.2" }
 pyo3-build-config = { version = "0.29.2", features = ["resolve-config"] }
-# Redis
 
 # Logging
 log = "0.4"
