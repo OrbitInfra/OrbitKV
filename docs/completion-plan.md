@@ -9,8 +9,9 @@ M2 coordinated SSD watermarks are implemented. M3 discovery now applies the
 [placement lookup contract](distributed-cache.md#placement-lookup-contract) to
 the Manager's existing catalog. Complete coverage requires matching membership
 and recent receipts from every expected owner. The read-only router API serves bounded placement batches and replays source
-events from the retained journal. The next M3 delivery is shared-file storage
-and recovery after losing an owner.
+events from the retained journal. The M3 [owner-handoff gate](storage-persistence.md#exclusive-handoff-after-owner-loss)
+exercises recovery of a surviving shard by another Manager. The next shared-file
+delivery is concurrent access with namespace isolation, bounded capacity and safe reclamation.
 Source implementation and CPU controls do not qualify installed GPU profiles,
 which remain unqualified.
 Each coherent PR stops for review before dependent work starts. Research designs
@@ -243,6 +244,13 @@ Remaining M3 work includes a shared filesystem/3FS tier, node-loss recovery,
 MLA TP deduplication and hybrid coverage allowed by engines. Shared-tier work
 must establish tenant isolation, capacity accounting and recovery after an
 owner disappears. Only a current grant authorizes payload access.
+
+The same-host [exclusive handoff](storage-persistence.md#exclusive-handoff-after-owner-loss)
+covers loss of a writer process with an outstanding grant. A distinct Manager
+reopens the surviving file and journal at the same peer address. A live
+requester must observe the old placement retire, obtain a fresh grant and read
+the verified bytes over TCP. Multi-writer shared storage and loss of a host or
+volume remain open.
 
 **CPU now:** multi-process etcd/TCP faults, epochs, bounded snapshots/events,
 router contracts, shared-file races/GC, tenant isolation and dedup accounting.

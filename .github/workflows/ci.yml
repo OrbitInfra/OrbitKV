@@ -377,6 +377,10 @@ jobs:
               --binary target/debug/orbitkv-cache-manager \
               --root "$RUNNER_TEMP/ssd-process-mount" --filesystem "$fs" \
               --artifacts "$RUNNER_TEMP/ssd-process-results/$fs"
+            PYTHONPATH="$PWD/python" ETCD_BIN=/usr/bin/etcd \
+              python3 crates/orbitkv-server/tests/process/ssd_owner_handoff.py \
+              --binary target/debug/orbitkv-cache-manager --root "$RUNNER_TEMP/ssd-process-mount" \
+              --artifacts "$RUNNER_TEMP/ssd-process-results/$fs-owner-handoff"
             sudo umount "$RUNNER_TEMP/ssd-process-mount"
             trap - EXIT
           done

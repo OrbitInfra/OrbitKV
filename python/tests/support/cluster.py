@@ -1,19 +1,40 @@
 """An isolated etcd process shared by distributed runtime gates."""
 
 import contextlib
+import errno
 import os
+import secrets
 import select
 import socket
 import subprocess
 import threading
 import time
 from contextlib import contextmanager
+from pathlib import Path
+from urllib.error import URLError
 from urllib.parse import urlsplit
+from urllib.request import urlopen
 
-import pytest
-import requests
 
-from .cache_manager import find_available_port
+def find_available_port() -> int:
+    """Find a listener port outside outgoing TCP and OrbiTE listener-port ranges."""
+    low, high = map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
+    for _ in range(128):
+        port = 1024 + secrets.randbelow(65536 - 1024)
+        # OrbiTE listener starts before the engine HTTP listener and
+        # independently chooses an RPC port in [15000, 17000).
+        if low <= port <= high or 15000 <= port < 17000:
+            continue
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("0.0.0.0", port))
+                s.listen(1)
+            except OSError as error:
+                if error.errno != errno.EADDRINUSE:
+                    raise
+                continue
+            return s.getsockname()[1]
+    raise RuntimeError("No free test listener port found")
 
 
 class TcpGate:
@@ -148,6 +169,8 @@ class TcpGate:
 def etcd_server(directory):
     binary = os.environ.get("ETCD_BIN")
     if not binary:
+        import pytest
+
         pytest.skip("set ETCD_BIN to run a distributed runtime gate")
     endpoint = f"http://127.0.0.1:{find_available_port()}"
     peer = f"http://127.0.0.1:{find_available_port()}"
@@ -191,9 +214,10 @@ def etcd_server(directory):
         while True:
             assert process.poll() is None, log_path.read_text()
             try:
-                if requests.get(f"{endpoint}/health", timeout=1).ok:
-                    break
-            except requests.RequestException:
+                with urlopen(f"{endpoint}/health", timeout=1) as response:
+                    if response.status == 200:
+                        break
+            except (URLError, TimeoutError, ConnectionError):
                 pass
             assert time.monotonic() < deadline, "etcd startup timed out"
             time.sleep(0.05)
