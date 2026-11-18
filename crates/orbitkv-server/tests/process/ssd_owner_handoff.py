@@ -160,9 +160,11 @@ def handoff(gate, path, endpoint, credentials, token):
     old_ticket = {**grant, "window": issued["window"]}
     stale = observer.call("grant", grant=old_ticket)
     assert stale["grpc_code"] == "FailedPrecondition", stale
-    rebound = observer.call(
-        "grant", grant={**old_ticket, "source": new, "residency": current["sequence"]}
-    )
+    # Use the verified residency for both probes so only the owner changes.
+    current_residency = {**old_ticket, "residency": current["sequence"]}
+    retired = observer.call("grant", grant=current_residency)
+    assert retired["grpc_code"] == "FailedPrecondition", retired
+    rebound = observer.call("grant", grant={**current_residency, "source": new})
     assert rebound["grpc_code"] == "NotFound", rebound
     observer.read(2, present=False, operation="peer_read")
     received = observer.read(operation="peer_read")
@@ -172,6 +174,7 @@ def handoff(gate, path, endpoint, credentials, token):
                 "old_owner": old,
                 "new_owner": new,
                 "old_ticket_status": stale["grpc_code"],
+                "retired_owner_status": retired["grpc_code"],
                 "rebound_ticket_status": rebound["grpc_code"],
                 "checksum_drops": recovery["drops"]["data_checksum"],
                 "verified_peer_slot_bytes": [
