@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "orbitkv"
 version = "0.1.0b1"
-description = "Framework adapters and Python bindings for the OrbitKV state cache"
+description = "OrbitKV is a High Performance KV Cache System for LLM Inference."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"

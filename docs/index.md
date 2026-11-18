@@ -1,5 +1,8 @@
 ---
 title: OrbitKV
+myst:
+  html_meta:
+    description: OrbitKV is a High Performance KV Cache System for LLM Inference.
 ---
 
 ```{raw} html
@@ -9,11 +12,13 @@ title: OrbitKV
 </div>
 ```
 
+(a-distributed-kv-cache-for-vllm-and-sglang)=
 (hero-title)=
-# A distributed KV cache for vLLM and SGLang
+# OrbitKV is a High Performance KV Cache System for LLM Inference.
 
-Reuse compatible prefixes beyond GPU memory. An independent Cache Manager
-owns DRAM, SSD and peer cache state; OrbiTE moves the bytes.
+Reuse compatible vLLM and SGLang prefixes beyond GPU memory. The Rust Cache
+Manager owns DRAM, SSD and peer cache state. OrbiTE is the high-performance
+transfer engine that moves KV data between those tiers and GPU memory.
 
 (get-started)=
 (start-title)=
@@ -35,8 +40,8 @@ owns DRAM, SSD and peer cache state; OrbiTE moves the bytes.
   and fetch them through authoritative source grants.
 - **Keep ownership explicit.** Sources, destinations and registrations stay owned
   until physical drain. A timeout never permits reuse of their bytes.
-- **Use one byte mover.** OrbiTE handles local GPU↔DRAM copies, SSD transfers and
-  peer reads; engines retain scheduling, GPU allocation and native P/D.
+- **Transfer KV data with OrbiTE.** One engine handles local GPU↔DRAM copies, SSD
+  transfers and peer reads. vLLM and SGLang retain scheduling, GPU allocation and native P/D.
 
 See [features and limits](features.md) and the [engine support matrix](compatibility.md).
 The current adapters target **vLLM 0.33.0** (V1 single-group or Full + SWA) and
@@ -55,8 +60,8 @@ and [release gates](releases.md) before choosing a deployment.
 
 ```{raw} html
 <figure class="architecture-figure">
-  <img class="only-light" src="_static/architecture-light.svg" alt="vLLM and SGLang hand cache operations to OrbitKV, which sends byte movement through OrbiTE to GPU, DRAM, SSD and peer memory." width="960" height="560">
-  <img class="only-dark" src="_static/architecture-dark.svg" alt="vLLM and SGLang hand cache operations to OrbitKV, which sends byte movement through OrbiTE to GPU, DRAM, SSD and peer memory." width="960" height="560">
+  <img class="only-light" src="_static/architecture-light.svg" alt="OrbitKV’s high-performance KV cache system uses OrbiTE, its high-performance transfer engine, to move KV data between GPU memory, DRAM, SSDs and peer hosts." width="960" height="560">
+  <img class="only-dark" src="_static/architecture-dark.svg" alt="OrbitKV’s high-performance KV cache system uses OrbiTE, its high-performance transfer engine, to move KV data between GPU memory, DRAM, SSDs and peer hosts." width="960" height="560">
   <figcaption>Implemented ownership boundaries. Hardware paths remain unqualified.</figcaption>
 </figure>
 ```

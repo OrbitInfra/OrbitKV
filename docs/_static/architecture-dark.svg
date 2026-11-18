@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" role="img" aria-labelledby="title desc">
-  <title id="title">OrbitKV over OrbiTE</title>
-  <desc id="desc">Inference engines own scheduling, GPU allocation and native prefill/decode transport. OrbitKV owns cache identity, placement, leases and extents. OrbiTE moves all cache bytes. Implemented boundaries; GPU, RDMA, GDS and installed profiles remain unqualified.</desc>
+  <title id="title">OrbitKV High Performance KV Cache System and OrbiTE High Performance Transfer Engine</title>
+  <desc id="desc">OrbitKV is a High Performance KV Cache System for LLM Inference. Its Cache Manager and native client own cache identity, placement, leases and extents. OrbiTE is the high-performance transfer engine for local copies, storage I/O and peer reads. Inference engines own scheduling, GPU allocation and native prefill/decode transport. GPU, RDMA, GDS and installed profiles remain unqualified.</desc>
   <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#546c58"/></marker></defs>
   <rect width="960" height="560" rx="12" fill="#18241e"/>
   <g fill="#263b2e" stroke="#546c58" stroke-width="1.5">
@@ -23,8 +23,8 @@
   <g fill="#d3e3ce" font-family="Arial, Helvetica, sans-serif" text-anchor="middle">
     <g font-size="24" font-weight="700">
       <text x="480" y="58">vLLM / SGLang</text>
-      <text x="480" y="193">OrbitKV · Cache Manager and native client</text>
-      <text x="480" y="332">OrbiTE · the only byte mover</text>
+      <text x="480" y="193">OrbitKV · High Performance KV Cache System</text>
+      <text x="480" y="332">OrbiTE · High Performance Transfer Engine</text>
     </g>
     <g font-size="17">
       <text x="135" y="488">Engine GPU pages</text><text x="365" y="488">Pinned DRAM</text>
@@ -33,7 +33,7 @@
   </g>
   <g fill="#bec8bc" font-family="Arial, Helvetica, sans-serif" text-anchor="middle" font-size="16">
     <text x="480" y="84">Scheduling · GPU allocation · native P/D</text>
-    <text x="480" y="222">Identity · index · placement · leases · layouts · extents</text>
+    <text x="480" y="222">Cache Manager and native client · identity · index · placement · leases · layouts · extents</text>
     <text x="480" y="359">Local GPU↔DRAM copy · file I/O · peer READ</text>
     <text x="650" y="135">Cache operations + layouts</text>
     <text x="670" y="277">Bounded requests + retained owners</text>

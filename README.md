@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<p align="center"><strong>A High Performance KV Cache System for LLM Inference.</strong></p>
+<p align="center"><strong>OrbitKV is a High Performance KV Cache System for LLM Inference.</strong></p>
 
 <p align="center">
   <a href="https://orbitinfra.github.io/OrbitKV/">Documentation</a> |
@@ -22,11 +22,12 @@
 
 OrbitKV keeps reusable KV for prefixes, documents and conversations beyond GPU memory,
 in DRAM, local SSD and peer hosts, for vLLM and SGLang. A Rust Cache Manager owns
-identity, placement and leases. [OrbiTE](https://github.com/OrbitInfra/OrbiTE) moves the bytes.
+identity, placement and leases. [OrbiTE](https://github.com/OrbitInfra/OrbiTE) is the
+high-performance transfer engine for local cache copies, storage I/O and peer reads.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/_static/architecture-dark.svg" />
-  <img src="docs/_static/architecture-light.svg" alt="OrbitKV owns cache semantics; OrbiTE moves bytes between GPU, DRAM, SSD and peers." width="960" />
+  <img src="docs/_static/architecture-light.svg" alt="OrbitKV’s high-performance KV cache system uses OrbiTE, its high-performance transfer engine, to move KV data between GPU memory, DRAM, SSDs and peer hosts." width="960" />
 </picture>
 
 ## Quick start

@@ -1,7 +1,7 @@
 # OrbitKV completion plan
 
 **Goal: a standard, complete distributed KV cache for vLLM and SGLang, accepted
-into both upstream mainlines.** OrbiTE is the only byte mover. Engines own
+into both upstream mainlines.** OrbiTE is the sole transfer engine for cache data. Engines own
 scheduling, HBM and native P/D; OrbitKV owns cache identity, storage, discovery,
 grants and resource lifetime. This is the only execution queue.
 
