@@ -269,7 +269,9 @@ pub fn spawn(engine: Arc<crate::OrbitKVEngine>) {
                 }
                 "grant" => match command.grant.as_ref().unwrap().request(&key).await {
                     Ok(grant) => grant,
-                    Err(status) => json!({"grpc_code": format!("{:?}", status.code())}),
+                    Err(status) => {
+                        json!({"grpc_code": format!("{:?}", status.code()), "detail": status.message()})
+                    }
                 },
                 "hold" => {
                     assert!(held.is_none());

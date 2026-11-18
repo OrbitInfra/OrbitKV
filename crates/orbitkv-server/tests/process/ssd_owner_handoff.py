@@ -64,7 +64,8 @@ def handoff(gate, path, endpoint, credentials, token):
 
     source = node("writer", path)
     observer = node("requester", path.parent / "requester")
-    good = source.call("write", id=1)
+    good_id = 1
+    good = source.call("write", id=good_id)
     damaged = source.call("write", id=2)
     assert good["present"] and damaged["present"]
     hashes = [good["hash"], damaged["hash"]]
@@ -97,7 +98,12 @@ def handoff(gate, path, endpoint, credentials, token):
     rows = placements([[old], [old]])
     old_sequence = rows[0]["peers"][0]["sequence"]
     grant = {"source": old, "requester": requester, "residency": old_sequence}
-    issued = observer.call("grant", grant=grant)
+
+    def authorize(probe):
+        return observer.call("grant", id=good_id, grant=probe)
+
+    issued = authorize(grant)
+    assert "window" in issued, issued
     UUID(issued["window"])
     assert issued["epoch"]
     source.close(kill=True)
@@ -145,7 +151,7 @@ def handoff(gate, path, endpoint, credentials, token):
 
     observer.wait(new_view_installed)
     placements([[], []])
-    observer.read(present=False, operation="peer_read")
+    observer.read(good_id, present=False, operation="peer_read")
     replacement.release("ssd_before_verification")
     replacement.recovered()
     recovery = replacement.call("report")["state"]["recovery"]
@@ -158,16 +164,16 @@ def handoff(gate, path, endpoint, credentials, token):
     assert current["sequence"] == published["local"][0]["sequence"]
 
     old_ticket = {**grant, "window": issued["window"]}
-    stale = observer.call("grant", grant=old_ticket)
+    stale = authorize(old_ticket)
     assert stale["grpc_code"] == "FailedPrecondition", stale
     # Use the verified residency for both probes so only the owner changes.
     current_residency = {**old_ticket, "residency": current["sequence"]}
-    retired = observer.call("grant", grant=current_residency)
+    retired = authorize(current_residency)
     assert retired["grpc_code"] == "FailedPrecondition", retired
-    rebound = observer.call("grant", grant={**current_residency, "source": new})
+    rebound = authorize({**current_residency, "source": new})
     assert rebound["grpc_code"] == "NotFound", rebound
     observer.read(2, present=False, operation="peer_read")
-    received = observer.read(operation="peer_read")
+    received = observer.read(good_id, operation="peer_read")
     (gate.artifacts / "handoff.json").write_text(
         json.dumps(
             {
