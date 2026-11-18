@@ -47,6 +47,7 @@ struct Command {
     id: u8,
     #[serde(default)]
     namespace: u8,
+    fill: Option<u8>,
     #[serde(default)]
     encoded: bool,
     #[serde(default)]
@@ -230,7 +231,12 @@ pub fn spawn(engine: Arc<crate::OrbitKVEngine>) {
             let key = key(&command);
             let mut result = match command.operation.as_str() {
                 "write" => {
-                    let block = fixture(&engine.storage, command.id, command.encoded, command.wide);
+                    let block = fixture(
+                        &engine.storage,
+                        command.fill.unwrap_or(command.id),
+                        command.encoded,
+                        command.wide,
+                    );
                     block
                         .set_expiration(
                             crate::storage::expiry::Expiration::new(

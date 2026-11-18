@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Reserve capacity before admitting GPU I/O. Allocation failures must not
 /// silently turn a capacity error into sparse, best-effort writes.
@@ -66,16 +66,81 @@ pub(super) fn aligned_shard_capacity(
     Ok(capacity)
 }
 
+const SHARED_DIRECTORY_PREFIX: &str = "orbitkv-ssd-";
+
+/// Keep the first shard and its journal at the same names for every shard count.
+pub(super) fn shared_cache_path(
+    root: &Path,
+    namespace: &str,
+    shards: usize,
+) -> std::io::Result<PathBuf> {
+    use std::fs::{self, DirBuilder};
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+    let directory = root.join(format!("{SHARED_DIRECTORY_PREFIX}{namespace}"));
+    match DirBuilder::new().mode(0o700).create(&directory) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let metadata = fs::symlink_metadata(&directory)?;
+            if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "shared SSD namespace needs a private directory",
+                ));
+            }
+        }
+        Err(error) => return Err(error),
+    }
+    if shards == 1 {
+        Ok(directory.join("shard-000000.dat"))
+    } else {
+        Ok(directory)
+    }
+}
+
+/// Under the first shard lock, account for every data file even if metadata is missing.
+fn shared_partition_has_payload(paths: &[PathBuf], journal: &Path) -> std::io::Result<bool> {
+    use std::io::{Error, ErrorKind};
+
+    let directory = journal
+        .parent()
+        .ok_or_else(|| Error::other("missing SSD partition directory"))?;
+    let checkpoint = journal.with_extension("index.tmp");
+    let mut has_payload = false;
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !entry.file_type()?.is_file() {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "unexpected entry in shared SSD partition",
+            ));
+        }
+        if path == journal || path == checkpoint {
+            continue;
+        }
+        if !paths.contains(&path) {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "unexpected file or shard count change in shared SSD partition",
+            ));
+        }
+        has_payload |= entry.metadata()?.len() > 0;
+    }
+    Ok(has_payload)
+}
+
 pub(super) fn open_cache_files(
     cache_paths: &[PathBuf],
     shards_per_path: usize,
     shard_capacity: u64,
-    options: &mut std::fs::OpenOptions,
+    shared_namespace: Option<&str>,
     preserve: bool,
 ) -> std::io::Result<Vec<std::fs::File>> {
     use std::fs;
     use std::os::unix::fs::OpenOptionsExt;
 
+    let mut options = fs::OpenOptions::new();
     options
         .create(true)
         .truncate(false)
@@ -122,9 +187,28 @@ pub(super) fn open_cache_files(
             }
         }
     }
+    let metadata = journal_path(cache_paths, shards_per_path)?;
     let mut files = Vec::with_capacity(total_shards);
     for path in &paths {
         use std::os::fd::AsRawFd;
+        if shared_namespace.is_none() {
+            let parent = path
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
+            let parent = parent.canonicalize()?;
+            if parent
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_prefix(SHARED_DIRECTORY_PREFIX))
+                .is_some_and(orbitkv_state::is_storage_namespace)
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "shared SSD partition requires --ssd-shared-namespace",
+                ));
+            }
+        }
         let file = options.open(path)?;
         // SAFETY: the owned fd remains live in `files` through all data-plane
         // owners; flock only acquires an advisory lock on this open description.
@@ -135,9 +219,18 @@ pub(super) fn open_cache_files(
                 std::io::Error::last_os_error()
             )));
         }
+        if files.is_empty() && (shared_namespace.is_some() || !preserve) {
+            let has_payload =
+                shared_namespace.is_some() && shared_partition_has_payload(&paths, &metadata)?;
+            super::persistence::check_partition_file(
+                &metadata,
+                shared_namespace,
+                total_shards,
+                has_payload,
+            )?;
+        }
         files.push(file);
     }
-    let metadata = journal_path(cache_paths, shards_per_path)?;
     if preserve || metadata.exists() {
         for file in &files {
             previous_file_users_drained(file)?;

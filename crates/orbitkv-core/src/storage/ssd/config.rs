@@ -98,6 +98,8 @@ pub struct SsdCacheConfig {
     pub capacity_bytes: u64,
     /// Recover committed, checksum-verified SSD entries after Manager restart.
     pub persistent: bool,
+    /// Bind one persistent partition under a shared root to this exact storage namespace.
+    pub shared_namespace: Option<String>,
     /// Start FIFO reclamation at this percent of each shard's occupied ring window.
     /// Both watermarks are required; omission keeps overwrite-pressure eviction only.
     pub high_watermark_percent: Option<u8>,
@@ -128,6 +130,7 @@ impl Default for SsdCacheConfig {
             cache_paths: vec![PathBuf::from("/tmp/orbitkv-ssd-cache/cache.bin")],
             capacity_bytes: 512 * 1024 * 1024 * 1024, // 512GB
             persistent: false,
+            shared_namespace: None,
             high_watermark_percent: None,
             low_watermark_percent: None,
             shards: NonZeroUsize::MIN,
@@ -143,6 +146,21 @@ impl Default for SsdCacheConfig {
 }
 
 impl SsdCacheConfig {
+    pub(crate) fn shared_partition(&self) -> Result<Option<(&std::path::Path, &str)>, String> {
+        let Some(namespace) = self.shared_namespace.as_deref() else {
+            return Ok(None);
+        };
+        if !self.persistent || !orbitkv_state::is_storage_namespace(namespace) {
+            return Err(
+                "shared SSD requires persistence and an exact orbitkv:v2 storage namespace".into(),
+            );
+        }
+        let [root] = self.cache_paths.as_slice() else {
+            return Err("shared SSD requires one root directory".into());
+        };
+        Ok(Some((root.as_path(), namespace)))
+    }
+
     pub(crate) fn watermarks(&self) -> Result<Option<(u8, u8)>, String> {
         match (self.low_watermark_percent, self.high_watermark_percent) {
             (None, None) => Ok(None),

@@ -264,6 +264,7 @@ impl Drop for WriteLease {
 }
 
 struct SsdInner {
+    shared_namespace: Option<String>,
     ring: SsdRingBuffer,
     pending_writes: HashSet<StateKey>,
     reuse_history: LruCache<StateKey, ()>,
@@ -297,6 +298,13 @@ impl SsdInner {
         reused: bool,
         policy: SsdWritePolicy,
     ) -> Option<&'static str> {
+        if self
+            .shared_namespace
+            .as_ref()
+            .is_some_and(|scope| *scope != key.namespace)
+        {
+            return Some("namespace");
+        }
         if self.ring.get(key).is_some() {
             return Some("resident");
         }
@@ -545,8 +553,6 @@ impl SsdStore {
         inventory: Option<Arc<crate::storage::inventory::ResidencyInventory>>,
         transfer: Arc<crate::transfer_engine::TransferEngine>,
     ) -> std::io::Result<Arc<Self>> {
-        use std::fs::OpenOptions;
-
         let watermarks = config.watermarks().map_err(std::io::Error::other)?;
         let shards_per_path = config.shards.get();
         let total_shards = config
@@ -582,20 +588,29 @@ impl SsdStore {
         };
         let shard_capacity =
             files::aligned_shard_capacity(config.capacity_bytes, total_shards, alignment)?;
+        let shared_path;
+        let paths = match config.shared_partition().map_err(std::io::Error::other)? {
+            Some((root, namespace)) => {
+                shared_path = files::shared_cache_path(root, namespace, shards_per_path)?;
+                std::slice::from_ref(&shared_path)
+            }
+            None => config.cache_paths.as_slice(),
+        };
         let files = files::open_cache_files(
-            &config.cache_paths,
+            paths,
             shards_per_path,
             shard_capacity,
-            &mut OpenOptions::new(),
+            config.shared_namespace.as_deref(),
             config.persistent,
         )?;
         let files = files.into_iter().map(Arc::new).collect::<Vec<_>>();
         let (journal, recovered) = if config.persistent {
             let (journal, recovered) = persistence::Journal::open(
-                files::journal_path(&config.cache_paths, shards_per_path)?,
+                files::journal_path(paths, shards_per_path)?,
                 &files,
                 shard_capacity,
                 alignment as u64,
+                config.shared_namespace.as_deref(),
             )?;
             // The rebased metadata is durable before a shrink can discard bytes.
             for file in &files {
@@ -654,8 +669,7 @@ impl SsdStore {
 
         info!(
             "SSD cache initialized at {} (capacity {}, shards {}, shard capacity {})",
-            config
-                .cache_paths
+            paths
                 .iter()
                 .map(|p| p.display().to_string())
                 .collect::<Vec<_>>()
@@ -691,6 +705,7 @@ impl SsdStore {
             watermark_sweep: Mutex::new(0),
             prefetch_tx,
             inner: Mutex::new(SsdInner {
+                shared_namespace: config.shared_namespace,
                 ring,
                 pending_writes: HashSet::new(),
                 reuse_history: LruCache::new(REUSE_HISTORY_BLOCKS),

@@ -356,6 +356,32 @@ fn orbite_rdma_cli_requires_explicit_device_and_valid_port() {
 }
 
 #[test]
+fn shared_ssd_validates_exact_scope_persistence_and_single_root() {
+    use orbitkv_core::SsdCacheConfig;
+    let scope = format!("orbitkv:v2:{:064x}", 1);
+    let base = [
+        "manager",
+        "--ssd-cache-path",
+        "/cache",
+        "--ssd-shared-namespace",
+    ];
+    assert!(Cli::try_parse_from(base.into_iter().chain([scope.as_str()])).is_err());
+    assert!(Cli::try_parse_from(base.into_iter().chain(["model", "--ssd-persistent"])).is_err());
+    let cli =
+        Cli::try_parse_from(base.into_iter().chain([scope.as_str(), "--ssd-persistent"])).unwrap();
+    assert_eq!(cli.ssd_shared_namespace.as_deref(), Some(scope.as_str()));
+    let mut config = SsdCacheConfig {
+        shared_namespace: Some(scope),
+        ..Default::default()
+    };
+    assert!(config.validate_transfer_engine().is_err());
+    config.persistent = true;
+    assert!(config.validate_transfer_engine().is_ok());
+    config.cache_paths.push("/cache2".into());
+    assert!(config.validate_transfer_engine().is_err());
+}
+
+#[test]
 fn ssd_uses_selected_engine_and_rejects_removed_legacy_switch() {
     use orbitkv_core::SsdCacheConfig;
     assert!(!SsdCacheConfig::default().persistent);

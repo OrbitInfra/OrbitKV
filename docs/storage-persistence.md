@@ -86,7 +86,7 @@ heads and sequence watermark. Every extent record contains:
 The namespace binds model revision, layout, computation scope and representation;
 recovery never derives it from a path or model name. Checksums detect accidental
 corruption, not a malicious writer with filesystem access. Use private local
-filesystems; this is not the shared-storage tier or tenant authentication.
+filesystems or the [managed namespace partitions](#shared-root-namespace-partitions) described below.
 
 ## Recovery and first hit
 
@@ -201,6 +201,46 @@ The installed gate waits for a real NVMe and immutable vLLM 0.33.0 and SGLang
 bytes and model-output checks, and retain the power-loss caveat. No hardware
 has been requested or qualified by this PR.
 
+## Shared root namespace partitions
+
+Managers serving different storage namespaces can write concurrently under one
+operator-provisioned directory. Configure each Manager with one existing root,
+the exact namespace from engine registration, and its own payload budget.
+
+```sh
+orbitkv-cache-manager --ssd-cache-path "$ROOT" --ssd-persistent \
+  --ssd-shared-namespace "$STORAGE_NAMESPACE" --ssd-cache-capacity 16gb
+```
+
+The Manager creates an owner-only directory named `orbitkv-ssd-<namespace>`
+under the root. Shards start at `shard-000000.dat`. Each partition has one
+active Manager and a fixed shard count. Changing that count requires a newly
+provisioned partition. Starting with the wrong count, a private SSD path
+inside this reserved directory, or existing data with a missing or unreadable
+partition header fails before reuse. Keep the data files and journal together.
+Other partitions can continue writing, reading and reclaiming their own extents
+during recovery.
+A replacement using the same partition must pass the file-lease drain check and
+verify recovered bytes before publication.
+
+SSD write admission compares the full storage namespace before reserving queue
+or ring space. The journal binds the namespace in its header and checks it on
+each record. Opening a valid journal with a different scope fails before
+checkpoint or resize. A foreign key with an identical content hash misses the
+local SSD index. DRAM, peer grants and router credentials have their own
+contracts. Operators authenticate tenants and assign their Managers and storage
+namespaces. Keep root entries under trusted administrative control throughout
+operation and use a filesystem that implements the required locks, file leases
+and sync operations.
+
+Capacity is reserved per partition. Two 16 GB partitions reserve 32 GB of
+payload space, plus journals and filesystem overhead. Operators budget the sum,
+including stopped partitions. Automatic root-wide admission and reclamation
+across partitions are open. On ext4 and tmpfs the Linux process gate uses
+different bytes under the same block hash, restarts one writer, and holds a
+read across wrap pressure while the other partition reuses its space. The
+installed cross-host and 3FS profiles still require separate runs.
+
 ## Exclusive handoff after owner loss
 
 On Linux, a replacement Manager can reopen a surviving private shard and its
@@ -231,8 +271,8 @@ PYTHONPATH="$PWD/python" ETCD_BIN=/usr/bin/etcd \
 ```
 
 This profile covers same-host process loss and exclusive access to surviving
-files. Shared multi-host filesystem fencing, concurrent writers, 3FS, and
-physical host or volume loss remain open.
+files. Cross-host filesystem fencing, concurrent writes to the same partition,
+3FS and physical host or volume loss remain open.
 
 ## Precedents
 

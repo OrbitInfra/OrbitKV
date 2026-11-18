@@ -174,6 +174,10 @@ pub struct Cli {
     #[arg(long, requires = "ssd_cache_path")]
     pub ssd_persistent: bool,
 
+    /// Use the SSD cache path as a shared root for one exact storage namespace.
+    #[arg(long, requires = "ssd_persistent", value_parser = parse_storage_namespace)]
+    pub ssd_shared_namespace: Option<String>,
+
     /// Start per-shard SSD FIFO reclamation at this percentage (default off).
     #[arg(long, requires_all = ["ssd_cache_path", "ssd_low_watermark_percent"], value_parser = clap::value_parser!(u8).range(1..=100))]
     pub ssd_high_watermark_percent: Option<u8>,
@@ -295,7 +299,7 @@ pub struct Cli {
         action = clap::ArgAction::Append,
         requires = "etcd_endpoints",
         conflicts_with = "metadata_empty_scope",
-        value_parser = parse_metadata_namespace
+        value_parser = parse_storage_namespace
     )]
     pub metadata_namespace: Vec<String>,
 
@@ -394,11 +398,11 @@ fn parse_rdma_device(s: &str) -> Result<String, String> {
     Ok(name.to_string())
 }
 
-fn parse_metadata_namespace(value: &str) -> Result<String, String> {
+fn parse_storage_namespace(value: &str) -> Result<String, String> {
     if orbitkv_state::is_storage_namespace(value) {
         Ok(value.to_string())
     } else {
-        Err("--metadata-namespace requires an exact orbitkv:v2 storage namespace".into())
+        Err("expected an exact orbitkv:v2 storage namespace".into())
     }
 }
 
@@ -686,15 +690,25 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         .map(|path| http_server::router::Credentials::load(path, cli.http_addr, &metadata_scope))
         .transpose()?;
     cli.transfer_transport.validate_compiled()?;
-    if !cli.ssd_cache_path.is_empty() {
-        orbitkv_core::SsdCacheConfig {
-            backend: cli.ssd_backend,
-            persistent: cli.ssd_persistent,
-            high_watermark_percent: cli.ssd_high_watermark_percent,
-            low_watermark_percent: cli.ssd_low_watermark_percent,
-            ..Default::default()
-        }
-        .validate_transfer_engine()?;
+    let ssd_cache_config = (!cli.ssd_cache_path.is_empty()).then(|| orbitkv_core::SsdCacheConfig {
+        cache_paths: cli.ssd_cache_path.iter().map(|p| p.into()).collect(),
+        capacity_bytes: cli.ssd_cache_capacity as u64,
+        persistent: cli.ssd_persistent,
+        shared_namespace: cli.ssd_shared_namespace.clone(),
+        high_watermark_percent: cli.ssd_high_watermark_percent,
+        low_watermark_percent: cli.ssd_low_watermark_percent,
+        shards: cli.ssd_cache_shards,
+        write_queue_depth: cli.ssd_write_queue_depth,
+        write_policy: cli.ssd_write_policy,
+        backend: cli.ssd_backend,
+        read_path: cli.ssd_read_path,
+        prefetch_queue_depth: cli.ssd_prefetch_queue_depth,
+        write_inflight: cli.ssd_write_inflight,
+        prefetch_inflight: cli.ssd_prefetch_inflight,
+    });
+
+    if let Some(config) = &ssd_cache_config {
+        config.validate_transfer_engine()?;
     }
     let query_control_address = cli.query_control_address()?;
     orbitkv_common::logging::init_stdout_colored(&cli.log_level);
@@ -724,9 +738,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         cli.use_hugepages
     );
 
-    let ssd_cache_config = if cli.ssd_cache_path.is_empty() {
-        None
-    } else {
+    if ssd_cache_config.is_some() {
         info!(
             "SSD cache enabled: paths={}, capacity={:.2} GiB, shards={}, write_queue={}, prefetch_queue={}, write_inflight={}, prefetch_inflight={}",
             cli.ssd_cache_path.join(", "),
@@ -737,22 +749,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             cli.ssd_write_inflight,
             cli.ssd_prefetch_inflight,
         );
-        Some(orbitkv_core::SsdCacheConfig {
-            cache_paths: cli.ssd_cache_path.iter().map(|p| p.into()).collect(),
-            capacity_bytes: cli.ssd_cache_capacity as u64,
-            persistent: cli.ssd_persistent,
-            high_watermark_percent: cli.ssd_high_watermark_percent,
-            low_watermark_percent: cli.ssd_low_watermark_percent,
-            shards: cli.ssd_cache_shards,
-            write_queue_depth: cli.ssd_write_queue_depth,
-            write_policy: cli.ssd_write_policy,
-            backend: cli.ssd_backend,
-            read_path: cli.ssd_read_path,
-            prefetch_queue_depth: cli.ssd_prefetch_queue_depth,
-            write_inflight: cli.ssd_write_inflight,
-            prefetch_inflight: cli.ssd_prefetch_inflight,
-        })
-    };
+    }
 
     let peer_control_enabled = !cli.etcd_endpoints.is_empty();
     let membership_view = if peer_control_enabled {
