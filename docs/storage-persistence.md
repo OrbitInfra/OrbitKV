@@ -201,6 +201,39 @@ The installed gate waits for a real NVMe and immutable vLLM 0.33.0 and SGLang
 bytes and model-output checks, and retain the power-loss caveat. No hardware
 has been requested or qualified by this PR.
 
+## Exclusive handoff after owner loss
+
+On Linux, a replacement Manager can reopen a surviving private shard and its
+journal once the old writer and its file users have drained. It joins under its
+own identity and advertises each recovered extent after checksum verification.
+A requester must rediscover the extent and open a new transfer window, even if
+the replacement listens at the old address. Unverified and corrupt extents
+stay out of its inventory.
+
+The required Linux CI case runs three Manager processes across the handoff, an
+isolated etcd and the real OrbiTE io_uring and TCP paths. It kills a writer
+with an issued grant, keeps the requester running, and reuses the peer address
+under a different node ID. A verification pause and a damaged neighboring
+extent check visibility. The replacement rejects the old owner and window,
+and the requester checks every byte in two slots obtained through a fresh
+source grant. CI runs the case on ext4 and tmpfs and saves `handoff.json` in
+the `ssd-process-crash` artifact.
+
+To run the case with the same test-hooks binary and host-registration shim as
+the persistent SSD gate, choose an existing scratch directory for `MOUNT` and
+a new external results directory for `OUT`:
+
+```sh
+PYTHONPATH="$PWD/python" ETCD_BIN=/usr/bin/etcd \
+  ORBITKV_REQUIRE_ENGINE_SSD=1 ORBITE_REQUIRE_IO_URING=1 \
+  python3 crates/orbitkv-server/tests/process/ssd_owner_handoff.py \
+  --binary target/debug/orbitkv-cache-manager --root "$MOUNT" --artifacts "$OUT"
+```
+
+This profile covers same-host process loss and exclusive access to surviving
+files. Shared multi-host filesystem fencing, concurrent writers, 3FS, and
+physical host or volume loss remain open.
+
 ## Precedents
 
 [LMCache's local disk backend](https://docs.lmcache.ai/api_reference/configurations.html),

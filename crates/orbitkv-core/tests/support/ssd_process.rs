@@ -12,11 +12,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use orbitkv_proto::proto::engine::{
+    OpenTransferWindowRequest, QueryBlocksForTransferRequest, TransferTicket,
+    engine_client::EngineClient,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{SsdReadLease, SsdStore};
-use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
+use crate::block::{RawBlock, RestoreSource, SealedBlock, Segment, StateKey};
 use crate::memory::numa::NumaNode;
 use crate::transfer_engine::TransferOptions;
 
@@ -49,6 +53,58 @@ struct Command {
     wide: bool,
     #[serde(default)]
     ttl_millis: Option<u64>,
+    grant: Option<GrantProbe>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GrantProbe {
+    source: orbitkv_state::CacheOwner,
+    requester: uuid::Uuid,
+    residency: u64,
+    window: Option<String>,
+}
+
+impl GrantProbe {
+    async fn request(&self, key: &StateKey) -> Result<Value, tonic::Status> {
+        let mut client = EngineClient::connect(format!("http://{}", self.source.endpoint))
+            .await
+            .unwrap();
+        let owner = self.source.incarnation.to_string();
+        let window = match &self.window {
+            Some(window) => window.clone(),
+            None => {
+                client
+                    .open_transfer_window(OpenTransferWindowRequest {
+                        owner_incarnation: owner.clone(),
+                        requester_incarnation: self.requester.to_string(),
+                    })
+                    .await?
+                    .into_inner()
+                    .window_id
+            }
+        };
+        let reply = client
+            .query_blocks_for_transfer(QueryBlocksForTransferRequest {
+                namespace: key.namespace.clone(),
+                block_hashes: vec![key.hash.clone()],
+                owner_incarnation: owner,
+                residency_sequences: vec![self.residency],
+                ticket: Some(TransferTicket {
+                    window_id: window.clone(),
+                    slot: 0,
+                    generation: 1,
+                }),
+                background_prefetch: false,
+                transfer_timeout_millis: 10000,
+                cache_protocol: orbitkv_state::INVENTORY_STREAM_PROTOCOL.into(),
+            })
+            .await?
+            .into_inner();
+        assert_eq!(reply.blocks.len(), 1);
+        assert_eq!(reply.blocks[0].block_hash, key.hash);
+        Ok(json!({"window": window, "epoch": reply.native_source_epoch}))
+    }
 }
 
 fn key(command: &Command) -> StateKey {
@@ -109,23 +165,25 @@ fn pin(store: &Arc<SsdStore>, key: &StateKey) -> Option<Arc<SsdReadLease>> {
         ))
 }
 
+fn block_contents(block: &SealedBlock) -> Value {
+    let slots: Vec<_> = block
+        .slots()
+        .iter()
+        .map(|slot| {
+            let mut bytes = Vec::new();
+            for (ptr, len) in slot.segment_iovecs() {
+                // SAFETY: the completed host read owns the immutable backing of every segment.
+                bytes.extend_from_slice(unsafe { std::slice::from_raw_parts(ptr.as_ptr(), len) });
+            }
+            json!({"bytes": bytes, "encoded": slot.encoding.is_some()})
+        })
+        .collect();
+    json!({"present": true, "slots": slots})
+}
+
 async fn read(store: Arc<SsdStore>, lease: Arc<SsdReadLease>) -> Value {
     match store.read_host_batch(vec![lease]).await {
-        Ok(mut blocks) if !blocks.is_empty() => {
-            let block = blocks.remove(0).1;
-            let slots: Vec<_> = block
-                .slots()
-                .iter()
-                .map(|slot| {
-                    let (ptr, bytes) = slot.segment_iovecs().next().unwrap();
-                    // SAFETY: the read's native receipt initialized and drained this
-                    // entire range. The retained block owns its immutable backing.
-                    let bytes = unsafe { std::slice::from_raw_parts(ptr.as_ptr(), bytes) };
-                    json!({"bytes": bytes, "encoded": slot.encoding.is_some()})
-                })
-                .collect();
-            json!({"present": true, "slots": slots})
-        }
+        Ok(blocks) if !blocks.is_empty() => block_contents(&blocks[0].1),
         Ok(_) => json!({"present": false}),
         Err(error) => json!({"present": false, "error": error.to_string()}),
     }
@@ -184,11 +242,36 @@ pub fn spawn(engine: Arc<crate::OrbitKVEngine>) {
                     store.ingest_batch(std::iter::once((&key, &block)), false);
                     store.flush().await;
                     drop(block);
-                    json!({"present": store.discover(std::slice::from_ref(&key))[0].is_some()})
+                    json!({"present": store.discover(std::slice::from_ref(&key))[0].is_some(), "hash": key.hash})
                 }
                 "read" => match pin(&store, &key) {
                     Some(lease) => read(store.clone(), lease).await,
                     None => json!({"present": false}),
+                },
+                "peer_read" => {
+                    let result = engine
+                        .storage
+                        .reads
+                        .read_prefix(
+                            "ssd-owner-handoff",
+                            &key.namespace,
+                            std::slice::from_ref(&key.hash),
+                            crate::QueryMode::Prepare,
+                            &[NumaNode::UNKNOWN; 2],
+                            Instant::now() + Duration::from_secs(20),
+                        )
+                        .await;
+                    match result.blocks.as_slice() {
+                        [RestoreSource::Memory(block)] => block_contents(block),
+                        [] => json!({"present": false}),
+                        _ => panic!("expected one materialized host block"),
+                    }
+                }
+                "grant" => match command.grant.as_ref().unwrap().request(&key).await {
+                    Ok(grant) => grant,
+                    Err(status) => {
+                        json!({"grpc_code": format!("{:?}", status.code()), "detail": status.message()})
+                    }
                 },
                 "hold" => {
                     assert!(held.is_none());

@@ -63,6 +63,8 @@ class Manager:
         pauses=(),
         rejected=False,
         watermarks=None,
+        address=None,
+        cluster_args=(),
     ):
         self.gate, self.sequence = gate, 0
         self.root = Path(tempfile.mkdtemp(prefix="okv-ssd-"))
@@ -81,6 +83,7 @@ class Manager:
         gate.logs.append(str(self.log_path))
         self.log = self.log_path.open("wb")
         self.http = f"127.0.0.1:{port()}"
+        self.address = address or f"127.0.0.1:{port()}"
         command = [
             str(gate.binary),
             "--ssd-cache-path",
@@ -95,11 +98,12 @@ class Manager:
             "--transfer-transport",
             "tcp",
             "--addr",
-            f"127.0.0.1:{port()}",
+            self.address,
             "--http-addr",
             self.http,
             "--bootstrap-socket",
             str(self.root / "m.sock"),
+            *cluster_args,
         ]
         if watermarks is not None:
             low, high = watermarks
@@ -130,7 +134,12 @@ class Manager:
             assert "drained prior file users" in self.log_path.read_text()
             return
         self.wait(lambda: (self.control / "ready").exists())
-        self.wait(lambda: "Standalone Cache Manager ready" in self.log_path.read_text())
+        ready = (
+            "Cache Manager control listening"
+            if cluster_args
+            else "Standalone Cache Manager ready"
+        )
+        self.wait(lambda: ready in self.log_path.read_text())
         if not {"ssd_before_verification", "ssd_watermark_invalidated"}.intersection(
             pauses
         ):
@@ -192,8 +201,8 @@ class Manager:
             )
         )
 
-    def read(self, id=1, *, present=True, encoded=False, namespace=0):
-        result = self.call("read", id=id, namespace=namespace)
+    def read(self, id=1, *, present=True, encoded=False, namespace=0, operation="read"):
+        result = self.call(operation, id=id, namespace=namespace)
         assert result["present"] == present, result
         if present:
             assert [s["bytes"] for s in result["slots"]] == [

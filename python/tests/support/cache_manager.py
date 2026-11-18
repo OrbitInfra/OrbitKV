@@ -5,13 +5,10 @@ and test helpers for connector testing against a running server.
 """
 
 import contextlib
-import errno
 import json
 import logging
 import os
-import secrets
 import signal
-import socket
 import subprocess
 import sys
 import sysconfig
@@ -23,6 +20,7 @@ from typing import TYPE_CHECKING
 import pytest
 import requests
 
+from .cluster import find_available_port as find_available_port
 from .gpu_identity import identity_group_members, inherited_gpu_lock_fds
 from .metrics import fetch_orbitkv_metrics
 from .paths import PYTHON_ROOT, REPO_ROOT
@@ -72,27 +70,6 @@ def evict_dram_after_ssd_writes(http_port: int) -> None:
 
 def _torch():
     return pytest.importorskip("torch", reason="torch is required for GPU integration tests")
-
-
-def find_available_port() -> int:
-    """Find a listener port outside outgoing TCP and OrbiTE listener-port ranges."""
-    low, high = map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
-    for _ in range(128):
-        port = 1024 + secrets.randbelow(65536 - 1024)
-        # OrbiTE listener starts before the engine HTTP listener and
-        # independently chooses an RPC port in [15000, 17000).
-        if low <= port <= high or 15000 <= port < 17000:
-            continue
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.bind(("0.0.0.0", port))
-                s.listen(1)
-            except OSError as error:
-                if error.errno != errno.EADDRINUSE:
-                    raise
-                continue
-            return s.getsockname()[1]
-    raise RuntimeError("No free test listener port found")
 
 
 def find_cache_manager_binary() -> str | None:
