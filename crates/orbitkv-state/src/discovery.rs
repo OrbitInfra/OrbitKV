@@ -4,13 +4,15 @@ use crate::StateKey;
 pub const DISCOVERY_MAX_KEYS: usize = 128;
 pub const DISCOVERY_MAX_BYTES: usize = 64 * 1024;
 pub const DISCOVERY_MAX_REPLICAS_PER_MEDIUM: usize = 4;
-pub const DISCOVERY_MAX_ENDPOINT_BYTES: usize = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DiscoveryCoverage {
+    /// Every expected peer supplied a synchronized, recent inventory receipt for this cut.
     CompleteAtWatermarks,
+    /// An admitted view can still supply candidates. An empty result is inconclusive.
     PartialHints,
+    /// No usable discovery cut for this membership or namespace.
     Unavailable,
 }
 
@@ -99,21 +101,6 @@ pub struct BlockCandidates {
     pub key: StateKey,
     pub replicas: Vec<ReplicaLocation>,
     pub coverage: DiscoveryCoverage,
-}
-
-impl BlockCandidates {
-    /// Logical retained bytes, including owned capacities but not allocator overhead.
-    pub fn estimated_size(&self) -> usize {
-        std::mem::size_of::<Self>()
-            + self.key.namespace.capacity()
-            + self.key.hash.capacity()
-            + self.replicas.capacity() * std::mem::size_of::<ReplicaLocation>()
-            + self
-                .replicas
-                .iter()
-                .map(|r| r.owner.endpoint.capacity())
-                .sum::<usize>()
-    }
 }
 
 #[cfg(test)]

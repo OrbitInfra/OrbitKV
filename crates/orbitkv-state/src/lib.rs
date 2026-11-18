@@ -25,9 +25,9 @@ pub use bundle::{
 };
 pub use component::StateComponent;
 pub use discovery::{
-    BlockCandidates, CacheOwner, DISCOVERY_MAX_BYTES, DISCOVERY_MAX_ENDPOINT_BYTES,
-    DISCOVERY_MAX_KEYS, DISCOVERY_MAX_REPLICAS_PER_MEDIUM, DiscoveryCoverage, ReplicaLocation,
-    ReplicaMedium, ReplicaMetadata, ReplicaRepresentation, validate_discovery_query,
+    BlockCandidates, CacheOwner, DISCOVERY_MAX_BYTES, DISCOVERY_MAX_KEYS,
+    DISCOVERY_MAX_REPLICAS_PER_MEDIUM, DiscoveryCoverage, ReplicaLocation, ReplicaMedium,
+    ReplicaMetadata, ReplicaRepresentation, validate_discovery_query,
 };
 pub use format::{AttentionRole, Scalar16, StateDType, StateFormat, StateLayout, StorageFormat};
 pub use inventory::{

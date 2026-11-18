@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use orbitkv_catalog::{DeltaApply, GlobalIndex, MembershipView};
+use orbitkv_catalog::{DeltaApply, GlobalIndex, INVENTORY_RECEIPT_TIMEOUT, MembershipView};
 use orbitkv_core::{InventoryReadError, ResidencyInventory};
 use orbitkv_proto::proto::engine::inventory_client::InventoryClient;
 use orbitkv_proto::proto::engine::inventory_server::Inventory;
@@ -1083,7 +1083,7 @@ async fn receive_frames(
     let mut transcript = None::<Sha256>;
     let mut snapshot_id = None::<Uuid>;
     let mut snapshot_permit = None;
-    while let Some(frame) = tokio::time::timeout(Duration::from_secs(3), response.message())
+    while let Some(frame) = tokio::time::timeout(INVENTORY_RECEIPT_TIMEOUT, response.message())
         .await
         .map_err(|_| "inventory response timed out")?
         .map_err(|error| error.to_string())?
@@ -1131,7 +1131,6 @@ async fn receive_frames(
                     view_id,
                     begin.start_sequence,
                 )?;
-                runtime.shared.index.mark_syncing(source.owner.incarnation);
                 snapshot_id = Some(id);
                 let mut digest = Sha256::new();
                 digest.update(transcript_frame.encode_to_vec());

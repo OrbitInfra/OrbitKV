@@ -50,15 +50,35 @@ not assert installed visibility.
 Deltas coalesce exact state/medium identities over a contiguous source interval.
 Filtered empty intervals preserve sequence coverage. Duplicate replay is
 idempotent; gaps, overlap, identity conflicts and incomplete snapshots never
-partially install. Reconnect, overflow and retired owners require a complete
-replacement snapshot. Membership refresh cannot reactivate a budget-retired
-owner by itself.
+partially install. A reconnect can resume the same incarnation and scope at a
+retained contiguous cursor. Journal overflow, retirement or a new incarnation
+requires a replacement snapshot.
 
 Stream interruption makes coverage partial; membership removal excludes the old
 incarnation immediately. Source grants revalidate authoritative current ownership,
 so a stale index hint cannot authorize a stale replica. Normal Manager shutdown
 fences membership before inventory/lifecycle drain and stops new inventory frames.
 Session counters are released on task cancellation.
+
+### Placement lookup contract
+
+The Manager reads one local index and membership cut for a batch. Each requested
+key has a bounded list of candidate replicas and one coverage result.
+
+| Result | What the consumer can conclude |
+| --- | --- |
+| `CompleteAtWatermarks` | Every expected peer in this membership cut has a synchronized view with a local receipt less than three seconds old. An empty row means no remote replica was visible in this namespace at those applied sequence numbers. A later publication can change the answer. |
+| `PartialHints` | At least one admitted view remains. Returned locations may be tried under a new source grant. An empty row leaves the remote placement unknown. |
+| `Unavailable` | The namespace is outside scope, membership is invalid or changing, or no usable view exists. Local cache policy can still serve or recompute the request. |
+
+The three seconds bound **requester receipt age**. Network delay and a backlog
+can make a recently applied source sequence older than that. The source emits
+idle progress every second. Duplicate deltas do not renew a receipt. A commit,
+contiguous advance or matching head confirmation does. Replacing a member at the
+same address invalidates the old cut and its grants. Rebuilding the new member's
+view restores coverage. A router consuming these results must bind any cursor to
+the membership cut, source incarnation, namespace scope and applied sequence.
+The external lookup and event interfaces remain planned.
 
 ## Scope and bounded resources
 

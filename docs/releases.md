@@ -13,6 +13,15 @@ Changes below apply to the next pre-release; nothing new is published by this PR
 
 ## Next pre-release (unreleased)
 
+### Placement discovery
+
+Manager queries now report partial coverage when any expected owner's last
+inventory receipt reaches three seconds. Queries during membership replacement
+report unavailable until the matching index cut is installed. The internal
+Rust crates removed the duplicate `GlobalIndex::mark_syncing` entry point and
+the unused `BlockCandidates::estimated_size` and `DISCOVERY_MAX_ENDPOINT_BYTES`.
+See the [lookup contract](distributed-cache.md#placement-lookup-contract).
+
 ### Optional SSD watermarks
 
 Added paired `--ssd-high-watermark-percent` / `--ssd-low-watermark-percent`,

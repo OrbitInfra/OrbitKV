@@ -1,8 +1,8 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use orbitkv_state::{
     BlockCandidates, DISCOVERY_MAX_REPLICAS_PER_MEDIUM, DiscoveryCoverage, InventoryRecord,
@@ -15,7 +15,10 @@ use uuid::Uuid;
 use crate::MembershipView;
 
 pub const DEFAULT_INDEX_BYTES: usize = 256 * 1024 * 1024;
-const OWNER_ACCOUNTING_BYTES: usize = 256;
+/// Maximum age of a local inventory receipt used to report complete coverage.
+pub const INVENTORY_RECEIPT_TIMEOUT: Duration = Duration::from_secs(3);
+// Includes the active view's ordered receipt entry, reserved at snapshot admission.
+const OWNER_ACCOUNTING_BYTES: usize = 320;
 
 type Residence = (StateKey, ReplicaMedium);
 
@@ -70,7 +73,6 @@ struct OwnerView {
     applied_sequence: u64,
     installed_mono_ns: u64,
     records: BTreeMap<Residence, InventoryRecord>,
-    fresh: bool,
     received_at: Instant,
     retired: bool,
 }
@@ -99,9 +101,44 @@ struct View {
     active_bytes: usize,
     staging_bytes: usize,
     membership_revision: Option<i64>,
+    membership_generation: u64,
     generation: u64,
     admitted_owner_views: usize,
-    fresh_expected_owner_views: usize,
+    // One entry per synchronized owner. The oldest receipt bounds the entire batch.
+    receipts: BTreeSet<(Instant, Uuid)>,
+}
+
+impl View {
+    fn mark_stale(&mut self, owner: Uuid) {
+        if let Some(installed) = self.owners.get(&owner) {
+            self.receipts.remove(&(installed.received_at, owner));
+        }
+    }
+
+    fn record_receipt(&mut self, owner: Uuid, now: Instant) -> Result<(), String> {
+        let installed = self
+            .owners
+            .get_mut(&owner)
+            .ok_or("owner view is not installed")?;
+        self.receipts.remove(&(installed.received_at, owner));
+        installed.received_at = now;
+        self.receipts.insert((now, owner));
+        Ok(())
+    }
+
+    fn owner_status(&self, owner: Uuid, installed: &OwnerView, now: Instant) -> OwnerIndexStatus {
+        let age = now.duration_since(installed.received_at);
+        OwnerIndexStatus {
+            owner,
+            view_id: installed.view_id,
+            applied_sequence: installed.applied_sequence,
+            installed_mono_ns: installed.installed_mono_ns,
+            fresh: age < INVENTORY_RECEIPT_TIMEOUT
+                && self.receipts.contains(&(installed.received_at, owner)),
+            receipt_age_ms: u64::try_from(age.as_millis()).unwrap_or(u64::MAX),
+            records: installed.records.len(),
+        }
+    }
 }
 
 pub struct GlobalIndex {
@@ -237,7 +274,6 @@ impl GlobalIndex {
         for (owner, owner_view) in &mut view.owners {
             if !expected.contains(owner) {
                 owner_view.retired = true;
-                owner_view.fresh = false;
             }
         }
         let retired_staging = view
@@ -251,28 +287,18 @@ impl GlobalIndex {
             view.staging_bytes -= bytes;
             view.accounted_bytes -= bytes;
         }
+        view.receipts.retain(|(_, owner)| expected.contains(owner));
+        view.admitted_owner_views = view.owners.values().filter(|v| !v.retired).count();
         view.expected = expected;
         view.membership_revision = Some(revision);
-        refresh_coverage_counts(&mut view);
-        view.generation = view.generation.saturating_add(1);
-    }
-
-    pub fn mark_syncing(&self, owner: Uuid) {
-        let mut view = self.write_view();
-        let expected = view.expected.contains(&owner);
-        let became_stale = view.owners.get_mut(&owner).is_some_and(|owner_view| {
-            let became_stale = owner_view.fresh && !owner_view.retired && expected;
-            owner_view.fresh = false;
-            became_stale
-        });
-        if became_stale {
-            view.fresh_expected_owner_views -= 1;
-        }
+        view.membership_generation = self.membership.snapshot().generation;
         view.generation = view.generation.saturating_add(1);
     }
 
     pub fn mark_stale(&self, owner: Uuid) {
-        self.mark_syncing(owner);
+        let mut view = self.write_view();
+        view.mark_stale(owner);
+        view.generation = view.generation.saturating_add(1);
     }
 
     pub fn confirm_progress(
@@ -282,26 +308,17 @@ impl GlobalIndex {
         applied_sequence: u64,
     ) -> Result<(), String> {
         let mut view = self.write_view();
-        let expected = view.expected.contains(&owner);
-        let became_fresh = {
-            let owner_view = view
-                .owners
-                .get_mut(&owner)
-                .ok_or("owner view is not installed")?;
-            if owner_view.retired
-                || owner_view.view_id != view_id
-                || owner_view.applied_sequence != applied_sequence
-            {
-                return Err("owner progress does not match the installed view".into());
-            }
-            let became_fresh = !owner_view.fresh && expected;
-            owner_view.fresh = true;
-            owner_view.received_at = Instant::now();
-            became_fresh
-        };
-        if became_fresh {
-            view.fresh_expected_owner_views += 1;
+        let installed = view
+            .owners
+            .get(&owner)
+            .ok_or("owner view is not installed")?;
+        if installed.retired
+            || installed.view_id != view_id
+            || installed.applied_sequence != applied_sequence
+        {
+            return Err("owner progress does not match the installed view".into());
         }
+        view.record_receipt(owner, Instant::now())?;
         view.generation = view.generation.saturating_add(1);
         Ok(())
     }
@@ -350,15 +367,7 @@ impl GlobalIndex {
         );
         view.staging_bytes += OWNER_ACCOUNTING_BYTES;
         view.accounted_bytes += OWNER_ACCOUNTING_BYTES;
-        let expected = view.expected.contains(&owner);
-        let became_stale = view.owners.get_mut(&owner).is_some_and(|owner_view| {
-            let became_stale = owner_view.fresh && !owner_view.retired && expected;
-            owner_view.fresh = false;
-            became_stale
-        });
-        if became_stale {
-            view.fresh_expected_owner_views -= 1;
-        }
+        view.mark_stale(owner);
         view.generation = view.generation.saturating_add(1);
         Ok(())
     }
@@ -498,6 +507,7 @@ impl GlobalIndex {
             insert_block(&mut view.blocks, owner, record)?;
         }
         view.active_bytes += active_bytes;
+        let received_at = Instant::now();
         view.owners.insert(
             owner,
             OwnerView {
@@ -505,15 +515,12 @@ impl GlobalIndex {
                 applied_sequence: through_sequence,
                 installed_mono_ns: 0,
                 records: staging.records,
-                fresh: true,
-                received_at: Instant::now(),
+                received_at,
                 retired: false,
             },
         );
         view.admitted_owner_views += 1;
-        if view.expected.contains(&owner) {
-            view.fresh_expected_owner_views += 1;
-        }
+        view.receipts.insert((received_at, owner));
         view.generation = view.generation.saturating_add(1);
         view.owners
             .get_mut(&owner)
@@ -583,22 +590,13 @@ impl GlobalIndex {
                 insert_block(&mut view.blocks, owner, record)?;
             }
         }
-        let expected = view.expected.contains(&owner);
-        let became_fresh = {
-            let owner_view = view
-                .owners
-                .get_mut(&owner)
-                .ok_or("missing validated owner view")?;
-            let became_fresh = !owner_view.fresh && expected;
-            apply_records(&mut owner_view.records, updates);
-            owner_view.applied_sequence = through_inclusive;
-            owner_view.fresh = true;
-            owner_view.received_at = Instant::now();
-            became_fresh
-        };
-        if became_fresh {
-            view.fresh_expected_owner_views += 1;
-        }
+        let owner_view = view
+            .owners
+            .get_mut(&owner)
+            .ok_or("missing validated owner view")?;
+        apply_records(&mut owner_view.records, updates);
+        owner_view.applied_sequence = through_inclusive;
+        view.record_receipt(owner, Instant::now())?;
         view.active_bytes = view
             .active_bytes
             .checked_add_signed(delta)
@@ -622,38 +620,20 @@ impl GlobalIndex {
     }
 
     pub fn owner_status(&self, owner: Uuid) -> Option<OwnerIndexStatus> {
-        self.view
-            .read()
-            .owners
+        let view = self.view.read();
+        view.owners
             .get(&owner)
-            .map(|view| OwnerIndexStatus {
-                owner,
-                view_id: view.view_id,
-                applied_sequence: view.applied_sequence,
-                installed_mono_ns: view.installed_mono_ns,
-                fresh: view.fresh && !view.retired,
-                receipt_age_ms: u64::try_from(view.received_at.elapsed().as_millis())
-                    .unwrap_or(u64::MAX),
-                records: view.records.len(),
-            })
+            .map(|installed| view.owner_status(owner, installed, Instant::now()))
     }
 
     pub fn owner_statuses(&self, after: Option<Uuid>, limit: usize) -> Vec<OwnerIndexStatus> {
         let view = self.view.read();
+        let now = Instant::now();
         let mut owners = view
             .owners
             .iter()
             .filter(|(owner, _)| after.is_none_or(|after| **owner > after))
-            .map(|(owner, owner_view)| OwnerIndexStatus {
-                owner: *owner,
-                view_id: owner_view.view_id,
-                applied_sequence: owner_view.applied_sequence,
-                installed_mono_ns: owner_view.installed_mono_ns,
-                fresh: owner_view.fresh && !owner_view.retired,
-                receipt_age_ms: u64::try_from(owner_view.received_at.elapsed().as_millis())
-                    .unwrap_or(u64::MAX),
-                records: owner_view.records.len(),
-            })
+            .map(|(owner, installed)| view.owner_status(*owner, installed, now))
             .collect::<Vec<_>>();
         owners.sort_by_key(|status| status.owner);
         owners.truncate(limit.min(128));
@@ -666,25 +646,12 @@ impl GlobalIndex {
             view.staging_bytes -= staging.bytes;
             view.accounted_bytes -= staging.bytes;
         }
-        let expected = view.expected.contains(&owner);
-        let (was_admitted, was_fresh) =
-            view.owners
-                .get(&owner)
-                .map_or((false, false), |owner_view| {
-                    (
-                        !owner_view.retired,
-                        !owner_view.retired && owner_view.fresh && expected,
-                    )
-                });
-        if was_admitted {
-            view.admitted_owner_views -= 1;
-        }
-        if was_fresh {
-            view.fresh_expected_owner_views -= 1;
-        }
-        if let Some(owner_view) = view.owners.get_mut(&owner) {
+        view.mark_stale(owner);
+        if let Some(owner_view) = view.owners.get_mut(&owner)
+            && !owner_view.retired
+        {
             owner_view.retired = true;
-            owner_view.fresh = false;
+            view.admitted_owner_views -= 1;
         }
         view.generation = view.generation.saturating_add(1);
     }
@@ -728,14 +695,25 @@ impl GlobalIndex {
     pub fn status(&self) -> IndexStatus {
         let view = self.view.read();
         let registration_valid = self.membership.registration_valid();
-        let coverage = coverage(&view, self.membership.permits(self.membership.owner()));
+        let members = self.membership.snapshot();
+        let now = Instant::now();
+        let coverage = coverage(
+            &view,
+            members.admitted_generation(self.membership.owner()),
+            now,
+        );
         IndexStatus {
             membership_revision: view.membership_revision,
             accounted_bytes: view.accounted_bytes,
             active_bytes: view.active_bytes,
             staging_bytes: view.staging_bytes,
             expected_owner_views: view.expected.len(),
-            installed_owner_views: view.fresh_expected_owner_views,
+            installed_owner_views: view
+                .receipts
+                .iter()
+                .rev()
+                .take_while(|(at, _)| now.duration_since(*at) < INVENTORY_RECEIPT_TIMEOUT)
+                .count(),
             view_generation: view.generation,
             registration_valid,
             coverage,
@@ -756,7 +734,12 @@ impl GlobalIndex {
 
     pub fn lookup(&self, keys: &[StateKey]) -> Vec<BlockCandidates> {
         let view = self.read_for_lookup();
-        let discovery_coverage = coverage(&view, self.membership.permits(self.membership.owner()));
+        let members = self.membership.snapshot();
+        let discovery_coverage = coverage(
+            &view,
+            members.admitted_generation(self.membership.owner()),
+            Instant::now(),
+        );
         keys.iter()
             .map(|key| {
                 if !self.scope.contains(&key.namespace) {
@@ -776,7 +759,7 @@ impl GlobalIndex {
                             .iter()
                             .filter(|entry| entry.metadata.medium == medium)
                         {
-                            if let Some(owner) = self.membership.resolve(entry.owner)
+                            if let Some(owner) = members.resolve(entry.owner)
                                 && owner.incarnation != self.membership.owner().incarnation
                                 && view
                                     .owners
@@ -784,7 +767,7 @@ impl GlobalIndex {
                                     .is_some_and(|owner_view| !owner_view.retired)
                             {
                                 replicas.push(ReplicaLocation {
-                                    owner,
+                                    owner: owner.clone(),
                                     sequence: entry.sequence,
                                     metadata: entry.metadata,
                                 });
@@ -821,33 +804,23 @@ fn monotonic_ns() -> u64 {
         .saturating_add(u64::try_from(now.tv_nsec).unwrap_or(0))
 }
 
-fn coverage(view: &View, registration_valid: bool) -> DiscoveryCoverage {
-    if !registration_valid || view.membership_revision.is_none() {
+fn coverage(view: &View, membership_generation: Option<u64>, now: Instant) -> DiscoveryCoverage {
+    if membership_generation != Some(view.membership_generation)
+        || view.membership_revision.is_none()
+    {
         DiscoveryCoverage::Unavailable
-    } else if view.fresh_expected_owner_views == view.expected.len() {
+    } else if view.receipts.len() == view.expected.len()
+        && view
+            .receipts
+            .first()
+            .is_none_or(|(at, _)| now.duration_since(*at) < INVENTORY_RECEIPT_TIMEOUT)
+    {
         DiscoveryCoverage::CompleteAtWatermarks
     } else if view.admitted_owner_views > 0 {
         DiscoveryCoverage::PartialHints
     } else {
         DiscoveryCoverage::Unavailable
     }
-}
-
-fn refresh_coverage_counts(view: &mut View) {
-    view.admitted_owner_views = view
-        .owners
-        .values()
-        .filter(|owner_view| !owner_view.retired)
-        .count();
-    view.fresh_expected_owner_views = view
-        .expected
-        .iter()
-        .filter(|owner| {
-            view.owners
-                .get(owner)
-                .is_some_and(|owner_view| !owner_view.retired && owner_view.fresh)
-        })
-        .count();
 }
 
 fn record_duration(counter: &AtomicU64, duration: std::time::Duration) {
@@ -997,10 +970,8 @@ fn remove_active_owner(view: &mut View, owner: Uuid) {
     };
     if !previous.retired {
         view.admitted_owner_views -= 1;
-        if previous.fresh && view.expected.contains(&owner) {
-            view.fresh_expected_owner_views -= 1;
-        }
     }
+    view.receipts.remove(&(previous.received_at, owner));
     for residence in previous.records.keys() {
         remove_block(&mut view.blocks, owner, residence);
     }

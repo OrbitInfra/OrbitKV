@@ -207,6 +207,109 @@ fn install(
 }
 
 #[test]
+fn oldest_receipt_limits_complete_queries_until_the_same_owner_makes_progress() {
+    let (index, membership, slow) = setup(1 << 20);
+    let fast = owner(51003);
+    membership.replace_members([
+        ("local".into(), 1, membership.owner().clone()),
+        ("slow".into(), 1, slow.clone()),
+        ("fast".into(), 1, fast.clone()),
+    ]);
+    index.set_expected_owners(11, [slow.incarnation, fast.incarnation]);
+    let row = record(1, 1, ReplicaMedium::Dram, true);
+    let keys = [row.key.clone(), record(2, 1, ReplicaMedium::Ssd, true).key];
+    let slow_view = install(&index, &slow, vec![row.clone()], 1);
+    let fast_view = install(&index, &fast, Vec::new(), 0);
+    let receipt = Instant::now() - INVENTORY_RECEIPT_TIMEOUT;
+    index
+        .view
+        .write()
+        .record_receipt(slow.incarnation, receipt)
+        .unwrap();
+    {
+        let view = index.view.read();
+        let cut = Some(view.membership_generation);
+        let expiry = receipt + INVENTORY_RECEIPT_TIMEOUT;
+        assert_eq!(
+            coverage(&view, cut, expiry - Duration::from_nanos(1)),
+            DiscoveryCoverage::CompleteAtWatermarks
+        );
+        assert_eq!(
+            coverage(&view, cut, expiry),
+            DiscoveryCoverage::PartialHints
+        );
+    }
+    assert_eq!(
+        index
+            .apply_delta(slow.incarnation, slow_view, 0, 1, vec![row])
+            .unwrap(),
+        DeltaApply::Duplicate
+    );
+    index
+        .confirm_progress(fast.incarnation, fast_view, 0)
+        .unwrap();
+    let partial = index.lookup(&keys);
+    assert!(
+        partial
+            .iter()
+            .all(|row| row.coverage == DiscoveryCoverage::PartialHints)
+    );
+    assert_eq!(partial[0].replicas[0].owner, slow);
+    assert!(partial[1].replicas.is_empty());
+    assert!(!index.owner_status(slow.incarnation).unwrap().fresh);
+    assert_eq!(index.status().installed_owner_views, 1);
+    index
+        .confirm_progress(slow.incarnation, slow_view, 1)
+        .unwrap();
+    assert!(
+        index
+            .lookup(&keys)
+            .iter()
+            .all(|row| row.coverage == DiscoveryCoverage::CompleteAtWatermarks)
+    );
+}
+
+#[test]
+fn lookup_suspends_between_member_replacement_and_inventory_installation() {
+    let (index, membership, old) = setup(1 << 20);
+    let row = record(1, 1, ReplicaMedium::Dram, true);
+    let keys = [row.key.clone()];
+    let old_view = install(&index, &old, vec![row], 1);
+    let lease = membership.lease(&old).unwrap();
+    let new = CacheOwner {
+        endpoint: old.endpoint.clone(),
+        incarnation: Uuid::new_v4(),
+    };
+    membership.revoke(&old);
+    assert_eq!(
+        index.lookup(&keys)[0].coverage,
+        DiscoveryCoverage::Unavailable
+    );
+    membership.replace_members([
+        ("local".into(), 1, membership.owner().clone()),
+        ("remote".into(), 2, new.clone()),
+    ]);
+    let during_watch = index.lookup(&keys);
+    assert_eq!(during_watch[0].coverage, DiscoveryCoverage::Unavailable);
+    assert!(during_watch[0].replicas.is_empty());
+    assert!(!membership.permits_lease(&lease));
+    index.set_expected_owners(11, [new.incarnation]);
+    assert!(
+        index
+            .confirm_progress(old.incarnation, old_view, 1)
+            .is_err()
+    );
+    assert_eq!(
+        index.lookup(&keys)[0].coverage,
+        DiscoveryCoverage::Unavailable
+    );
+    install(&index, &new, Vec::new(), 0);
+    let after = index.lookup(&keys);
+    assert_eq!(after[0].coverage, DiscoveryCoverage::CompleteAtWatermarks);
+    assert!(after[0].replicas.is_empty());
+}
+
+#[test]
 fn hidden_snapshot_installs_both_media_atomically() {
     let (index, _, remote) = setup(1 << 20);
     let session = Uuid::new_v4();
