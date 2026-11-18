@@ -1,6 +1,7 @@
 # OrbitKV Python package
 
-OrbitKV connects official vLLM and SGLang to an independent Rust Cache Manager.
+OrbitKV is a High Performance KV Cache System for LLM Inference.
+The Python package connects vLLM and SGLang to an independent Rust Cache Manager.
 Reuse prefixes from DRAM and optional SSD after GPU eviction or engine restart.
 Engines own GPU memory and scheduling; Rust owns cache state, batches, budgets
 and transfer completion.

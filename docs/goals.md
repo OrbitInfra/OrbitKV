@@ -1,9 +1,10 @@
 # Overview
 
-OrbitKV is an external KV cache for vLLM and SGLang. It retains reusable prefixes
-in DRAM and optional SSD so requests can recover state after GPU eviction or an
-engine restart. Run an independent Cache Manager per inference host and connect
-the official engine adapter. Begin with the [quickstart](single-node.md).
+OrbitKV is a High Performance KV Cache System for LLM Inference.
+It retains reusable vLLM and SGLang prefixes in DRAM and, when configured, on
+local SSDs. Requests can recover this state after GPU eviction or an engine
+restart. Run an independent Cache Manager per inference host and connect the
+official engine adapter. Begin with the [quickstart](single-node.md).
 
 ## What you can use today
 

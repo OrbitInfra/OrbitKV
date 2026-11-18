@@ -49,8 +49,12 @@ maintained skill per workflow and update it when the consumed API changes.
 
 ## Project Overview
 
-OrbitKV is a distributed KV cache for vLLM and SGLang, with OrbiTE as its only
-byte mover. Compiled recovery requirements validate supported layouts. Engine pins
+OrbitKV is a High Performance KV Cache System for LLM Inference.
+Use that sentence for the project description. In architecture diagrams, label
+the cache system “OrbitKV · High Performance KV Cache System” and its transfer
+engine “OrbiTE · High Performance Transfer Engine”. OrbitKV integrates with
+vLLM and SGLang and uses OrbiTE for all cache transfers. Compiled recovery
+requirements validate supported layouts. Engine pins
 are vLLM `0.33.0` and SGLang `0.5.23`; see `docs/compatibility.md` for current limits
 and `docs/performance.md` for historical evidence. The SGLang UnifiedRadixCache
 linker is implemented; public lifecycle integration and installed qualification

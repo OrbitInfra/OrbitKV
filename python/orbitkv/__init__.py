@@ -1,4 +1,4 @@
-"""OrbitKV - High-performance key-value storage engine with Python bindings.
+"""OrbitKV is a High Performance KV Cache System for LLM Inference.
 
 This package provides:
 1. CacheManagerClient: node-local Cache Manager client

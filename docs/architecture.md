@@ -2,9 +2,11 @@
 
 ## Mission
 
-Extend engine KV capacity with reusable DRAM, SSD and peer replicas. Engines
-retain scheduling and GPU allocation; Rust owns external cache state and resource
-lifetime. Start with [compatibility](compatibility.md) and [deployment](deployment.md).
+OrbitKV is a High Performance KV Cache System for LLM Inference.
+Its Cache Manager extends vLLM and SGLang capacity with reusable DRAM, SSD and peer
+replicas. OrbiTE is the high-performance transfer engine for these tiers. The
+inference engines own scheduling and GPU allocation. OrbitKV owns external
+cache state and resource lifetime. Start with [compatibility](compatibility.md) and [deployment](deployment.md).
 Architecture contracts are not completion claims; the [completion plan](completion-plan.md)
 is the only execution queue.
 
@@ -35,7 +37,7 @@ scoped owner inventory streams install local candidate views with explicit cover
 Queries use those views rather than per-key etcd RPCs. Grants revalidate source
 incarnation, representation and allocation generation. See [distributed design](distributed-cache.md).
 
-![Local recovery, peer OrbiTE READ and native P/D ownership](_static/architecture-light.svg)
+![OrbitKV’s high-performance KV cache system uses OrbiTE, its high-performance transfer engine, to move KV data between GPU memory, DRAM, SSDs and peer hosts.](_static/architecture-light.svg)
 
 ## API and crate boundaries
 
@@ -89,13 +91,15 @@ Detailed contracts live in [transport](transport.md), [engine-local Restore](eng
 
 ```mermaid
 flowchart TD
-  E[Official engine: scheduler and HBM] --> A[Thin engine adapter]
-  A --> C[Native client: process and Restore ownership]
-  C --> M[Cache Manager]
-  M --> S[Core storage, query and source owners]
-  M --> I[Catalog: covered inventory views]
+  subgraph KV["OrbitKV · High Performance KV Cache System"]
+    A[Thin engine adapter] --> C[Native client: process and Restore ownership]
+    C --> M[Cache Manager]
+    M --> S[Core storage, query and source owners]
+    M --> I[Catalog: covered inventory views]
+  end
+  E[Official engine: scheduler and HBM] --> A
   M --> X[etcd: leased members and protocol]
-  S --> T[OrbiTE peer bytes]
+  S -->|Peer READ| T["OrbiTE · High Performance Transfer Engine"]
 ```
 
 The current layers validate declared recovery requirements and execute bounded

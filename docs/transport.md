@@ -1,7 +1,7 @@
 # OrbitKV transport architecture
 
-OrbiTE moves all shared-cache bytes: local GPU↔DRAM, SSD file vectors and peer
-READs. OrbitKV owns state compatibility, placement, grants, extents and GPU codec
+OrbiTE is OrbitKV’s high-performance transfer engine. It handles local GPU↔DRAM
+copies, SSD file vectors and peer READs. OrbitKV owns state compatibility, placement, grants, extents and GPU codec
 compute. Live P/D uses the inference engine's native transport independently.
 
 CPU/TCP, Linux io_uring and CUDA-shim controls are CI evidence. **Every current
