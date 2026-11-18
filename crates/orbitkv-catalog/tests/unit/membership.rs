@@ -110,3 +110,32 @@ fn authority_is_revoked_on_removal_incarnation_or_epoch_change_only() {
     install(1, peer.clone());
     assert!(!view.permits(&peer));
 }
+
+#[test]
+fn router_cut_survives_progress_and_changes_after_suspension_or_rejoin() {
+    let local = owner("127.0.0.1:50055");
+    let peer = owner("127.0.0.1:50056");
+    let view = MembershipView::new(local.clone());
+    let publish = || {
+        view.replace_members([
+            ("local".into(), 1, local.clone()),
+            ("peer".into(), 1, peer.clone()),
+        ]);
+    };
+    assert_eq!(view.admitted_generation(), None);
+    assert!(view.renew(Instant::now(), Duration::from_secs(30)));
+    publish();
+    let initial = view.admitted_generation().unwrap();
+    publish();
+    assert_eq!(view.admitted_generation(), Some(initial));
+    view.invalidate_snapshot();
+    assert_eq!(view.admitted_generation(), None);
+    publish();
+    let after_repair = view.admitted_generation().unwrap();
+    assert_ne!(after_repair, initial);
+    view.revoke(&peer).unwrap();
+    publish();
+    assert_ne!(view.admitted_generation(), Some(after_repair));
+    view.fence();
+    assert_eq!(view.admitted_generation(), None);
+}

@@ -97,6 +97,11 @@ impl MembershipView {
         &self.owner
     }
 
+    /// Local admission cut. Progress-only coordinator updates preserve this identity.
+    pub fn admitted_generation(&self) -> Option<u64> {
+        self.state.read().admitted_generation(&self.owner)
+    }
+
     pub fn resolve(&self, incarnation: uuid::Uuid) -> Option<CacheOwner> {
         let state = self.state.read();
         if !state.permits() {
@@ -152,13 +157,17 @@ impl MembershipView {
                 (owner.incarnation, member)
             })
             .collect();
+        let mut changed = !state.ready || next.len() != state.members.len();
         for (incarnation, member) in &state.members {
             if next.get(incarnation) != Some(member) {
+                changed = true;
                 member.0.revoked.store(true, Ordering::Release);
             }
         }
+        if changed {
+            state.generation += 1;
+        }
         state.members = next;
-        state.generation += 1;
         state.ready = true;
         if state.fenced
             || state

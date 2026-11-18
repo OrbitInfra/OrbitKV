@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::watch as signal;
 use tokio::task::JoinHandle;
 
-pub(crate) use inventory::{InventoryRuntime, InventoryRuntimeStatus};
+pub(crate) use inventory::{InventoryRuntime, InventoryRuntimeStatus, router};
 
 pub(super) const RPC_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_MEMBERS: usize = 4096;

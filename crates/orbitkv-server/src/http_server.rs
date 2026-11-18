@@ -1,3 +1,5 @@
+pub(crate) mod router;
+
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -9,8 +11,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
-
-use crate::registry::RegistryHandle;
 
 #[derive(Clone)]
 struct AppState {
@@ -273,47 +273,31 @@ fn decode_hex(value: &str) -> Result<Vec<u8>, String> {
         .collect()
 }
 
-/// Start HTTP server for health check, optional Prometheus metrics, and instance management.
-pub async fn start_http_server(
-    addr: std::net::SocketAddr,
-    engine: Arc<OrbitKVEngine>,
-    registry: RegistryHandle,
-    enable_prometheus: bool,
-    prometheus_registry: Option<Registry>,
-    shutdown: Arc<Notify>,
-) -> Result<tokio::task::JoinHandle<()>, std::io::Error> {
-    let lifecycle = crate::cache::lifecycle::LifecycleService::new(Arc::clone(&engine), registry);
-    start_http_server_with_lifecycle(
-        addr,
-        engine,
-        lifecycle,
-        enable_prometheus,
-        prometheus_registry,
-        shutdown,
-        None,
-    )
-    .await
-}
-
-pub(crate) async fn start_http_server_with_lifecycle(
+pub(crate) async fn start_http_server(
     addr: std::net::SocketAddr,
     engine: Arc<OrbitKVEngine>,
     lifecycle: crate::cache::lifecycle::LifecycleService,
-    enable_prometheus: bool,
     prometheus_registry: Option<Registry>,
     shutdown: Arc<Notify>,
     inventory: Option<crate::cluster::InventoryRuntime>,
+    router_credentials: Option<router::Credentials>,
 ) -> Result<tokio::task::JoinHandle<()>, std::io::Error> {
     let listener = TcpListener::bind(addr).await?;
 
+    let router = match router_credentials {
+        Some(credentials) => Some(router::routes(
+            credentials,
+            inventory.clone().ok_or_else(|| {
+                std::io::Error::other("router API requires distributed inventory")
+            })?,
+        )),
+        None => None,
+    };
+    let metrics_enabled = prometheus_registry.is_some();
     let state = AppState {
         engine,
         lifecycle,
-        prometheus_registry: if enable_prometheus {
-            prometheus_registry
-        } else {
-            None
-        },
+        prometheus_registry,
         inventory,
     };
 
@@ -327,20 +311,14 @@ pub(crate) async fn start_http_server_with_lifecycle(
         .route("/cache/metadata", get(metadata_handler))
         .route("/cache/memory/cleanup", post(cleanup_memory_cache_handler));
 
-    if enable_prometheus {
+    if metrics_enabled {
         app = app.route("/metrics", get(metrics_handler));
-        info!(
-            "Starting HTTP server on {} (/health, /metrics, /instances, /instances/cleanup, /cache/sync, /cache/metadata, /cache/memory/cleanup)",
-            addr
-        );
-    } else {
-        info!(
-            "Starting HTTP server on {} (/health, /instances, /instances/cleanup, /cache/sync, /cache/metadata, /cache/memory/cleanup)",
-            addr
-        );
     }
-
-    let app = app.with_state(state);
+    let mut app = app.with_state(state);
+    if let Some(router) = router {
+        app = app.merge(router);
+    }
+    info!("Starting Manager HTTP server on {addr}");
 
     let handle = tokio::spawn(async move {
         if let Err(err) = axum::serve(listener, app)

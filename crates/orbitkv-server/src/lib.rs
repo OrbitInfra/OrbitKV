@@ -10,7 +10,7 @@ mod cluster;
 mod endpoint;
 mod peer;
 pub use peer::P2pTransferService;
-pub mod http_server;
+mod http_server;
 pub mod metric;
 pub mod proto;
 pub mod registry;
@@ -298,6 +298,10 @@ pub struct Cli {
         value_parser = parse_metadata_namespace
     )]
     pub metadata_namespace: Vec<String>,
+
+    /// Read-only router credentials file. Requires distributed membership and a loopback HTTP bind.
+    #[arg(long, requires = "etcd_endpoints")]
+    pub router_credentials: Option<std::path::PathBuf>,
 
     /// Subscribe to no remote namespaces while retaining local cache service.
     #[arg(
@@ -669,6 +673,18 @@ fn initialize_registry(cli: &Cli) -> Result<CudaTensorRegistry, Box<dyn Error>> 
 /// Main entry point for the Cache Manager.
 pub fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
+    let metadata_scope = Arc::new(if cli.metadata_empty_scope {
+        orbitkv_state::InventoryScope::exact(Vec::new())?
+    } else if cli.metadata_namespace.is_empty() {
+        orbitkv_state::InventoryScope::AllNamespaces
+    } else {
+        orbitkv_state::InventoryScope::exact(cli.metadata_namespace.clone())?
+    });
+    let router_credentials = cli
+        .router_credentials
+        .as_deref()
+        .map(|path| http_server::router::Credentials::load(path, cli.http_addr, &metadata_scope))
+        .transpose()?;
     cli.transfer_transport.validate_compiled()?;
     if !cli.ssd_cache_path.is_empty() {
         orbitkv_core::SsdCacheConfig {
@@ -739,13 +755,6 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     };
 
     let peer_control_enabled = !cli.etcd_endpoints.is_empty();
-    let metadata_scope = Arc::new(if cli.metadata_empty_scope {
-        orbitkv_state::InventoryScope::exact(Vec::new())?
-    } else if cli.metadata_namespace.is_empty() {
-        orbitkv_state::InventoryScope::AllNamespaces
-    } else {
-        orbitkv_state::InventoryScope::exact(cli.metadata_namespace.clone())?
-    });
     let membership_view = if peer_control_enabled {
         let peer_addr = cli.peer_advertise_addr.unwrap_or(cli.addr);
         if peer_addr.ip().is_unspecified() || peer_addr.port() == 0 {
@@ -992,14 +1001,14 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         }
 
         // Start HTTP server for health check (always enabled)
-        let http_server_handle = http_server::start_http_server_with_lifecycle(
+        let http_server_handle = http_server::start_http_server(
             cli.http_addr,
             Arc::clone(&engine),
             lifecycle.clone(),
-            cli.enable_prometheus,
             metrics_state.prometheus_registry.clone(),
             Arc::clone(&shutdown),
             inventory_runtime.clone(),
+            router_credentials,
         )
         .await?;
 

@@ -80,10 +80,68 @@ invalidates both even when a node rejoins with the same UUID. The receiver
 checks its original lease under the catalog lock before applying frames or
 withdrawing inventory. Fence waiters use the same lease to read progress. A journal reset
 preserves positive hints while clearing the resume cursor until the replacement
-snapshot commits. Retiring the view also reclaims its reset state. A router
-consuming these results must bind any cursor to
-the membership cut, source incarnation, namespace scope and applied sequence.
-The external lookup and event interfaces remain planned.
+snapshot commits. Retiring the view also reclaims its reset state.
+
+### Router lookups and source events
+
+A router can query one Manager for local placements and remote candidate hints.
+To track live changes, subscribe to each source whose blocks the router tracks.
+Manager membership comes from the deployment. The Manager never selects an
+inference worker, reserves a replica or grants access through these routes.
+
+Enable the routes on a distributed Manager with a loopback HTTP bind, such as
+`--http-addr 127.0.0.1:9091 --router-credentials /run/orbitkv/router.json`.
+The file is a JSON array with 1–64 entries of this form:
+
+```json
+[{"namespace":"<exact orbitkv:v2 storage namespace>","token_sha256":"<64 lowercase hex characters>"}]
+```
+
+Generate a random 32-byte token and encode it as 64 lowercase hexadecimal
+characters. The fingerprint is SHA-256 of those 64 ASCII characters, without
+a trailing newline. Send the token as `Authorization: Bearer <token>` with
+`Content-Type: application/json`. Each fingerprint selects one exact namespace
+within the Manager's configured scope. Restart to rotate credentials. For a
+router on another host, terminate TLS at a trusted proxy and forward only these
+two paths. Other Manager HTTP endpoints are operational controls.
+
+1. Send `POST /v1/router/lookup` with `{"hashes":[[1,2],[3,4]]}`, using the
+   stored, group-encoded hashes. The response contains `source` (peer endpoint
+   and incarnation), `local` (resident DRAM/SSD rows), one `placements` row for
+   each input hash, and `cursor`. Each placement carries `peers` and
+   `peer_coverage` under the lookup contract above. Local rows and the source
+   sequence are sampled under one lock. Peer hints have their own applied
+   watermarks and freshness. Refresh peer hints by looking up again or following
+   those sources directly.
+2. Send `POST /v1/router/events` with `{"cursor":<cursor>,"wait_ms":1000}`.
+   The response returns `changes` and the next `cursor`. Upsert or remove each
+   `(source incarnation, hash, metadata.medium)` according to `present`.
+   Events cover the authorized namespace. Bootstrap only the hashes you track
+   and retain their events. The journal coalesces repeated changes to a
+   residence within one page. An empty page can still advance through changes
+   in another namespace. The source-wide sequence reveals aggregate activity.
+3. Install the complete page and its returned cursor together. Retrying the
+   same cursor can return a longer interval if the source has advanced. Apply
+   rows by sequence, and discard responses from a superseded request or stream.
+   Poll each source serially. On `409 resync_required`, drop that source's
+   tracked rows and relookup the tracked hashes. When bootstrapping in multiple
+   batches, replay from the **earliest** returned cursor on the same stream and
+   retain each batch's baseline sequence, including for absent rows. Apply only
+   changes newer than that baseline. Restart on any stream change or gap.
+   A cursor binds cluster, source epoch/incarnation, membership generation,
+   exact namespace and the last source sequence. Suspend that source on
+   `503 membership_unavailable`, a connection failure or a timeout. Resume
+   using it after a fresh lookup succeeds.
+
+Each request accepts at most 320 KiB of JSON with a one-second body deadline.
+Lookup accepts 1–128 hashes and 64 KiB of namespace plus raw hash bytes.
+Each Manager admits eight lookups and eight event polls independently,
+with `429` on saturation. A response holds its slot through the lifetime of
+its encoded bytes, capped at 3 MiB per response. A poll waits 0–1,000 ms
+and reads at most one existing inventory batch (1,024 records or 512 KiB
+before JSON encoding). The router adds no persistent subscriber queue or
+second event journal. Source authorization and OrbiTE drain still govern
+every payload transfer.
 
 ## Scope and bounded resources
 
@@ -141,7 +199,7 @@ HBM or qualifies GPU-direct operation.
 
 | Operation | Implemented path |
 | --- | --- |
-| Block discovery | Complete local global index; no foreground network query |
+| Block discovery | Requester-local catalog with per-batch coverage and bounded peer hints |
 | Inventory publication | Bounded Manager inventory streams |
 | Index synchronization | Covered inventory snapshots and deltas |
 | Membership/incarnations | Background etcd registration, lease renewal and Watch |
