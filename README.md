@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<p align="center"><strong>A KV cache for vLLM and SGLang</strong></p>
+<p align="center"><strong>A High Performance KV Cache System for LLM Inference.</strong></p>
 
 <p align="center">
   <a href="https://orbitinfra.github.io/OrbitKV/">Documentation</a> |
