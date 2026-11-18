@@ -178,7 +178,7 @@ async fn bootstrap(
         view.fence();
         return Err("cluster format or own registration changed".into());
     }
-    install_members(view, inventory, revision, &members);
+    inventory.replace_members(revision, members.clone());
     Ok((members, revision))
 }
 
@@ -262,7 +262,7 @@ async fn follow(
             )
             .map_err(FollowError::Rebuild)?
             {
-                view.revoke(&previous);
+                inventory.revoke_member(&previous);
             }
             if !format_valid || members.get(&registration.node_id) != Some(registration) {
                 view.fence();
@@ -277,24 +277,10 @@ async fn follow(
                 .max(through);
         }
         if through > *applied {
-            install_members(view, inventory, through, members);
+            inventory.replace_members(through, members.clone());
             *applied = through;
         }
     }
-}
-
-fn install_members(
-    view: &MembershipView,
-    inventory: &InventoryRuntime,
-    revision: i64,
-    members: &BTreeMap<String, Member>,
-) {
-    view.replace_members(
-        members
-            .values()
-            .map(|member| (member.node_id.clone(), member.epoch, member.owner.clone())),
-    );
-    inventory.replace_members(revision, members.clone());
 }
 
 fn decode(

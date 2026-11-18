@@ -1,8 +1,8 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use orbitkv_state::{
     BlockCandidates, DISCOVERY_MAX_REPLICAS_PER_MEDIUM, DiscoveryCoverage, InventoryRecord,
@@ -12,10 +12,13 @@ use orbitkv_state::{
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use uuid::Uuid;
 
-use crate::MembershipView;
+use crate::{MemberLease, MembershipView};
 
 pub const DEFAULT_INDEX_BYTES: usize = 256 * 1024 * 1024;
-const OWNER_ACCOUNTING_BYTES: usize = 256;
+/// Maximum age of a local inventory receipt used to report complete coverage.
+pub const INVENTORY_RECEIPT_TIMEOUT: Duration = Duration::from_secs(3);
+// Includes the active view's ordered receipt entry, reserved at snapshot admission.
+const OWNER_ACCOUNTING_BYTES: usize = 320;
 
 type Residence = (StateKey, ReplicaMedium);
 
@@ -66,16 +69,24 @@ struct Entry {
 }
 
 struct OwnerView {
+    lease: MemberLease,
     view_id: Uuid,
     applied_sequence: u64,
     installed_mono_ns: u64,
     records: BTreeMap<Residence, InventoryRecord>,
-    fresh: bool,
     received_at: Instant,
-    retired: bool,
+    cursor: CursorState,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CursorState {
+    Resumable,
+    NeedsSnapshot,
+    Retired,
 }
 
 struct StagingView {
+    lease: MemberLease,
     session_id: Uuid,
     snapshot_id: Uuid,
     view_id: Uuid,
@@ -99,9 +110,46 @@ struct View {
     active_bytes: usize,
     staging_bytes: usize,
     membership_revision: Option<i64>,
+    membership_generation: u64,
     generation: u64,
     admitted_owner_views: usize,
-    fresh_expected_owner_views: usize,
+    // One entry per synchronized owner. The oldest receipt bounds the entire batch.
+    receipts: BTreeSet<(Instant, Uuid)>,
+}
+
+impl View {
+    fn mark_stale(&mut self, owner: Uuid) {
+        if let Some(installed) = self.owners.get(&owner) {
+            self.receipts.remove(&(installed.received_at, owner));
+        }
+    }
+
+    fn record_receipt(&mut self, owner: Uuid, now: Instant) -> Result<(), String> {
+        let installed = self
+            .owners
+            .get_mut(&owner)
+            .ok_or("owner view is not installed")?;
+        self.receipts.remove(&(installed.received_at, owner));
+        installed.received_at = now;
+        self.receipts.insert((now, owner));
+        Ok(())
+    }
+
+    fn owner_status(&self, owner: Uuid, installed: &OwnerView, now: Instant) -> OwnerIndexStatus {
+        let age = now.duration_since(installed.received_at);
+        OwnerIndexStatus {
+            owner,
+            view_id: installed.view_id,
+            applied_sequence: installed.applied_sequence,
+            installed_mono_ns: installed.installed_mono_ns,
+            fresh: installed.cursor == CursorState::Resumable
+                && !installed.lease.revoked()
+                && age < INVENTORY_RECEIPT_TIMEOUT
+                && self.receipts.contains(&(installed.received_at, owner)),
+            receipt_age_ms: u64::try_from(age.as_millis()).unwrap_or(u64::MAX),
+            records: installed.records.len(),
+        }
+    }
 }
 
 pub struct GlobalIndex {
@@ -217,10 +265,6 @@ impl GlobalIndex {
         }
     }
 
-    pub fn reset(&self) {
-        *self.write_view() = View::default();
-    }
-
     pub fn set_expected_owners(&self, revision: i64, owners: impl IntoIterator<Item = Uuid>) {
         let local = self.membership.owner().incarnation;
         let expected = owners
@@ -234,16 +278,20 @@ impl GlobalIndex {
         {
             return;
         }
-        for (owner, owner_view) in &mut view.owners {
-            if !expected.contains(owner) {
-                owner_view.retired = true;
-                owner_view.fresh = false;
+        let members = self.membership.snapshot();
+        let View {
+            owners, receipts, ..
+        } = &mut *view;
+        for (owner, installed) in owners {
+            if !expected.contains(owner) || installed.lease.revoked() {
+                installed.cursor = CursorState::Retired;
+                receipts.remove(&(installed.received_at, *owner));
             }
         }
         let retired_staging = view
             .staging
             .iter()
-            .filter(|(owner, _)| !expected.contains(owner))
+            .filter(|(owner, staging)| !expected.contains(owner) || staging.lease.revoked())
             .map(|(owner, staging)| (*owner, staging.bytes))
             .collect::<Vec<_>>();
         for (owner, bytes) in retired_staging {
@@ -251,57 +299,47 @@ impl GlobalIndex {
             view.staging_bytes -= bytes;
             view.accounted_bytes -= bytes;
         }
+        view.admitted_owner_views = view
+            .owners
+            .values()
+            .filter(|v| v.cursor != CursorState::Retired)
+            .count();
         view.expected = expected;
         view.membership_revision = Some(revision);
-        refresh_coverage_counts(&mut view);
+        view.membership_generation = members.generation;
         view.generation = view.generation.saturating_add(1);
     }
 
-    pub fn mark_syncing(&self, owner: Uuid) {
+    pub fn mark_stale(&self, lease: &MemberLease) {
+        let owner = lease.owner().incarnation;
         let mut view = self.write_view();
-        let expected = view.expected.contains(&owner);
-        let became_stale = view.owners.get_mut(&owner).is_some_and(|owner_view| {
-            let became_stale = owner_view.fresh && !owner_view.retired && expected;
-            owner_view.fresh = false;
-            became_stale
-        });
-        if became_stale {
-            view.fresh_expected_owner_views -= 1;
+        if view.owners.get(&owner).is_some_and(|v| &v.lease == lease) {
+            view.mark_stale(owner);
+            view.generation = view.generation.saturating_add(1);
         }
-        view.generation = view.generation.saturating_add(1);
-    }
-
-    pub fn mark_stale(&self, owner: Uuid) {
-        self.mark_syncing(owner);
     }
 
     pub fn confirm_progress(
         &self,
-        owner: Uuid,
+        lease: &MemberLease,
         view_id: Uuid,
         applied_sequence: u64,
     ) -> Result<(), String> {
+        let owner = lease.owner().incarnation;
         let mut view = self.write_view();
-        let expected = view.expected.contains(&owner);
-        let became_fresh = {
-            let owner_view = view
-                .owners
-                .get_mut(&owner)
-                .ok_or("owner view is not installed")?;
-            if owner_view.retired
-                || owner_view.view_id != view_id
-                || owner_view.applied_sequence != applied_sequence
-            {
-                return Err("owner progress does not match the installed view".into());
-            }
-            let became_fresh = !owner_view.fresh && expected;
-            owner_view.fresh = true;
-            owner_view.received_at = Instant::now();
-            became_fresh
-        };
-        if became_fresh {
-            view.fresh_expected_owner_views += 1;
+        let installed = view
+            .owners
+            .get(&owner)
+            .ok_or("owner view is not installed")?;
+        if installed.cursor != CursorState::Resumable
+            || &installed.lease != lease
+            || lease.revoked()
+            || installed.view_id != view_id
+            || installed.applied_sequence != applied_sequence
+        {
+            return Err("owner progress does not match the installed view".into());
         }
+        view.record_receipt(owner, Instant::now())?;
         view.generation = view.generation.saturating_add(1);
         Ok(())
     }
@@ -312,18 +350,27 @@ impl GlobalIndex {
     )]
     pub fn begin_snapshot(
         &self,
-        owner: Uuid,
+        lease: &MemberLease,
         session_id: Uuid,
         snapshot_id: Uuid,
         view_id: Uuid,
         start_sequence: u64,
     ) -> Result<(), String> {
+        let owner = lease.owner().incarnation;
         if owner.is_nil() || session_id.is_nil() || snapshot_id.is_nil() || view_id.is_nil() {
             return Err("nil inventory snapshot identity".into());
         }
         let mut view = self.write_view();
         if !view.expected.contains(&owner) {
             return Err("snapshot source is not an expected member".into());
+        }
+        let members = self.membership.snapshot();
+        if members.admitted_generation(self.membership.owner()) != Some(view.membership_generation)
+        {
+            return Err("snapshot membership cut changed".into());
+        }
+        if members.member(owner) != Some(lease) {
+            return Err("snapshot source lease changed".into());
         }
         if let Some(previous) = view.staging.remove(&owner) {
             view.staging_bytes -= previous.bytes;
@@ -335,6 +382,7 @@ impl GlobalIndex {
         view.staging.insert(
             owner,
             StagingView {
+                lease: lease.clone(),
                 session_id,
                 snapshot_id,
                 view_id,
@@ -350,34 +398,31 @@ impl GlobalIndex {
         );
         view.staging_bytes += OWNER_ACCOUNTING_BYTES;
         view.accounted_bytes += OWNER_ACCOUNTING_BYTES;
-        let expected = view.expected.contains(&owner);
-        let became_stale = view.owners.get_mut(&owner).is_some_and(|owner_view| {
-            let became_stale = owner_view.fresh && !owner_view.retired && expected;
-            owner_view.fresh = false;
-            became_stale
-        });
-        if became_stale {
-            view.fresh_expected_owner_views -= 1;
-        }
+        view.mark_stale(owner);
         view.generation = view.generation.saturating_add(1);
         Ok(())
     }
 
     pub fn apply_snapshot_page(
         &self,
-        owner: Uuid,
+        lease: &MemberLease,
         session_id: Uuid,
         snapshot_id: Uuid,
         page_number: u64,
         records: Vec<InventoryRecord>,
     ) -> Result<(), String> {
+        let owner = lease.owner().incarnation;
         let mut view = self.write_view();
         let (additional, updates) = {
             let staging = view
                 .staging
                 .get(&owner)
                 .ok_or("missing inventory snapshot")?;
-            if staging.session_id != session_id || staging.snapshot_id != snapshot_id {
+            if &staging.lease != lease
+                || lease.revoked()
+                || staging.session_id != session_id
+                || staging.snapshot_id != snapshot_id
+            {
                 return Err("inventory snapshot identity changed".into());
             }
             if staging.replay_started {
@@ -409,19 +454,24 @@ impl GlobalIndex {
 
     pub fn apply_snapshot_delta(
         &self,
-        owner: Uuid,
+        lease: &MemberLease,
         session_id: Uuid,
         from_exclusive: u64,
         through_inclusive: u64,
         records: Vec<InventoryRecord>,
     ) -> Result<(), String> {
+        let owner = lease.owner().incarnation;
         let mut view = self.write_view();
         let (delta, updates) = {
             let staging = view
                 .staging
                 .get(&owner)
                 .ok_or("missing inventory snapshot")?;
-            if staging.session_id != session_id || staging.replay_sequence != from_exclusive {
+            if &staging.lease != lease
+                || lease.revoked()
+                || staging.session_id != session_id
+                || staging.replay_sequence != from_exclusive
+            {
                 return Err("inventory snapshot replay is not contiguous".into());
             }
             validate_delta(
@@ -463,19 +513,21 @@ impl GlobalIndex {
 
     pub fn commit_snapshot(
         &self,
-        owner: Uuid,
+        lease: &MemberLease,
         session_id: Uuid,
         snapshot_id: Uuid,
         view_id: Uuid,
         through_sequence: u64,
         page_count: u64,
     ) -> Result<Uuid, String> {
+        let owner = lease.owner().incarnation;
         let mut view = self.write_view();
         let staging = view
             .staging
             .remove(&owner)
             .ok_or("missing inventory snapshot")?;
-        if staging.session_id != session_id
+        if &staging.lease != lease
+            || staging.session_id != session_id
             || staging.snapshot_id != snapshot_id
             || staging.view_id != view_id
             || staging.replay_sequence != through_sequence
@@ -486,7 +538,7 @@ impl GlobalIndex {
             view.staging.insert(owner, staging);
             return Err("inventory snapshot commit is incomplete".into());
         }
-        if !view.expected.contains(&owner) || !self.membership.resolve(owner).is_some() {
+        if !view.expected.contains(&owner) || !self.membership.permits_lease(&staging.lease) {
             view.staging_bytes -= staging.bytes;
             view.accounted_bytes -= staging.bytes;
             return Err("inventory snapshot source is no longer admitted".into());
@@ -498,22 +550,21 @@ impl GlobalIndex {
             insert_block(&mut view.blocks, owner, record)?;
         }
         view.active_bytes += active_bytes;
+        let received_at = Instant::now();
         view.owners.insert(
             owner,
             OwnerView {
+                lease: staging.lease,
                 view_id: staging.view_id,
                 applied_sequence: through_sequence,
                 installed_mono_ns: 0,
                 records: staging.records,
-                fresh: true,
-                received_at: Instant::now(),
-                retired: false,
+                received_at,
+                cursor: CursorState::Resumable,
             },
         );
         view.admitted_owner_views += 1;
-        if view.expected.contains(&owner) {
-            view.fresh_expected_owner_views += 1;
-        }
+        view.receipts.insert((received_at, owner));
         view.generation = view.generation.saturating_add(1);
         view.owners
             .get_mut(&owner)
@@ -522,12 +573,13 @@ impl GlobalIndex {
         Ok(view_id)
     }
 
-    pub fn abort_snapshot(&self, owner: Uuid, session_id: Uuid) {
+    pub fn abort_snapshot(&self, lease: &MemberLease, session_id: Uuid) {
+        let owner = lease.owner().incarnation;
         let mut view = self.write_view();
         if view
             .staging
             .get(&owner)
-            .is_some_and(|staging| staging.session_id == session_id)
+            .is_some_and(|staging| &staging.lease == lease && staging.session_id == session_id)
             && let Some(staging) = view.staging.remove(&owner)
         {
             view.staging_bytes -= staging.bytes;
@@ -538,18 +590,23 @@ impl GlobalIndex {
 
     pub fn apply_delta(
         &self,
-        owner: Uuid,
+        lease: &MemberLease,
         view_id: Uuid,
         from_exclusive: u64,
         through_inclusive: u64,
         records: Vec<InventoryRecord>,
     ) -> Result<DeltaApply, String> {
+        let owner = lease.owner().incarnation;
         let mut view = self.write_view();
         let owner_view = view
             .owners
             .get(&owner)
             .ok_or("owner view is not installed")?;
-        if owner_view.view_id != view_id || owner_view.retired {
+        if owner_view.view_id != view_id
+            || owner_view.cursor != CursorState::Resumable
+            || &owner_view.lease != lease
+            || lease.revoked()
+        {
             return Err("owner view identity changed".into());
         }
         if through_inclusive <= owner_view.applied_sequence {
@@ -583,22 +640,13 @@ impl GlobalIndex {
                 insert_block(&mut view.blocks, owner, record)?;
             }
         }
-        let expected = view.expected.contains(&owner);
-        let became_fresh = {
-            let owner_view = view
-                .owners
-                .get_mut(&owner)
-                .ok_or("missing validated owner view")?;
-            let became_fresh = !owner_view.fresh && expected;
-            apply_records(&mut owner_view.records, updates);
-            owner_view.applied_sequence = through_inclusive;
-            owner_view.fresh = true;
-            owner_view.received_at = Instant::now();
-            became_fresh
-        };
-        if became_fresh {
-            view.fresh_expected_owner_views += 1;
-        }
+        let owner_view = view
+            .owners
+            .get_mut(&owner)
+            .ok_or("missing validated owner view")?;
+        apply_records(&mut owner_view.records, updates);
+        owner_view.applied_sequence = through_inclusive;
+        view.record_receipt(owner, Instant::now())?;
         view.active_bytes = view
             .active_bytes
             .checked_add_signed(delta)
@@ -615,84 +663,80 @@ impl GlobalIndex {
         Ok(DeltaApply::Applied)
     }
 
-    pub fn owner_watermark(&self, owner: Uuid) -> Option<(Uuid, u64)> {
+    pub fn owner_watermark(&self, lease: &MemberLease) -> Option<(Uuid, u64)> {
+        let owner = lease.owner().incarnation;
         self.view.read().owners.get(&owner).and_then(|owner_view| {
-            (!owner_view.retired).then_some((owner_view.view_id, owner_view.applied_sequence))
+            (&owner_view.lease == lease
+                && owner_view.cursor == CursorState::Resumable
+                && !lease.revoked())
+            .then_some((owner_view.view_id, owner_view.applied_sequence))
         })
     }
 
-    pub fn owner_status(&self, owner: Uuid) -> Option<OwnerIndexStatus> {
-        self.view
-            .read()
-            .owners
+    /// A journal reset keeps positive hints but invalidates this view's resume cursor.
+    pub fn require_snapshot(&self, lease: &MemberLease) {
+        let owner = lease.owner().incarnation;
+        let mut view = self.write_view();
+        if let Some(installed) = view.owners.get_mut(&owner)
+            && installed.lease == *lease
+            && installed.cursor == CursorState::Resumable
+        {
+            installed.cursor = CursorState::NeedsSnapshot;
+            view.mark_stale(owner);
+            view.generation = view.generation.saturating_add(1);
+        }
+    }
+
+    pub fn owner_status(&self, lease: &MemberLease) -> Option<OwnerIndexStatus> {
+        let owner = lease.owner().incarnation;
+        let view = self.view.read();
+        view.owners
             .get(&owner)
-            .map(|view| OwnerIndexStatus {
-                owner,
-                view_id: view.view_id,
-                applied_sequence: view.applied_sequence,
-                installed_mono_ns: view.installed_mono_ns,
-                fresh: view.fresh && !view.retired,
-                receipt_age_ms: u64::try_from(view.received_at.elapsed().as_millis())
-                    .unwrap_or(u64::MAX),
-                records: view.records.len(),
-            })
+            .filter(|installed| &installed.lease == lease)
+            .map(|installed| view.owner_status(owner, installed, Instant::now()))
     }
 
     pub fn owner_statuses(&self, after: Option<Uuid>, limit: usize) -> Vec<OwnerIndexStatus> {
         let view = self.view.read();
+        let now = Instant::now();
         let mut owners = view
             .owners
             .iter()
             .filter(|(owner, _)| after.is_none_or(|after| **owner > after))
-            .map(|(owner, owner_view)| OwnerIndexStatus {
-                owner: *owner,
-                view_id: owner_view.view_id,
-                applied_sequence: owner_view.applied_sequence,
-                installed_mono_ns: owner_view.installed_mono_ns,
-                fresh: owner_view.fresh && !owner_view.retired,
-                receipt_age_ms: u64::try_from(owner_view.received_at.elapsed().as_millis())
-                    .unwrap_or(u64::MAX),
-                records: owner_view.records.len(),
-            })
+            .map(|(owner, installed)| view.owner_status(*owner, installed, now))
             .collect::<Vec<_>>();
         owners.sort_by_key(|status| status.owner);
         owners.truncate(limit.min(128));
         owners
     }
 
-    pub fn retire_owner(&self, owner: Uuid) {
+    /// Returns true when retiring an installed view requires bounded reverse cleanup.
+    pub fn retire_owner(&self, lease: &MemberLease) -> bool {
+        let owner = lease.owner().incarnation;
         let mut view = self.write_view();
-        if let Some(staging) = view.staging.remove(&owner) {
+        if view.staging.get(&owner).is_some_and(|s| &s.lease == lease)
+            && let Some(staging) = view.staging.remove(&owner)
+        {
             view.staging_bytes -= staging.bytes;
             view.accounted_bytes -= staging.bytes;
         }
-        let expected = view.expected.contains(&owner);
-        let (was_admitted, was_fresh) =
-            view.owners
-                .get(&owner)
-                .map_or((false, false), |owner_view| {
-                    (
-                        !owner_view.retired,
-                        !owner_view.retired && owner_view.fresh && expected,
-                    )
-                });
-        if was_admitted {
-            view.admitted_owner_views -= 1;
+        let Some(installed) = view.owners.get_mut(&owner) else {
+            return false;
+        };
+        if &installed.lease != lease || installed.cursor == CursorState::Retired {
+            return false;
         }
-        if was_fresh {
-            view.fresh_expected_owner_views -= 1;
-        }
-        if let Some(owner_view) = view.owners.get_mut(&owner) {
-            owner_view.retired = true;
-            owner_view.fresh = false;
-        }
+        installed.cursor = CursorState::Retired;
+        view.mark_stale(owner);
+        view.admitted_owner_views -= 1;
         view.generation = view.generation.saturating_add(1);
+        true
     }
 
     pub fn cleanup_owner(&self, owner: Uuid, limit: usize) -> bool {
         let mut view = self.write_view();
         let records = match view.owners.get(&owner) {
-            Some(owner_view) if owner_view.retired => owner_view
+            Some(owner_view) if owner_view.cursor == CursorState::Retired => owner_view
                 .records
                 .keys()
                 .take(limit.max(1))
@@ -728,14 +772,26 @@ impl GlobalIndex {
     pub fn status(&self) -> IndexStatus {
         let view = self.view.read();
         let registration_valid = self.membership.registration_valid();
-        let coverage = coverage(&view, self.membership.permits(self.membership.owner()));
+        let members = self.membership.snapshot();
+        let now = Instant::now();
+        let coverage = coverage(
+            &view,
+            members.admitted_generation(self.membership.owner()),
+            now,
+        );
         IndexStatus {
             membership_revision: view.membership_revision,
             accounted_bytes: view.accounted_bytes,
             active_bytes: view.active_bytes,
             staging_bytes: view.staging_bytes,
             expected_owner_views: view.expected.len(),
-            installed_owner_views: view.fresh_expected_owner_views,
+            installed_owner_views: view
+                .receipts
+                .iter()
+                .rev()
+                .take_while(|(at, _)| now.duration_since(*at) < INVENTORY_RECEIPT_TIMEOUT)
+                .filter(|(_, owner)| view.owners.get(owner).is_some_and(|v| !v.lease.revoked()))
+                .count(),
             view_generation: view.generation,
             registration_valid,
             coverage,
@@ -756,7 +812,12 @@ impl GlobalIndex {
 
     pub fn lookup(&self, keys: &[StateKey]) -> Vec<BlockCandidates> {
         let view = self.read_for_lookup();
-        let discovery_coverage = coverage(&view, self.membership.permits(self.membership.owner()));
+        let members = self.membership.snapshot();
+        let discovery_coverage = coverage(
+            &view,
+            members.admitted_generation(self.membership.owner()),
+            Instant::now(),
+        );
         keys.iter()
             .map(|key| {
                 if !self.scope.contains(&key.namespace) {
@@ -776,15 +837,15 @@ impl GlobalIndex {
                             .iter()
                             .filter(|entry| entry.metadata.medium == medium)
                         {
-                            if let Some(owner) = self.membership.resolve(entry.owner)
+                            if let Some(owner) = members.resolve(entry.owner)
                                 && owner.incarnation != self.membership.owner().incarnation
-                                && view
-                                    .owners
-                                    .get(&entry.owner)
-                                    .is_some_and(|owner_view| !owner_view.retired)
+                                && view.owners.get(&entry.owner).is_some_and(|owner_view| {
+                                    owner_view.cursor != CursorState::Retired
+                                        && !owner_view.lease.revoked()
+                                })
                             {
                                 replicas.push(ReplicaLocation {
-                                    owner,
+                                    owner: owner.clone(),
                                     sequence: entry.sequence,
                                     metadata: entry.metadata,
                                 });
@@ -821,33 +882,23 @@ fn monotonic_ns() -> u64 {
         .saturating_add(u64::try_from(now.tv_nsec).unwrap_or(0))
 }
 
-fn coverage(view: &View, registration_valid: bool) -> DiscoveryCoverage {
-    if !registration_valid || view.membership_revision.is_none() {
+fn coverage(view: &View, membership_generation: Option<u64>, now: Instant) -> DiscoveryCoverage {
+    if membership_generation != Some(view.membership_generation)
+        || view.membership_revision.is_none()
+    {
         DiscoveryCoverage::Unavailable
-    } else if view.fresh_expected_owner_views == view.expected.len() {
+    } else if view.receipts.len() == view.expected.len()
+        && view
+            .receipts
+            .first()
+            .is_none_or(|(at, _)| now.duration_since(*at) < INVENTORY_RECEIPT_TIMEOUT)
+    {
         DiscoveryCoverage::CompleteAtWatermarks
     } else if view.admitted_owner_views > 0 {
         DiscoveryCoverage::PartialHints
     } else {
         DiscoveryCoverage::Unavailable
     }
-}
-
-fn refresh_coverage_counts(view: &mut View) {
-    view.admitted_owner_views = view
-        .owners
-        .values()
-        .filter(|owner_view| !owner_view.retired)
-        .count();
-    view.fresh_expected_owner_views = view
-        .expected
-        .iter()
-        .filter(|owner| {
-            view.owners
-                .get(owner)
-                .is_some_and(|owner_view| !owner_view.retired && owner_view.fresh)
-        })
-        .count();
 }
 
 fn record_duration(counter: &AtomicU64, duration: std::time::Duration) {
@@ -995,12 +1046,10 @@ fn remove_active_owner(view: &mut View, owner: Uuid) {
     let Some(previous) = view.owners.remove(&owner) else {
         return;
     };
-    if !previous.retired {
+    if previous.cursor != CursorState::Retired {
         view.admitted_owner_views -= 1;
-        if previous.fresh && view.expected.contains(&owner) {
-            view.fresh_expected_owner_views -= 1;
-        }
     }
+    view.receipts.remove(&(previous.received_at, owner));
     for residence in previous.records.keys() {
         remove_block(&mut view.blocks, owner, residence);
     }

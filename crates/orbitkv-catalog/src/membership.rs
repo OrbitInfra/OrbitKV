@@ -5,18 +5,19 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use orbitkv_state::CacheOwner;
-use parking_lot::RwLock;
+use parking_lot::{RwLock, RwLockReadGuard};
 
 /// Cached membership evidence and this runtime's conservative registration deadline.
 /// The control-plane adapter updates it; cache operations perform no coordinator I/O.
 pub struct MembershipView {
     owner: CacheOwner,
-    state: RwLock<View>,
+    state: RwLock<MembershipSnapshot>,
 }
 
 #[derive(Default)]
-struct View {
+pub(super) struct MembershipSnapshot {
     members: HashMap<uuid::Uuid, MemberLease>,
+    pub(super) generation: u64,
     ready: bool,
     valid_until: Option<Instant>,
     fenced: bool,
@@ -56,7 +57,7 @@ impl Hash for MemberLease {
     }
 }
 
-impl View {
+impl MembershipSnapshot {
     fn fence(&mut self) {
         self.fenced = true;
         for member in self.members.values() {
@@ -67,13 +68,28 @@ impl View {
     fn permits(&self) -> bool {
         !self.fenced && self.ready && self.valid_until.is_some_and(|until| Instant::now() < until)
     }
+
+    pub(super) fn admitted_generation(&self, local: &CacheOwner) -> Option<u64> {
+        (self.permits() && self.resolve(local.incarnation) == Some(local))
+            .then_some(self.generation)
+    }
+
+    pub(super) fn resolve(&self, incarnation: uuid::Uuid) -> Option<&CacheOwner> {
+        self.member(incarnation).map(MemberLease::owner)
+    }
+
+    pub(super) fn member(&self, incarnation: uuid::Uuid) -> Option<&MemberLease> {
+        self.members
+            .get(&incarnation)
+            .filter(|member| !member.revoked())
+    }
 }
 
 impl MembershipView {
     pub fn new(owner: CacheOwner) -> Self {
         Self {
             owner,
-            state: RwLock::new(View::default()),
+            state: RwLock::new(MembershipSnapshot::default()),
         }
     }
 
@@ -83,19 +99,14 @@ impl MembershipView {
 
     pub fn resolve(&self, incarnation: uuid::Uuid) -> Option<CacheOwner> {
         let state = self.state.read();
-        if state.fenced
-            || !state.ready
-            || state
-                .valid_until
-                .is_none_or(|until| Instant::now() >= until)
-        {
+        if !state.permits() {
             return None;
         }
-        state
-            .members
-            .get(&incarnation)
-            .filter(|member| !member.revoked())
-            .map(|member| member.owner().clone())
+        state.resolve(incarnation).cloned()
+    }
+
+    pub(super) fn snapshot(&self) -> RwLockReadGuard<'_, MembershipSnapshot> {
+        self.state.read()
     }
 
     /// A delayed acknowledgement cannot revive an expired runtime. Half the
@@ -147,6 +158,7 @@ impl MembershipView {
             }
         }
         state.members = next;
+        state.generation += 1;
         state.ready = true;
         if state.fenced
             || state
@@ -173,12 +185,17 @@ impl MembershipView {
 
     /// Revoke an observed Watch transition before its final snapshot is installed.
     /// A delete/rejoin in one response must not revive the preceding grants.
-    pub fn revoke(&self, owner: &CacheOwner) {
-        if let Some(member) = self.state.read().members.get(&owner.incarnation)
+    pub fn revoke(&self, owner: &CacheOwner) -> Option<MemberLease> {
+        let mut state = self.state.write();
+        if let Some(member) = state.members.get(&owner.incarnation)
             && member.owner() == owner
+            && !member.0.revoked.swap(true, Ordering::AcqRel)
         {
-            member.0.revoked.store(true, Ordering::Release);
+            let revoked = member.clone();
+            state.generation += 1;
+            return Some(revoked);
         }
+        None
     }
 
     pub fn registration_valid(&self) -> bool {

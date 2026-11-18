@@ -5,11 +5,11 @@ into both upstream mainlines.** OrbiTE is the only byte mover. Engines own
 scheduling, HBM and native P/D; OrbitKV owns cache identity, storage, discovery,
 grants and resource lifetime. This is the only execution queue.
 
-M2 coordinated SSD watermarks are implemented: per-shard FIFO hysteresis,
-bounded scans, held-reader/write barriers and durable invalidation before reuse.
-They follow fixed data TTL (#351) and DRAM watermarks (#350) in the existing
-maintenance task. The next delivery is **M3 bounded-stale discovery and router
-lookup/events**, beginning with the consumer contract and coverage semantics.
+M2 coordinated SSD watermarks are implemented. M3 discovery now applies the
+[placement lookup contract](distributed-cache.md#placement-lookup-contract) to
+the Manager's existing catalog. Complete coverage requires matching membership
+and recent receipts from every expected owner. The next M3 delivery is the
+bounded router lookup and event contract, including cursor loss and resync.
 Source implementation and CPU controls do not qualify installed GPU profiles,
 which remain unqualified.
 Each coherent PR stops for review before dependent work starts. Research designs
@@ -95,7 +95,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 | Capability | OrbitKV status and evidence | Precedent |
 | --- | --- | --- |
 | Membership | **Have:** etcd leases, persistent epochs and Watch fencing. [Membership](distributed-cache.md#local-global-index-and-etcd-metadata). | F/M coordination |
-| Bounded-stale placement directory | **Partial:** covered requester-local inventories and authoritative grants; no external directory API or qualified visibility bound under loss/pressure. [Coverage](distributed-cache.md#owner-inventory-streams). | F metadata service, L coordinator, M master |
+| Bounded-stale placement directory | **Partial:** requester-local coverage uses one membership cut and a three-second receipt limit. Source grants authorize payload access. External directory access and publication-to-visibility bounds under pressure remain open. [Coverage](distributed-cache.md#placement-lookup-contract). | F metadata service, L coordinator, M master |
 | Router lookup / KV events | **Missing:** diagnostics are not a router API. Target [llm-d's event index](https://github.com/llm-d/llm-d/blob/main/docs/architecture/advanced/kv-management/kv-indexer.md) and [Dynamo's selection interface](https://docs.nvidia.com/dynamo/dev/knowledge-base/modular-components/router/standalone-selection). | L coordination and V KV events; no new inference router |
 | Replica selection | **Have:** deterministic, coverage-first [fixed medium and owner ordering](architecture.md#planning). Cost-based selection is removed by design until hardware evidence warrants reconsideration; no blind replay on failure. | L/F/M replica lookup |
 | Node loss | **Partial:** retired epochs are fenced and uncertain owners retained; permanent-loss reclamation/cache HA unqualified. [Retirement](transport.md#peer-departure). | F distributed reuse, M leases/replicas |
@@ -226,6 +226,11 @@ engines is **written, unrun and unqualified**; no power-loss claim follows from
 SIGKILL or clean restart.
 
 ### M3 — A complete cluster
+
+The local lookup contract is implemented. CPU controls cover expired receipts,
+duplicate updates, independent owner progress and delayed frames across member
+replacement. The Linux gate exercises scoped inventory streams, journal overflow
+and scope-changing restarts over real etcd and gRPC.
 
 Separate PRs for bounded-stale placement discovery and router lookup/events;
 a shared filesystem/3FS tier; node-loss recovery; MLA TP deduplication and hybrid
