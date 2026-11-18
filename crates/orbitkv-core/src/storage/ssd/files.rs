@@ -68,6 +68,34 @@ pub(super) fn aligned_shard_capacity(
 
 const SHARED_DIRECTORY_PREFIX: &str = "orbitkv-ssd-";
 
+/// Reject a managed directory anywhere in an operator-supplied path before creating children.
+fn outside_shared_partition(path: &Path) -> std::io::Result<()> {
+    let in_partition = |path: &Path| {
+        path.components().any(|part| {
+            part.as_os_str()
+                .to_str()
+                .and_then(|name| name.strip_prefix(SHARED_DIRECTORY_PREFIX))
+                .is_some_and(orbitkv_state::is_storage_namespace)
+        })
+    };
+    let absolute = std::path::absolute(path)?;
+    if !in_partition(&absolute) {
+        // The leaf may not exist yet. Resolve its closest existing ancestor to cover directory aliases.
+        for ancestor in absolute.ancestors() {
+            match ancestor.canonicalize() {
+                Ok(existing) if in_partition(&existing) => break,
+                Ok(_) => return Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e),
+            }
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        "cache path or shared root is inside a managed SSD partition",
+    ))
+}
+
 /// Keep the first shard and its journal at the same names for every shard count.
 pub(super) fn shared_cache_path(
     root: &Path,
@@ -77,6 +105,7 @@ pub(super) fn shared_cache_path(
     use std::fs::{self, DirBuilder};
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
+    outside_shared_partition(root)?;
     let directory = root.join(format!("{SHARED_DIRECTORY_PREFIX}{namespace}"));
     match DirBuilder::new().mode(0o700).create(&directory) {
         Ok(()) => {}
@@ -155,6 +184,11 @@ pub(super) fn open_cache_files(
         ));
     }
 
+    if shared_namespace.is_none() {
+        for path in cache_paths {
+            outside_shared_partition(path)?;
+        }
+    }
     let total_shards = cache_paths.len() * shards_per_path;
 
     // Open and lock every inode before modifying any of them.
@@ -191,24 +225,6 @@ pub(super) fn open_cache_files(
     let mut files = Vec::with_capacity(total_shards);
     for path in &paths {
         use std::os::fd::AsRawFd;
-        if shared_namespace.is_none() {
-            let parent = path
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or(Path::new("."));
-            let parent = parent.canonicalize()?;
-            if parent
-                .file_name()
-                .and_then(|name| name.to_str())
-                .and_then(|name| name.strip_prefix(SHARED_DIRECTORY_PREFIX))
-                .is_some_and(orbitkv_state::is_storage_namespace)
-            {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "shared SSD partition requires --ssd-shared-namespace",
-                ));
-            }
-        }
         let file = options.open(path)?;
         // SAFETY: the owned fd remains live in `files` through all data-plane
         // owners; flock only acquires an advisory lock on this open description.

@@ -424,8 +424,20 @@ class Gate:
             self.manager(
                 shard,
                 persistent=False,
-                reject_with="partition requires --ssd-shared-namespace",
+                reject_with="inside a managed SSD partition",
             ).close()
+        alias = root / "partition-alias"
+        alias.symlink_to(directory, target_is_directory=True)
+        self.manager(
+            alias / "nested" / "cache.dat",
+            persistent=False,
+            reject_with="inside a managed SSD partition",
+        ).close()
+        self.manager(
+            alias,
+            shared_namespace=scope + 1,
+            reject_with="inside a managed SSD partition",
+        ).close()
         assert {p: p.read_bytes() for p in directory.iterdir()} == before
         journal.unlink()
         self.manager(
