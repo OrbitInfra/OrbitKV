@@ -120,7 +120,7 @@ fn router_cut_survives_progress_and_changes_after_suspension_or_rejoin() {
         view.replace_members([
             ("local".into(), 1, local.clone()),
             ("peer".into(), 1, peer.clone()),
-        ])
+        ]);
     };
     assert_eq!(view.admitted_generation(), None);
     assert!(view.renew(Instant::now(), Duration::from_secs(30)));

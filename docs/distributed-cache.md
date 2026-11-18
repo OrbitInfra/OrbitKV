@@ -199,7 +199,7 @@ HBM or qualifies GPU-direct operation.
 
 | Operation | Implemented path |
 | --- | --- |
-| Block discovery | Complete local global index; no foreground network query |
+| Block discovery | Requester-local catalog with per-batch coverage and bounded peer hints |
 | Inventory publication | Bounded Manager inventory streams |
 | Index synchronization | Covered inventory snapshots and deltas |
 | Membership/incarnations | Background etcd registration, lease renewal and Watch |

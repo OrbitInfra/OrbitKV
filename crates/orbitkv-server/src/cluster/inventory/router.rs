@@ -27,14 +27,14 @@ pub(crate) struct Cursor {
 }
 
 #[derive(Serialize)]
-pub(crate) struct Placement {
+struct Placement {
     hash: Vec<u8>,
     peers: Vec<ReplicaLocation>,
     peer_coverage: DiscoveryCoverage,
 }
 
 #[derive(Serialize)]
-pub(crate) struct Residence {
+struct Residence {
     hash: Vec<u8>,
     sequence: u64,
     present: bool,
