@@ -12,7 +12,7 @@ from tests.support.paths import REPO_ROOT
 @pytest.mark.parametrize(
     "module_name,function_name",
     [
-        ("tests.support.cache_manager", "find_available_port"),
+        ("tests.support.cluster", "find_available_port"),
         ("benches.common.runtime", "free_port"),
     ],
 )
