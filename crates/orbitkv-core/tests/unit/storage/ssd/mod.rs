@@ -17,6 +17,7 @@ fn only_automatic_failures_disable_gpu_admission() {
 #[test]
 fn selective_writes_track_republication_without_pinning_payloads() {
     let mut inner = SsdInner {
+        shared_namespace: None,
         ring: SsdRingBuffer::new_sharded(vec![4096], 512),
         pending_writes: HashSet::new(),
         reuse_history: LruCache::new(2),
@@ -96,6 +97,7 @@ fn queued_read_store_with_inventory(
         watermark_sweep: Mutex::new(0),
         prefetch_tx,
         inner: Mutex::new(SsdInner {
+            shared_namespace: None,
             ring: SsdRingBuffer::new_sharded(vec![SSD_ALIGNMENT as u64], SSD_ALIGNMENT as u64),
             pending_writes: HashSet::new(),
             reuse_history: LruCache::new(1),
@@ -128,6 +130,24 @@ fn queued_read_store_with_inventory(
         store.commit_write(&key, true, Some(&expected));
     }
     (store, prefetch_rx)
+}
+
+#[test]
+fn gpu_write_leaves_owned_extent_in_place_for_a_foreign_namespace() {
+    let (store, _queued) = queued_read_store();
+    store.gpu_io.enabled.store(true, Ordering::Release);
+    let own = StateKey::new("queued-lease".into(), vec![0]);
+    let slots = {
+        let mut inner = store.inner.lock();
+        inner.shared_namespace = Some(own.namespace.clone());
+        inner.ring.get(&own).unwrap().slots.clone()
+    };
+    let foreign = StateKey::new("other".into(), own.hash.clone());
+    assert!(store.reserve_gpu(foreign, slots.clone(), None).is_none());
+    assert!(store.inner.lock().pending_writes.is_empty());
+    assert!(store.discover(std::slice::from_ref(&own))[0].is_some());
+    let next = StateKey::new(own.namespace.clone(), vec![1]);
+    assert!(store.reserve_gpu(next, slots, None).is_some());
 }
 
 #[test]

@@ -61,7 +61,9 @@ class Manager:
         capacity=4096,
         persistent=True,
         pauses=(),
-        rejected=False,
+        reject_with=None,
+        shared_namespace=None,
+        shards=1,
         watermarks=None,
         address=None,
         cluster_args=(),
@@ -105,6 +107,12 @@ class Manager:
             str(self.root / "m.sock"),
             *cluster_args,
         ]
+        if shared_namespace is not None:
+            command.extend(
+                ["--ssd-shared-namespace", f"orbitkv:v2:{shared_namespace:064x}"]
+            )
+        if shards != 1:
+            command.extend(["--ssd-cache-shards", str(shards)])
         if watermarks is not None:
             low, high = watermarks
             command.extend(
@@ -129,9 +137,10 @@ class Manager:
             },
         )
         gate.children.append(self)
-        if rejected:
+        if reject_with is not None:
             assert self.process.wait(timeout=30) != 0
-            assert "drained prior file users" in self.log_path.read_text()
+            log = self.log_path.read_text()
+            assert reject_with in log, log
             return
         self.wait(lambda: (self.control / "ready").exists())
         ready = (
@@ -201,13 +210,23 @@ class Manager:
             )
         )
 
-    def read(self, id=1, *, present=True, encoded=False, namespace=0, operation="read"):
+    def read(
+        self,
+        id=1,
+        *,
+        present=True,
+        encoded=False,
+        namespace=0,
+        operation="read",
+        fill=None,
+    ):
         result = self.call(operation, id=id, namespace=namespace)
         assert result["present"] == present, result
         if present:
+            expected = id if fill is None else fill
             assert [s["bytes"] for s in result["slots"]] == [
-                [id] * 137,
-                [(id + 1) % 256] * 631,
+                [expected] * 137,
+                [(expected + 1) % 256] * 631,
             ]
             assert all(s["encoded"] == encoded for s in result["slots"])
         return result
@@ -308,6 +327,130 @@ class Gate:
         child.read()
         child.close()
 
+    def shared_namespaces(self, root):
+        root.mkdir()
+        block = 17
+        first, second = 1, 2
+        left = self.manager(
+            root, capacity=1024, shared_namespace=first, pauses=["ssd_data_written"]
+        )
+        right = self.manager(root, capacity=1024, shared_namespace=second)
+        left.send("write", id=block, namespace=first, fill=41)
+        left.reached("ssd_data_written")
+        published = right.call("write", id=block, namespace=second, fill=93)
+        assert published["present"], published
+        right.read(block, namespace=second, fill=93)
+        left.release("ssd_data_written")
+        committed = left.reply()
+        assert committed["present"] and committed["hash"] == published["hash"], (
+            committed
+        )
+        left.read(block, namespace=first, fill=41)
+
+        for manager, foreign in ((left, second), (right, first)):
+            manager.read(block, namespace=foreign, present=False)
+            denied = manager.call("write", id=block, namespace=foreign, fill=181)
+            assert not denied["present"], denied
+        # A different shard count still contends for the same first inode.
+        self.manager(
+            root,
+            shared_namespace=first,
+            shards=2,
+            reject_with="SSD shard is already owned",
+        ).close()
+        left.close(kill=True)
+        left = self.manager(root, capacity=1024, shared_namespace=first)
+        left.read(block, namespace=first, fill=41)
+        left.read(block, namespace=second, present=False)
+        right.read(block, namespace=second, fill=93)
+        left.pause("ssd_read_receipt")
+        left.call("read_start", id=block, namespace=first)
+        left.reached("ssd_read_receipt")
+        blocked = left.call("write", id=block + 1, namespace=first)
+        assert not blocked["present"] and blocked["state"]["ring"]["readers"] > 0, (
+            blocked
+        )
+        assert right.call("write", id=block + 1, namespace=second)["present"]
+        right.read(block, namespace=second, present=False)
+        right.read(block + 1, namespace=second)
+        left.release("ssd_read_receipt")
+        finished = left.call("read_finish")["slots"]
+        assert [s["bytes"] for s in finished] == [[41] * 137, [42] * 631]
+        assert left.call("write", id=block + 1, namespace=first)["present"]
+        left.read(block + 1, namespace=first)
+        lengths = [p.stat().st_size for p in sorted(root.glob("*/shard-*.dat"))]
+        assert lengths == [1024, 1024], lengths
+        (self.artifacts / "shared-namespace.json").write_text(
+            json.dumps(
+                {
+                    "block_hash": committed["hash"],
+                    "partition_file_bytes": lengths,
+                    "held_read_slot_bytes": [len(s["bytes"]) for s in finished],
+                    "readers_while_blocked": blocked["state"]["ring"]["readers"],
+                },
+                indent=2,
+            )
+        )
+        right.close()
+        left.close()
+
+    def shared_partition_reopen(self, root):
+        root.mkdir()
+        scope = 7
+        args = {"capacity": 2048, "shared_namespace": scope, "shards": 2}
+        original = self.manager(root, **args)
+        for block in (1, 2):
+            assert original.call("write", id=block, namespace=scope)["present"]
+        original.close()
+        (directory,) = root.iterdir()
+        data = sorted(directory.glob("shard-*.dat"))
+        journal = directory / "shard-000000.dat.index"
+        before = {p: p.read_bytes() for p in directory.iterdir()}
+        assert [len(before[p]) for p in data] == [1024, 1024]
+        self.manager(
+            root,
+            capacity=2048,
+            shared_namespace=scope,
+            reject_with="shard count change",
+        ).close()
+        self.manager(
+            root,
+            capacity=4096,
+            shared_namespace=scope,
+            shards=4,
+            reject_with="shard count changed",
+        ).close()
+        for shard in data:
+            self.manager(
+                shard,
+                persistent=False,
+                reject_with="inside a managed SSD partition",
+            ).close()
+        alias = root / "partition-alias"
+        alias.symlink_to(directory, target_is_directory=True)
+        self.manager(
+            alias / "nested" / "cache.dat",
+            persistent=False,
+            reject_with="inside a managed SSD partition",
+        ).close()
+        self.manager(
+            alias,
+            shared_namespace=scope + 1,
+            reject_with="inside a managed SSD partition",
+        ).close()
+        assert {p: p.read_bytes() for p in directory.iterdir()} == before
+        journal.unlink()
+        self.manager(
+            root, **args, reject_with="missing shared SSD partition header"
+        ).close()
+        assert all(p.read_bytes() == before[p] for p in data)
+        assert not journal.exists()
+        journal.write_bytes(before[journal])
+        restarted = self.manager(root, **args)
+        for block in (1, 2):
+            restarted.read(block, namespace=scope)
+        restarted.close()
+
     def ttl(self, path, during_verification):
         point = "ssd_before_verification" if during_verification else "ssd_data_written"
         child = self.manager(path, pauses=[] if during_verification else [point])
@@ -344,7 +487,7 @@ class Gate:
         with path.open("rb") as outstanding:
             child.close(kill=True)
             before = Path(str(path) + ".index").read_bytes()
-            rejected = self.manager(path, rejected=True)
+            rejected = self.manager(path, reject_with="drained prior file users")
             rejected.close()
             assert Path(str(path) + ".index").read_bytes() == before
             assert outstanding.read(137) == bytes([1]) * 137
@@ -662,6 +805,8 @@ def main():
     gate.case("clean-restart", gate.clean)
     gate.case("default-truncates", lambda path: gate.clean(path, False))
     gate.case("verify-before-first-hit", gate.verify)
+    gate.case("concurrent-shared-namespaces", gate.shared_namespaces)
+    gate.case("shared-partition-reopen", gate.shared_partition_reopen)
     gate.case("ttl-late-write", lambda path: gate.ttl(path, False))
     gate.case("ttl-during-recovery-verification", lambda path: gate.ttl(path, True))
     gate.case("prior-file-user-blocks-restart", gate.old_file_user)

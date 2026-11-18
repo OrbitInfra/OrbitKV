@@ -10,8 +10,10 @@ M2 coordinated SSD watermarks are implemented. M3 discovery now applies the
 the Manager's existing catalog. Complete coverage requires matching membership
 and recent receipts from every expected owner. The read-only router API serves bounded placement batches and replays source
 events from the retained journal. The M3 [owner-handoff gate](storage-persistence.md#exclusive-handoff-after-owner-loss)
-exercises recovery of a surviving shard by another Manager. The next shared-file
-delivery is concurrent access with namespace isolation, bounded capacity and safe reclamation.
+exercises recovery of a surviving shard by another Manager.
+[Shared-root partitions](storage-persistence.md#shared-root-namespace-partitions)
+serve concurrent namespaces with separate budgets. The next shared-file
+delivery is root-wide capacity accounting across active and stopped partitions.
 Source implementation and CPU controls do not qualify installed GPU profiles,
 which remain unqualified.
 Each coherent PR stops for review before dependent work starts. Research designs
@@ -90,7 +92,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 | Host DRAM | **Have:** bounded pinned pools, replicas and leased restores. [Policies](cache-policies.md). | L/F/V host tiers, M memory objects |
 | SSD surviving Manager restart | **Partial:** opt-in [durable journal and checksum-gated recovery](storage-persistence.md); default still truncates. Tail recovery preserves a verified prefix; capacity-derived metadata admission stays bounded. CPU process-crash controls run on ext4/tmpfs; installed NVMe serving and power-loss behavior remain unqualified. | L/F disk and V filesystem tiers; persistence needs a separate crash contract |
 | Peer DRAM/SSD cluster tier | **Partial:** inventory discovery, source-owned SSD preparation and OrbiTE reads exist; durable cluster recovery/node-loss qualification remain open. [Distributed cache](distributed-cache.md). | F distributed reuse, L P2P, M replicas |
-| Shared filesystem / 3FS mount | **Missing:** a local SSD path on a shared mount supplies no shared metadata, locking, GC or safe restart. | L filesystem/HF3FS, V secondary filesystem, F remote storage |
+| Shared filesystem / 3FS mount | **Partial:** [namespace partitions](storage-persistence.md#shared-root-namespace-partitions) share one root with exclusive writers and checksum-gated recovery on the same host. Root-wide capacity, cross-host fencing and installed 3FS are open. | L filesystem/HF3FS, V secondary filesystem, F remote storage |
 
 ### Distributed behavior
 
@@ -243,14 +245,16 @@ real HTTP, gRPC and etcd. See the [consumer protocol](distributed-cache.md#route
 Remaining M3 work includes a shared filesystem/3FS tier, node-loss recovery,
 MLA TP deduplication and hybrid coverage allowed by engines. Shared-tier work
 must establish tenant isolation, capacity accounting and recovery after an
-owner disappears. Only a current grant authorizes payload access.
+owner disappears. Only a current source grant authorizes peer payload access.
 
 The same-host [exclusive handoff](storage-persistence.md#exclusive-handoff-after-owner-loss)
 covers loss of a writer process with an outstanding grant. A distinct Manager
 reopens the surviving file and journal at the same peer address. A live
 requester must observe the old placement retire, obtain a fresh grant and read
-the verified bytes over TCP. Multi-writer shared storage and loss of a host or
-volume remain open.
+the verified bytes over TCP. Distinct namespace partitions now accept concurrent
+writers under one root. Each has its own bounded ring and reader holds. Root-wide
+accounting for active and stopped partitions, cross-owner reclamation and
+physical host or volume loss remain open.
 
 **CPU now:** multi-process etcd/TCP faults, epochs, bounded snapshots/events,
 router contracts, shared-file races/GC, tenant isolation and dedup accounting.

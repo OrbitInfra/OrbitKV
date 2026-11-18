@@ -38,11 +38,39 @@ fn files(dir: &Path, capacity: u64) -> Vec<Arc<File>> {
 }
 
 #[test]
+fn shared_journal_refuses_foreign_keys_and_mismatched_reopens_without_mutation() {
+    let dir = tempfile::tempdir().unwrap();
+    let files = files(dir.path(), 1024);
+    let path = dir.path().join("index");
+    let own = key(1);
+    let other = StateKey::new(format!("orbitkv:v2:{:064x}", 2), own.hash.clone());
+    let (mut journal, _) =
+        Journal::open(path.clone(), &files, 1024, 512, Some(&own.namespace)).unwrap();
+    journal.append(&own, &entry(0, 1024), Some(42)).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let error = journal
+        .append(&other, &entry(512, 1024), Some(42))
+        .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    drop(journal);
+    for scope in [Some(other.namespace.as_str()), None] {
+        let Err(error) = Journal::open(path.clone(), &files, 512, 512, scope) else {
+            panic!("wrong namespace reopened a bound journal");
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+    let (_, recovered) = Journal::open(path, &files, 1024, 512, Some(&own.namespace)).unwrap();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].key, own);
+}
+
+#[test]
 fn durable_reservations_prevent_wrap_resurrection_and_reclaim_orphans() {
     let dir = tempfile::tempdir().unwrap();
     let files = files(dir.path(), 1024);
     let path = dir.path().join("index");
-    let (mut journal, recovered) = Journal::open(path.clone(), &files, 1024, 512).unwrap();
+    let (mut journal, recovered) = Journal::open(path.clone(), &files, 1024, 512, None).unwrap();
     assert!(recovered.is_empty());
     for (id, begin) in [(1, 0), (2, 512)] {
         journal.append(&key(id), &entry(begin, 1024), None).unwrap();
@@ -54,7 +82,7 @@ fn durable_reservations_prevent_wrap_resurrection_and_reclaim_orphans() {
     // A metadata checkpoint must keep the fence even before data is submitted.
     journal.checkpoint().unwrap();
     drop(journal);
-    let (mut journal, recovered) = Journal::open(path.clone(), &files, 1024, 512).unwrap();
+    let (mut journal, recovered) = Journal::open(path.clone(), &files, 1024, 512, None).unwrap();
     assert_eq!(recovered.len(), 1);
     assert_eq!(recovered[0].key, key(2));
     assert_eq!(journal.heads(), vec![1536]);
@@ -64,7 +92,7 @@ fn durable_reservations_prevent_wrap_resurrection_and_reclaim_orphans() {
         .append(&key(4), &entry(1536, 1024), Some(42))
         .unwrap();
     drop(journal);
-    let (_, recovered) = Journal::open(path, &files, 1024, 512).unwrap();
+    let (_, recovered) = Journal::open(path, &files, 1024, 512, None).unwrap();
     assert_eq!(recovered[0].key, key(4));
     assert_eq!(recovered.len(), 1);
 }
@@ -75,7 +103,7 @@ fn tails_keep_the_prefix_but_valid_frames_after_corruption_cold_start() {
         let dir = tempfile::tempdir().unwrap();
         let files = files(dir.path(), 4096);
         let path = dir.path().join("index");
-        let (mut journal, _) = Journal::open(path.clone(), &files, 4096, 512).unwrap();
+        let (mut journal, _) = Journal::open(path.clone(), &files, 4096, 512, None).unwrap();
         journal.append(&key(1), &entry(0, 4096), Some(42)).unwrap();
         journal.checkpoint().unwrap();
         let prefix = std::fs::read(&path).unwrap();
@@ -103,7 +131,8 @@ fn tails_keep_the_prefix_but_valid_frames_after_corruption_cold_start() {
         let mut bytes = prefix;
         bytes.extend_from_slice(&tail);
         std::fs::write(&path, bytes).unwrap();
-        let (mut journal, recovered) = Journal::open(path.clone(), &files, 4096, 512).unwrap();
+        let (mut journal, recovered) =
+            Journal::open(path.clone(), &files, 4096, 512, None).unwrap();
         if kind.ends_with("mid") {
             assert!(recovered.is_empty());
             assert_eq!(journal.report.lock().drops["metadata_mid_journal"], 1);
@@ -117,7 +146,7 @@ fn tails_keep_the_prefix_but_valid_frames_after_corruption_cold_start() {
             .append(&key(3), &entry(1024, 4096), Some(42))
             .unwrap();
         drop(journal);
-        let (journal, recovered) = Journal::open(path, &files, 4096, 512).unwrap();
+        let (journal, recovered) = Journal::open(path, &files, 4096, 512, None).unwrap();
         assert_eq!(recovered.len(), if kind.ends_with("mid") { 1 } else { 2 });
         assert!(journal.report.lock().drops.is_empty());
     }
@@ -155,7 +184,7 @@ fn malformed_metadata_cold_starts_the_whole_set() {
         let dir = tempfile::tempdir().unwrap();
         let files = files(dir.path(), 1024);
         let path = dir.path().join("index");
-        let (mut journal, _) = Journal::open(path.clone(), &files, 1024, 512).unwrap();
+        let (mut journal, _) = Journal::open(path.clone(), &files, 1024, 512, None).unwrap();
         journal.append(&key(1), &entry(0, 1024), None).unwrap();
         journal.append(&key(1), &entry(0, 1024), Some(42)).unwrap();
         journal.checkpoint().unwrap();
@@ -208,7 +237,7 @@ fn malformed_metadata_cold_starts_the_whole_set() {
                 .set_len(MAX_JOURNAL + 1)
                 .unwrap();
         }
-        let (journal, recovered) = Journal::open(path, &files, 1024, 512).unwrap();
+        let (journal, recovered) = Journal::open(path, &files, 1024, 512, None).unwrap();
         assert!(recovered.is_empty(), "{fault}");
         assert_eq!(
             journal.report.lock().drops.values().sum::<u64>(),
@@ -223,7 +252,7 @@ fn capacity_shrink_rebases_only_fitting_extents_before_data_resize() {
     let dir = tempfile::tempdir().unwrap();
     let files = files(dir.path(), 2048);
     let path = dir.path().join("index");
-    let (mut journal, _) = Journal::open(path.clone(), &files, 2048, 512).unwrap();
+    let (mut journal, _) = Journal::open(path.clone(), &files, 2048, 512, None).unwrap();
     for (id, begin) in [(1, 2048), (2, 2560), (3, 3072)] {
         journal.append(&key(id), &entry(begin, 2048), None).unwrap();
         journal
@@ -231,7 +260,7 @@ fn capacity_shrink_rebases_only_fitting_extents_before_data_resize() {
             .unwrap();
     }
     drop(journal);
-    let (journal, recovered) = Journal::open(path.clone(), &files, 1024, 512).unwrap();
+    let (journal, recovered) = Journal::open(path.clone(), &files, 1024, 512, None).unwrap();
     assert_eq!(recovered.len(), 2);
     assert_eq!(journal.heads(), vec![1024]);
     assert_eq!(journal.report.lock().drops["capacity"], 1);
@@ -243,7 +272,7 @@ fn capacity_shrink_rebases_only_fitting_extents_before_data_resize() {
     );
     drop(journal);
     files[0].set_len(1024).unwrap();
-    let (_, recovered) = Journal::open(path, &files, 1024, 512).unwrap();
+    let (_, recovered) = Journal::open(path, &files, 1024, 512, None).unwrap();
     assert_eq!(recovered.len(), 2);
 }
 
@@ -252,7 +281,7 @@ fn capacity_shrink_drops_records_above_the_new_frame_budget_before_checkpoint() 
     let dir = tempfile::tempdir().unwrap();
     let files = files(dir.path(), 65536);
     let path = dir.path().join("index");
-    let (mut journal, _) = Journal::open(path.clone(), &files, 65536, 512).unwrap();
+    let (mut journal, _) = Journal::open(path.clone(), &files, 65536, 512, None).unwrap();
     let mut large = entry(0, 65536);
     large.slots = vec![SlotMeta::new(smallvec::smallvec![1], NumaNode::UNKNOWN); 300];
     journal.append(&key(1), &large, Some(42)).unwrap();
@@ -263,13 +292,13 @@ fn capacity_shrink_drops_records_above_the_new_frame_budget_before_checkpoint() 
     assert!(journal.records[&key(1)].charge() < smaller.metadata);
     assert!(frame(&journal.records[&key(1)], smaller.record).is_err());
     drop(journal);
-    let (journal, recovered) = Journal::open(path.clone(), &files, 1024, 512).unwrap();
+    let (journal, recovered) = Journal::open(path.clone(), &files, 1024, 512, None).unwrap();
     assert_eq!(recovered.len(), 1);
     assert_eq!(recovered[0].key, key(2));
     assert_eq!(journal.report.lock().drops["capacity_metadata"], 1);
     drop(journal);
     files[0].set_len(1024).unwrap();
-    let (_, recovered) = Journal::open(path, &files, 1024, 512).unwrap();
+    let (_, recovered) = Journal::open(path, &files, 1024, 512, None).unwrap();
     assert_eq!(recovered.len(), 1);
     assert_eq!(recovered[0].key, key(2));
 }
@@ -279,7 +308,7 @@ fn namespace_and_representation_are_not_inferred_or_aliased() {
     let dir = tempfile::tempdir().unwrap();
     let files = files(dir.path(), 1024);
     let path = dir.path().join("index");
-    let (mut journal, _) = Journal::open(path.clone(), &files, 1024, 512).unwrap();
+    let (mut journal, _) = Journal::open(path.clone(), &files, 1024, 512, None).unwrap();
     let mut other = key(1);
     other.namespace = format!("orbitkv:v2:{}", "cd".repeat(32));
     let mut encoded = entry(512, 1024);
@@ -294,7 +323,7 @@ fn namespace_and_representation_are_not_inferred_or_aliased() {
     journal.append(&key(1), &entry(0, 1024), Some(42)).unwrap();
     journal.append(&other, &encoded, Some(42)).unwrap();
     drop(journal);
-    let (_, recovered) = Journal::open(path, &files, 1024, 512).unwrap();
+    let (_, recovered) = Journal::open(path, &files, 1024, 512, None).unwrap();
     assert_eq!(recovered.len(), 2);
     assert_eq!(recovered[0].key, key(1));
     assert_eq!(recovered[1].key, other);
@@ -307,7 +336,7 @@ fn metadata_admission_rejects_without_appending_and_fences_only_durability_error
     let capacity = 20_000 * 512;
     let files = files(dir.path(), capacity);
     let path = dir.path().join("index");
-    let (mut journal, _) = Journal::open(path.clone(), &files, capacity, 512).unwrap();
+    let (mut journal, _) = Journal::open(path.clone(), &files, capacity, 512, None).unwrap();
     let limit = journal.limits.entries;
     assert_eq!(limit, 20_000);
     for index in 0..limit {
@@ -318,7 +347,7 @@ fn metadata_admission_rejects_without_appending_and_fences_only_durability_error
             .unwrap();
     }
     drop(journal);
-    let (mut journal, recovered) = Journal::open(path, &files, capacity, 512).unwrap();
+    let (mut journal, recovered) = Journal::open(path, &files, capacity, 512, None).unwrap();
     assert_eq!(
         recovered.len(),
         limit,
@@ -353,7 +382,7 @@ fn restart_preserves_live_deadlines_and_durably_drops_expired_records() {
     let dir = tempfile::tempdir().unwrap();
     let files = files(dir.path(), 4096);
     let path = dir.path().join("index");
-    let (mut journal, _) = Journal::open(path.clone(), &files, 4096, 512).unwrap();
+    let (mut journal, _) = Journal::open(path.clone(), &files, 4096, 512, None).unwrap();
     let now = unix_millis().unwrap();
     let mut expired = entry(0, 4096);
     expired.expiration = Expiration::from_record(Some(crate::CacheExpiry {
@@ -367,7 +396,7 @@ fn restart_preserves_live_deadlines_and_durably_drops_expired_records() {
     journal.append(&key(1), &expired, Some(42)).unwrap();
     journal.append(&key(2), &live, Some(42)).unwrap();
     drop(journal);
-    let (journal, recovered) = Journal::open(path.clone(), &files, 4096, 512).unwrap();
+    let (journal, recovered) = Journal::open(path.clone(), &files, 4096, 512, None).unwrap();
     assert_eq!(recovered.len(), 1);
     assert_eq!(recovered[0].key, key(2));
     assert_eq!(
@@ -377,7 +406,7 @@ fn restart_preserves_live_deadlines_and_durably_drops_expired_records() {
     assert_eq!(journal.report.lock().drops["expired"], 1);
     assert!(!journal.records.contains_key(&key(1)));
     drop(journal);
-    let (journal, recovered) = Journal::open(path, &files, 4096, 512).unwrap();
+    let (journal, recovered) = Journal::open(path, &files, 4096, 512, None).unwrap();
     assert_eq!(recovered.len(), 1);
     assert_eq!(
         recovered[0].entry.expiration.as_ref().unwrap().record,

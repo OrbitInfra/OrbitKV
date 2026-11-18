@@ -130,6 +130,7 @@ mod unavailable_rdma {
 impl crate::SsdCacheConfig {
     pub fn validate_transfer_engine(&self) -> Result<(), String> {
         self.watermarks()?;
+        self.shared_partition()?;
         if self.backend == crate::SsdBackend::Cufile && !cfg!(feature = "orbite-gds") {
             return Err("OrbiTE cuFile requires the orbite-gds build feature".into());
         }

@@ -84,11 +84,31 @@ struct Shard {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Header {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shared_namespace: Option<String>,
     version: u32,
     cache: Uuid,
     sequence: u64,
     alignment: u64,
     shards: Vec<Shard>,
+}
+
+impl Header {
+    fn check_partition(&self, scope: Option<&str>, shards: usize) -> io::Result<()> {
+        if self.shared_namespace.as_deref() != scope {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "SSD journal belongs to another namespace",
+            ));
+        }
+        if scope.is_some() && self.shards.len() != shards {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "shared SSD partition shard count changed",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -147,6 +167,16 @@ impl Record {
     }
 
     fn validate(&self, header: &Header) -> io::Result<()> {
+        if header
+            .shared_namespace
+            .as_ref()
+            .is_some_and(|scope| *scope != self.key.namespace)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "SSD record is outside its journal namespace",
+            ));
+        }
         if let Some(expiry) = self.expiry {
             expiry.validate().map_err(|_| invalid("expiry"))?;
         }
@@ -304,12 +334,38 @@ pub(super) fn fault(name: &str) {
     let _ = name;
 }
 
+/// Check the binding under the first shard lock, before opening secondary shards or resetting files.
+pub(super) fn check_partition_file(
+    path: &Path,
+    scope: Option<&str>,
+    shards: usize,
+    has_payload: bool,
+) -> io::Result<()> {
+    let header = match File::open(path) {
+        Ok(mut file) => read_frame::<Header>(&mut file, 1 << 20),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => return Err(e),
+    };
+    match header {
+        Ok(Some(header)) => header.check_partition(scope, shards),
+        Ok(None) if scope.is_some() && has_payload => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "missing shared SSD partition header for existing data",
+        )),
+        Ok(None) => Ok(()),
+        // The explicit ephemeral mode can discard a damaged private journal.
+        Err(e) if scope.is_none() && e.kind() == io::ErrorKind::InvalidData => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 impl Journal {
     pub(super) fn open(
         path: PathBuf,
         files: &[Arc<File>],
         capacity: u64,
         alignment: u64,
+        shared_namespace: Option<&str>,
     ) -> io::Result<(Self, Vec<Recovered>)> {
         let started = Instant::now();
         let shards = files
@@ -334,6 +390,7 @@ impl Journal {
         let mut journal = Self {
             limits: Limits::new(capacity, files.len(), alignment),
             header: Header {
+                shared_namespace: shared_namespace.map(str::to_owned),
                 version: VERSION,
                 cache: Uuid::new_v4(),
                 sequence: 0,
@@ -465,13 +522,14 @@ impl Journal {
     }
 
     fn replay(&mut self, current: &Header, started: Instant) -> io::Result<()> {
-        if self.file.metadata()?.len() > MAX_JOURNAL {
-            return Err(invalid("metadata_journal_limit"));
-        }
         let header: Header =
             read_frame(&mut self.file, 1 << 20)?.ok_or_else(|| invalid("metadata_header"))?;
+        header.check_partition(current.shared_namespace.as_deref(), current.shards.len())?;
         if header.version != VERSION {
             return Err(invalid("metadata_version"));
+        }
+        if self.file.metadata()?.len() > MAX_JOURNAL {
+            return Err(invalid("metadata_journal_limit"));
         }
         if header.cache.is_nil()
             || header.shards.len() != current.shards.len()

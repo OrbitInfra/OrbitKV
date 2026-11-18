@@ -13,6 +13,14 @@ Changes below apply to the next pre-release; nothing new is published by this PR
 
 ## Next pre-release (unreleased)
 
+### Shared SSD namespace partitions
+
+Managers can use `--ssd-shared-namespace` with a persistent SSD root. Rust
+callers constructing a complete `SsdCacheConfig` literal must supply
+`shared_namespace`. Its default is `None`; existing private journals use their
+original format. Scoped journals record the assigned namespace. See
+[shared-root partitions](storage-persistence.md#shared-root-namespace-partitions).
+
 ### Placement discovery
 
 Manager queries now report partial coverage when any expected owner's last

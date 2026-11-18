@@ -213,7 +213,7 @@ fn persistent_watermarks_remove_inventory_and_do_not_resurrect_after_reopen() {
         let path = directory.path().join("index");
         let mut store = store(2048, 1);
         let (journal, recovered) =
-            persistence::Journal::open(path.clone(), &store._files, 2048, 512).unwrap();
+            persistence::Journal::open(path.clone(), &store._files, 2048, 512, None).unwrap();
         assert!(recovered.is_empty());
         Arc::get_mut(&mut store).unwrap().journal = Some(Mutex::new(journal));
         for id in 0..3 {
@@ -237,7 +237,7 @@ fn persistent_watermarks_remove_inventory_and_do_not_resurrect_after_reopen() {
         }
         let files = store._files.clone();
         drop(store);
-        let (_, recovered) = persistence::Journal::open(path, &files, 2048, 512).unwrap();
+        let (_, recovered) = persistence::Journal::open(path, &files, 2048, 512, None).unwrap();
         assert_eq!(recovered.len(), if fenced { 3 } else { 1 });
         assert!(recovered.iter().any(|entry| entry.key == key(2)));
     }
