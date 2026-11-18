@@ -44,7 +44,6 @@ futures.workspace = true
 parking_lot.workspace = true
 fastrace = { workspace = true, optional = true }
 tonic.workspace = true
-dashmap.workspace = true
 smallvec.workspace = true
 orbitkv-proto = { path = "../orbitkv-proto" }
 mea.workspace = true

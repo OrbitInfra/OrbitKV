@@ -34,7 +34,6 @@ orbitkv-core = { workspace = true, default-features = false }
 orbitkv-channel.workspace = true
 orbitkv-proto = { path = "../crates/orbitkv-proto" }
 orbitkv-server = { path = "../crates/orbitkv-server", default-features = false }
-tokio.workspace = true
 prost.workspace = true
 uuid.workspace = true
 libc.workspace = true
