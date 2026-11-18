@@ -142,7 +142,9 @@ impl View {
             view_id: installed.view_id,
             applied_sequence: installed.applied_sequence,
             installed_mono_ns: installed.installed_mono_ns,
-            fresh: age < INVENTORY_RECEIPT_TIMEOUT
+            fresh: installed.cursor == CursorState::Resumable
+                && !installed.lease.revoked()
+                && age < INVENTORY_RECEIPT_TIMEOUT
                 && self.receipts.contains(&(installed.received_at, owner)),
             receipt_age_ms: u64::try_from(age.as_millis()).unwrap_or(u64::MAX),
             records: installed.records.len(),
@@ -308,25 +310,30 @@ impl GlobalIndex {
         view.generation = view.generation.saturating_add(1);
     }
 
-    pub fn mark_stale(&self, owner: Uuid) {
+    pub fn mark_stale(&self, lease: &MemberLease) {
+        let owner = lease.owner().incarnation;
         let mut view = self.write_view();
-        view.mark_stale(owner);
-        view.generation = view.generation.saturating_add(1);
+        if view.owners.get(&owner).is_some_and(|v| &v.lease == lease) {
+            view.mark_stale(owner);
+            view.generation = view.generation.saturating_add(1);
+        }
     }
 
     pub fn confirm_progress(
         &self,
-        owner: Uuid,
+        lease: &MemberLease,
         view_id: Uuid,
         applied_sequence: u64,
     ) -> Result<(), String> {
+        let owner = lease.owner().incarnation;
         let mut view = self.write_view();
         let installed = view
             .owners
             .get(&owner)
             .ok_or("owner view is not installed")?;
         if installed.cursor != CursorState::Resumable
-            || installed.lease.revoked()
+            || &installed.lease != lease
+            || lease.revoked()
             || installed.view_id != view_id
             || installed.applied_sequence != applied_sequence
         {
@@ -343,12 +350,13 @@ impl GlobalIndex {
     )]
     pub fn begin_snapshot(
         &self,
-        owner: Uuid,
+        lease: &MemberLease,
         session_id: Uuid,
         snapshot_id: Uuid,
         view_id: Uuid,
         start_sequence: u64,
     ) -> Result<(), String> {
+        let owner = lease.owner().incarnation;
         if owner.is_nil() || session_id.is_nil() || snapshot_id.is_nil() || view_id.is_nil() {
             return Err("nil inventory snapshot identity".into());
         }
@@ -361,10 +369,9 @@ impl GlobalIndex {
         {
             return Err("snapshot membership cut changed".into());
         }
-        let lease = members
-            .member(owner)
-            .ok_or("snapshot source lease was revoked")?
-            .clone();
+        if members.member(owner) != Some(lease) {
+            return Err("snapshot source lease changed".into());
+        }
         if let Some(previous) = view.staging.remove(&owner) {
             view.staging_bytes -= previous.bytes;
             view.accounted_bytes -= previous.bytes;
@@ -375,7 +382,7 @@ impl GlobalIndex {
         view.staging.insert(
             owner,
             StagingView {
-                lease,
+                lease: lease.clone(),
                 session_id,
                 snapshot_id,
                 view_id,
@@ -398,19 +405,24 @@ impl GlobalIndex {
 
     pub fn apply_snapshot_page(
         &self,
-        owner: Uuid,
+        lease: &MemberLease,
         session_id: Uuid,
         snapshot_id: Uuid,
         page_number: u64,
         records: Vec<InventoryRecord>,
     ) -> Result<(), String> {
+        let owner = lease.owner().incarnation;
         let mut view = self.write_view();
         let (additional, updates) = {
             let staging = view
                 .staging
                 .get(&owner)
                 .ok_or("missing inventory snapshot")?;
-            if staging.session_id != session_id || staging.snapshot_id != snapshot_id {
+            if &staging.lease != lease
+                || lease.revoked()
+                || staging.session_id != session_id
+                || staging.snapshot_id != snapshot_id
+            {
                 return Err("inventory snapshot identity changed".into());
             }
             if staging.replay_started {
@@ -442,19 +454,24 @@ impl GlobalIndex {
 
     pub fn apply_snapshot_delta(
         &self,
-        owner: Uuid,
+        lease: &MemberLease,
         session_id: Uuid,
         from_exclusive: u64,
         through_inclusive: u64,
         records: Vec<InventoryRecord>,
     ) -> Result<(), String> {
+        let owner = lease.owner().incarnation;
         let mut view = self.write_view();
         let (delta, updates) = {
             let staging = view
                 .staging
                 .get(&owner)
                 .ok_or("missing inventory snapshot")?;
-            if staging.session_id != session_id || staging.replay_sequence != from_exclusive {
+            if &staging.lease != lease
+                || lease.revoked()
+                || staging.session_id != session_id
+                || staging.replay_sequence != from_exclusive
+            {
                 return Err("inventory snapshot replay is not contiguous".into());
             }
             validate_delta(
@@ -496,19 +513,21 @@ impl GlobalIndex {
 
     pub fn commit_snapshot(
         &self,
-        owner: Uuid,
+        lease: &MemberLease,
         session_id: Uuid,
         snapshot_id: Uuid,
         view_id: Uuid,
         through_sequence: u64,
         page_count: u64,
     ) -> Result<Uuid, String> {
+        let owner = lease.owner().incarnation;
         let mut view = self.write_view();
         let staging = view
             .staging
             .remove(&owner)
             .ok_or("missing inventory snapshot")?;
-        if staging.session_id != session_id
+        if &staging.lease != lease
+            || staging.session_id != session_id
             || staging.snapshot_id != snapshot_id
             || staging.view_id != view_id
             || staging.replay_sequence != through_sequence
@@ -554,12 +573,13 @@ impl GlobalIndex {
         Ok(view_id)
     }
 
-    pub fn abort_snapshot(&self, owner: Uuid, session_id: Uuid) {
+    pub fn abort_snapshot(&self, lease: &MemberLease, session_id: Uuid) {
+        let owner = lease.owner().incarnation;
         let mut view = self.write_view();
         if view
             .staging
             .get(&owner)
-            .is_some_and(|staging| staging.session_id == session_id)
+            .is_some_and(|staging| &staging.lease == lease && staging.session_id == session_id)
             && let Some(staging) = view.staging.remove(&owner)
         {
             view.staging_bytes -= staging.bytes;
@@ -570,12 +590,13 @@ impl GlobalIndex {
 
     pub fn apply_delta(
         &self,
-        owner: Uuid,
+        lease: &MemberLease,
         view_id: Uuid,
         from_exclusive: u64,
         through_inclusive: u64,
         records: Vec<InventoryRecord>,
     ) -> Result<DeltaApply, String> {
+        let owner = lease.owner().incarnation;
         let mut view = self.write_view();
         let owner_view = view
             .owners
@@ -583,7 +604,8 @@ impl GlobalIndex {
             .ok_or("owner view is not installed")?;
         if owner_view.view_id != view_id
             || owner_view.cursor != CursorState::Resumable
-            || owner_view.lease.revoked()
+            || &owner_view.lease != lease
+            || lease.revoked()
         {
             return Err("owner view identity changed".into());
         }
@@ -641,10 +663,13 @@ impl GlobalIndex {
         Ok(DeltaApply::Applied)
     }
 
-    pub fn owner_watermark(&self, owner: Uuid) -> Option<(Uuid, u64)> {
+    pub fn owner_watermark(&self, lease: &MemberLease) -> Option<(Uuid, u64)> {
+        let owner = lease.owner().incarnation;
         self.view.read().owners.get(&owner).and_then(|owner_view| {
-            (owner_view.cursor == CursorState::Resumable && !owner_view.lease.revoked())
-                .then_some((owner_view.view_id, owner_view.applied_sequence))
+            (&owner_view.lease == lease
+                && owner_view.cursor == CursorState::Resumable
+                && !lease.revoked())
+            .then_some((owner_view.view_id, owner_view.applied_sequence))
         })
     }
 
@@ -662,10 +687,12 @@ impl GlobalIndex {
         }
     }
 
-    pub fn owner_status(&self, owner: Uuid) -> Option<OwnerIndexStatus> {
+    pub fn owner_status(&self, lease: &MemberLease) -> Option<OwnerIndexStatus> {
+        let owner = lease.owner().incarnation;
         let view = self.view.read();
         view.owners
             .get(&owner)
+            .filter(|installed| &installed.lease == lease)
             .map(|installed| view.owner_status(owner, installed, Instant::now()))
     }
 
@@ -684,24 +711,26 @@ impl GlobalIndex {
     }
 
     /// Returns true when retiring an installed view requires bounded reverse cleanup.
-    pub fn retire_owner(&self, owner: Uuid) -> bool {
+    pub fn retire_owner(&self, lease: &MemberLease) -> bool {
+        let owner = lease.owner().incarnation;
         let mut view = self.write_view();
-        if let Some(staging) = view.staging.remove(&owner) {
+        if view.staging.get(&owner).is_some_and(|s| &s.lease == lease)
+            && let Some(staging) = view.staging.remove(&owner)
+        {
             view.staging_bytes -= staging.bytes;
             view.accounted_bytes -= staging.bytes;
         }
-        view.mark_stale(owner);
-        let cleanup = if let Some(owner_view) = view.owners.get_mut(&owner)
-            && owner_view.cursor != CursorState::Retired
-        {
-            owner_view.cursor = CursorState::Retired;
-            view.admitted_owner_views -= 1;
-            true
-        } else {
-            false
+        let Some(installed) = view.owners.get_mut(&owner) else {
+            return false;
         };
+        if &installed.lease != lease || installed.cursor == CursorState::Retired {
+            return false;
+        }
+        installed.cursor = CursorState::Retired;
+        view.mark_stale(owner);
+        view.admitted_owner_views -= 1;
         view.generation = view.generation.saturating_add(1);
-        cleanup
+        true
     }
 
     pub fn cleanup_owner(&self, owner: Uuid, limit: usize) -> bool {
@@ -761,6 +790,7 @@ impl GlobalIndex {
                 .iter()
                 .rev()
                 .take_while(|(at, _)| now.duration_since(*at) < INVENTORY_RECEIPT_TIMEOUT)
+                .filter(|(_, owner)| view.owners.get(owner).is_some_and(|v| !v.lease.revoked()))
                 .count(),
             view_generation: view.generation,
             registration_valid,

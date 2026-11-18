@@ -185,14 +185,17 @@ impl MembershipView {
 
     /// Revoke an observed Watch transition before its final snapshot is installed.
     /// A delete/rejoin in one response must not revive the preceding grants.
-    pub fn revoke(&self, owner: &CacheOwner) {
+    pub fn revoke(&self, owner: &CacheOwner) -> Option<MemberLease> {
         let mut state = self.state.write();
         if let Some(member) = state.members.get(&owner.incarnation)
             && member.owner() == owner
             && !member.0.revoked.swap(true, Ordering::AcqRel)
         {
+            let revoked = member.clone();
             state.generation += 1;
+            return Some(revoked);
         }
+        None
     }
 
     pub fn registration_valid(&self) -> bool {

@@ -192,22 +192,23 @@ impl InventoryRuntime {
     }
 
     pub(super) fn replace_members(&self, revision: i64, members: BTreeMap<String, Member>) {
-        let previous = {
-            let mut state = self.shared.members.write();
-            let previous = std::mem::replace(&mut state.members, members.clone());
-            state.revision = Some(revision);
-            previous
-        };
-        let owners = members
-            .values()
-            .map(|member| member.owner.incarnation)
-            .collect::<Vec<_>>();
-        for old in previous.values() {
+        let mut state = self.shared.members.write();
+        for old in state.members.values() {
             if members.get(&old.node_id) != Some(old) {
-                self.retire(old.owner.incarnation);
+                self.revoke_member(&old.owner);
             }
         }
-        self.shared.index.set_expected_owners(revision, owners);
+        self.shared.membership.replace_members(
+            members
+                .values()
+                .map(|m| (m.node_id.clone(), m.epoch, m.owner.clone())),
+        );
+        self.shared
+            .index
+            .set_expected_owners(revision, members.values().map(|m| m.owner.incarnation));
+        state.members = members;
+        state.revision = Some(revision);
+        drop(state);
         self.shared.member_changes.send_replace(revision as u64);
     }
 
@@ -217,15 +218,18 @@ impl InventoryRuntime {
         });
     }
 
-    pub(super) fn retire(&self, owner: Uuid) {
-        self.shared.controls.lock().remove(&owner);
-        self.withdraw_for_rebuild(owner);
+    pub(super) fn revoke_member(&self, owner: &CacheOwner) {
+        if let Some(lease) = self.shared.membership.revoke(owner) {
+            self.shared.controls.lock().remove(&owner.incarnation);
+            self.withdraw_for_rebuild(&lease);
+        }
     }
 
-    fn withdraw_for_rebuild(&self, owner: Uuid) {
-        if !self.shared.index.retire_owner(owner) {
+    fn withdraw_for_rebuild(&self, lease: &MemberLease) {
+        if !self.shared.index.retire_owner(lease) {
             return;
         }
+        let owner = lease.owner().incarnation;
         let index = Arc::clone(&self.shared.index);
         tokio::spawn(async move {
             while !index.cleanup_owner(owner, RETIRE_BATCH) {
@@ -253,9 +257,12 @@ impl InventoryRuntime {
             .then_some(member)
     }
 
-    fn exact_member(&self, member: &Member) -> bool {
-        self.shared.membership.permits(&member.owner)
-            && self.shared.members.read().members.get(&member.node_id) == Some(member)
+    fn member_lease(&self, member: &Member) -> Option<MemberLease> {
+        let state = self.shared.members.read();
+        if state.members.get(&member.node_id) != Some(member) {
+            return None;
+        }
+        self.shared.membership.lease(&member.owner)
     }
 
     pub(crate) fn service(&self) -> InventoryService {
@@ -302,6 +309,9 @@ impl InventoryRuntime {
         if source.epoch != fence.source_node_epoch {
             return Err("inventory fence source epoch changed".into());
         }
+        let lease = self
+            .member_lease(&source)
+            .ok_or("inventory fence source membership changed")?;
         let _permit = self
             .shared
             .awaiters
@@ -311,13 +321,13 @@ impl InventoryRuntime {
         self.request_flush(source.owner.incarnation, fence.inventory_sequence);
         tokio::time::timeout(timeout, async {
             loop {
-                if !self.exact_member(&source) {
+                if !self.shared.membership.permits_lease(&lease) {
                     return Err("inventory fence source membership changed".into());
                 }
                 if self
                     .shared
                     .index
-                    .owner_status(source.owner.incarnation)
+                    .owner_status(&lease)
                     .is_some_and(|status| {
                         status.fresh && status.applied_sequence >= fence.inventory_sequence
                     })
@@ -563,7 +573,7 @@ async fn serve_source(
     let mut changes = runtime.shared.inventory.changed();
     loop {
         sender.release_acknowledged()?;
-        if !runtime.exact_member(&identity.source)
+        if runtime.member_lease(&identity.source).is_none()
             || runtime.member(identity.requester.incarnation).is_none()
         {
             break;
@@ -964,26 +974,25 @@ async fn follow_source(runtime: InventoryRuntime, source: Member) {
     };
     let _active = ActiveSession::new(runtime.shared.clone(), SessionDirection::Receiver);
     let mut delay = Duration::from_millis(100);
-    while runtime.exact_member(&source) {
-        if let Err(error) = follow_source_once(runtime.clone(), source.clone()).await {
+    while let Some(lease) = runtime.member_lease(&source) {
+        if let Err(error) = follow_source_once(&runtime, &source, &lease).await {
             log::warn!(
                 "Inventory receiver for node={} incarnation={} will reconnect: {error}",
                 source.node_id,
                 source.owner.incarnation
             );
-            runtime.shared.index.mark_stale(source.owner.incarnation);
+            runtime.shared.index.mark_stale(&lease);
         }
         tokio::time::sleep(delay).await;
         delay = (delay * 2).min(Duration::from_secs(3));
     }
 }
 
-async fn follow_source_once(runtime: InventoryRuntime, source: Member) -> Result<(), String> {
-    let lease = runtime
-        .shared
-        .membership
-        .lease(&source.owner)
-        .ok_or("source membership changed")?;
+async fn follow_source_once(
+    runtime: &InventoryRuntime,
+    source: &Member,
+    lease: &MemberLease,
+) -> Result<(), String> {
     let session_id = Uuid::new_v4();
     let endpoint = format!("http://{}", source.owner.endpoint);
     let channel = tonic::transport::Endpoint::from_shared(endpoint)
@@ -997,10 +1006,7 @@ async fn follow_source_once(runtime: InventoryRuntime, source: Member) -> Result
         .max_decoding_message_size(MESSAGE_BYTES)
         .max_encoding_message_size(MESSAGE_BYTES);
     let (control, request) = mpsc::channel(64);
-    let installed = runtime
-        .shared
-        .index
-        .owner_watermark(source.owner.incarnation);
+    let installed = runtime.shared.index.owner_watermark(lease);
     let (scope_mode, scope_namespaces) = encode_scope(&runtime.shared.scope);
     let open = InventoryOpen {
         protocol: INVENTORY_STREAM_PROTOCOL.into(),
@@ -1032,25 +1038,19 @@ async fn follow_source_once(runtime: InventoryRuntime, source: Member) -> Result
         .await
         .map_err(|error| error.to_string())?
         .into_inner();
-    runtime
-        .shared
-        .controls
-        .lock()
-        .insert(source.owner.incarnation, (session_id, control.clone()));
-    let result = receive_frames(
-        &runtime,
-        &source,
-        &lease,
-        session_id,
-        &control,
-        &mut response,
-    )
-    .await;
+    {
+        let mut controls = runtime.shared.controls.lock();
+        if lease.revoked() {
+            return Err("source membership changed".into());
+        }
+        controls.insert(source.owner.incarnation, (session_id, control.clone()));
+    }
+    let result = receive_frames(runtime, lease, session_id, &control, &mut response).await;
     if result
         .as_ref()
         .is_err_and(|error| error.contains("metadata budget"))
     {
-        runtime.withdraw_for_rebuild(source.owner.incarnation);
+        runtime.withdraw_for_rebuild(lease);
     }
     {
         let mut controls = runtime.shared.controls.lock();
@@ -1061,16 +1061,12 @@ async fn follow_source_once(runtime: InventoryRuntime, source: Member) -> Result
             controls.remove(&source.owner.incarnation);
         }
     }
-    runtime
-        .shared
-        .index
-        .abort_snapshot(source.owner.incarnation, session_id);
+    runtime.shared.index.abort_snapshot(lease, session_id);
     result
 }
 
 async fn receive_frames(
     runtime: &InventoryRuntime,
-    source: &Member,
     lease: &MemberLease,
     session_id: Uuid,
     control: &mpsc::Sender<InventoryClientFrame>,
@@ -1085,7 +1081,7 @@ async fn receive_frames(
         .map_err(|_| "inventory response timed out")?
         .map_err(|error| error.to_string())?
     {
-        if lease.revoked() || !runtime.exact_member(source) {
+        if !runtime.shared.membership.permits_lease(lease) {
             return Err("source membership changed".into());
         }
         if frame.encoded_len() > MESSAGE_BYTES
@@ -1122,7 +1118,7 @@ async fn receive_frames(
                 let id = uuid_from_string(&begin.snapshot_id)?;
                 let view_id = uuid_from_string(&begin.view_id)?;
                 runtime.shared.index.begin_snapshot(
-                    source.owner.incarnation,
+                    lease,
                     session_id,
                     id,
                     view_id,
@@ -1140,7 +1136,7 @@ async fn receive_frames(
                     return Err("snapshot page identity changed".into());
                 }
                 runtime.shared.index.apply_snapshot_page(
-                    source.owner.incarnation,
+                    lease,
                     session_id,
                     id,
                     page.page_number,
@@ -1156,7 +1152,7 @@ async fn receive_frames(
                 let records = delta.records.into_iter().map(Into::into).collect();
                 if snapshot_id.is_some() {
                     runtime.shared.index.apply_snapshot_delta(
-                        source.owner.incarnation,
+                        lease,
                         session_id,
                         delta.from_exclusive,
                         delta.through_inclusive,
@@ -1167,15 +1163,11 @@ async fn receive_frames(
                         .ok_or("snapshot delta arrived before begin")?
                         .update(transcript_frame.encode_to_vec());
                 } else {
-                    let Some((view_id, _)) = runtime
-                        .shared
-                        .index
-                        .owner_watermark(source.owner.incarnation)
-                    else {
+                    let Some((view_id, _)) = runtime.shared.index.owner_watermark(lease) else {
                         return Err("delta arrived without an installed owner view".into());
                     };
                     match runtime.shared.index.apply_delta(
-                        source.owner.incarnation,
+                        lease,
                         view_id,
                         delta.from_exclusive,
                         delta.through_inclusive,
@@ -1202,7 +1194,7 @@ async fn receive_frames(
                     return Err("snapshot transcript or identity differs".into());
                 }
                 let installed = runtime.shared.index.commit_snapshot(
-                    source.owner.incarnation,
+                    lease,
                     session_id,
                     id,
                     view_id,
@@ -1220,14 +1212,11 @@ async fn receive_frames(
                 if progress.source_head_sequence < progress.through_sequence {
                     return Err("inventory source head precedes covered progress".into());
                 }
-                if let Some((view_id, applied)) = runtime
-                    .shared
-                    .index
-                    .owner_watermark(source.owner.incarnation)
+                if let Some((view_id, applied)) = runtime.shared.index.owner_watermark(lease)
                     && progress.through_sequence > applied
                 {
                     match runtime.shared.index.apply_delta(
-                        source.owner.incarnation,
+                        lease,
                         view_id,
                         applied,
                         progress.through_sequence,
@@ -1242,17 +1231,13 @@ async fn receive_frames(
                     }
                 }
                 if progress.source_head_sequence == progress.through_sequence
-                    && let Some((view_id, applied)) = runtime
-                        .shared
-                        .index
-                        .owner_watermark(source.owner.incarnation)
+                    && let Some((view_id, applied)) = runtime.shared.index.owner_watermark(lease)
                     && applied == progress.through_sequence
                 {
-                    runtime.shared.index.confirm_progress(
-                        source.owner.incarnation,
-                        view_id,
-                        applied,
-                    )?;
+                    runtime
+                        .shared
+                        .index
+                        .confirm_progress(lease, view_id, applied)?;
                 }
             }
             inventory_server_frame::Body::ResetRequired(reset) => {
@@ -1268,10 +1253,7 @@ async fn receive_frames(
                 ));
             }
         }
-        let installed = runtime
-            .shared
-            .index
-            .owner_watermark(source.owner.incarnation);
+        let installed = runtime.shared.index.owner_watermark(lease);
         control
             .send(InventoryClientFrame {
                 body: Some(inventory_client_frame::Body::Ack(InventoryAck {

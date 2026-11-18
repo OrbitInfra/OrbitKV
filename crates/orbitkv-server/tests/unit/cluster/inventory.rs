@@ -110,10 +110,6 @@ fn runtime_for_protocol_test() -> (InventoryRuntime, Member, CacheOwner) {
     };
     let membership = Arc::new(MembershipView::new(own.clone()));
     assert!(membership.renew(std::time::Instant::now(), Duration::from_secs(60)));
-    membership.replace_members([
-        ("source".into(), 1, own.clone()),
-        ("requester".into(), 1, requester.clone()),
-    ]);
     let member = Member {
         node_id: "source".into(),
         epoch: 1,
@@ -158,6 +154,43 @@ fn runtime_for_protocol_test() -> (InventoryRuntime, Member, CacheOwner) {
         .collect(),
     );
     (runtime, member, requester)
+}
+
+#[tokio::test]
+async fn snapshot_repair_revokes_a_replaced_etcd_lease_even_with_the_same_record() {
+    let (runtime, _, peer) = runtime_for_protocol_test();
+    let old = runtime.shared.membership.lease(&peer).unwrap();
+    let index = &runtime.shared.index;
+    let (session, snapshot, view) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    index
+        .begin_snapshot(&old, session, snapshot, view, 7)
+        .unwrap();
+    index
+        .commit_snapshot(&old, session, snapshot, view, 7, 0)
+        .unwrap();
+    let mut members = runtime.members();
+    let original = members["requester"].clone();
+    members.get_mut("requester").unwrap().lease += 1;
+    runtime.shared.membership.invalidate_snapshot();
+    runtime.replace_members(2, members);
+    let current = runtime.shared.membership.lease(&peer).unwrap();
+    assert!(old.revoked());
+    assert!(runtime.member_lease(&original).is_none());
+    assert!(index.owner_watermark(&current).is_none());
+    assert!(index.confirm_progress(&old, view, 7).is_err());
+    assert!(
+        index
+            .begin_snapshot(&old, session, snapshot, view, 7)
+            .is_err()
+    );
+    index
+        .begin_snapshot(&current, session, snapshot, view, 0)
+        .unwrap();
+    index
+        .commit_snapshot(&current, session, snapshot, view, 0, 0)
+        .unwrap();
+    runtime.withdraw_for_rebuild(&old);
+    assert_eq!(index.owner_watermark(&current), Some((view, 0)));
 }
 
 #[test]
@@ -326,7 +359,7 @@ async fn stream_installs_exact_owner_views_and_recovers_overflow_without_etcd_bl
     assert_eq!(rows[1].replicas.len(), 2);
     assert_eq!(
         target_index
-            .owner_watermark(source_view.owner().incarnation)
+            .owner_watermark(&target_view.lease(source_view.owner()).unwrap())
             .unwrap()
             .1,
         final_fence.inventory_sequence
@@ -511,7 +544,7 @@ async fn scoped_streams_filter_at_source_and_install_complete_empty_views() {
     assert_eq!(
         empty
             .index
-            .owner_status(source_view.owner().incarnation)
+            .owner_status(&empty.cluster.view.lease(source_view.owner()).unwrap())
             .unwrap()
             .records,
         0
@@ -550,7 +583,7 @@ async fn scoped_streams_filter_at_source_and_install_complete_empty_views() {
     assert_eq!(
         single
             .index
-            .owner_status(source_view.owner().incarnation)
+            .owner_status(&single.cluster.view.lease(source_view.owner()).unwrap())
             .unwrap()
             .applied_sequence,
         empty_interval.inventory_sequence

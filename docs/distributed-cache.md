@@ -76,7 +76,9 @@ can make a recently applied source sequence older than that. The source emits
 idle progress every second. A commit, contiguous advance or matching head
 confirmation renews a receipt. Duplicate deltas preserve its original age.
 Active and staged views retain the membership lease that admitted them. Revocation
-invalidates both even when a node rejoins with the same UUID. A journal reset
+invalidates both even when a node rejoins with the same UUID. The receiver
+checks its original lease under the catalog lock before applying frames or
+withdrawing inventory. Fence waiters use the same lease to read progress. A journal reset
 preserves positive hints while clearing the resume cursor until the replacement
 snapshot commits. Retiring the view also reclaims its reset state. A router
 consuming these results must bind any cursor to

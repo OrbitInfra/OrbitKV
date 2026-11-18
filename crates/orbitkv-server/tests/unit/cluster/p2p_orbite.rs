@@ -1,7 +1,7 @@
 //! P2P OrbiTE remote fetch integration test.
 //!
 //! Verifies the end-to-end flow:
-//! Engine A saves blocks → etcd publishes locations → local index discovers them → Engine B fetches via OrbiTE READ
+//! Engine A saves blocks → owner streams its inventory → local index discovers locations → Engine B fetches via OrbiTE READ
 //! → data integrity verified.
 //!
 //! Run with: `cargo test -p orbitkv-server --lib cluster::tests::p2p_orbite -- --ignored`
@@ -19,7 +19,7 @@ use crate::proto::engine::engine_server::EngineServer;
 use crate::proto::engine::inventory_server::InventoryServer;
 use cudarc::driver::CudaContext;
 use cudarc::driver::sys;
-use orbitkv_catalog::GlobalIndex;
+use orbitkv_catalog::{GlobalIndex, MembershipView};
 use orbitkv_core::transfer::local::{LocalRestoreExecutor, LocalTensor, RawRestorePart};
 use orbitkv_core::*;
 use orbitkv_proto::proto::engine::{
@@ -265,10 +265,16 @@ async fn capture_inventory_fence(
     cluster.inventory().capture_fence().unwrap()
 }
 
-async fn wait_for_fence(index: &GlobalIndex, fence: &orbitkv_state::InventoryFence) {
+async fn wait_for_fence(
+    index: &GlobalIndex,
+    members: &MembershipView,
+    fence: &orbitkv_state::InventoryFence,
+) {
     wait_for(|| {
-        index
-            .owner_watermark(fence.source_incarnation)
+        members
+            .resolve(fence.source_incarnation)
+            .and_then(|owner| members.lease(&owner))
+            .and_then(|lease| index.owner_watermark(&lease))
             .is_some_and(|(_, sequence)| sequence >= fence.inventory_sequence)
     })
     .await;
@@ -468,7 +474,7 @@ async fn peer_remote_fetch_roundtrip(backend: TransportHint) {
     let _cuda_ctx = CudaContext::new(0).expect("CUDA init");
 
     let coordinator = Etcd::start(1).await;
-    let (_observer, stores, _) = join(
+    let (observer, stores, _) = join(
         &coordinator,
         "raw-gpu",
         "observer",
@@ -567,7 +573,7 @@ async fn peer_remote_fetch_roundtrip(backend: TransportHint) {
 
     // ── 6. Wait for acknowledged owner inventory ──
     let source_fence = capture_inventory_fence(&engine_a, &cluster_a).await;
-    wait_for_fence(&stores, &source_fence).await;
+    wait_for_fence(&stores, &observer.view, &source_fence).await;
     wait_for_index_registration(
         &stores,
         &cache_namespace,
@@ -910,7 +916,7 @@ async fn peer_remote_fetch_roundtrip(backend: TransportHint) {
     // OrbiTE-fetched blocks are now resident on B, so B must advertise them so
     // other nodes can discover and fetch from B (not just from A).
     let restored_fence = capture_inventory_fence(&engine_b, &cluster_b).await;
-    wait_for_fence(&stores, &restored_fence).await;
+    wait_for_fence(&stores, &observer.view, &restored_fence).await;
     wait_for_index_ownership(
         &stores,
         &cache_namespace,
@@ -924,7 +930,7 @@ async fn peer_remote_fetch_roundtrip(backend: TransportHint) {
     // Eviction removes A's evidence while the copied replica on B remains usable.
     assert!(engine_a.cleanup_memory_cache().unwrap().evicted_blocks > 0);
     let evicted_fence = capture_inventory_fence(&engine_a, &cluster_a).await;
-    wait_for_fence(&stores, &evicted_fence).await;
+    wait_for_fence(&stores, &observer.view, &evicted_fence).await;
     let remaining = locate(&stores, &cache_namespace, &stored_delayed);
     assert_eq!(remaining.len(), NUM_BLOCKS);
     for entry in remaining {
@@ -968,7 +974,7 @@ async fn peer_remote_fetch_roundtrip(backend: TransportHint) {
         .await
         .unwrap();
     let fresh_fence = capture_inventory_fence(&engine_a, &cluster_a).await;
-    wait_for_fence(&stores, &fresh_fence).await;
+    wait_for_fence(&stores, &observer.view, &fresh_fence).await;
     assert_eq!(
         peer.query_blocks_for_transfer(authorization)
             .await
@@ -1086,7 +1092,7 @@ async fn peer_remote_fetch_roundtrip(backend: TransportHint) {
         .unwrap();
     assert!(engine_b.list_instance_ids().unwrap().is_empty());
     assert!(engine_a.list_instance_ids().unwrap().is_empty());
-    _observer.shutdown().await;
+    observer.shutdown().await;
     if matches!(backend, TransportHint::Tcp | TransportHint::Rdma) {
         let artifact_root = std::env::var_os("ORBITKV_METADATA_ARTIFACT_DIR")
             .expect("explicit external peer evidence directory");
@@ -1222,7 +1228,7 @@ async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata
         .await
         .expect("save initial live-store blocks");
     let initial_fence = capture_inventory_fence(&engine, &source_cluster).await;
-    wait_for_fence(&observer_index, &initial_fence).await;
+    wait_for_fence(&observer_index, &observer_view, &initial_fence).await;
     wait_for_index_registration(
         &observer_index,
         &engine.instance_namespace(INSTANCE).unwrap(),
@@ -1309,14 +1315,14 @@ async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata
     peer_gate.heal(Duration::ZERO);
     let reconciliation_started = Instant::now();
     let final_fence = capture_inventory_fence(&engine, &source_cluster).await;
-    wait_for_fence(&observer_index, &final_fence).await;
+    wait_for_fence(&observer_index, &observer_view, &final_fence).await;
     let namespace = engine.instance_namespace(INSTANCE).unwrap();
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let initial = locate(&observer_index, &namespace, &initial_stored);
         let final_rows = locate(&observer_index, &namespace, &final_stored);
         if observer_index
-            .owner_watermark(source_view.owner().incarnation)
+            .owner_watermark(&observer_view.lease(source_view.owner()).unwrap())
             .is_some_and(|(_, sequence)| sequence >= final_fence.inventory_sequence)
             && initial.iter().all(|row| row.replicas.is_empty())
             && final_rows
@@ -1542,7 +1548,7 @@ async fn encoded_peer_roundtrip(backend: TransportHint) {
             .unwrap();
         wait_for_cache(&source, "source", &hashes, 1, Duration::from_secs(10)).await;
         let source_fence = capture_inventory_fence(&source, &cluster_a).await;
-        wait_for_fence(&stores, &source_fence).await;
+        wait_for_fence(&stores, &cluster_b.view, &source_fence).await;
         let namespace = source.instance_namespace("source").unwrap();
         wait_for_index_registration(
             &stores,

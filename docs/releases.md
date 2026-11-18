@@ -21,7 +21,9 @@ report unavailable until the matching index cut is installed. Journal-reset
 state retires with its owner view. The internal Rust crates removed the duplicate
 `GlobalIndex::mark_syncing` and unused `GlobalIndex::reset`,
 `BlockCandidates::estimated_size` and `DISCOVERY_MAX_ENDPOINT_BYTES`.
-`retire_owner` reports whether an installed view needs bounded cleanup.
+Inventory mutations, cursor reads and fence status now take the original
+`MemberLease`. `MembershipView::revoke` returns the revoked lease and
+`retire_owner` reports whether that lease needs bounded cleanup.
 See the [lookup contract](distributed-cache.md#placement-lookup-contract).
 
 ### Optional SSD watermarks

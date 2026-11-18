@@ -58,6 +58,7 @@ fn scoped_index_distinguishes_empty_views_and_rejects_cross_scope_rows() {
     let wanted = "orbitkv:v2:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let outside = "orbitkv:v2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     let (index, _, remote) = setup_scope(1 << 20, InventoryScope::exact([wanted.into()]).unwrap());
+    let lease = index.membership.lease(&remote).unwrap();
     let view = install(
         &index,
         &remote,
@@ -70,17 +71,17 @@ fn scoped_index_distinguishes_empty_views_and_rejects_cross_scope_rows() {
     let outside_row = &index.lookup(&[outside_key])[0];
     assert!(outside_row.replicas.is_empty());
     assert_eq!(outside_row.coverage, DiscoveryCoverage::Unavailable);
-    assert_eq!(index.owner_watermark(remote.incarnation), Some((view, 1)));
+    assert_eq!(index.owner_watermark(&lease), Some((view, 1)));
 
     let session = Uuid::new_v4();
     let snapshot = Uuid::new_v4();
     index
-        .begin_snapshot(remote.incarnation, session, snapshot, Uuid::new_v4(), 1)
+        .begin_snapshot(&lease, session, snapshot, Uuid::new_v4(), 1)
         .unwrap();
     assert!(
         index
             .apply_snapshot_page(
-                remote.incarnation,
+                &lease,
                 session,
                 snapshot,
                 0,
@@ -90,18 +91,10 @@ fn scoped_index_distinguishes_empty_views_and_rejects_cross_scope_rows() {
     );
 
     let (empty, _, empty_remote) = setup_scope(1 << 20, InventoryScope::exact(Vec::new()).unwrap());
+    let empty_lease = empty.membership.lease(&empty_remote).unwrap();
     let empty_view = install(&empty, &empty_remote, Vec::new(), 1);
-    assert_eq!(
-        empty.owner_watermark(empty_remote.incarnation),
-        Some((empty_view, 1))
-    );
-    assert_eq!(
-        empty
-            .owner_status(empty_remote.incarnation)
-            .unwrap()
-            .records,
-        0
-    );
+    assert_eq!(empty.owner_watermark(&empty_lease), Some((empty_view, 1)));
+    assert_eq!(empty.owner_status(&empty_lease).unwrap().records, 0);
     assert_eq!(
         empty.status().coverage,
         DiscoveryCoverage::CompleteAtWatermarks
@@ -118,6 +111,7 @@ fn scoped_index_distinguishes_empty_views_and_rejects_cross_scope_rows() {
 #[test]
 fn member_transitions_update_cached_coverage_without_treating_missing_as_empty() {
     let (index, membership, remote) = setup(1 << 20);
+    let lease = index.membership.lease(&remote).unwrap();
     install(
         &index,
         &remote,
@@ -166,7 +160,7 @@ fn member_transitions_update_cached_coverage_without_treating_missing_as_empty()
             replacement.incarnation,
         ],
     );
-    index.retire_owner(remote.incarnation);
+    index.retire_owner(&lease);
     let status = index.status();
     assert_eq!(status.expected_owner_views, 2);
     assert_eq!(status.installed_owner_views, 1);
@@ -191,17 +185,18 @@ fn install(
     records: Vec<InventoryRecord>,
     through: u64,
 ) -> Uuid {
+    let lease = index.membership.lease(remote).unwrap();
     let session = Uuid::new_v4();
     let snapshot = Uuid::new_v4();
     let view = Uuid::new_v4();
     index
-        .begin_snapshot(remote.incarnation, session, snapshot, view, through)
+        .begin_snapshot(&lease, session, snapshot, view, through)
         .unwrap();
     index
-        .apply_snapshot_page(remote.incarnation, session, snapshot, 0, records)
+        .apply_snapshot_page(&lease, session, snapshot, 0, records)
         .unwrap();
     index
-        .commit_snapshot(remote.incarnation, session, snapshot, view, through, 1)
+        .commit_snapshot(&lease, session, snapshot, view, through, 1)
         .unwrap();
     view
 }
@@ -220,6 +215,8 @@ fn oldest_receipt_limits_complete_queries_until_the_same_owner_makes_progress() 
     let keys = [row.key.clone(), record(2, 1, ReplicaMedium::Ssd, true).key];
     let slow_view = install(&index, &slow, vec![row.clone()], 1);
     let fast_view = install(&index, &fast, Vec::new(), 0);
+    let slow_lease = membership.lease(&slow).unwrap();
+    let fast_lease = membership.lease(&fast).unwrap();
     let receipt = Instant::now() - INVENTORY_RECEIPT_TIMEOUT;
     index
         .view
@@ -241,13 +238,11 @@ fn oldest_receipt_limits_complete_queries_until_the_same_owner_makes_progress() 
     }
     assert_eq!(
         index
-            .apply_delta(slow.incarnation, slow_view, 0, 1, vec![row])
+            .apply_delta(&slow_lease, slow_view, 0, 1, vec![row])
             .unwrap(),
         DeltaApply::Duplicate
     );
-    index
-        .confirm_progress(fast.incarnation, fast_view, 0)
-        .unwrap();
+    index.confirm_progress(&fast_lease, fast_view, 0).unwrap();
     let partial = index.lookup(&keys);
     assert!(
         partial
@@ -256,11 +251,9 @@ fn oldest_receipt_limits_complete_queries_until_the_same_owner_makes_progress() 
     );
     assert_eq!(partial[0].replicas[0].owner, slow);
     assert!(partial[1].replicas.is_empty());
-    assert!(!index.owner_status(slow.incarnation).unwrap().fresh);
+    assert!(!index.owner_status(&slow_lease).unwrap().fresh);
     assert_eq!(index.status().installed_owner_views, 1);
-    index
-        .confirm_progress(slow.incarnation, slow_view, 1)
-        .unwrap();
+    index.confirm_progress(&slow_lease, slow_view, 1).unwrap();
     assert!(
         index
             .lookup(&keys)
@@ -294,11 +287,7 @@ fn lookup_suspends_between_member_replacement_and_inventory_installation() {
     assert!(during_watch[0].replicas.is_empty());
     assert!(!membership.permits_lease(&lease));
     index.set_expected_owners(11, [new.incarnation]);
-    assert!(
-        index
-            .confirm_progress(old.incarnation, old_view, 1)
-            .is_err()
-    );
+    assert!(index.confirm_progress(&lease, old_view, 1).is_err());
     assert_eq!(
         index.lookup(&keys)[0].coverage,
         DiscoveryCoverage::Unavailable
@@ -318,7 +307,7 @@ fn revoked_then_rejoined_identity_cannot_reuse_an_inventory_or_staging_cursor() 
     let old_lease = members.lease(&peer).unwrap();
     let (session, snapshot, staging_view) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
     index
-        .begin_snapshot(peer.incarnation, session, snapshot, staging_view, 1)
+        .begin_snapshot(&old_lease, session, snapshot, staging_view, 1)
         .unwrap();
 
     // One Watch response can delete and reinsert even the identical member record.
@@ -329,15 +318,11 @@ fn revoked_then_rejoined_identity_cannot_reuse_an_inventory_or_staging_cursor() 
     ]);
     index.set_expected_owners(11, [peer.incarnation]);
     assert!(old_lease.revoked());
-    assert!(index.owner_watermark(peer.incarnation).is_none());
+    assert!(index.owner_watermark(&old_lease).is_none());
+    assert!(index.confirm_progress(&old_lease, old_view, 1).is_err());
     assert!(
         index
-            .confirm_progress(peer.incarnation, old_view, 1)
-            .is_err()
-    );
-    assert!(
-        index
-            .commit_snapshot(peer.incarnation, session, snapshot, staging_view, 1, 0)
+            .commit_snapshot(&old_lease, session, snapshot, staging_view, 1, 0)
             .is_err()
     );
     let pending = index.lookup(&keys);
@@ -345,15 +330,87 @@ fn revoked_then_rejoined_identity_cannot_reuse_an_inventory_or_staging_cursor() 
     assert!(pending[0].replicas.is_empty());
 
     let replacement = install(&index, &peer, Vec::new(), 0);
+    let replacement_lease = members.lease(&peer).unwrap();
     index.require_snapshot(&old_lease);
     assert_eq!(
-        index.owner_watermark(peer.incarnation),
+        index.owner_watermark(&replacement_lease),
         Some((replacement, 0))
     );
     assert_eq!(
         index.lookup(&keys)[0].coverage,
         DiscoveryCoverage::CompleteAtWatermarks
     );
+}
+
+#[test]
+fn late_frames_and_cleanup_cannot_touch_a_replacement_under_the_same_uuid() {
+    let (index, members, peer) = setup(1 << 20);
+    let old = members.lease(&peer).unwrap();
+    let row = record(1, 1, ReplicaMedium::Dram, true);
+    install(&index, &peer, vec![row.clone()], 1);
+    assert!(index.owner_status(&old).unwrap().fresh);
+    members.revoke(&peer);
+    assert!(!index.owner_status(&old).unwrap().fresh);
+    assert!(!index.owner_statuses(None, 1)[0].fresh);
+    assert_eq!(index.status().installed_owner_views, 0);
+
+    members.replace_members([
+        ("local".into(), 1, members.owner().clone()),
+        ("remote".into(), 2, peer.clone()),
+    ]);
+    index.set_expected_owners(11, [peer.incarnation]);
+    let current = members.lease(&peer).unwrap();
+    let view_id = install(&index, &peer, vec![row.clone()], 1);
+    // The old receiver resumes after having passed its frame-level membership check.
+    let deleted = record(1, 2, ReplicaMedium::Dram, false);
+    assert!(
+        index
+            .apply_delta(&old, view_id, 1, 2, vec![deleted])
+            .is_err()
+    );
+    assert!(index.confirm_progress(&old, view_id, 1).is_err());
+    assert!(index.owner_watermark(&old).is_none());
+    assert!(index.owner_status(&old).is_none());
+    index.mark_stale(&old);
+    assert!(index.owner_status(&current).unwrap().fresh);
+
+    let (session, snapshot, next) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    index
+        .begin_snapshot(&current, session, snapshot, next, 1)
+        .unwrap();
+    assert!(
+        index
+            .begin_snapshot(&old, session, snapshot, next, 1)
+            .is_err()
+    );
+    assert!(
+        index
+            .apply_snapshot_page(&old, session, snapshot, 0, vec![row.clone()])
+            .is_err()
+    );
+    assert!(
+        index
+            .apply_snapshot_delta(&old, session, 1, 2, Vec::new())
+            .is_err()
+    );
+    assert!(
+        index
+            .commit_snapshot(&old, session, snapshot, next, 1, 0)
+            .is_err()
+    );
+    index.abort_snapshot(&old, session);
+    assert!(!index.retire_owner(&old));
+    index.require_snapshot(&old);
+    index
+        .apply_snapshot_page(&current, session, snapshot, 0, vec![row.clone()])
+        .unwrap();
+    index
+        .commit_snapshot(&current, session, snapshot, next, 1, 1)
+        .unwrap();
+    assert_eq!(index.owner_watermark(&current), Some((next, 1)));
+    let result = index.lookup(&[row.key]);
+    assert_eq!(result[0].coverage, DiscoveryCoverage::CompleteAtWatermarks);
+    assert_eq!(result[0].replicas[0].owner, peer);
 }
 
 #[test]
@@ -367,37 +424,31 @@ fn journal_reset_keeps_hints_and_discards_its_cursor_with_the_owner() {
     let hints = index.lookup(&keys);
     assert_eq!(hints[0].coverage, DiscoveryCoverage::PartialHints);
     assert_eq!(hints[0].replicas[0].owner, peer);
-    assert!(index.owner_watermark(peer.incarnation).is_none());
-    assert!(index.confirm_progress(peer.incarnation, view, 1).is_err());
-    assert!(
-        index
-            .apply_delta(peer.incarnation, view, 1, 2, Vec::new())
-            .is_err()
-    );
-    assert!(index.retire_owner(peer.incarnation));
-    assert!(!index.retire_owner(peer.incarnation));
+    assert!(index.owner_watermark(&lease).is_none());
+    assert!(index.confirm_progress(&lease, view, 1).is_err());
+    assert!(index.apply_delta(&lease, view, 1, 2, Vec::new()).is_err());
+    assert!(index.retire_owner(&lease));
+    assert!(!index.retire_owner(&lease));
     assert!(index.cleanup_owner(peer.incarnation, 1));
     index.require_snapshot(&lease);
     assert_eq!(index.bytes(), 0);
     let replacement = install(&index, &peer, Vec::new(), 0);
-    assert_eq!(
-        index.owner_watermark(peer.incarnation),
-        Some((replacement, 0))
-    );
+    assert_eq!(index.owner_watermark(&lease), Some((replacement, 0)));
 }
 
 #[test]
 fn hidden_snapshot_installs_both_media_atomically() {
     let (index, _, remote) = setup(1 << 20);
+    let lease = index.membership.lease(&remote).unwrap();
     let session = Uuid::new_v4();
     let snapshot = Uuid::new_v4();
     let view = Uuid::new_v4();
     index
-        .begin_snapshot(remote.incarnation, session, snapshot, view, 2)
+        .begin_snapshot(&lease, session, snapshot, view, 2)
         .unwrap();
     index
         .apply_snapshot_page(
-            remote.incarnation,
+            &lease,
             session,
             snapshot,
             0,
@@ -415,7 +466,7 @@ fn hidden_snapshot_installs_both_media_atomically() {
     );
     assert_eq!(index.status().coverage, DiscoveryCoverage::Unavailable);
     index
-        .commit_snapshot(remote.incarnation, session, snapshot, view, 2, 1)
+        .commit_snapshot(&lease, session, snapshot, view, 2, 1)
         .unwrap();
     let candidates = index.lookup(&[key]);
     assert_eq!(candidates[0].replicas.len(), 2);
@@ -423,21 +474,22 @@ fn hidden_snapshot_installs_both_media_atomically() {
         candidates[0].coverage,
         DiscoveryCoverage::CompleteAtWatermarks
     );
-    assert_eq!(index.owner_watermark(remote.incarnation), Some((view, 2)));
+    assert_eq!(index.owner_watermark(&lease), Some((view, 2)));
 }
 
 #[test]
 fn replay_uses_generations_and_never_resurrects_a_deleted_scan_row() {
     let (index, _, remote) = setup(1 << 20);
+    let lease = index.membership.lease(&remote).unwrap();
     let session = Uuid::new_v4();
     let snapshot = Uuid::new_v4();
     let view = Uuid::new_v4();
     index
-        .begin_snapshot(remote.incarnation, session, snapshot, view, 2)
+        .begin_snapshot(&lease, session, snapshot, view, 2)
         .unwrap();
     index
         .apply_snapshot_page(
-            remote.incarnation,
+            &lease,
             session,
             snapshot,
             0,
@@ -449,7 +501,7 @@ fn replay_uses_generations_and_never_resurrects_a_deleted_scan_row() {
         .unwrap();
     index
         .apply_snapshot_delta(
-            remote.incarnation,
+            &lease,
             session,
             2,
             4,
@@ -460,7 +512,7 @@ fn replay_uses_generations_and_never_resurrects_a_deleted_scan_row() {
         )
         .unwrap();
     index
-        .commit_snapshot(remote.incarnation, session, snapshot, view, 4, 1)
+        .commit_snapshot(&lease, session, snapshot, view, 4, 1)
         .unwrap();
     let rows = index.lookup(&[
         record(1, 1, ReplicaMedium::Dram, true).key,
@@ -473,18 +525,19 @@ fn replay_uses_generations_and_never_resurrects_a_deleted_scan_row() {
 #[test]
 fn deltas_are_atomic_and_reject_gaps_overlap_and_conflicts() {
     let (index, _, remote) = setup(1 << 20);
+    let lease = index.membership.lease(&remote).unwrap();
     let view = install(
         &index,
         &remote,
         vec![record(1, 1, ReplicaMedium::Dram, true)],
         1,
     );
-    let first_install = index.owner_status(remote.incarnation).unwrap();
+    let first_install = index.owner_status(&lease).unwrap();
     assert!(first_install.installed_mono_ns > 0);
     assert_eq!(
         index
             .apply_delta(
-                remote.incarnation,
+                &lease,
                 view,
                 1,
                 3,
@@ -496,28 +549,19 @@ fn deltas_are_atomic_and_reject_gaps_overlap_and_conflicts() {
             .unwrap(),
         DeltaApply::Applied
     );
-    assert_eq!(index.owner_watermark(remote.incarnation), Some((view, 3)));
-    let delta_install = index
-        .owner_status(remote.incarnation)
-        .unwrap()
-        .installed_mono_ns;
+    assert_eq!(index.owner_watermark(&lease), Some((view, 3)));
+    let delta_install = index.owner_status(&lease).unwrap().installed_mono_ns;
     assert!(
-        index
-            .owner_status(remote.incarnation)
-            .unwrap()
-            .installed_mono_ns
-            >= first_install.installed_mono_ns
+        index.owner_status(&lease).unwrap().installed_mono_ns >= first_install.installed_mono_ns
     );
     assert_eq!(
-        index
-            .apply_delta(remote.incarnation, view, 1, 3, Vec::new())
-            .unwrap(),
+        index.apply_delta(&lease, view, 1, 3, Vec::new()).unwrap(),
         DeltaApply::Duplicate
     );
     assert_eq!(
         index
             .apply_delta(
-                remote.incarnation,
+                &lease,
                 view,
                 2,
                 4,
@@ -531,7 +575,7 @@ fn deltas_are_atomic_and_reject_gaps_overlap_and_conflicts() {
     assert!(
         index
             .apply_delta(
-                remote.incarnation,
+                &lease,
                 view,
                 4,
                 5,
@@ -539,40 +583,27 @@ fn deltas_are_atomic_and_reject_gaps_overlap_and_conflicts() {
             )
             .is_err()
     );
-    assert_eq!(index.owner_watermark(remote.incarnation), Some((view, 3)));
-    index.confirm_progress(remote.incarnation, view, 3).unwrap();
+    assert_eq!(index.owner_watermark(&lease), Some((view, 3)));
+    index.confirm_progress(&lease, view, 3).unwrap();
     assert_eq!(
-        index
-            .owner_status(remote.incarnation)
-            .unwrap()
-            .installed_mono_ns,
+        index.owner_status(&lease).unwrap().installed_mono_ns,
         delta_install
     );
-    index.mark_stale(remote.incarnation);
-    index.confirm_progress(remote.incarnation, view, 3).unwrap();
+    index.mark_stale(&lease);
+    index.confirm_progress(&lease, view, 3).unwrap();
     assert_eq!(
-        index
-            .owner_status(remote.incarnation)
-            .unwrap()
-            .installed_mono_ns,
+        index.owner_status(&lease).unwrap().installed_mono_ns,
         delta_install
     );
-    index
-        .apply_delta(remote.incarnation, view, 3, 4, Vec::new())
-        .unwrap();
-    assert!(
-        index
-            .owner_status(remote.incarnation)
-            .unwrap()
-            .installed_mono_ns
-            >= delta_install
-    );
-    assert_eq!(index.owner_watermark(remote.incarnation), Some((view, 4)));
+    index.apply_delta(&lease, view, 3, 4, Vec::new()).unwrap();
+    assert!(index.owner_status(&lease).unwrap().installed_mono_ns >= delta_install);
+    assert_eq!(index.owner_watermark(&lease), Some((view, 4)));
 }
 
 #[test]
 fn active_plus_staging_budget_failure_preserves_old_positive_hints() {
     let (index, _, remote) = setup(1400);
+    let lease = index.membership.lease(&remote).unwrap();
     install(
         &index,
         &remote,
@@ -582,12 +613,12 @@ fn active_plus_staging_budget_failure_preserves_old_positive_hints() {
     let session = Uuid::new_v4();
     let snapshot = Uuid::new_v4();
     index
-        .begin_snapshot(remote.incarnation, session, snapshot, Uuid::new_v4(), 1)
+        .begin_snapshot(&lease, session, snapshot, Uuid::new_v4(), 1)
         .unwrap();
     assert!(
         index
             .apply_snapshot_page(
-                remote.incarnation,
+                &lease,
                 session,
                 snapshot,
                 0,
@@ -602,12 +633,13 @@ fn active_plus_staging_budget_failure_preserves_old_positive_hints() {
     let old = record(1, 1, ReplicaMedium::Dram, true).key;
     assert_eq!(index.lookup(&[old])[0].replicas.len(), 1);
     assert_eq!(index.status().coverage, DiscoveryCoverage::PartialHints);
-    index.abort_snapshot(remote.incarnation, session);
+    index.abort_snapshot(&lease, session);
 }
 
 #[test]
 fn removed_owner_is_excluded_before_bounded_reverse_cleanup() {
     let (index, membership, remote) = setup(1 << 20);
+    let lease = index.membership.lease(&remote).unwrap();
     let key = record(1, 1, ReplicaMedium::Dram, true).key;
     install(
         &index,
@@ -617,7 +649,7 @@ fn removed_owner_is_excluded_before_bounded_reverse_cleanup() {
     );
     membership.replace_members([("local".into(), 1, membership.owner().clone())]);
     index.set_expected_owners(11, [membership.owner().incarnation]);
-    index.retire_owner(remote.incarnation);
+    index.retire_owner(&lease);
     assert!(index.lookup(&[key])[0].replicas.is_empty());
     assert!(index.cleanup_owner(remote.incarnation, 1));
     assert_eq!(index.bytes(), 0);
@@ -626,14 +658,15 @@ fn removed_owner_is_excluded_before_bounded_reverse_cleanup() {
 #[test]
 fn snapshot_commit_rejects_missing_pages_and_keeps_staging_hidden() {
     let (index, _, remote) = setup(1 << 20);
+    let lease = index.membership.lease(&remote).unwrap();
     let session = Uuid::new_v4();
     let snapshot = Uuid::new_v4();
     index
-        .begin_snapshot(remote.incarnation, session, snapshot, Uuid::new_v4(), 1)
+        .begin_snapshot(&lease, session, snapshot, Uuid::new_v4(), 1)
         .unwrap();
     index
         .apply_snapshot_page(
-            remote.incarnation,
+            &lease,
             session,
             snapshot,
             0,
@@ -642,7 +675,7 @@ fn snapshot_commit_rejects_missing_pages_and_keeps_staging_hidden() {
         .unwrap();
     assert!(
         index
-            .commit_snapshot(remote.incarnation, session, snapshot, Uuid::new_v4(), 1, 2,)
+            .commit_snapshot(&lease, session, snapshot, Uuid::new_v4(), 1, 2,)
             .is_err()
     );
     assert!(
@@ -651,13 +684,14 @@ fn snapshot_commit_rejects_missing_pages_and_keeps_staging_hidden() {
             .is_empty()
     );
     assert!(index.status().staging_bytes > 0);
-    index.abort_snapshot(remote.incarnation, session);
+    index.abort_snapshot(&lease, session);
     assert_eq!(index.status().staging_bytes, 0);
 }
 
 #[test]
 fn snapshot_commit_validates_view_before_replacing_active_rows() {
     let (index, _, remote) = setup(1 << 20);
+    let lease = index.membership.lease(&remote).unwrap();
     let old_key = record(1, 1, ReplicaMedium::Dram, true).key;
     install(
         &index,
@@ -669,11 +703,11 @@ fn snapshot_commit_validates_view_before_replacing_active_rows() {
     let snapshot = Uuid::new_v4();
     let view = Uuid::new_v4();
     index
-        .begin_snapshot(remote.incarnation, session, snapshot, view, 1)
+        .begin_snapshot(&lease, session, snapshot, view, 1)
         .unwrap();
     index
         .apply_snapshot_page(
-            remote.incarnation,
+            &lease,
             session,
             snapshot,
             0,
@@ -682,25 +716,26 @@ fn snapshot_commit_validates_view_before_replacing_active_rows() {
         .unwrap();
     assert!(
         index
-            .commit_snapshot(remote.incarnation, session, snapshot, Uuid::new_v4(), 2, 1,)
+            .commit_snapshot(&lease, session, snapshot, Uuid::new_v4(), 2, 1,)
             .is_err()
     );
     assert_eq!(index.lookup(&[old_key])[0].replicas.len(), 1);
-    assert_eq!(index.owner_watermark(remote.incarnation).unwrap().1, 1);
+    assert_eq!(index.owner_watermark(&lease).unwrap().1, 1);
 }
 
 #[test]
 fn snapshot_pages_are_rejected_after_replay_starts() {
     let (index, _, remote) = setup(1 << 20);
+    let lease = index.membership.lease(&remote).unwrap();
     let session = Uuid::new_v4();
     let snapshot = Uuid::new_v4();
     let view = Uuid::new_v4();
     index
-        .begin_snapshot(remote.incarnation, session, snapshot, view, 1)
+        .begin_snapshot(&lease, session, snapshot, view, 1)
         .unwrap();
     index
         .apply_snapshot_page(
-            remote.incarnation,
+            &lease,
             session,
             snapshot,
             0,
@@ -709,7 +744,7 @@ fn snapshot_pages_are_rejected_after_replay_starts() {
         .unwrap();
     index
         .apply_snapshot_delta(
-            remote.incarnation,
+            &lease,
             session,
             1,
             2,
@@ -719,7 +754,7 @@ fn snapshot_pages_are_rejected_after_replay_starts() {
     assert!(
         index
             .apply_snapshot_page(
-                remote.incarnation,
+                &lease,
                 session,
                 snapshot,
                 1,
@@ -728,7 +763,7 @@ fn snapshot_pages_are_rejected_after_replay_starts() {
             .is_err()
     );
     index
-        .commit_snapshot(remote.incarnation, session, snapshot, view, 2, 1)
+        .commit_snapshot(&lease, session, snapshot, view, 2, 1)
         .unwrap();
     assert!(
         index.lookup(&[record(1, 1, ReplicaMedium::Dram, true).key])[0]
@@ -740,6 +775,7 @@ fn snapshot_pages_are_rejected_after_replay_starts() {
 #[test]
 fn membership_refresh_does_not_revive_budget_withdrawal() {
     let (index, membership, remote) = setup(1 << 20);
+    let lease = index.membership.lease(&remote).unwrap();
     let mut old = (0..700)
         .map(|key| InventoryRecord {
             key: StateKey::new("model".into(), (key as u64).to_le_bytes().to_vec()),
@@ -754,19 +790,19 @@ fn membership_refresh_does_not_revive_budget_withdrawal() {
         .collect::<Vec<_>>();
     old.sort_by_key(|record| (record.key.clone(), record.metadata.unwrap().medium));
     install(&index, &remote, old, 700);
-    index.retire_owner(remote.incarnation);
+    index.retire_owner(&lease);
     let before = index.bytes();
     assert!(!index.cleanup_owner(remote.incarnation, 128));
     assert!(index.bytes() < before);
     index.set_expected_owners(11, [membership.owner().incarnation, remote.incarnation]);
-    assert_eq!(index.owner_watermark(remote.incarnation), None);
+    assert_eq!(index.owner_watermark(&lease), None);
     assert_eq!(index.status().coverage, DiscoveryCoverage::Unavailable);
     while !index.cleanup_owner(remote.incarnation, 128) {}
     assert_eq!(index.bytes(), 0);
     let replacement = record(9, 701, ReplicaMedium::Ssd, true);
     let key = replacement.key.clone();
     let view = install(&index, &remote, vec![replacement], 701);
-    assert_eq!(index.owner_watermark(remote.incarnation), Some((view, 701)));
+    assert_eq!(index.owner_watermark(&lease), Some((view, 701)));
     assert_eq!(index.lookup(&[key])[0].replicas.len(), 1);
     assert_eq!(
         index.status().coverage,
@@ -777,6 +813,7 @@ fn membership_refresh_does_not_revive_budget_withdrawal() {
 #[test]
 fn interrupted_owner_view_is_a_partial_positive_hint() {
     let (index, _, remote) = setup(1 << 20);
+    let lease = index.membership.lease(&remote).unwrap();
     let key = record(1, 1, ReplicaMedium::Dram, true).key;
     install(
         &index,
@@ -784,14 +821,12 @@ fn interrupted_owner_view_is_a_partial_positive_hint() {
         vec![record(1, 1, ReplicaMedium::Dram, true)],
         1,
     );
-    index.mark_stale(remote.incarnation);
+    index.mark_stale(&lease);
     let row = &index.lookup(&[key])[0];
     assert_eq!(row.coverage, DiscoveryCoverage::PartialHints);
     assert_eq!(row.replicas.len(), 1);
-    let (view, sequence) = index.owner_watermark(remote.incarnation).unwrap();
-    index
-        .confirm_progress(remote.incarnation, view, sequence)
-        .unwrap();
+    let (view, sequence) = index.owner_watermark(&lease).unwrap();
+    index.confirm_progress(&lease, view, sequence).unwrap();
     assert_eq!(
         index.lookup(&[record(1, 1, ReplicaMedium::Dram, true).key])[0].coverage,
         DiscoveryCoverage::CompleteAtWatermarks
