@@ -240,9 +240,13 @@ Manager is stopped. Leave filesystem space for journals, checkpoints and other
 files. A root without a configured limit relies on operator provisioning.
 
 To enable the limit on an existing root, first upgrade every Manager that can
-open it. The first Manager to specify a limit checks existing shards and stores
-the limit in the root's `.orbitkv-ssd-capacity` file. Keep this file with the
-root. Every subsequent Manager reads the limit, including when its command
+open it. Run capped Managers under a service identity that can read every
+partition's owner-only directory. The first Manager to specify a limit checks
+existing shards and publishes the root's `.orbitkv-ssd-capacity` file using
+Linux `O_TMPFILE` and a hard link. This requires support for both operations
+on that filesystem. The Manager publishes the limit after checking partition
+ownership and recovering its journal, before resizing any shard. Keep the
+policy file with the root. Every subsequent Manager reads the limit, including when its command
 line omits the flag. A conflicting value, corrupt policy or over-budget request
 fails startup. If the existing shards exceed the intended limit, shrink their
 partitions before enabling it.

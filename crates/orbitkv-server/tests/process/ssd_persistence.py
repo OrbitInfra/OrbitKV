@@ -411,6 +411,13 @@ class Gate:
         original = {"shared_namespace": 1, "capacity": 2048, "shards": 2}
         legacy = self.manager(root, **original)
         assert legacy.call("write", id=1, namespace=1)["present"]
+        self.manager(
+            root,
+            **original,
+            root_capacity=4096,
+            reject_with="SSD shard is already owned",
+        ).close()
+        assert not (root / ".orbitkv-ssd-capacity").exists()
         legacy.close(kill=True)
 
         # Adoption includes both existing shards before any new partition is created.

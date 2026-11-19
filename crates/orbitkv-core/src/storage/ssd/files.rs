@@ -97,7 +97,7 @@ pub(super) fn open_shared_partition(
     shards: usize,
     shard_capacity: u64,
     root_capacity: Option<u64>,
-) -> std::io::Result<(PathBuf, std::fs::File)> {
+) -> std::io::Result<(PathBuf, super::shared_root::Admission)> {
     use std::fs::{self, DirBuilder};
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 

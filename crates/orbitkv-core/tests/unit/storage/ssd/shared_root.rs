@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn installing_a_policy_preserves_existing_directory_entries() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let namespace = format!("orbitkv:v2:{:064x}", 1);
+    let admit = || super::admit(temp.path(), &namespace, 1, 512, Some(3072)).unwrap();
+    let other = temp.path().join(".orbitkv-ssd-capacity.tmp");
+    fs::write(&other, b"existing private cache").unwrap();
+    let inode = fs::metadata(&other).unwrap().ino();
+    let policy = temp.path().join(LIMIT_FILE);
+    let mut candidate = admit();
+    fs::write(&policy, b"pre-existing file").unwrap();
+    assert_eq!(
+        candidate.publish_limit().unwrap_err().kind(),
+        ErrorKind::AlreadyExists
+    );
+    assert_eq!(fs::read(&policy).unwrap(), b"pre-existing file");
+    drop(candidate);
+    fs::remove_file(&policy).unwrap();
+    admit().publish_limit().unwrap();
+    assert_eq!(fs::metadata(&other).unwrap().ino(), inode);
+    assert_eq!(fs::read(&other).unwrap(), b"existing private cache");
+    assert_eq!(stored_limit(temp.path()).unwrap(), Some(3072));
+}
+
+#[test]
 fn partially_resized_shards_keep_the_larger_of_each_old_and_requested_length() {
     let root = tempfile::tempdir().unwrap();
     let own = format!("orbitkv:v2:{:064x}", 1);
@@ -22,7 +48,7 @@ fn partially_resized_shards_keep_the_larger_of_each_old_and_requested_length() {
         ErrorKind::StorageFull
     );
     assert!(!root.path().join(LIMIT_FILE).exists());
-    drop(admit_own(Some(3072)).unwrap());
+    admit_own(Some(3072)).unwrap().publish_limit().unwrap();
     drop(admit_own(None).unwrap());
     assert_eq!(
         required_payload(root.path(), &own, 2, u64::MAX)

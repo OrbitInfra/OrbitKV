@@ -623,6 +623,9 @@ impl SsdStore {
                 alignment as u64,
                 config.shared_namespace.as_deref(),
             )?;
+            if let Some(admission) = &mut root_admission {
+                admission.publish_limit()?;
+            }
             // The rebased metadata is durable before a shrink can discard bytes.
             for file in &files {
                 file.set_len(shard_capacity)?;
