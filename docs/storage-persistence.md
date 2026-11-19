@@ -209,7 +209,8 @@ the exact namespace from engine registration, and its own payload budget.
 
 ```sh
 orbitkv-cache-manager --ssd-cache-path "$ROOT" --ssd-persistent \
-  --ssd-shared-namespace "$STORAGE_NAMESPACE" --ssd-cache-capacity 16gb
+  --ssd-shared-namespace "$STORAGE_NAMESPACE" --ssd-cache-capacity 16gb \
+  --ssd-shared-root-capacity 32gb
 ```
 
 The Manager creates an owner-only directory named `orbitkv-ssd-<namespace>`
@@ -233,13 +234,31 @@ namespaces. Keep root entries under trusted administrative control throughout
 operation and use a filesystem that implements the required locks, file leases
 and sync operations.
 
-Capacity is reserved per partition. Two 16 GB partitions reserve 32 GB of
-payload space, plus journals and filesystem overhead. Operators budget the sum,
-including stopped partitions. Automatic root-wide admission and reclamation
-across partitions are open. On ext4 and tmpfs the Linux process gate uses
-different bytes under the same block hash, restarts one writer, and holds a
-read across wrap pressure while the other partition reuses its space. The
-installed cross-host and 3FS profiles still require separate runs.
+The example admits two 16 GB partitions under a 32 GB root payload limit.
+Each partition reserves the total of its aligned shard lengths, even while its
+Manager is stopped. Leave filesystem space for journals, checkpoints and other
+files. A root without a configured limit relies on operator provisioning.
+
+To enable the limit on an existing root, first upgrade every Manager that can
+open it. The first Manager to specify a limit checks existing shards and stores
+the limit in the root's `.orbitkv-ssd-capacity` file. Keep this file with the
+root. Every subsequent Manager reads the limit, including when its command
+line omits the flag. A conflicting value, corrupt policy or over-budget request
+fails startup. If the existing shards exceed the intended limit, shrink their
+partitions before enabling it.
+
+Managers serialize admission and resizing under a directory lock. A restart
+charges each requested shard once and keeps any excess old length until the
+resize completes. If a Manager dies partway through startup, the next Manager
+accounts for the shard lengths left on disk. A successful shrink makes space
+available to another namespace. Reads and writes run without the root lock.
+Reclaiming space from another owner and physical host or volume loss remain open.
+
+The Linux process gate on ext4 and tmpfs exercises concurrent admission, killed
+writers, byte-checked reopen and shrink. It also writes different bytes under
+the same block hash in two namespaces and holds a read across wrap pressure in
+one while the other reuses its space. Installed cross-host and 3FS profiles
+still require separate runs.
 
 ## Exclusive handoff after owner loss
 

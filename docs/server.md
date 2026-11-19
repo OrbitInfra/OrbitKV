@@ -73,7 +73,10 @@ optional engine dependency, not a service to deploy. See [deployment examples](d
 - `--ssd-shared-namespace` binds the persistent SSD partition to one exact
   `orbitkv:v2:` storage namespace. Supply one existing directory as
   `--ssd-cache-path`. Different Managers may own different partitions under
-  that root. Size each with `--ssd-cache-capacity` and budget their sum.
+  that root. Size each with `--ssd-cache-capacity`.
+- `--ssd-shared-root-capacity` sets the shared root's total shard payload
+  budget. Active and stopped partitions count. Once set, later Managers inherit
+  the limit from disk. Provision extra space for metadata and filesystem overhead.
   See [shared-root partitions](storage-persistence.md#shared-root-namespace-partitions).
 - `--ssd-write-policy`: `all` writes newly saved pages; `reuse` admits foreground-returned pages or repeated publications within a bounded history (default: `all`). Selective admission can require recomputation on the first reuse after DRAM eviction.
 - `--ssd-backend`: `uring` uses pinned DRAM; `auto` (default) additionally uses

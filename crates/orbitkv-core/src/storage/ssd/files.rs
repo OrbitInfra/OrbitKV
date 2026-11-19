@@ -66,17 +66,11 @@ pub(super) fn aligned_shard_capacity(
     Ok(capacity)
 }
 
-const SHARED_DIRECTORY_PREFIX: &str = "orbitkv-ssd-";
-
 /// Reject a managed directory anywhere in an operator-supplied path before creating children.
 fn outside_shared_partition(path: &Path) -> std::io::Result<()> {
     let in_partition = |path: &Path| {
-        path.components().any(|part| {
-            part.as_os_str()
-                .to_str()
-                .and_then(|name| name.strip_prefix(SHARED_DIRECTORY_PREFIX))
-                .is_some_and(orbitkv_state::is_storage_namespace)
-        })
+        path.components()
+            .any(|part| super::shared_root::reserved_name(part.as_os_str()))
     };
     let absolute = std::path::absolute(path)?;
     if !in_partition(&absolute) {
@@ -92,21 +86,27 @@ fn outside_shared_partition(path: &Path) -> std::io::Result<()> {
     }
     Err(std::io::Error::new(
         std::io::ErrorKind::InvalidInput,
-        "cache path or shared root is inside a managed SSD partition",
+        "cache path or shared root is inside a managed SSD partition or uses a reserved root capacity file",
     ))
 }
 
 /// Keep the first shard and its journal at the same names for every shard count.
-pub(super) fn shared_cache_path(
+pub(super) fn open_shared_partition(
     root: &Path,
     namespace: &str,
     shards: usize,
-) -> std::io::Result<PathBuf> {
+    shard_capacity: u64,
+    root_capacity: Option<u64>,
+) -> std::io::Result<(PathBuf, std::fs::File)> {
     use std::fs::{self, DirBuilder};
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
     outside_shared_partition(root)?;
-    let directory = root.join(format!("{SHARED_DIRECTORY_PREFIX}{namespace}"));
+    let lock = super::shared_root::admit(root, namespace, shards, shard_capacity, root_capacity)?;
+    let directory = root.join(format!(
+        "{}{namespace}",
+        super::shared_root::PARTITION_PREFIX
+    ));
     match DirBuilder::new().mode(0o700).create(&directory) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -121,9 +121,9 @@ pub(super) fn shared_cache_path(
         Err(error) => return Err(error),
     }
     if shards == 1 {
-        Ok(directory.join("shard-000000.dat"))
+        Ok((directory.join("shard-000000.dat"), lock))
     } else {
-        Ok(directory)
+        Ok((directory, lock))
     }
 }
 

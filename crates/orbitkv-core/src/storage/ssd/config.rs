@@ -100,6 +100,8 @@ pub struct SsdCacheConfig {
     pub persistent: bool,
     /// Bind one persistent partition under a shared root to this exact storage namespace.
     pub shared_namespace: Option<String>,
+    /// Establish or confirm the shared root's limit on total shard payload bytes.
+    pub shared_root_capacity_bytes: Option<u64>,
     /// Start FIFO reclamation at this percent of each shard's occupied ring window.
     /// Both watermarks are required; omission keeps overwrite-pressure eviction only.
     pub high_watermark_percent: Option<u8>,
@@ -131,6 +133,7 @@ impl Default for SsdCacheConfig {
             capacity_bytes: 512 * 1024 * 1024 * 1024, // 512GB
             persistent: false,
             shared_namespace: None,
+            shared_root_capacity_bytes: None,
             high_watermark_percent: None,
             low_watermark_percent: None,
             shards: NonZeroUsize::MIN,
@@ -148,8 +151,14 @@ impl Default for SsdCacheConfig {
 impl SsdCacheConfig {
     pub(crate) fn shared_partition(&self) -> Result<Option<(&std::path::Path, &str)>, String> {
         let Some(namespace) = self.shared_namespace.as_deref() else {
+            if self.shared_root_capacity_bytes.is_some() {
+                return Err("shared SSD root capacity requires a shared namespace".into());
+            }
             return Ok(None);
         };
+        if self.shared_root_capacity_bytes == Some(0) {
+            return Err("shared SSD root capacity must be positive".into());
+        }
         if !self.persistent || !orbitkv_state::is_storage_namespace(namespace) {
             return Err(
                 "shared SSD requires persistence and an exact orbitkv:v2 storage namespace".into(),

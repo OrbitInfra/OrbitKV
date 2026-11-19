@@ -288,7 +288,10 @@ fn truncated_record(error: io::Error) -> io::Error {
     }
 }
 
-fn read_frame<T: for<'a> Deserialize<'a>>(file: &mut File, limit: usize) -> io::Result<Option<T>> {
+pub(super) fn read_frame<T: for<'a> Deserialize<'a>>(
+    file: &mut File,
+    limit: usize,
+) -> io::Result<Option<T>> {
     let mut prefix = [0; 8];
     match file.read(&mut prefix[..1])? {
         0 => return Ok(None),
@@ -312,7 +315,7 @@ fn read_frame<T: for<'a> Deserialize<'a>>(file: &mut File, limit: usize) -> io::
         .map_err(|_| invalid("metadata_schema"))
 }
 
-fn frame(value: &impl Serialize, limit: usize) -> io::Result<Vec<u8>> {
+pub(super) fn frame(value: &impl Serialize, limit: usize) -> io::Result<Vec<u8>> {
     let bytes = serde_json::to_vec(value).map_err(io::Error::other)?;
     if bytes.is_empty() || bytes.len() > limit {
         return Err(io::Error::new(

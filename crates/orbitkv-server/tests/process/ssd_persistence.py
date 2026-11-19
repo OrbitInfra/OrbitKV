@@ -63,6 +63,8 @@ class Manager:
         pauses=(),
         reject_with=None,
         shared_namespace=None,
+        root_capacity=None,
+        defer_start=False,
         shards=1,
         watermarks=None,
         address=None,
@@ -111,6 +113,8 @@ class Manager:
             command.extend(
                 ["--ssd-shared-namespace", f"orbitkv:v2:{shared_namespace:064x}"]
             )
+        if root_capacity is not None:
+            command.extend(["--ssd-shared-root-capacity", str(root_capacity)])
         if shards != 1:
             command.extend(["--ssd-cache-shards", str(shards)])
         if watermarks is not None:
@@ -137,21 +141,29 @@ class Manager:
             },
         )
         gate.children.append(self)
-        if reject_with is not None:
-            assert self.process.wait(timeout=30) != 0
-            log = self.log_path.read_text()
-            assert reject_with in log, log
-            return
-        self.wait(lambda: (self.control / "ready").exists())
-        ready = (
+        self.start_message = (
             "Cache Manager control listening"
             if cluster_args
             else "Standalone Cache Manager ready"
         )
-        self.wait(lambda: ready in self.log_path.read_text())
-        if not {"ssd_before_verification", "ssd_watermark_invalidated"}.intersection(
-            pauses
-        ):
+        self.wait_for_recovery = not {
+            "ssd_before_verification",
+            "ssd_watermark_invalidated",
+        }.intersection(pauses)
+        if reject_with is not None:
+            self.rejected(reject_with)
+        elif not defer_start:
+            self.ready()
+
+    def rejected(self, reason):
+        assert self.process.wait(timeout=30) != 0
+        log = self.log_path.read_text()
+        assert reason in log, log
+
+    def ready(self):
+        self.wait(lambda: (self.control / "ready").exists())
+        self.wait(lambda: self.start_message in self.log_path.read_text())
+        if self.wait_for_recovery:
             self.recovered()
 
     def wait(self, condition, timeout=90):
@@ -393,6 +405,102 @@ class Gate:
         )
         right.close()
         left.close()
+
+    def shared_root_capacity(self, root):
+        root.mkdir()
+        original = {"shared_namespace": 1, "capacity": 2048, "shards": 2}
+        legacy = self.manager(root, **original)
+        assert legacy.call("write", id=1, namespace=1)["present"]
+        legacy.close(kill=True)
+
+        # Adoption includes both existing shards before any new partition is created.
+        self.manager(
+            root,
+            shared_namespace=2,
+            capacity=1024,
+            root_capacity=2048,
+            reject_with="shared SSD root capacity exceeded",
+        ).close()
+        assert len(list(root.iterdir())) == 1
+        winner = self.manager(
+            root,
+            shared_namespace=2,
+            capacity=1024,
+            root_capacity=3072,
+            pauses=["ssd_root_admitted"],
+            defer_start=True,
+        )
+        winner.reached("ssd_root_admitted")
+        challenger = self.manager(
+            root, shared_namespace=3, capacity=1024, defer_start=True
+        )
+        # Wait for the second process's actual lock request while the winning shard is still unsized.
+        inode = root.stat().st_ino
+
+        def blocked_on_root():
+            for line in Path("/proc/locks").read_text().splitlines():
+                fields = line.split()
+                if (
+                    len(fields) == 9
+                    and fields[1:3] == ["->", "FLOCK"]
+                    and fields[5] == str(challenger.process.pid)
+                    and fields[6].endswith(f":{inode}")
+                ):
+                    return True
+            return False
+
+        challenger.wait(blocked_on_root)
+        winner.release("ssd_root_admitted")
+        winner.ready()
+        challenger.rejected("shared SSD root capacity exceeded")
+        challenger.close()
+        assert winner.call("write", id=2, namespace=2)["present"]
+        self.manager(
+            root,
+            shared_namespace=3,
+            capacity=1024,
+            root_capacity=8192,
+            reject_with="shared SSD root capacity is 3072",
+        ).close()
+        winner.close(kill=True)
+
+        # Restart at the limit counts the original partition once. Killing both writers
+        # leaves all reservations on disk, even for a new Manager that omits the flag.
+        self.manager(
+            root,
+            shared_namespace=3,
+            capacity=1024,
+            reject_with="shared SSD root capacity exceeded",
+        ).close()
+        self.manager(
+            root,
+            shared_namespace=1,
+            capacity=3072,
+            shards=2,
+            reject_with="shared SSD root capacity exceeded",
+        ).close()
+        left = self.manager(root, **original)
+        left.read(1, namespace=1)
+        left.close()
+        right = self.manager(root, shared_namespace=2, capacity=1024)
+        right.read(2, namespace=2)
+        right.close()
+        smaller = self.manager(root, shared_namespace=1, capacity=1024, shards=2)
+        smaller.close()
+        interrupted = self.manager(
+            root,
+            shared_namespace=4,
+            capacity=1024,
+            pauses=["ssd_root_admitted"],
+            defer_start=True,
+        )
+        interrupted.reached("ssd_root_admitted")
+        interrupted.close(kill=True)
+        third = self.manager(root, shared_namespace=3, capacity=1024)
+        assert third.call("write", id=3, namespace=3)["present"]
+        third.read(3, namespace=3)
+        third.close()
+        assert sum(p.stat().st_size for p in root.glob("*/shard-*.dat")) == 3072
 
     def shared_partition_reopen(self, root):
         root.mkdir()
@@ -807,6 +915,7 @@ def main():
     gate.case("verify-before-first-hit", gate.verify)
     gate.case("concurrent-shared-namespaces", gate.shared_namespaces)
     gate.case("shared-partition-reopen", gate.shared_partition_reopen)
+    gate.case("shared-root-capacity", gate.shared_root_capacity)
     gate.case("ttl-late-write", lambda path: gate.ttl(path, False))
     gate.case("ttl-during-recovery-verification", lambda path: gate.ttl(path, True))
     gate.case("prior-file-user-blocks-restart", gate.old_file_user)

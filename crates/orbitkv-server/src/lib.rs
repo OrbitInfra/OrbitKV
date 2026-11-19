@@ -178,6 +178,10 @@ pub struct Cli {
     #[arg(long, requires = "ssd_persistent", value_parser = parse_storage_namespace)]
     pub ssd_shared_namespace: Option<String>,
 
+    /// Total shard payload budget across active and stopped partitions on this shared root.
+    #[arg(long, requires = "ssd_shared_namespace", value_parser = parse_memory_size)]
+    pub ssd_shared_root_capacity: Option<usize>,
+
     /// Start per-shard SSD FIFO reclamation at this percentage (default off).
     #[arg(long, requires_all = ["ssd_cache_path", "ssd_low_watermark_percent"], value_parser = clap::value_parser!(u8).range(1..=100))]
     pub ssd_high_watermark_percent: Option<u8>,
@@ -695,6 +699,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         capacity_bytes: cli.ssd_cache_capacity as u64,
         persistent: cli.ssd_persistent,
         shared_namespace: cli.ssd_shared_namespace.clone(),
+        shared_root_capacity_bytes: cli.ssd_shared_root_capacity.map(|bytes| bytes as u64),
         high_watermark_percent: cli.ssd_high_watermark_percent,
         low_watermark_percent: cli.ssd_low_watermark_percent,
         shards: cli.ssd_cache_shards,

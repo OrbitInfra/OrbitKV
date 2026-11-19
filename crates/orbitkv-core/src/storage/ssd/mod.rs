@@ -26,6 +26,7 @@ pub use maintenance::SsdCacheCleanupStats;
 #[path = "../../../tests/support/ssd_process.rs"]
 pub(crate) mod process_test;
 mod reader;
+mod shared_root;
 mod writer;
 
 use super::MaterializedBlocks;
@@ -589,9 +590,19 @@ impl SsdStore {
         let shard_capacity =
             files::aligned_shard_capacity(config.capacity_bytes, total_shards, alignment)?;
         let shared_path;
+        let mut root_admission = None;
         let paths = match config.shared_partition().map_err(std::io::Error::other)? {
             Some((root, namespace)) => {
-                shared_path = files::shared_cache_path(root, namespace, shards_per_path)?;
+                let (path, lock) = files::open_shared_partition(
+                    root,
+                    namespace,
+                    shards_per_path,
+                    shard_capacity,
+                    config.shared_root_capacity_bytes,
+                )?;
+                shared_path = path;
+                root_admission = Some(lock);
+                persistence::fault("ssd_root_admitted");
                 std::slice::from_ref(&shared_path)
             }
             None => config.cache_paths.as_slice(),
@@ -621,6 +632,8 @@ impl SsdStore {
         } else {
             (None, Vec::new())
         };
+        // The shard lengths now reflect this reservation, including any durable shrink.
+        drop(root_admission);
         let io = Arc::new(SsdIo::new(
             &files,
             transfer,
