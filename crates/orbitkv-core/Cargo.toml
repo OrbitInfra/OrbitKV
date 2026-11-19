@@ -31,6 +31,7 @@ uuid.workspace = true
 opentelemetry.workspace = true
 bytesize.workspace = true
 libc.workspace = true
+rustix.workspace = true
 libloading.workspace = true
 rand.workspace = true
 ahash.workspace = true
@@ -52,7 +53,6 @@ mea.workspace = true
 orbite = { version = "=0.1.0-beta.1", default-features = false, features = ["cuda", "io-uring"] }
 
 [dev-dependencies]
-rustix.workspace = true
 opentelemetry_sdk.workspace = true
 opentelemetry-prometheus.workspace = true
 prometheus.workspace = true

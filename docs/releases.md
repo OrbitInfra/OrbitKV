@@ -17,8 +17,10 @@ Changes below apply to the next pre-release; nothing new is published by this PR
 
 Managers can use `--ssd-shared-namespace` with a persistent SSD root. Rust
 callers constructing a complete `SsdCacheConfig` literal must supply
-`shared_namespace`. Its default is `None`; existing private journals use their
-original format. Scoped journals record the assigned namespace. See
+`shared_namespace` and `shared_root_capacity_bytes` (both default to `None`).
+Existing private journals use their original format. Scoped journals record
+the assigned namespace. The optional `--ssd-shared-root-capacity` establishes
+a persistent payload budget covering active and stopped partitions. See
 [shared-root partitions](storage-persistence.md#shared-root-namespace-partitions).
 
 ### Placement discovery

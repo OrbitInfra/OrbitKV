@@ -367,9 +367,16 @@ fn shared_ssd_validates_exact_scope_persistence_and_single_root() {
     ];
     assert!(Cli::try_parse_from(base.into_iter().chain([scope.as_str()])).is_err());
     assert!(Cli::try_parse_from(base.into_iter().chain(["model", "--ssd-persistent"])).is_err());
-    let cli =
-        Cli::try_parse_from(base.into_iter().chain([scope.as_str(), "--ssd-persistent"])).unwrap();
+    assert!(Cli::try_parse_from(["manager", "--ssd-shared-root-capacity", "4gb"]).is_err());
+    let cli = Cli::try_parse_from(base.into_iter().chain([
+        scope.as_str(),
+        "--ssd-persistent",
+        "--ssd-shared-root-capacity",
+        "4096",
+    ]))
+    .unwrap();
     assert_eq!(cli.ssd_shared_namespace.as_deref(), Some(scope.as_str()));
+    assert_eq!(cli.ssd_shared_root_capacity, Some(4096));
     let mut config = SsdCacheConfig {
         shared_namespace: Some(scope),
         ..Default::default()
@@ -377,8 +384,20 @@ fn shared_ssd_validates_exact_scope_persistence_and_single_root() {
     assert!(config.validate_transfer_engine().is_err());
     config.persistent = true;
     assert!(config.validate_transfer_engine().is_ok());
+    config.shared_root_capacity_bytes = Some(0);
+    assert!(config.validate_transfer_engine().is_err());
+    config.shared_root_capacity_bytes = Some(4096);
+    assert!(config.validate_transfer_engine().is_ok());
     config.cache_paths.push("/cache2".into());
     assert!(config.validate_transfer_engine().is_err());
+    assert!(
+        SsdCacheConfig {
+            shared_root_capacity_bytes: Some(4096),
+            ..Default::default()
+        }
+        .validate_transfer_engine()
+        .is_err()
+    );
 }
 
 #[test]

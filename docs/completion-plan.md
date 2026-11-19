@@ -12,8 +12,9 @@ and recent receipts from every expected owner. The read-only router API serves b
 events from the retained journal. The M3 [owner-handoff gate](storage-persistence.md#exclusive-handoff-after-owner-loss)
 exercises recovery of a surviving shard by another Manager.
 [Shared-root partitions](storage-persistence.md#shared-root-namespace-partitions)
-serve concurrent namespaces with separate budgets. The next shared-file
-delivery is root-wide capacity accounting across active and stopped partitions.
+serve concurrent namespaces with per-partition budgets and an optional root-wide
+payload limit covering active and stopped partitions. The next shared-file
+delivery is safe reclamation of capacity held by another owner.
 Source implementation and CPU controls do not qualify installed GPU profiles,
 which remain unqualified.
 Each coherent PR stops for review before dependent work starts. Research designs
@@ -92,7 +93,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 | Host DRAM | **Have:** bounded pinned pools, replicas and leased restores. [Policies](cache-policies.md). | L/F/V host tiers, M memory objects |
 | SSD surviving Manager restart | **Partial:** opt-in [durable journal and checksum-gated recovery](storage-persistence.md); default still truncates. Tail recovery preserves a verified prefix; capacity-derived metadata admission stays bounded. CPU process-crash controls run on ext4/tmpfs; installed NVMe serving and power-loss behavior remain unqualified. | L/F disk and V filesystem tiers; persistence needs a separate crash contract |
 | Peer DRAM/SSD cluster tier | **Partial:** inventory discovery, source-owned SSD preparation and OrbiTE reads exist; durable cluster recovery/node-loss qualification remain open. [Distributed cache](distributed-cache.md). | F distributed reuse, L P2P, M replicas |
-| Shared filesystem / 3FS mount | **Partial:** [namespace partitions](storage-persistence.md#shared-root-namespace-partitions) share one root with exclusive writers and checksum-gated recovery on the same host. Root-wide capacity, cross-host fencing and installed 3FS are open. | L filesystem/HF3FS, V secondary filesystem, F remote storage |
+| Shared filesystem / 3FS mount | **Partial:** [namespace partitions](storage-persistence.md#shared-root-namespace-partitions) share one root with exclusive writers, a durable payload limit and checksum-gated recovery on the same host. Cross-owner reclamation, cross-host fencing and installed 3FS remain open. | L filesystem/HF3FS, V secondary filesystem, F remote storage |
 
 ### Distributed behavior
 
@@ -104,7 +105,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 | Replica selection | **Have:** deterministic, coverage-first [fixed medium and owner ordering](architecture.md#planning). Cost-based selection is removed by design until hardware evidence warrants reconsideration; no blind replay on failure. | L/F/M replica lookup |
 | Node loss | **Partial:** retired epochs are fenced and uncertain owners retained; permanent-loss reclamation/cache HA unqualified. [Retirement](transport.md#peer-departure). | F distributed reuse, M leases/replicas |
 | LRU / TTL / watermarks | **Partial:** LRU/protected retention, SSD admission and optional bounded DRAM high/low watermarks and fixed data TTL across DRAM, SSD and peers; per-shard SSD watermarks with durable FIFO retirement are implemented. Membership TTL is separate. [Policies](cache-policies.md). | L/F LRU, V LRU/ARC, M watermarks/soft pinning |
-| Exact capacity accounting | **Partial:** local pool/index/query/registration/file and persistence metadata budgets include retained work; shared-tier and fleet reconciliation remain missing. [Budgets](server.md), [persistence](storage-persistence.md#bounds-gc-and-changed-capacity). | L/F/V tier limits, M replica accounting |
+| Exact capacity accounting | **Partial:** local pool, index, query, registration, file and persistence metadata budgets include retained work. The shared SSD payload limit counts active and stopped shards. Fleet reconciliation remains open. [Budgets](server.md), [persistence](storage-persistence.md#shared-root-namespace-partitions). | L/F/V tier limits, M replica accounting |
 | Tenant namespaces | **Partial:** computation scope and inventory filtering exist; neither authenticates tenants nor provides quotas. [Identity](state-identity.md), [scope](distributed-cache.md#scope-and-bounded-resources). | L/F namespace and management controls |
 
 ### Correctness and operations
@@ -253,8 +254,8 @@ reopens the surviving file and journal at the same peer address. A live
 requester must observe the old placement retire, obtain a fresh grant and read
 the verified bytes over TCP. Distinct namespace partitions now accept concurrent
 writers under one root. Each has its own bounded ring and reader holds. Root-wide
-accounting for active and stopped partitions, cross-owner reclamation and
-physical host or volume loss remain open.
+admission counts active and stopped shards through concurrent starts, crashes and
+resizing. Cross-owner reclamation and physical host or volume loss remain open.
 
 **CPU now:** multi-process etcd/TCP faults, epochs, bounded snapshots/events,
 router contracts, shared-file races/GC, tenant isolation and dedup accounting.

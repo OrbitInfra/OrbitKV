@@ -8,18 +8,21 @@ fn shared_partitions_require_a_private_directory_and_stable_first_shard() {
 
     let root = tempfile::tempdir().unwrap();
     let namespace = format!("orbitkv:v2:{:064x}", 1);
-    let data = shared_cache_path(root.path(), &namespace, 1).unwrap();
-    let directory = shared_cache_path(root.path(), &namespace, 2).unwrap();
+    let path = |shards| {
+        open_shared_partition(root.path(), &namespace, shards, 512, None).map(|(path, _lock)| path)
+    };
+    let data = path(1).unwrap();
+    let directory = path(2).unwrap();
     assert_eq!(data, directory.join("shard-000000.dat"));
     assert_eq!(
         fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
         0o700
     );
     fs::set_permissions(&directory, fs::Permissions::from_mode(0o750)).unwrap();
-    assert!(shared_cache_path(root.path(), &namespace, 1).is_err());
+    assert!(path(1).is_err());
     fs::remove_dir(&directory).unwrap();
     symlink(root.path(), &directory).unwrap();
-    assert!(shared_cache_path(root.path(), &namespace, 1).is_err());
+    assert!(path(1).is_err());
 }
 
 #[test]

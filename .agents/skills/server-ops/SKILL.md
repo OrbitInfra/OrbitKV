@@ -79,8 +79,10 @@ unless configured. Unknown drain retains backing, extents and admission.
 SSD is ephemeral unless `--ssd-persistent` is selected. Preserve every data file
 and its `.index` sidecar together; recovery verifies full extents before hits.
 For `--ssd-shared-namespace`, use one trusted existing root and the canonical
-namespace from registration. Reserve room for every partition and its journal,
-including stopped Managers. A durability error fences writes until restart, and shrink drops
+namespace from registration. Set `--ssd-shared-root-capacity` to cap payload
+reservations across active and stopped partitions. Upgrade all writers before
+enabling it on an existing root. Preserve the root's `.orbitkv-ssd-capacity`
+file and leave headroom for journals. A durability error fences writes until restart, and shrink drops
 out-of-range entries. Check the bounded recovery log/counters before diagnosing
 a startup miss. `docs/storage-persistence.md` defines the commit and GC contract;
 CPU SIGKILL controls do not qualify installed NVMe serving or power loss.
