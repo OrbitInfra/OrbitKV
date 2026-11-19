@@ -3,7 +3,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Error, ErrorKind, Seek, Write};
 use std::num::NonZeroU64;
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
 
 use super::persistence::{frame, read_frame};
@@ -115,6 +115,12 @@ fn required_payload(root: &Path, own: &str, shards: usize, shard_bytes: u64) -> 
                 return Err(Error::new(
                     ErrorKind::InvalidData,
                     "invalid shared SSD shard",
+                ));
+            }
+            if meta.nlink() != 1 {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "shared SSD shard has another hard link",
                 ));
             }
             // The requested partition is already charged above. Keep any excess old length

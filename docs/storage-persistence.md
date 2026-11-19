@@ -241,7 +241,9 @@ files. A root without a configured limit relies on operator provisioning.
 
 To enable the limit on an existing root, first upgrade every Manager that can
 open it. Run capped Managers under a service identity that can read every
-partition's owner-only directory. The first Manager to specify a limit checks
+partition's owner-only directory. The Manager rejects shards with extra hard
+links. Keep each managed shard at its original path and avoid exposing it to a
+private Manager through a bind mount. The first Manager to specify a limit checks
 existing shards and publishes the root's `.orbitkv-ssd-capacity` file using
 Linux `O_TMPFILE` and a hard link. This requires support for both operations
 on that filesystem. The Manager publishes the limit after checking partition

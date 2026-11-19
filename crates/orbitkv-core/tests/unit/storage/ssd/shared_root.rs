@@ -1,9 +1,22 @@
 use super::*;
 
 #[test]
-fn installing_a_policy_preserves_existing_directory_entries() {
-    use std::os::unix::fs::MetadataExt;
+fn adoption_refuses_an_existing_private_hard_link_to_a_partition_shard() {
+    let root = tempfile::tempdir().unwrap();
+    let namespace = format!("orbitkv:v2:{:064x}", 1);
+    let dir = root.path().join(format!("{PARTITION_PREFIX}{namespace}"));
+    fs::create_dir(&dir).unwrap();
+    let private = root.path().join("private.dat");
+    fs::write(&private, b"private cache").unwrap();
+    fs::hard_link(&private, dir.join("shard-000000.dat")).unwrap();
+    let err = admit(root.path(), &namespace, 1, 512, Some(1024)).unwrap_err();
+    assert!(err.to_string().contains("another hard link"));
+    assert_eq!(fs::read(private).unwrap(), b"private cache");
+    assert!(!root.path().join(LIMIT_FILE).exists());
+}
 
+#[test]
+fn installing_a_policy_preserves_existing_directory_entries() {
     let temp = tempfile::tempdir().unwrap();
     let namespace = format!("orbitkv:v2:{:064x}", 1);
     let admit = || super::admit(temp.path(), &namespace, 1, 512, Some(3072)).unwrap();
