@@ -26,7 +26,7 @@ mod wire;
 
 pub use registry::{CudaTensorRegistry, RegistryHandle};
 
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use cudarc::driver::result as cuda_driver;
 use log::{error, info, warn};
 use opentelemetry::global;
@@ -60,13 +60,9 @@ static GLOBAL: Jemalloc = Jemalloc;
     name = "orbitkv-cache-manager",
     bin_name = "orbitkv-cache-manager",
     version,
-    about = "OrbitKV local cache with optional distributed control",
-    args_conflicts_with_subcommands = true
+    about = "OrbitKV local cache with optional distributed control"
 )]
 pub struct Cli {
-    #[command(subcommand)]
-    command: Option<MaintenanceCommand>,
-
     /// Peer control address in distributed mode; its port also names the default local socket.
     #[arg(long, default_value = "127.0.0.1:50055")]
     pub addr: SocketAddr,
@@ -367,7 +363,7 @@ pub struct Cli {
     pub descriptor_slot_size: usize,
 }
 
-#[derive(clap::Subcommand, Debug)]
+#[derive(Subcommand, Debug)]
 enum MaintenanceCommand {
     /// Evict all cached blocks and release the payload reservation of one offline SSD partition.
     ReclaimSsdPartition {
@@ -378,6 +374,10 @@ enum MaintenanceCommand {
         #[arg(long, value_parser = parse_storage_namespace)]
         namespace: String,
     },
+}
+
+fn manager_command() -> clap::Command {
+    MaintenanceCommand::augment_subcommands(Cli::command()).args_conflicts_with_subcommands(true)
 }
 
 impl Cli {
@@ -697,12 +697,15 @@ fn initialize_registry(cli: &Cli) -> Result<CudaTensorRegistry, Box<dyn Error>> 
 
 /// Main entry point for the Cache Manager.
 pub fn run() -> Result<(), Box<dyn Error>> {
-    let cli = Cli::parse();
-    if let Some(MaintenanceCommand::ReclaimSsdPartition { root, namespace }) = &cli.command {
-        let bytes = orbitkv_core::reclaim_shared_ssd_partition(root, namespace)?;
+    let mut matches = manager_command().get_matches();
+    if matches.subcommand().is_some() {
+        let MaintenanceCommand::ReclaimSsdPartition { root, namespace } =
+            MaintenanceCommand::from_arg_matches_mut(&mut matches)?;
+        let bytes = orbitkv_core::reclaim_shared_ssd_partition(&root, &namespace)?;
         println!("Reclaimed {bytes} payload bytes from {namespace}");
         return Ok(());
     }
+    let cli = Cli::from_arg_matches_mut(&mut matches)?;
     let metadata_scope = Arc::new(if cli.metadata_empty_scope {
         orbitkv_state::InventoryScope::exact(Vec::new())?
     } else if cli.metadata_namespace.is_empty() {

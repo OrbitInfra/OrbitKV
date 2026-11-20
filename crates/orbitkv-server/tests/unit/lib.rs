@@ -361,7 +361,7 @@ fn shared_ssd_validates_exact_scope_persistence_and_single_root() {
     let scope = format!("orbitkv:v2:{:064x}", 1);
     let reclaim = ["reclaim-ssd-partition", "--root", "/cache", "--namespace"];
     let parse_reclaim = |prefix: &[&str], ns| {
-        Cli::try_parse_from(prefix.iter().copied().chain(reclaim).chain([ns]))
+        manager_command().try_get_matches_from(prefix.iter().copied().chain(reclaim).chain([ns]))
     };
     assert!(parse_reclaim(&["manager"], &scope).is_ok());
     assert!(parse_reclaim(&["manager"], "model").is_err());

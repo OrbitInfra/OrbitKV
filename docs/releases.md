@@ -20,8 +20,11 @@ callers constructing a complete `SsdCacheConfig` literal must supply
 `shared_namespace` and `shared_root_capacity_bytes` (both default to `None`).
 Existing private journals use their original format. Scoped journals record
 the assigned namespace. The optional `--ssd-shared-root-capacity` establishes
-a persistent payload budget covering active and stopped partitions. See
-[shared-root partitions](storage-persistence.md#shared-root-namespace-partitions).
+a persistent payload budget covering active and stopped partitions.
+`orbitkv-cache-manager reclaim-ssd-partition --root PATH --namespace NAMESPACE`
+evicts an offline partition and returns its payload reservation. The existing
+journal format supports a cold reopen of the reclaimed namespace. See
+[shared-root operations](storage-persistence.md#reclaim-an-offline-partition).
 
 ### Placement discovery
 
