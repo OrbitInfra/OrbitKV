@@ -52,7 +52,7 @@ pub use storage::ssd::metadata::SlotMeta;
 pub use storage::ssd::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,
     DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheCleanupStats, SsdCacheConfig, SsdReadLease,
-    SsdReadPath, SsdWritePolicy,
+    SsdReadPath, SsdWritePolicy, reclaim_shared_ssd_partition,
 };
 pub use storage::{CacheExpirationStats, MemoryCacheCleanupStats};
 pub use trace::{set_trace_sample_rate, should_sample};

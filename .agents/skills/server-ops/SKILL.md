@@ -82,7 +82,10 @@ For `--ssd-shared-namespace`, use one trusted existing root and the canonical
 namespace from registration. Set `--ssd-shared-root-capacity` to cap payload
 reservations across active and stopped partitions. Upgrade all writers before
 enabling it on an existing root. Preserve the root's `.orbitkv-ssd-capacity`
-file and leave headroom for journals. A durability error fences writes until restart, and shrink drops
+file and leave headroom for journals. To evict a stopped partition and return
+its capacity, run `orbitkv-cache-manager reclaim-ssd-partition --root PATH --namespace NAMESPACE`.
+Check the exact namespace and allow previous file users to drain before retrying.
+A durability error fences writes until restart, and shrink drops
 out-of-range entries. Check the bounded recovery log/counters before diagnosing
 a startup miss. `docs/storage-persistence.md` defines the commit and GC contract;
 CPU SIGKILL controls do not qualify installed NVMe serving or power loss.

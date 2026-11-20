@@ -24,6 +24,7 @@ OrbitKV keeps reusable KV for prefixes, documents and conversations beyond GPU m
 in DRAM, local SSD and peer hosts, for vLLM and SGLang. A Rust Cache Manager owns
 identity, placement and leases. [OrbiTE](https://github.com/OrbitInfra/OrbiTE) is the
 high-performance transfer engine for local cache copies, storage I/O and peer reads.
+Managers can share an SSD root and [release an offline partition's capacity](docs/storage-persistence.md#reclaim-an-offline-partition).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/_static/architecture-dark.svg" />

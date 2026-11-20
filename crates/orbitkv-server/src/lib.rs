@@ -60,9 +60,13 @@ static GLOBAL: Jemalloc = Jemalloc;
     name = "orbitkv-cache-manager",
     bin_name = "orbitkv-cache-manager",
     version,
-    about = "OrbitKV local cache with optional distributed control"
+    about = "OrbitKV local cache with optional distributed control",
+    args_conflicts_with_subcommands = true
 )]
 pub struct Cli {
+    #[command(subcommand)]
+    command: Option<MaintenanceCommand>,
+
     /// Peer control address in distributed mode; its port also names the default local socket.
     #[arg(long, default_value = "127.0.0.1:50055")]
     pub addr: SocketAddr,
@@ -361,6 +365,19 @@ pub struct Cli {
     /// Per-client descriptor slot capacity.
     #[arg(long, default_value = "64kb", value_parser = parse_memory_size)]
     pub descriptor_slot_size: usize,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum MaintenanceCommand {
+    /// Evict all cached blocks and release the payload reservation of one offline SSD partition.
+    ReclaimSsdPartition {
+        /// Existing shared SSD root used by the Managers.
+        #[arg(long)]
+        root: std::path::PathBuf,
+        /// Exact storage namespace of the partition to reclaim.
+        #[arg(long, value_parser = parse_storage_namespace)]
+        namespace: String,
+    },
 }
 
 impl Cli {
@@ -681,6 +698,11 @@ fn initialize_registry(cli: &Cli) -> Result<CudaTensorRegistry, Box<dyn Error>> 
 /// Main entry point for the Cache Manager.
 pub fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
+    if let Some(MaintenanceCommand::ReclaimSsdPartition { root, namespace }) = &cli.command {
+        let bytes = orbitkv_core::reclaim_shared_ssd_partition(root, namespace)?;
+        println!("Reclaimed {bytes} payload bytes from {namespace}");
+        return Ok(());
+    }
     let metadata_scope = Arc::new(if cli.metadata_empty_scope {
         orbitkv_state::InventoryScope::exact(Vec::new())?
     } else if cli.metadata_namespace.is_empty() {

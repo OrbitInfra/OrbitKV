@@ -6,10 +6,13 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
 
+use super::config::MAX_SSD_SHARDS;
 use super::persistence::{frame, read_frame};
+use super::{files, persistence};
 
 pub(super) const PARTITION_PREFIX: &str = "orbitkv-ssd-";
 const LIMIT_FILE: &str = ".orbitkv-ssd-capacity";
+const JOURNAL_NAME: &str = "shard-000000.dat.index";
 const MAX_DECIMAL_U64: usize = 20;
 
 fn partition_namespace(name: &OsStr) -> Option<&str> {
@@ -20,6 +23,34 @@ fn partition_namespace(name: &OsStr) -> Option<&str> {
 
 pub(super) fn reserved_name(name: &OsStr) -> bool {
     name == LIMIT_FILE || partition_namespace(name).is_some()
+}
+
+fn shard_index(name: &OsStr) -> io::Result<Option<usize>> {
+    // The index and its checkpoint are outside the payload budget.
+    if name == JOURNAL_NAME || name == "shard-000000.dat.index.tmp" {
+        return Ok(None);
+    }
+    name.to_str()
+        .and_then(|s| s.strip_prefix("shard-"))
+        .and_then(|s| s.strip_suffix(".dat"))
+        .filter(|s| s.len() == 6 && s.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|s| s.parse::<usize>().ok())
+        .map(Some)
+        .ok_or_else(|| {
+            Error::new(
+                ErrorKind::InvalidData,
+                "unexpected file in shared SSD partition",
+            )
+        })
+}
+
+fn lock_root(root: &Path) -> io::Result<File> {
+    let directory = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY)
+        .open(root)?;
+    directory.lock()?;
+    Ok(directory)
 }
 
 fn stored_limit(root: &Path) -> io::Result<Option<u64>> {
@@ -93,23 +124,9 @@ fn required_payload(root: &Path, own: &str, shards: usize, shard_bytes: u64) -> 
         }
         for shard in fs::read_dir(partition.path())? {
             let shard = shard?;
-            let name = shard.file_name();
-            // Checkpoints can be replaced during this scan. Their bytes are outside the payload limit.
-            if name == "shard-000000.dat.index" || name == "shard-000000.dat.index.tmp" {
+            let Some(index) = shard_index(&shard.file_name())? else {
                 continue;
-            }
-            let index = name
-                .to_str()
-                .and_then(|s| s.strip_prefix("shard-"))
-                .and_then(|s| s.strip_suffix(".dat"))
-                .filter(|s| s.len() == 6 && s.bytes().all(|b| b.is_ascii_digit()))
-                .and_then(|s| s.parse::<usize>().ok())
-                .ok_or_else(|| {
-                    Error::new(
-                        ErrorKind::InvalidData,
-                        "unexpected file in shared SSD partition",
-                    )
-                })?;
+            };
             let meta = shard.metadata()?;
             if !meta.is_file() {
                 return Err(Error::new(
@@ -170,11 +187,7 @@ pub(super) fn admit(
     shard_bytes: u64,
     configured: Option<u64>,
 ) -> io::Result<Admission> {
-    let directory = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_DIRECTORY)
-        .open(root)?;
-    directory.lock()?;
+    let directory = lock_root(root)?;
     let stored = stored_limit(root)?;
     if let (Some(existing), Some(requested)) = (stored, configured)
         && existing != requested
@@ -203,6 +216,82 @@ pub(super) fn admit(
         directory,
         pending_limit,
     })
+}
+
+/// Evict the named offline partition and release its shard payload reservation.
+/// Returns the sum of shard lengths released by this invocation.
+pub fn reclaim_shared_ssd_partition(root: &Path, namespace: &str) -> io::Result<u64> {
+    if !orbitkv_state::is_storage_namespace(namespace) {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "expected an exact orbitkv:v2 storage namespace",
+        ));
+    }
+    files::outside_shared_partition(root)?;
+    let _root_lock = lock_root(root)?;
+    let partition = root.join(format!("{PARTITION_PREFIX}{namespace}"));
+    files::check_shared_directory(&partition)?;
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(&partition)? {
+        let entry = entry?;
+        if let Some(index) = shard_index(&entry.file_name())? {
+            if index >= MAX_SSD_SHARDS {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "invalid shared SSD shard index",
+                ));
+            }
+            paths.push((index, entry.path()));
+        }
+    }
+    paths.sort_unstable_by_key(|(index, _)| *index);
+    if paths.is_empty() || paths.iter().enumerate().any(|(i, (index, _))| i != *index) {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "incomplete shared SSD shard set",
+        ));
+    }
+    let mut shards = Vec::with_capacity(paths.len());
+    let mut identities = Vec::with_capacity(paths.len());
+    let mut released = 0u64;
+    for (_, path) in paths {
+        let (file, meta) = open_partition_file(&path)?;
+        files::lock_shard(&file, &path)?;
+        files::previous_file_users_drained(&file)?;
+        released = released.checked_add(meta.len()).ok_or_else(|| {
+            Error::new(ErrorKind::InvalidData, "shared SSD payload size overflow")
+        })?;
+        identities.push(meta);
+        shards.push(file);
+    }
+    let journal_path = partition.join(JOURNAL_NAME);
+    let (mut journal, _) = open_partition_file(&journal_path)?;
+    files::previous_file_users_drained(&journal)?;
+    persistence::discard_partition_records(&mut journal, namespace, &identities)?;
+    persistence::sync_parent(&journal_path)?;
+    persistence::fault("ssd_reclaim_journal_synced");
+    for file in &shards {
+        file.set_len(0)?;
+        file.sync_all()?;
+        persistence::fault("ssd_reclaim_shard_synced");
+    }
+    Ok(released)
+}
+
+fn open_partition_file(path: &Path) -> io::Result<(File, fs::Metadata)> {
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    let meta = file.metadata()?;
+    if !meta.is_file() || meta.nlink() != 1 {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "shared SSD reclamation requires regular, singly linked files",
+        ));
+    }
+    Ok((file, meta))
 }
 
 #[cfg(test)]

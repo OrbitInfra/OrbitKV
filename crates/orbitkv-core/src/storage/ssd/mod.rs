@@ -27,6 +27,7 @@ pub use maintenance::SsdCacheCleanupStats;
 pub(crate) mod process_test;
 mod reader;
 mod shared_root;
+pub use shared_root::reclaim_shared_ssd_partition;
 mod writer;
 
 use super::MaterializedBlocks;
@@ -560,7 +561,7 @@ impl SsdStore {
             .cache_paths
             .len()
             .checked_mul(shards_per_path)
-            .filter(|count| (1..=256).contains(count))
+            .filter(|count| (1..=config::MAX_SSD_SHARDS).contains(count))
             .ok_or_else(|| std::io::Error::other("SSD requires 1..=256 total shards"))?;
         if [
             config.write_queue_depth,
