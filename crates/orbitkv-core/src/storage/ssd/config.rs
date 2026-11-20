@@ -2,6 +2,7 @@ use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 pub(crate) const SSD_ALIGNMENT: usize = 512;
+pub(super) const MAX_SSD_SHARDS: usize = 256;
 
 /// Default write queue depth for SSD writer thread (blocks dropped if full)
 pub const DEFAULT_SSD_WRITE_QUEUE_DEPTH: usize = 8;

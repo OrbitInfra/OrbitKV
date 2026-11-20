@@ -109,6 +109,25 @@ impl Header {
         }
         Ok(())
     }
+
+    fn check_identity(&self, files: impl ExactSizeIterator<Item = (u64, u64)>) -> io::Result<()> {
+        if self.version != VERSION {
+            return Err(invalid("metadata_version"));
+        }
+        if self.cache.is_nil()
+            || self.shards.len() != files.len()
+            || !matches!(self.alignment, 512 | 4096)
+            || self.shards.iter().zip(files).any(|(old, (device, inode))| {
+                old.capacity == 0
+                    || !old.capacity.is_multiple_of(self.alignment)
+                    || old.device != device
+                    || old.inode != inode
+            })
+        {
+            return Err(invalid("metadata_identity"));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -362,6 +381,20 @@ pub(super) fn check_partition_file(
     }
 }
 
+/// Keep the partition binding and remove all publishable records before releasing payload space.
+pub(super) fn discard_partition_records(
+    file: &mut File,
+    namespace: &str,
+    shards: &[std::fs::Metadata],
+) -> io::Result<()> {
+    let header: Header = read_frame(file, 1 << 20)?.ok_or_else(|| invalid("metadata_header"))?;
+    header.check_partition(Some(namespace), shards.len())?;
+    header.check_identity(shards.iter().map(|shard| (shard.dev(), shard.ino())))?;
+    let header_end = file.stream_position()?;
+    file.set_len(header_end)?;
+    file.sync_all()
+}
+
 impl Journal {
     pub(super) fn open(
         path: PathBuf,
@@ -528,23 +561,14 @@ impl Journal {
         let header: Header =
             read_frame(&mut self.file, 1 << 20)?.ok_or_else(|| invalid("metadata_header"))?;
         header.check_partition(current.shared_namespace.as_deref(), current.shards.len())?;
-        if header.version != VERSION {
-            return Err(invalid("metadata_version"));
-        }
+        header.check_identity(
+            current
+                .shards
+                .iter()
+                .map(|shard| (shard.device, shard.inode)),
+        )?;
         if self.file.metadata()?.len() > MAX_JOURNAL {
             return Err(invalid("metadata_journal_limit"));
-        }
-        if header.cache.is_nil()
-            || header.shards.len() != current.shards.len()
-            || !matches!(header.alignment, 512 | 4096)
-            || header.shards.iter().zip(&current.shards).any(|(old, new)| {
-                old.capacity == 0
-                    || !old.capacity.is_multiple_of(header.alignment)
-                    || old.device != new.device
-                    || old.inode != new.inode
-            })
-        {
-            return Err(invalid("metadata_identity"));
         }
         // A shrink must first replay the old geometry's bounded journal, then
         // discard excess before checkpoint/publication under the new budget.

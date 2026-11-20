@@ -258,13 +258,42 @@ charges each requested shard once and keeps any excess old length until the
 resize completes. If a Manager dies partway through startup, the next Manager
 accounts for the shard lengths left on disk. A successful shrink makes space
 available to another namespace. Reads and writes run without the root lock.
-Reclaiming space from another owner and physical host or volume loss remain open.
 
 The Linux process gate on ext4 and tmpfs exercises concurrent admission, killed
 writers, byte-checked reopen and shrink. It also writes different bytes under
 the same block hash in two namespaces and holds a read across wrap pressure in
 one while the other reuses its space. Installed cross-host and 3FS profiles
 still require separate runs.
+
+### Reclaim an offline partition
+
+To release the space reserved by a stopped Manager, run this one-shot command
+on the host that owns the shared root. It evicts **all** SSD blocks in the exact
+storage namespace you name. Other namespaces can continue serving.
+
+```sh
+orbitkv-cache-manager reclaim-ssd-partition --root "$ROOT" --namespace "$STORAGE_NAMESPACE"
+```
+
+The command holds the same root lock as Manager startup. It takes every shard's
+exclusive lock and checks Linux write leases on the shards and the journal.
+A live owner or a file description left open after the owner exits blocks
+reclamation before any bytes change. The journal must bind the named namespace
+to the device and inode of every shard.
+
+The command keeps the journal header and syncs the removal of its cache records
+and the journal directory before truncating the first shard. It syncs each
+shard and reports how many payload bytes it released. The shard files retain
+their inodes. If the command stops partway, admission still charges the shard
+lengths on disk. Rerun it while the partition remains offline to release the
+rest. A second completed run on an empty partition reports zero. If a Manager
+has since repopulated the namespace, a new invocation evicts that data too.
+
+The Linux process gate races admission against a paused reclaimer and kills
+it after journal retirement and after the first of two shards is truncated.
+It also checks that a neighboring Manager can still read its data and another
+namespace can use the released capacity. Cross-host fencing and physical host
+or volume loss require separate qualification.
 
 ## Exclusive handoff after owner loss
 

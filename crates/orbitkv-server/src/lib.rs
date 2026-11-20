@@ -26,7 +26,7 @@ mod wire;
 
 pub use registry::{CudaTensorRegistry, RegistryHandle};
 
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use cudarc::driver::result as cuda_driver;
 use log::{error, info, warn};
 use opentelemetry::global;
@@ -363,6 +363,23 @@ pub struct Cli {
     pub descriptor_slot_size: usize,
 }
 
+#[derive(Subcommand, Debug)]
+enum MaintenanceCommand {
+    /// Evict all cached blocks and release the payload reservation of one offline SSD partition.
+    ReclaimSsdPartition {
+        /// Existing shared SSD root used by the Managers.
+        #[arg(long)]
+        root: std::path::PathBuf,
+        /// Exact storage namespace of the partition to reclaim.
+        #[arg(long, value_parser = parse_storage_namespace)]
+        namespace: String,
+    },
+}
+
+fn manager_command() -> clap::Command {
+    MaintenanceCommand::augment_subcommands(Cli::command()).args_conflicts_with_subcommands(true)
+}
+
 impl Cli {
     fn query_control_address(&self) -> Result<Option<SocketAddr>, String> {
         if !self.enable_query_control {
@@ -680,7 +697,15 @@ fn initialize_registry(cli: &Cli) -> Result<CudaTensorRegistry, Box<dyn Error>> 
 
 /// Main entry point for the Cache Manager.
 pub fn run() -> Result<(), Box<dyn Error>> {
-    let cli = Cli::parse();
+    let mut matches = manager_command().get_matches();
+    if matches.subcommand().is_some() {
+        let MaintenanceCommand::ReclaimSsdPartition { root, namespace } =
+            MaintenanceCommand::from_arg_matches_mut(&mut matches)?;
+        let bytes = orbitkv_core::reclaim_shared_ssd_partition(&root, &namespace)?;
+        println!("Reclaimed {bytes} payload bytes from {namespace}");
+        return Ok(());
+    }
+    let cli = Cli::from_arg_matches_mut(&mut matches)?;
     let metadata_scope = Arc::new(if cli.metadata_empty_scope {
         orbitkv_state::InventoryScope::exact(Vec::new())?
     } else if cli.metadata_namespace.is_empty() {

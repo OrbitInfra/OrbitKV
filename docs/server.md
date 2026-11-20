@@ -78,6 +78,9 @@ optional engine dependency, not a service to deploy. See [deployment examples](d
   budget. Active and stopped partitions count. Once set, later Managers inherit
   the limit from disk. Provision extra space for metadata and filesystem overhead.
   See [shared-root partitions](storage-persistence.md#shared-root-namespace-partitions).
+- `reclaim-ssd-partition --root PATH --namespace NAMESPACE` evicts all SSD blocks
+  in one offline partition and releases its reserved payload space. See
+  [offline reclamation](storage-persistence.md#reclaim-an-offline-partition).
 - `--ssd-write-policy`: `all` writes newly saved pages; `reuse` admits foreground-returned pages or repeated publications within a bounded history (default: `all`). Selective admission can require recomputation on the first reuse after DRAM eviction.
 - `--ssd-backend`: `uring` uses pinned DRAM; `auto` (default) additionally uses
   layout vectors with engine-owned CUDA staging/io_uring; `cufile` requires

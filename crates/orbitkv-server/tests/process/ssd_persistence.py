@@ -182,6 +182,23 @@ class Manager:
     def reached(self, name):
         self.wait(lambda: (self.control / f"{name}.reached").exists())
 
+    def wait_for_root_lock(self, root):
+        inode = root.stat().st_ino
+
+        def blocked():
+            for line in Path("/proc/locks").read_text().splitlines():
+                fields = line.split()
+                if (
+                    len(fields) == 9
+                    and fields[1:3] == ["->", "FLOCK"]
+                    and fields[5] == str(self.process.pid)
+                    and fields[6].endswith(f":{inode}")
+                ):
+                    return True
+            return False
+
+        self.wait(blocked)
+
     def release(self, name):
         (self.control / f"{name}.pause").unlink()
 
@@ -442,21 +459,7 @@ class Gate:
             root, shared_namespace=3, capacity=1024, defer_start=True
         )
         # Wait for the second process's actual lock request while the winning shard is still unsized.
-        inode = root.stat().st_ino
-
-        def blocked_on_root():
-            for line in Path("/proc/locks").read_text().splitlines():
-                fields = line.split()
-                if (
-                    len(fields) == 9
-                    and fields[1:3] == ["->", "FLOCK"]
-                    and fields[5] == str(challenger.process.pid)
-                    and fields[6].endswith(f":{inode}")
-                ):
-                    return True
-            return False
-
-        challenger.wait(blocked_on_root)
+        challenger.wait_for_root_lock(root)
         winner.release("ssd_root_admitted")
         winner.ready()
         challenger.rejected("shared SSD root capacity exceeded")
@@ -508,6 +511,124 @@ class Gate:
         third.read(3, namespace=3)
         third.close()
         assert sum(p.stat().st_size for p in root.glob("*/shard-*.dat")) == 3072
+
+    def reclaim_offline_partition(self, root):
+        root.mkdir()
+        donor_config = {"shared_namespace": 1, "capacity": 2048, "shards": 2}
+        donor = self.manager(root, **donor_config, root_capacity=3072)
+        neighbor = self.manager(root, shared_namespace=2, capacity=1024)
+        assert donor.call("write", id=1, namespace=1)["present"]
+        assert neighbor.call("write", id=2, namespace=2)["present"]
+        namespace = f"orbitkv:v2:{1:064x}"
+        directory = root / f"orbitkv-ssd-{namespace}"
+        shards = sorted(directory.glob("shard-*.dat"))
+        journal = directory / "shard-000000.dat.index"
+        policy = root / ".orbitkv-ssd-capacity"
+        initial_policy = policy.read_bytes()
+        command = [
+            str(self.binary),
+            "reclaim-ssd-partition",
+            "--root",
+            str(root),
+            "--namespace",
+            namespace,
+        ]
+
+        def reclaim(*, released=None, denied=None):
+            run = subprocess.run(command, capture_output=True, text=True, timeout=30)
+            if denied is not None:
+                assert run.returncode != 0 and denied in run.stderr, run
+            else:
+                assert run.returncode == 0, run.stderr
+                assert (
+                    run.stdout.strip()
+                    == f"Reclaimed {released} payload bytes from {namespace}"
+                ), run
+
+        def crash_at(point, *, concurrent_admission=False):
+            challenger = None
+            with tempfile.TemporaryDirectory() as tmp:
+                pause = Path(tmp) / (point + ".pause")
+                pause.touch()
+                with subprocess.Popen(
+                    command, env={**os.environ, "ORBITKV_TEST_FAULTS": tmp}
+                ) as child:
+                    try:
+                        end = time.monotonic() + 30
+                        while not pause.with_suffix(".reached").exists():
+                            assert child.poll() is None and time.monotonic() < end, (
+                                point
+                            )
+                            time.sleep(0.01)
+                        if concurrent_admission:
+                            challenger = self.manager(
+                                root,
+                                shared_namespace=3,
+                                capacity=2048,
+                                defer_start=True,
+                            )
+                            challenger.wait_for_root_lock(root)
+                    finally:
+                        child.kill()
+                    assert child.wait(timeout=10) == -signal.SIGKILL
+            if challenger is not None:
+                challenger.rejected("shared SSD root capacity exceeded")
+                challenger.close()
+
+        def require_no_space():
+            self.manager(
+                root,
+                shared_namespace=3,
+                capacity=2048,
+                reject_with="shared SSD root capacity exceeded",
+            ).close()
+
+        reclaim(denied="SSD shard is already owned")
+        donor.read(1, namespace=1)
+        assert len(shards) == 2
+        with shards[1].open("rb") as old_reader:
+            donor.close(kill=True)
+            original = [p.read_bytes() for p in [journal, *shards]]
+            reclaim(denied="drained prior file users")
+            assert [p.read_bytes() for p in [journal, *shards]] == original
+            assert old_reader.read() == original[-1]
+        require_no_space()
+
+        # A stopped partition with a replacement inode does not authorize eviction.
+        saved = root / "original-shard"
+        shards[1].rename(saved)
+        shards[1].write_bytes(original[-1])
+        reclaim(denied="metadata_identity")
+        assert [p.read_bytes() for p in [journal, *shards]] == original
+        saved.replace(shards[1])
+        alias = root / "journal-alias"
+        os.link(journal, alias)
+        reclaim(denied="singly linked")
+        assert alias.read_bytes() == original[0]
+        alias.unlink()
+
+        crash_at("ssd_reclaim_journal_synced")
+        assert len(frames(journal)) == 1
+        assert [p.read_bytes() for p in shards] == original[1:]
+        require_no_space()
+        recovered = self.manager(root, **donor_config)
+        recovered.read(1, namespace=1, present=False)
+        assert recovered.call("write", id=1, namespace=1)["present"]
+        recovered.close()
+
+        crash_at("ssd_reclaim_shard_synced", concurrent_admission=True)
+        assert len(frames(journal)) == 1
+        assert [p.stat().st_size for p in shards] == [0, 1024]
+        reclaim(released=1024)
+        reclaim(released=0)
+        assert [p.stat().st_size for p in shards] == [0, 0]
+        newcomer = self.manager(root, shared_namespace=3, capacity=2048)
+        assert newcomer.call("write", id=3, namespace=3)["present"]
+        newcomer.read(3, namespace=3)
+        neighbor.read(2, namespace=2)
+        assert policy.read_bytes() == initial_policy
+        newcomer.close()
+        neighbor.close()
 
     def shared_partition_reopen(self, root):
         root.mkdir()
@@ -923,6 +1044,7 @@ def main():
     gate.case("concurrent-shared-namespaces", gate.shared_namespaces)
     gate.case("shared-partition-reopen", gate.shared_partition_reopen)
     gate.case("shared-root-capacity", gate.shared_root_capacity)
+    gate.case("reclaim-offline-shared-partition", gate.reclaim_offline_partition)
     gate.case("ttl-late-write", lambda path: gate.ttl(path, False))
     gate.case("ttl-during-recovery-verification", lambda path: gate.ttl(path, True))
     gate.case("prior-file-user-blocks-restart", gate.old_file_user)

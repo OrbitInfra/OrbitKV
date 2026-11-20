@@ -67,7 +67,7 @@ pub(super) fn aligned_shard_capacity(
 }
 
 /// Reject a managed directory anywhere in an operator-supplied path before creating children.
-fn outside_shared_partition(path: &Path) -> std::io::Result<()> {
+pub(super) fn outside_shared_partition(path: &Path) -> std::io::Result<()> {
     let in_partition = |path: &Path| {
         path.components()
             .any(|part| super::shared_root::reserved_name(part.as_os_str()))
@@ -98,8 +98,8 @@ pub(super) fn open_shared_partition(
     shard_capacity: u64,
     root_capacity: Option<u64>,
 ) -> std::io::Result<(PathBuf, super::shared_root::Admission)> {
-    use std::fs::{self, DirBuilder};
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    use std::fs::DirBuilder;
+    use std::os::unix::fs::DirBuilderExt;
 
     outside_shared_partition(root)?;
     let lock = super::shared_root::admit(root, namespace, shards, shard_capacity, root_capacity)?;
@@ -110,13 +110,7 @@ pub(super) fn open_shared_partition(
     match DirBuilder::new().mode(0o700).create(&directory) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let metadata = fs::symlink_metadata(&directory)?;
-            if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "shared SSD namespace needs a private directory",
-                ));
-            }
+            check_shared_directory(&directory)?;
         }
         Err(error) => return Err(error),
     }
@@ -125,6 +119,19 @@ pub(super) fn open_shared_partition(
     } else {
         Ok((directory, lock))
     }
+}
+
+pub(super) fn check_shared_directory(directory: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = std::fs::symlink_metadata(directory)?;
+    if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "shared SSD namespace needs a private directory",
+        ));
+    }
+    Ok(())
 }
 
 /// Under the first shard lock, account for every data file even if metadata is missing.
@@ -224,17 +231,8 @@ pub(super) fn open_cache_files(
     let metadata = journal_path(cache_paths, shards_per_path)?;
     let mut files = Vec::with_capacity(total_shards);
     for path in &paths {
-        use std::os::fd::AsRawFd;
         let file = options.open(path)?;
-        // SAFETY: the owned fd remains live in `files` through all data-plane
-        // owners; flock only acquires an advisory lock on this open description.
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-            return Err(std::io::Error::other(format!(
-                "SSD shard is already owned: {}: {}",
-                path.display(),
-                std::io::Error::last_os_error()
-            )));
-        }
+        lock_shard(&file, path)?;
         if files.is_empty() && (shared_namespace.is_some() || !preserve) {
             let has_payload =
                 shared_namespace.is_some() && shared_partition_has_payload(&paths, &metadata)?;
@@ -275,7 +273,16 @@ pub(super) fn open_cache_files(
     Ok(files)
 }
 
-fn previous_file_users_drained(file: &std::fs::File) -> std::io::Result<()> {
+pub(super) fn lock_shard(file: &std::fs::File, path: &Path) -> std::io::Result<()> {
+    file.try_lock().map_err(|err| {
+        std::io::Error::other(format!(
+            "SSD shard is already owned: {}: {err}",
+            path.display()
+        ))
+    })
+}
+
+pub(super) fn previous_file_users_drained(file: &std::fs::File) -> std::io::Result<()> {
     use std::os::fd::AsRawFd;
     let fd = file.as_raw_fd();
     // F_SETSIG is Linux UAPI 10 on the supported x86_64/aarch64 targets;
@@ -294,7 +301,7 @@ fn previous_file_users_drained(file: &std::fs::File) -> std::io::Result<()> {
         return Err(std::io::Error::new(
             error.kind(),
             format!(
-                "SSD restart requires exclusive file-lease support and drained prior file users; retry startup after cleanup: {error}"
+                "SSD ownership requires exclusive file-lease support and drained prior file users: {error}"
             ),
         ));
     }
