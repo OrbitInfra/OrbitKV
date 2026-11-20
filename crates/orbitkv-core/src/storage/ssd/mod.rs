@@ -300,6 +300,9 @@ impl SsdInner {
         reused: bool,
         policy: SsdWritePolicy,
     ) -> Option<&'static str> {
+        if self.ring.closed() {
+            return Some("relinquished");
+        }
         if self
             .shared_namespace
             .as_ref()
@@ -532,7 +535,7 @@ impl SsdStore {
         let retired = inner.ring.take_retired();
         inner.pending_writes.insert(key.clone());
         core_metrics().ssd_write_inflight.add(1, &[]);
-        self.retire_inventory(retired);
+        self.retire_inventory(&retired);
         drop(inner);
         Some(Arc::new(WriteLease {
             options: crate::transfer_engine::TransferOptions::checkpoint(
@@ -546,15 +549,103 @@ impl SsdStore {
             store: Arc::clone(self),
         }))
     }
+}
 
-    pub(crate) fn new(
+/// All submitters share one admission point for a relinquishable partition.
+/// Existing transfers retain their original store and file owners through drain.
+#[derive(Clone, Default)]
+pub(crate) enum SsdTier {
+    #[default]
+    Disabled,
+    Local(Arc<SsdStore>),
+    Shared(Arc<SharedPartition>),
+}
+
+pub(crate) struct SharedPartition {
+    directory: std::fs::File,
+    active: Mutex<Option<Arc<SsdStore>>>,
+    writer: tokio::sync::mpsc::WeakSender<SsdWriteCommand>,
+    writer_exit: tokio::sync::watch::Receiver<()>,
+}
+
+impl SsdTier {
+    fn shared(
+        directory: std::fs::File,
+        store: Arc<SsdStore>,
+        writer_exit: tokio::sync::watch::Receiver<()>,
+    ) -> Self {
+        Self::Shared(Arc::new(SharedPartition {
+            directory,
+            writer: store.write_tx.downgrade(),
+            writer_exit,
+            active: Mutex::new(Some(store)),
+        }))
+    }
+
+    pub(crate) fn store(&self) -> Option<Arc<SsdStore>> {
+        match self {
+            Self::Disabled => None,
+            Self::Local(store) => Some(Arc::clone(store)),
+            Self::Shared(partition) => partition.active.lock().clone(),
+        }
+    }
+
+    /// Flush earlier logical writes, including those admitted before detachment.
+    /// The queue handle keeps no SSD store or file registration alive.
+    pub(crate) async fn flush(&self) {
+        let writer = match self {
+            Self::Disabled => return,
+            Self::Local(store) => store.write_tx.clone(),
+            Self::Shared(partition) => match partition.writer.upgrade() {
+                Some(writer) => writer,
+                None => {
+                    // The receiver can still be cancelling queued writes after the last sender drops.
+                    let _ = partition.writer_exit.clone().changed().await;
+                    return;
+                }
+            },
+        };
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if writer.send(SsdWriteCommand::Flush(tx)).await.is_ok() {
+            drop(writer);
+            let _ = rx.await;
+        }
+    }
+
+    pub(crate) fn maintain_cache(&self) -> std::io::Result<SsdCacheCleanupStats> {
+        let store = match self {
+            Self::Shared(partition) => {
+                let mut active = partition.active.lock();
+                if active.is_some()
+                    && shared_root::release_requested(&partition.directory)?
+                    && let Some(store) = active.take()
+                {
+                    let mut inner = store.inner.lock();
+                    let keys = inner.ring.close_admission();
+                    drop(active);
+                    store.retire_inventory(keys);
+                    drop(inner);
+                    info!("Shared SSD partition detached; the Manager continues serving DRAM");
+                    return Ok(SsdCacheCleanupStats::default());
+                }
+                active.clone()
+            }
+            _ => self.store(),
+        };
+        store.map_or_else(
+            || Ok(SsdCacheCleanupStats::default()),
+            |s| s.maintain_cache(),
+        )
+    }
+
+    pub(crate) fn open(
         config: SsdCacheConfig,
         allocate_fn: AllocateFn,
         allocation_footprint_fn: AllocationFootprintFn,
         is_numa: bool,
         inventory: Option<Arc<crate::storage::inventory::ResidencyInventory>>,
         transfer: Arc<crate::transfer_engine::TransferEngine>,
-    ) -> std::io::Result<Arc<Self>> {
+    ) -> std::io::Result<Self> {
         let watermarks = config.watermarks().map_err(std::io::Error::other)?;
         let shards_per_path = config.shards.get();
         let total_shards = config
@@ -592,9 +683,10 @@ impl SsdStore {
             files::aligned_shard_capacity(config.capacity_bytes, total_shards, alignment)?;
         let shared_path;
         let mut root_admission = None;
+        let mut partition_directory = None;
         let paths = match config.shared_partition().map_err(std::io::Error::other)? {
             Some((root, namespace)) => {
-                let (path, lock) = files::open_shared_partition(
+                let (path, lock, directory) = files::open_shared_partition(
                     root,
                     namespace,
                     shards_per_path,
@@ -603,6 +695,7 @@ impl SsdStore {
                 )?;
                 shared_path = path;
                 root_admission = Some(lock);
+                partition_directory = Some(directory);
                 persistence::fault("ssd_root_admitted");
                 std::slice::from_ref(&shared_path)
             }
@@ -710,7 +803,7 @@ impl SsdStore {
         if let Some(journal) = &journal {
             ring.recover(&journal.lock().heads(), &recovered);
         }
-        let store = Arc::new(Self {
+        let store = Arc::new(SsdStore {
             gpu_io,
             read_path: config.read_path,
             cufile_files,
@@ -736,17 +829,26 @@ impl SsdStore {
             recovered: Mutex::new(recovered),
         });
 
-        Self::spawn_workers(
+        let (tier, writer_lifetime) = match partition_directory {
+            Some(directory) => {
+                let (lifetime, exit) = tokio::sync::watch::channel(());
+                (Self::shared(directory, store.clone(), exit), Some(lifetime))
+            }
+            None => (Self::Local(store.clone()), None),
+        };
+        SsdStore::spawn_workers(
             &store,
             write_rx,
             prefetch_rx,
             write_inflight,
             prefetch_inflight,
+            writer_lifetime,
         );
-
-        Ok(store)
+        Ok(tier)
     }
+}
 
+impl SsdStore {
     pub(crate) fn discover(self: &Arc<Self>, keys: &[StateKey]) -> Vec<Option<SsdReadCandidate>> {
         let inner = self.inner.lock();
         keys.iter()
@@ -870,7 +972,7 @@ impl SsdStore {
         };
         let retired = inner.ring.take_retired();
         inner.pending_writes.remove(key);
-        self.retire_inventory(retired);
+        self.retire_inventory(&retired);
         if let (Some(inventory), Some(metadata)) = (&self.inventory, metadata)
             && let Err(error) =
                 inventory.change(key, orbitkv_state::ReplicaMedium::Ssd, Some(metadata))
@@ -889,7 +991,7 @@ impl SsdStore {
                         .cache_expirations
                         .add(1, &[opentelemetry::KeyValue::new("medium", "ssd")]);
                 }
-                self.retire_inventory(vec![key.clone()]);
+                self.retire_inventory([key]);
             }
             invalidated
         };
@@ -911,11 +1013,10 @@ impl SsdStore {
             .count()
     }
 
-    pub(super) fn retire_inventory(&self, keys: Vec<StateKey>) {
+    pub(super) fn retire_inventory<'a>(&self, keys: impl IntoIterator<Item = &'a StateKey>) {
         if let Some(inventory) = &self.inventory {
             for key in keys {
-                if let Err(error) = inventory.change(&key, orbitkv_state::ReplicaMedium::Ssd, None)
-                {
+                if let Err(error) = inventory.change(key, orbitkv_state::ReplicaMedium::Ssd, None) {
                     log::error!("Inventory mutation rejected: {error:?}");
                 }
             }
@@ -932,6 +1033,7 @@ impl SsdStore {
         prefetch_rx: tokio::sync::mpsc::Receiver<PrefetchBatch>,
         write_inflight: usize,
         prefetch_inflight: usize,
+        writer_lifetime: Option<tokio::sync::watch::Sender<()>>,
     ) {
         let io = Arc::clone(&store.io);
 
@@ -939,6 +1041,7 @@ impl SsdStore {
         let writer_io = Arc::clone(&io);
         tokio::spawn(async move {
             ssd_writer_loop(writer_weak, write_rx, writer_io, write_inflight).await;
+            drop(writer_lifetime);
         });
 
         let prefetch_weak = Arc::downgrade(store);
@@ -1027,15 +1130,6 @@ impl SsdStore {
                     );
                 }
             }
-        }
-    }
-
-    /// Wait for earlier logical write outcomes, including retained failures.
-    /// This is not an fsync barrier or a physical-drain receipt.
-    pub(crate) async fn flush(&self) {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        if self.write_tx.send(SsdWriteCommand::Flush(tx)).await.is_ok() {
-            let _ = rx.await;
         }
     }
 

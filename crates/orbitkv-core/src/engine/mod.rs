@@ -582,16 +582,14 @@ impl OrbitKVEngine {
     /// before reuse, so call from a blocking worker. A durability failure returns
     /// an error and fences persistent writes. The Manager schedules this after TTL
     /// and DRAM maintenance; embedded callers must schedule it themselves.
-    /// Disabled watermarks or a concurrent pass return empty statistics.
+    /// On shared SSD roots, this also observes local requests to relinquish
+    /// the partition, even with watermarks disabled. The Manager keeps serving
+    /// other tiers while the reclaimer waits for outstanding SSD owners.
     pub fn maintain_ssd_cache(&self) -> Result<crate::SsdCacheCleanupStats, EngineError> {
-        self.storage.ssd_store.as_ref().map_or_else(
-            || Ok(crate::SsdCacheCleanupStats::default()),
-            |store| {
-                store
-                    .maintain_cache()
-                    .map_err(|error| EngineError::Storage(error.to_string()))
-            },
-        )
+        self.storage
+            .ssd_store
+            .maintain_cache()
+            .map_err(|error| EngineError::Storage(error.to_string()))
     }
 
     /// Examine at most 512 finite-lived entries per tier and retire expired generations.
@@ -661,7 +659,7 @@ impl OrbitKVEngine {
     /// operations retain their backing, extents and admission charges.
     pub async fn flush_all(&self) {
         self.storage.writes.flush().await;
-        self.storage.flush_ssd().await;
+        self.storage.ssd_store.flush().await;
     }
 
     /// Remove abandoned writes. Query futures drain independently of polling.

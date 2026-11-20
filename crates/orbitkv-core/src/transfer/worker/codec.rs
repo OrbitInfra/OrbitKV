@@ -401,7 +401,7 @@ fn write_gpu(
     devices: Vec<Option<Vec<(u64, usize)>>>,
     backing: Option<Arc<CudaRegistration>>,
 ) -> Result<(), EngineError> {
-    let Some(store) = &storage.ssd_store else {
+    let Some(store) = storage.ssd_store.store() else {
         return Ok(());
     };
     // Encoded device outputs already carry the codec's source CRC. A raw

@@ -15,7 +15,7 @@ use crate::block::{QueryResult, RestoreSource, SealedBlock, StateKey};
 use crate::memory::numa::NumaNode;
 use crate::metrics::core_metrics;
 use crate::peer::read::PeerReader;
-use crate::storage::{MaterializedBlocks, ssd::SsdStore};
+use crate::storage::{MaterializedBlocks, ssd::SsdTier};
 use crate::transfer_engine::TransferOptions;
 
 use super::tier_attribution::{
@@ -50,7 +50,7 @@ type SharedRead = OnceCell<MaterializedRead>;
 pub(crate) struct ReadCoordinator {
     dram: Arc<DramStore>,
     reads: Mutex<HashMap<ReadKey, Weak<SharedRead>>>,
-    ssd_store: Option<Arc<SsdStore>>,
+    ssd_store: SsdTier,
     remote_fetch: Option<Arc<PeerReader>>,
     codec_budget: usize,
 }
@@ -58,7 +58,7 @@ pub(crate) struct ReadCoordinator {
 impl ReadCoordinator {
     pub(crate) fn new(
         dram: Arc<DramStore>,
-        ssd_store: Option<Arc<SsdStore>>,
+        ssd_store: SsdTier,
         remote_fetch: Option<Arc<PeerReader>>,
         codec_budget: usize,
     ) -> Self {
@@ -89,8 +89,9 @@ impl ReadCoordinator {
             .collect();
         let (hit, prefix_blocks) = self.dram.get_prefix_blocks(&keys, warming);
         let has_remote = self.remote_fetch.is_some();
-        if hit == keys.len() || (!has_remote && self.ssd_store.is_none()) {
-            if !warming && let Some(ssd) = &self.ssd_store {
+        let ssd_store = self.ssd_store.store();
+        if hit == keys.len() || (!has_remote && ssd_store.is_none()) {
+            if !warming && let Some(ssd) = &ssd_store {
                 ssd.ingest_batch(keys.iter().zip(&prefix_blocks), true);
             }
             record_tier_attribution(keys.len(), hit, 0, None);
@@ -103,11 +104,11 @@ impl ReadCoordinator {
             };
         }
 
-        let mut plan = ReadPlan::new(&keys[hit..], mode, self.ssd_store.as_ref());
+        let mut plan = ReadPlan::new(&keys[hit..], mode, ssd_store.as_ref());
         if let Some(remote) = &self.remote_fetch {
             remote.discover(&mut plan.rows);
         }
-        if let Some(ssd) = &self.ssd_store
+        if let Some(ssd) = &ssd_store
             && let Some(route) = plan.deferred_ssd(ssd, self.codec_budget)
         {
             let path = route.path;
@@ -136,11 +137,9 @@ impl ReadCoordinator {
             }
         }
 
-        let allow_ssd_prefetch = warming
-            || self
-                .ssd_store
-                .as_ref()
-                .is_none_or(|ssd| ssd.read_path.is_none());
+        let allow_ssd_prefetch =
+            warming || ssd_store.as_ref().is_none_or(|ssd| ssd.read_path.is_none());
+        drop(ssd_store); // Discovery alone must not retain the SSD across a peer read.
         let key = ReadKey {
             keys: keys.clone(),
             hit,
@@ -207,7 +206,7 @@ impl ReadCoordinator {
                 })
                 .unzip();
             self.dram.retain_demand(&resident_keys, &resident);
-            if let Some(ssd) = &self.ssd_store {
+            if let Some(ssd) = self.ssd_store.store() {
                 ssd.ingest_batch(resident_keys.iter().zip(&resident), true);
             }
         }
@@ -298,7 +297,7 @@ impl ReadCoordinator {
                     }
                 }
                 Some(HostReadRoute::Ssd(route)) => {
-                    if let Some(ssd) = &self.ssd_store
+                    if let Some(ssd) = self.ssd_store.store()
                         && let Some(leases) = route.acquire(self.codec_budget, options)
                     {
                         return (

@@ -273,7 +273,7 @@ async fn execute_write(task: WriteTask, store: Weak<SsdStore>, io: Arc<SsdIo>) -
         let entry = inner
             .ring
             .reserve(&key, slots, encoding, task.block.expiration());
-        store.retire_inventory(inner.ring.take_retired());
+        store.retire_inventory(&inner.ring.take_retired());
         entry
     };
     let Some(entry) = entry else {

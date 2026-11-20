@@ -22,9 +22,12 @@ Existing private journals use their original format. Scoped journals record
 the assigned namespace. The optional `--ssd-shared-root-capacity` establishes
 a persistent payload budget covering active and stopped partitions.
 `orbitkv-cache-manager reclaim-ssd-partition --root PATH --namespace NAMESPACE`
-evicts an offline partition and returns its payload reservation. The existing
-journal format supports a cold reopen of the reclaimed namespace. See
-[shared-root operations](storage-persistence.md#reclaim-an-offline-partition).
+evicts an offline partition and returns its payload reservation. Add
+`--wait-for-owner-secs N` to request the same release from a serving Manager.
+The public Rust function `reclaim_shared_ssd_partition(root, namespace, wait)`
+now takes a `std::time::Duration`. Pass `Duration::ZERO` for offline-only
+reclamation. The existing journal format supports a cold reopen of the reclaimed
+namespace. See [shared-root operations](storage-persistence.md#relinquish-a-live-partition).
 
 ### Placement discovery
 

@@ -214,7 +214,7 @@ fn ssd_evidence_appears_only_after_commit_and_survives_dram_eviction() {
         inner.ring.take_retired()
     };
     assert_eq!(retired, [key]);
-    store.retire_inventory(retired);
+    store.retire_inventory(&retired);
     assert!(inventory.page(None).unwrap().is_empty());
 
     let expected = store
@@ -234,6 +234,117 @@ fn ssd_evidence_appears_only_after_commit_and_survives_dram_eviction() {
     let entry = store.inner.lock().ring.get(&replacement).unwrap().clone();
     store.invalidate_entry(&replacement, &entry);
     assert!(inventory.page(None).unwrap().is_empty());
+}
+
+#[test]
+fn relinquishment_withdraws_ssd_evidence_and_fences_late_pins_and_commits() {
+    for committed in [true, false] {
+        let inventory = Arc::new(crate::storage::inventory::ResidencyInventory::new(
+            16 * 1024,
+        ));
+        let (store, _queue) = queued_read_store_with_inventory(Some(inventory.clone()), committed);
+        let directory = tempfile::tempdir().unwrap();
+        let (_writer, exit) = tokio::sync::watch::channel(());
+        let partition = SsdTier::shared(
+            std::fs::File::open(directory.path()).unwrap(),
+            store.clone(),
+            exit,
+        );
+        let key = StateKey::new("queued-lease".into(), vec![0]);
+        let candidate = store.discover(std::slice::from_ref(&key)).pop().unwrap();
+        let held = candidate
+            .as_ref()
+            .map(|entry| entry.pin(crate::transfer_engine::tests::demand()).unwrap());
+        let writing = store.inner.lock().ring.write_entry(&key).cloned();
+        assert_eq!(held.is_some(), committed);
+        assert_eq!(writing.is_some(), !committed);
+        let records = inventory.page(None).unwrap();
+        assert_eq!(records.len(), usize::from(committed));
+
+        let request = std::fs::File::open(directory.path()).unwrap();
+        request.lock().unwrap();
+        partition.maintain_cache().unwrap();
+        assert!(partition.store().is_none());
+        assert!(inventory.page(None).unwrap().is_empty());
+        assert!(store.discover(std::slice::from_ref(&key))[0].is_none());
+        if let (Some(stale), Some(lease)) = (candidate, held) {
+            assert!(stale.pin(crate::transfer_engine::tests::demand()).is_none());
+            assert!(
+                store
+                    .pin_residencies(&records, crate::transfer_engine::tests::demand())
+                    .is_none()
+            );
+            assert!(store.is_offset_valid(&lease.entry));
+        }
+        if let Some(entry) = writing {
+            store.commit_write(&key, true, Some(&entry));
+            assert!(inventory.page(None).unwrap().is_empty());
+            assert!(store.discover(std::slice::from_ref(&key))[0].is_none());
+        }
+        drop(request);
+        partition.maintain_cache().unwrap();
+        assert!(partition.store().is_none());
+    }
+}
+
+#[tokio::test]
+async fn flush_after_detachment_waits_for_queued_writes_with_or_without_a_live_reader() {
+    for keep_reader in [true, false] {
+        let (mut store, _queue) = queued_read_store();
+        let (writer, mut commands) = tokio::sync::mpsc::channel(2);
+        Arc::get_mut(&mut store).unwrap().write_tx = writer;
+        let previous_owner = Arc::downgrade(&store);
+        let (writer_lifetime, exit) = tokio::sync::watch::channel(());
+        let directory = tempfile::tempdir().unwrap();
+        let tier = SsdTier::shared(
+            std::fs::File::open(directory.path()).unwrap(),
+            store.clone(),
+            exit,
+        );
+        let resident = StateKey::new("queued-lease".into(), vec![0]);
+        let reader = keep_reader.then(|| {
+            store
+                .discover(&[resident])
+                .pop()
+                .unwrap()
+                .unwrap()
+                .pin(crate::transfer_engine::tests::demand())
+                .unwrap()
+        });
+        let incoming = StateKey::new("queued-lease".into(), vec![1]);
+        let block = Arc::new(SealedBlock::for_policy_test(SSD_ALIGNMENT as u64));
+        store.ingest_batch([(&incoming, &block)], false);
+
+        let request = std::fs::File::open(directory.path()).unwrap();
+        request.lock().unwrap();
+        tier.maintain_cache().unwrap();
+        drop(store);
+        assert!(tier.store().is_none());
+        assert_eq!(previous_owner.upgrade().is_some(), keep_reader);
+
+        let flush = tier.flush();
+        tokio::pin!(flush);
+        assert!(futures::poll!(&mut flush).is_pending());
+        assert!(matches!(commands.try_recv(), Ok(SsdWriteCommand::Write(_))));
+        if keep_reader {
+            let SsdWriteCommand::Flush(receipt) = commands.try_recv().unwrap() else {
+                panic!("expected a writer flush barrier");
+            };
+            assert!(futures::poll!(&mut flush).is_pending());
+            receipt.send(()).unwrap();
+            flush.await;
+            assert!(reader.unwrap().entry.readers.load(Ordering::Acquire) > 0);
+        } else {
+            assert!(matches!(
+                commands.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+            ));
+            drop(commands);
+            assert!(futures::poll!(&mut flush).is_pending());
+            drop(writer_lifetime);
+            flush.await;
+        }
+    }
 }
 
 #[test]
@@ -370,7 +481,7 @@ async fn cancelled_ssd_authorization_keeps_admission_with_queued_batch() {
     ));
     let exports = crate::PeerExports::new(
         dram,
-        Some(Arc::clone(&store)),
+        SsdTier::Local(Arc::clone(&store)),
         Some(membership),
         crate::transfer_engine::tests::engine(),
         std::time::Duration::from_secs(30),
@@ -976,7 +1087,7 @@ async fn resident_dram_hit_precedes_local_ssd_without_submitting_io() {
     let key = StateKey::new("queued-lease".into(), vec![0]);
     let block = Arc::new(SealedBlock::from_slots(Vec::new()));
     dram.batch_insert(vec![(key.clone(), Arc::clone(&block))]);
-    let reads = crate::query::read::ReadCoordinator::new(dram, Some(ssd), None, 0);
+    let reads = crate::query::read::ReadCoordinator::new(dram, SsdTier::Local(ssd), None, 0);
     let result = reads
         .read_prefix(
             "preference",

@@ -41,7 +41,7 @@ async fn raw_gpu_corruption_invalidates_completion_and_retains_the_extent_until_
         &[],
     )
     .unwrap();
-    let store = storage.ssd_store.as_ref().unwrap();
+    let store = &storage.ssd_store.store().unwrap();
     let allocation = storage
         .allocate(NonZeroU64::new(512).unwrap(), None)
         .unwrap();
@@ -53,7 +53,7 @@ async fn raw_gpu_corruption_invalidates_completion_and_retains_the_extent_until_
     )]));
     let key = StateKey::new("gpu-integrity".into(), vec![1]);
     store.ingest_batch(std::iter::once((&key, &source)), false);
-    store.flush().await;
+    storage.ssd_store.flush().await;
     let lease = store
         .discover(std::slice::from_ref(&key))
         .remove(0)

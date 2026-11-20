@@ -9,7 +9,8 @@ fn shared_partitions_require_a_private_directory_and_stable_first_shard() {
     let root = tempfile::tempdir().unwrap();
     let namespace = format!("orbitkv:v2:{:064x}", 1);
     let path = |shards| {
-        open_shared_partition(root.path(), &namespace, shards, 512, None).map(|(path, _lock)| path)
+        open_shared_partition(root.path(), &namespace, shards, 512, None)
+            .map(|(path, _lock, _directory)| path)
     };
     let data = path(1).unwrap();
     let directory = path(2).unwrap();

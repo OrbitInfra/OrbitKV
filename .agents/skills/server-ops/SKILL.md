@@ -84,7 +84,10 @@ reservations across active and stopped partitions. Upgrade all writers before
 enabling it on an existing root. Preserve the root's `.orbitkv-ssd-capacity`
 file and leave headroom for journals. To evict a stopped partition and return
 its capacity, run `orbitkv-cache-manager reclaim-ssd-partition --root PATH --namespace NAMESPACE`.
-Check the exact namespace and allow previous file users to drain before retrying.
+Check the exact namespace. Add `--wait-for-owner-secs N` for a live Manager to
+detach its SSD while serving DRAM. A timeout can leave its SSD detached and
+its reservation charged. Retry after file users drain. Reattach through Manager
+startup within the root budget. Stop older writers that lack this handshake.
 A durability error fences writes until restart, and shrink drops
 out-of-range entries. Check the bounded recovery log/counters before diagnosing
 a startup miss. `docs/storage-persistence.md` defines the commit and GC contract;

@@ -156,6 +156,7 @@ pub(super) enum WatermarkStep {
 /// Two-phase commit: reserve inserts Writing state, commit transitions
 /// to Committed (or removes on failure). Only Committed entries are readable.
 pub(super) struct SsdRingBuffer {
+    closed: bool,
     /// Per-file ring state.
     shards: Vec<SsdShardRing>,
     /// Round-robin cursor for selecting the next write shard.
@@ -196,7 +197,8 @@ impl SsdRingBuffer {
     }
 
     pub(super) fn unverified(&self, key: &StateKey, entry: &SsdIndexEntry) -> bool {
-        matches!(self.entries.get(key), Some(SsdEntryState::Unverified(current))
+        !self.closed
+            && matches!(self.entries.get(key), Some(SsdEntryState::Unverified(current))
             if Arc::ptr_eq(&current.readers, &entry.readers))
     }
 
@@ -258,6 +260,7 @@ impl SsdRingBuffer {
             "SSD cache needs at least one shard"
         );
         Self {
+            closed: false,
             shards: shard_capacities
                 .into_iter()
                 .map(|capacity| SsdShardRing {
@@ -278,12 +281,25 @@ impl SsdRingBuffer {
 
     /// Lookup a Committed entry by key, returning None if Writing, overwritten or past its data TTL.
     pub(super) fn get(&self, key: &StateKey) -> Option<&SsdIndexEntry> {
+        if self.closed {
+            return None;
+        }
         match self.entries.get(key) {
             Some(SsdEntryState::Committed(e)) if self.is_offset_valid(e) && !e.is_expired() => {
                 Some(e)
             }
             _ => None,
         }
+    }
+
+    pub(super) fn closed(&self) -> bool {
+        self.closed
+    }
+
+    /// Withdraw advertised generations while keeping the actual extents for admitted I/O.
+    pub(super) fn close_admission(&mut self) -> impl Iterator<Item = &StateKey> {
+        self.closed = true;
+        self.entries.keys()
     }
 
     pub(super) fn release_invalid(&mut self, key: &StateKey, released: &SsdIndexEntry) {
@@ -508,7 +524,8 @@ impl SsdRingBuffer {
         encoding: Encoding,
         expiration: Option<Arc<crate::storage::expiry::Expiration>>,
     ) -> Option<SsdIndexEntry> {
-        if self.entries.contains_key(key)
+        if self.closed
+            || self.entries.contains_key(key)
             || expiration
                 .as_ref()
                 .is_some_and(|expiry| expiry.is_expired())

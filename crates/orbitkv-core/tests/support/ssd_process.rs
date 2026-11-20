@@ -208,7 +208,6 @@ pub fn spawn(engine: Arc<crate::OrbitKVEngine>) {
     let directory = PathBuf::from(std::env::var_os("ORBITKV_TEST_SSD_PROCESS").unwrap());
     assert!(directory.is_absolute() && directory.is_dir());
     tokio::spawn(async move {
-        let store = engine.storage.ssd_store.as_ref().unwrap().clone();
         let mut last = 0;
         let mut held = None;
         let mut read_task = None;
@@ -229,8 +228,9 @@ pub fn spawn(engine: Arc<crate::OrbitKVEngine>) {
             assert!(command.sequence <= 10_000);
             last = command.sequence;
             let key = key(&command);
-            let mut result = match command.operation.as_str() {
-                "write" => {
+            let store = engine.storage.ssd_store.store();
+            let mut result = match (command.operation.as_str(), store.as_ref()) {
+                ("write", Some(store)) => {
                     let block = fixture(
                         &engine.storage,
                         command.fill.unwrap_or(command.id),
@@ -246,15 +246,15 @@ pub fn spawn(engine: Arc<crate::OrbitKVEngine>) {
                         )
                         .unwrap();
                     store.ingest_batch(std::iter::once((&key, &block)), false);
-                    store.flush().await;
+                    engine.storage.ssd_store.flush().await;
                     drop(block);
                     json!({"present": store.discover(std::slice::from_ref(&key))[0].is_some(), "hash": key.hash})
                 }
-                "read" => match pin(&store, &key) {
+                ("read", Some(store)) => match pin(store, &key) {
                     Some(lease) => read(store.clone(), lease).await,
                     None => json!({"present": false}),
                 },
-                "peer_read" => {
+                ("peer_read", _) => {
                     let result = engine
                         .storage
                         .reads
@@ -273,33 +273,38 @@ pub fn spawn(engine: Arc<crate::OrbitKVEngine>) {
                         _ => panic!("expected one materialized host block"),
                     }
                 }
-                "grant" => match command.grant.as_ref().unwrap().request(&key).await {
+                ("grant", _) => match command.grant.as_ref().unwrap().request(&key).await {
                     Ok(grant) => grant,
                     Err(status) => {
                         json!({"grpc_code": format!("{:?}", status.code()), "detail": status.message()})
                     }
                 },
-                "hold" => {
+                ("hold", Some(store)) => {
                     assert!(held.is_none());
-                    held = pin(&store, &key);
+                    held = pin(store, &key);
                     json!({"present": held.is_some()})
                 }
-                "release" => {
+                ("release", _) => {
                     held = None;
                     json!({})
                 }
-                "read_start" => {
+                ("read_start", Some(store)) => {
                     assert!(read_task.is_none());
-                    let lease = pin(&store, &key).unwrap();
+                    let lease = pin(store, &key).unwrap();
                     read_task = Some(tokio::spawn(read(store.clone(), lease)));
                     json!({})
                 }
-                "read_finish" => read_task.take().unwrap().await.unwrap(),
-                "report" | "stop" => json!({}),
+                ("read_finish", _) => read_task.take().unwrap().await.unwrap(),
+                ("write" | "read" | "hold" | "read_start", None) => json!({"present": false}),
+                ("report" | "stop", _) => json!({}),
                 _ => panic!("unknown test command"),
             };
             result["sequence"] = json!(last);
-            result["state"] = store.process_report();
+            let mut state = store
+                .as_ref()
+                .map_or_else(|| json!({}), |store| store.process_report());
+            state["ssd_attached"] = json!(store.is_some());
+            result["state"] = state;
             let temporary = directory.join("reply.tmp");
             std::fs::write(&temporary, serde_json::to_vec(&result).unwrap()).unwrap();
             std::fs::rename(temporary, directory.join("reply.json")).unwrap();

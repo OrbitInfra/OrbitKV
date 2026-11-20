@@ -171,9 +171,9 @@ async fn cpu_paths() {
         let keys = [key(1)];
         dram.batch_insert(vec![(keys[0].clone(), source.clone())]);
         let peer = Peer::new(&storage, &source);
-        let ssd = storage.ssd_store.as_ref().unwrap();
+        let ssd = &storage.ssd_store.store().unwrap();
         ssd.ingest_batch(std::iter::once((&keys[0], &source)), false);
-        ssd.flush().await;
+        storage.ssd_store.flush().await;
         let lease = ssd
             .discover(&keys)
             .remove(0)
@@ -214,7 +214,7 @@ async fn cpu_paths() {
         for persistent in [false, true] {
             let directory = tempfile::tempdir_in(&root).unwrap();
             let store = self::storage(directory.path(), bytes, persistent);
-            let ssd = store.ssd_store.as_ref().unwrap();
+            let ssd = &store.ssd_store.store().unwrap();
             // Source allocation/initialization is outside timing; each commit
             // still seals a fresh immutable object and includes source CRC work.
             let raw = block(&store, bytes);
@@ -236,7 +236,7 @@ async fn cpu_paths() {
                     )]));
                     let key = key(sequence);
                     ssd.ingest_batch(std::iter::once((&key, &source)), false);
-                    ssd.flush().await;
+                    store.ssd_store.flush().await;
                     assert!(
                         ssd.discover(&[key])[0].is_some(),
                         "write must publish, not time a refusal"
@@ -317,10 +317,10 @@ async fn tier_crossings_scan_once_and_never_publish_corrupt_receives() {
         }
         assert_eq!(crate::integrity::tests::bytes(&metrics, "seal"), seal);
         assert_eq!(crate::integrity::tests::bytes(&metrics, "dram"), 0);
-        let ssd = storage.ssd_store.as_ref().unwrap();
+        let ssd = &storage.ssd_store.store().unwrap();
         let before = crate::integrity::tests::bytes(&metrics, "ssd");
         ssd.ingest_batch(std::iter::once((&key, &source)), false);
-        ssd.flush().await;
+        storage.ssd_store.flush().await;
         assert_eq!(
             crate::integrity::tests::bytes(&metrics, "ssd"),
             before,
