@@ -749,6 +749,8 @@ impl OrbitKVEngine {
         } else {
             Vec::new()
         };
+        // Admitted SSD writes own their leases. A DRAM-only GPU save needs no partition.
+        drop(ssd);
         let returned_layers = trace_future!(
             "save.gpu_copy",
             gpu_context.worker_pool().batch_save(
