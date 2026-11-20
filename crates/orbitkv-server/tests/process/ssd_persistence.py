@@ -10,6 +10,7 @@ import argparse
 import errno
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -86,7 +87,6 @@ class Manager:
         self.log_path = gate.artifacts / f"{len(gate.logs):03d}-manager.log"
         gate.logs.append(str(self.log_path))
         self.log = self.log_path.open("wb")
-        self.http = f"127.0.0.1:{port()}"
         self.address = address or f"127.0.0.1:{port()}"
         command = [
             str(gate.binary),
@@ -104,7 +104,7 @@ class Manager:
             "--addr",
             self.address,
             "--http-addr",
-            self.http,
+            "127.0.0.1:0",
             "--bootstrap-socket",
             str(self.root / "m.sock"),
             *cluster_args,
@@ -163,6 +163,12 @@ class Manager:
     def ready(self):
         self.wait(lambda: (self.control / "ready").exists())
         self.wait(lambda: self.start_message in self.log_path.read_text())
+        log = self.log_path.read_text()
+        listener = re.search(
+            r"Starting Manager HTTP server on (127\.0\.0\.1:[1-9]\d*)", log
+        )
+        assert listener, log
+        self.http = listener[1]
         if self.wait_for_recovery:
             self.recovered()
 

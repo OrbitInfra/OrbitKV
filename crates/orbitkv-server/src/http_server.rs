@@ -318,7 +318,7 @@ pub(crate) async fn start_http_server(
     if let Some(router) = router {
         app = app.merge(router);
     }
-    info!("Starting Manager HTTP server on {addr}");
+    info!("Starting Manager HTTP server on {}", listener.local_addr()?);
 
     let handle = tokio::spawn(async move {
         if let Err(err) = axum::serve(listener, app)
