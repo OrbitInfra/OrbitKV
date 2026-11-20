@@ -564,14 +564,51 @@ pub(crate) enum SsdTier {
 pub(crate) struct SharedPartition {
     directory: std::fs::File,
     active: Mutex<Option<Arc<SsdStore>>>,
+    writer: tokio::sync::mpsc::WeakSender<SsdWriteCommand>,
+    writer_exit: tokio::sync::watch::Receiver<()>,
 }
 
 impl SsdTier {
+    fn shared(
+        directory: std::fs::File,
+        store: Arc<SsdStore>,
+        writer_exit: tokio::sync::watch::Receiver<()>,
+    ) -> Self {
+        Self::Shared(Arc::new(SharedPartition {
+            directory,
+            writer: store.write_tx.downgrade(),
+            writer_exit,
+            active: Mutex::new(Some(store)),
+        }))
+    }
+
     pub(crate) fn store(&self) -> Option<Arc<SsdStore>> {
         match self {
             Self::Disabled => None,
             Self::Local(store) => Some(Arc::clone(store)),
             Self::Shared(partition) => partition.active.lock().clone(),
+        }
+    }
+
+    /// Flush earlier logical writes, including those admitted before detachment.
+    /// The queue handle keeps no SSD store or file registration alive.
+    pub(crate) async fn flush(&self) {
+        let writer = match self {
+            Self::Disabled => return,
+            Self::Local(store) => store.write_tx.clone(),
+            Self::Shared(partition) => match partition.writer.upgrade() {
+                Some(writer) => writer,
+                None => {
+                    // The receiver can still be cancelling queued writes after the last sender drops.
+                    let _ = partition.writer_exit.clone().changed().await;
+                    return;
+                }
+            },
+        };
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if writer.send(SsdWriteCommand::Flush(tx)).await.is_ok() {
+            drop(writer);
+            let _ = rx.await;
         }
     }
 
@@ -792,21 +829,22 @@ impl SsdTier {
             recovered: Mutex::new(recovered),
         });
 
+        let (tier, writer_lifetime) = match partition_directory {
+            Some(directory) => {
+                let (lifetime, exit) = tokio::sync::watch::channel(());
+                (Self::shared(directory, store.clone(), exit), Some(lifetime))
+            }
+            None => (Self::Local(store.clone()), None),
+        };
         SsdStore::spawn_workers(
             &store,
             write_rx,
             prefetch_rx,
             write_inflight,
             prefetch_inflight,
+            writer_lifetime,
         );
-
-        Ok(match partition_directory {
-            Some(directory) => Self::Shared(Arc::new(SharedPartition {
-                directory,
-                active: Mutex::new(Some(store)),
-            })),
-            None => Self::Local(store),
-        })
+        Ok(tier)
     }
 }
 
@@ -995,6 +1033,7 @@ impl SsdStore {
         prefetch_rx: tokio::sync::mpsc::Receiver<PrefetchBatch>,
         write_inflight: usize,
         prefetch_inflight: usize,
+        writer_lifetime: Option<tokio::sync::watch::Sender<()>>,
     ) {
         let io = Arc::clone(&store.io);
 
@@ -1002,6 +1041,7 @@ impl SsdStore {
         let writer_io = Arc::clone(&io);
         tokio::spawn(async move {
             ssd_writer_loop(writer_weak, write_rx, writer_io, write_inflight).await;
+            drop(writer_lifetime);
         });
 
         let prefetch_weak = Arc::downgrade(store);
@@ -1090,15 +1130,6 @@ impl SsdStore {
                     );
                 }
             }
-        }
-    }
-
-    /// Wait for earlier logical write outcomes, including retained failures.
-    /// This is not an fsync barrier or a physical-drain receipt.
-    pub(crate) async fn flush(&self) {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        if self.write_tx.send(SsdWriteCommand::Flush(tx)).await.is_ok() {
-            let _ = rx.await;
         }
     }
 

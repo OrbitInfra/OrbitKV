@@ -308,7 +308,8 @@ The command holds an exclusive lock on the namespace directory. The Manager
 checks that directory during its regular cache maintenance, even when watermarks
 are disabled. It closes SSD admission and withdraws its SSD replicas from the
 inventory. Existing DRAM copies and peer service remain available. An already
-admitted SSD read keeps its backing through completion. Startup for the same
+admitted SSD read keeps its backing through completion. `flush_all` still waits
+for earlier writes to reach a logical outcome. Startup for the same
 namespace waits for root admission and rejects an active release request.
 
 The command retries ownership checks until the wait expires. It releases the

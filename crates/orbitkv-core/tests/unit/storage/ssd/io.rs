@@ -189,7 +189,7 @@ pub(super) mod engine {
             source.set_expiration(expiration.clone()).unwrap();
             let cache_expiry = source.cache_expiry();
             store.ingest_batch(std::iter::once((&key, &source)), false);
-            store.flush().await;
+            storage.ssd_store.flush().await;
             let lease = store
                 .discover(std::slice::from_ref(&key))
                 .remove(0)

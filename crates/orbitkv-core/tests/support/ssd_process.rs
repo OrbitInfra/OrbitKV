@@ -246,7 +246,7 @@ pub fn spawn(engine: Arc<crate::OrbitKVEngine>) {
                         )
                         .unwrap();
                     store.ingest_batch(std::iter::once((&key, &block)), false);
-                    store.flush().await;
+                    engine.storage.ssd_store.flush().await;
                     drop(block);
                     json!({"present": store.discover(std::slice::from_ref(&key))[0].is_some(), "hash": key.hash})
                 }

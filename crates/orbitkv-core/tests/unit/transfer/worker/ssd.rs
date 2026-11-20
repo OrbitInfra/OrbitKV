@@ -211,7 +211,7 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
     let sealed = Arc::new(SealedBlock::from_slots(vec![(raw, NumaNode::UNKNOWN)]));
     let key = StateKey::new("independent-ssd-paths".into(), vec![1]);
     store.ingest_batch([(&key, &sealed)], false);
-    store.flush().await;
+    storage.ssd_store.flush().await;
     drop(sealed);
     drop(payload);
     assert_eq!(storage.cleanup_memory_cache().evicted_blocks, 0);

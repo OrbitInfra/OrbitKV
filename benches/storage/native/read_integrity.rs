@@ -173,7 +173,7 @@ async fn cpu_paths() {
         let peer = Peer::new(&storage, &source);
         let ssd = &storage.ssd_store.store().unwrap();
         ssd.ingest_batch(std::iter::once((&keys[0], &source)), false);
-        ssd.flush().await;
+        storage.ssd_store.flush().await;
         let lease = ssd
             .discover(&keys)
             .remove(0)
@@ -236,7 +236,7 @@ async fn cpu_paths() {
                     )]));
                     let key = key(sequence);
                     ssd.ingest_batch(std::iter::once((&key, &source)), false);
-                    ssd.flush().await;
+                    store.ssd_store.flush().await;
                     assert!(
                         ssd.discover(&[key])[0].is_some(),
                         "write must publish, not time a refusal"
@@ -320,7 +320,7 @@ async fn tier_crossings_scan_once_and_never_publish_corrupt_receives() {
         let ssd = &storage.ssd_store.store().unwrap();
         let before = crate::integrity::tests::bytes(&metrics, "ssd");
         ssd.ingest_batch(std::iter::once((&key, &source)), false);
-        ssd.flush().await;
+        storage.ssd_store.flush().await;
         assert_eq!(
             crate::integrity::tests::bytes(&metrics, "ssd"),
             before,

@@ -659,7 +659,7 @@ impl OrbitKVEngine {
     /// operations retain their backing, extents and admission charges.
     pub async fn flush_all(&self) {
         self.storage.writes.flush().await;
-        self.storage.flush_ssd().await;
+        self.storage.ssd_store.flush().await;
     }
 
     /// Remove abandoned writes. Query futures drain independently of polling.

@@ -244,10 +244,12 @@ fn relinquishment_withdraws_ssd_evidence_and_fences_late_pins_and_commits() {
         ));
         let (store, _queue) = queued_read_store_with_inventory(Some(inventory.clone()), committed);
         let directory = tempfile::tempdir().unwrap();
-        let partition = SsdTier::Shared(Arc::new(SharedPartition {
-            directory: std::fs::File::open(directory.path()).unwrap(),
-            active: Mutex::new(Some(store.clone())),
-        }));
+        let (_writer, exit) = tokio::sync::watch::channel(());
+        let partition = SsdTier::shared(
+            std::fs::File::open(directory.path()).unwrap(),
+            store.clone(),
+            exit,
+        );
         let key = StateKey::new("queued-lease".into(), vec![0]);
         let candidate = store.discover(std::slice::from_ref(&key)).pop().unwrap();
         let held = candidate
@@ -282,6 +284,66 @@ fn relinquishment_withdraws_ssd_evidence_and_fences_late_pins_and_commits() {
         drop(request);
         partition.maintain_cache().unwrap();
         assert!(partition.store().is_none());
+    }
+}
+
+#[tokio::test]
+async fn flush_after_detachment_waits_for_queued_writes_with_or_without_a_live_reader() {
+    for keep_reader in [true, false] {
+        let (mut store, _queue) = queued_read_store();
+        let (writer, mut commands) = tokio::sync::mpsc::channel(2);
+        Arc::get_mut(&mut store).unwrap().write_tx = writer;
+        let previous_owner = Arc::downgrade(&store);
+        let (writer_lifetime, exit) = tokio::sync::watch::channel(());
+        let directory = tempfile::tempdir().unwrap();
+        let tier = SsdTier::shared(
+            std::fs::File::open(directory.path()).unwrap(),
+            store.clone(),
+            exit,
+        );
+        let resident = StateKey::new("queued-lease".into(), vec![0]);
+        let reader = keep_reader.then(|| {
+            store
+                .discover(&[resident])
+                .pop()
+                .unwrap()
+                .unwrap()
+                .pin(crate::transfer_engine::tests::demand())
+                .unwrap()
+        });
+        let incoming = StateKey::new("queued-lease".into(), vec![1]);
+        let block = Arc::new(SealedBlock::for_policy_test(SSD_ALIGNMENT as u64));
+        store.ingest_batch([(&incoming, &block)], false);
+
+        let request = std::fs::File::open(directory.path()).unwrap();
+        request.lock().unwrap();
+        tier.maintain_cache().unwrap();
+        drop(store);
+        assert!(tier.store().is_none());
+        assert_eq!(previous_owner.upgrade().is_some(), keep_reader);
+
+        let flush = tier.flush();
+        tokio::pin!(flush);
+        assert!(futures::poll!(&mut flush).is_pending());
+        assert!(matches!(commands.try_recv(), Ok(SsdWriteCommand::Write(_))));
+        if keep_reader {
+            let SsdWriteCommand::Flush(receipt) = commands.try_recv().unwrap() else {
+                panic!("expected a writer flush barrier");
+            };
+            assert!(futures::poll!(&mut flush).is_pending());
+            receipt.send(()).unwrap();
+            flush.await;
+            assert!(reader.unwrap().entry.readers.load(Ordering::Acquire) > 0);
+        } else {
+            assert!(matches!(
+                commands.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+            ));
+            drop(commands);
+            assert!(futures::poll!(&mut flush).is_pending());
+            drop(writer_lifetime);
+            flush.await;
+        }
     }
 }
 
