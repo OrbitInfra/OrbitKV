@@ -5,6 +5,7 @@ use std::num::NonZeroU64;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use super::config::MAX_SSD_SHARDS;
 use super::persistence::{frame, read_frame};
@@ -44,13 +45,26 @@ fn shard_index(name: &OsStr) -> io::Result<Option<usize>> {
         })
 }
 
-fn lock_root(root: &Path) -> io::Result<File> {
+fn lock_root(root: &Path, try_only: bool) -> io::Result<File> {
     let directory = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_DIRECTORY)
         .open(root)?;
-    directory.lock()?;
+    if try_only {
+        directory.try_lock().map_err(Error::from)?;
+    } else {
+        directory.lock()?;
+    }
     Ok(directory)
+}
+
+/// Maintenance holds an exclusive flock on this private namespace directory.
+pub(super) fn release_requested(directory: &File) -> io::Result<bool> {
+    match directory.try_lock_shared() {
+        Ok(()) => directory.unlock().map(|()| false),
+        Err(fs::TryLockError::WouldBlock) => Ok(true),
+        Err(fs::TryLockError::Error(error)) => Err(error),
+    }
 }
 
 fn stored_limit(root: &Path) -> io::Result<Option<u64>> {
@@ -187,7 +201,7 @@ pub(super) fn admit(
     shard_bytes: u64,
     configured: Option<u64>,
 ) -> io::Result<Admission> {
-    let directory = lock_root(root)?;
+    let directory = lock_root(root, false)?;
     let stored = stored_limit(root)?;
     if let (Some(existing), Some(requested)) = (stored, configured)
         && existing != requested
@@ -218,9 +232,14 @@ pub(super) fn admit(
     })
 }
 
-/// Evict the named offline partition and release its shard payload reservation.
-/// Returns the sum of shard lengths released by this invocation.
-pub fn reclaim_shared_ssd_partition(root: &Path, namespace: &str) -> io::Result<u64> {
+/// Evict one partition and return the sum of the shard lengths released.
+/// A zero wait requires an offline owner. A nonzero wait asks the live Manager
+/// to relinquish this SSD tier and bounds waiting for admission and file users.
+pub fn reclaim_shared_ssd_partition(
+    root: &Path,
+    namespace: &str,
+    wait: Duration,
+) -> io::Result<u64> {
     if !orbitkv_state::is_storage_namespace(namespace) {
         return Err(Error::new(
             ErrorKind::InvalidInput,
@@ -228,11 +247,81 @@ pub fn reclaim_shared_ssd_partition(root: &Path, namespace: &str) -> io::Result<
         ));
     }
     files::outside_shared_partition(root)?;
-    let _root_lock = lock_root(root)?;
     let partition = root.join(format!("{PARTITION_PREFIX}{namespace}"));
-    files::check_shared_directory(&partition)?;
+    let journal_path = partition.join(JOURNAL_NAME);
+    let deadline =
+        if wait.is_zero() {
+            None
+        } else {
+            Some(Instant::now().checked_add(wait).ok_or_else(|| {
+                Error::new(ErrorKind::InvalidInput, "SSD release wait is too large")
+            })?)
+        };
+    let _request = if deadline.is_some() {
+        files::check_shared_directory(&partition)?;
+        let request = File::open(&partition)?;
+        wait_for_owner(deadline, || request.try_lock().map_err(Error::from))?;
+        Some(request)
+    } else {
+        None
+    };
+    let (_root_lock, mut locked) = wait_for_owner(deadline, || {
+        let directory = lock_root(root, deadline.is_some())?;
+        files::check_shared_directory(&partition)?;
+        let files = lock_partition_files(&partition, &journal_path)?;
+        Ok((directory, files))
+    })?;
+    let released = locked.identities.iter().try_fold(0u64, |total, meta| {
+        total
+            .checked_add(meta.len())
+            .ok_or_else(|| Error::new(ErrorKind::InvalidData, "shared SSD payload size overflow"))
+    })?;
+    persistence::discard_partition_records(&mut locked.journal, namespace, &locked.identities)?;
+    persistence::sync_parent(&journal_path)?;
+    persistence::fault("ssd_reclaim_journal_synced");
+    for file in &locked.shards {
+        file.set_len(0)?;
+        file.sync_all()?;
+        persistence::fault("ssd_reclaim_shard_synced");
+    }
+    Ok(released)
+}
+
+/// Retry only lock/lease preflight. The caller owns every lock before any
+/// durable mutation and never retries journal or shard I/O here.
+fn wait_for_owner<T>(
+    deadline: Option<Instant>,
+    mut attempt: impl FnMut() -> io::Result<T>,
+) -> io::Result<T> {
+    let Some(deadline) = deadline else {
+        return attempt();
+    };
+    loop {
+        match attempt() {
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                std::thread::sleep(remaining.min(Duration::from_millis(50)));
+                if Instant::now() >= deadline {
+                    return Err(Error::new(
+                        ErrorKind::TimedOut,
+                        format!("timed out waiting for shared SSD ownership: {error}"),
+                    ));
+                }
+            }
+            result => return result,
+        }
+    }
+}
+
+struct LockedPartition {
+    shards: Vec<File>,
+    identities: Vec<fs::Metadata>,
+    journal: File,
+}
+
+fn lock_partition_files(partition: &Path, journal_path: &Path) -> io::Result<LockedPartition> {
     let mut paths = Vec::new();
-    for entry in fs::read_dir(&partition)? {
+    for entry in fs::read_dir(partition)? {
         let entry = entry?;
         if let Some(index) = shard_index(&entry.file_name())? {
             if index >= MAX_SSD_SHARDS {
@@ -253,29 +342,20 @@ pub fn reclaim_shared_ssd_partition(root: &Path, namespace: &str) -> io::Result<
     }
     let mut shards = Vec::with_capacity(paths.len());
     let mut identities = Vec::with_capacity(paths.len());
-    let mut released = 0u64;
     for (_, path) in paths {
         let (file, meta) = open_partition_file(&path)?;
         files::lock_shard(&file, &path)?;
         files::previous_file_users_drained(&file)?;
-        released = released.checked_add(meta.len()).ok_or_else(|| {
-            Error::new(ErrorKind::InvalidData, "shared SSD payload size overflow")
-        })?;
-        identities.push(meta);
         shards.push(file);
+        identities.push(meta);
     }
-    let journal_path = partition.join(JOURNAL_NAME);
-    let (mut journal, _) = open_partition_file(&journal_path)?;
+    let (journal, _) = open_partition_file(journal_path)?;
     files::previous_file_users_drained(&journal)?;
-    persistence::discard_partition_records(&mut journal, namespace, &identities)?;
-    persistence::sync_parent(&journal_path)?;
-    persistence::fault("ssd_reclaim_journal_synced");
-    for file in &shards {
-        file.set_len(0)?;
-        file.sync_all()?;
-        persistence::fault("ssd_reclaim_shard_synced");
-    }
-    Ok(released)
+    Ok(LockedPartition {
+        shards,
+        identities,
+        journal,
+    })
 }
 
 fn open_partition_file(path: &Path) -> io::Result<(File, fs::Metadata)> {

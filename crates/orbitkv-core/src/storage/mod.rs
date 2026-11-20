@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use std::num::NonZeroU64;
 use std::sync::{Arc, Weak};
 
-use self::ssd::SsdStore;
+use self::ssd::SsdTier;
 use crate::EngineConfig;
 use crate::block::{SealedBlock, StateKey};
 use crate::memory::AllocateFn;
@@ -53,7 +53,7 @@ pub(crate) struct Storage {
     pub(crate) dram: Arc<DramStore>,
     pub(crate) reads: ReadCoordinator,
     pub(crate) writes: PublishQueue,
-    pub(crate) ssd_store: Option<Arc<SsdStore>>,
+    pub(crate) ssd_store: SsdTier,
     peer_transport: Arc<TransferEngine>,
     blockwise_alloc: bool,
     memory_watermarks: Option<(u64, u64)>,
@@ -201,7 +201,7 @@ impl Storage {
         });
         let ssd_store = ssd_cache_config
             .map(|cfg| {
-                SsdStore::new(
+                SsdTier::open(
                     cfg,
                     allocate_fn.clone(),
                     allocation_footprint_fn.clone(),
@@ -211,7 +211,8 @@ impl Storage {
                 )
                 .map_err(|error| format!("Failed to initialise SSD cache: {error}"))
             })
-            .transpose()?;
+            .transpose()?
+            .unwrap_or_default();
         let engine = Arc::new({
             let remote_fetch = global_index.as_ref().and_then(|ms| {
                 Some(Arc::new(PeerReader::new(
@@ -260,7 +261,7 @@ impl Storage {
         });
 
         let _ = storage_ref.set(Arc::downgrade(&engine));
-        if let Some(ssd) = &engine.ssd_store {
+        if let Some(ssd) = engine.ssd_store.store() {
             ssd.start_recovery();
         }
 
@@ -268,7 +269,7 @@ impl Storage {
     }
 
     pub(crate) fn is_ssd_enabled(&self) -> bool {
-        self.ssd_store.is_some()
+        self.ssd_store.store().is_some()
     }
 
     pub(crate) fn is_numa_enabled(&self) -> bool {
@@ -321,7 +322,7 @@ impl Storage {
 
     /// Flush the SSD writer: waits until all enqueued writes are committed.
     pub(crate) async fn flush_ssd(&self) {
-        if let Some(ssd) = &self.ssd_store {
+        if let Some(ssd) = self.ssd_store.store() {
             ssd.flush().await;
         }
     }
@@ -400,7 +401,7 @@ impl Storage {
             dram_blocks: self.dram.expire(RECLAIM_BATCH_SIZE),
             ssd_blocks: self
                 .ssd_store
-                .as_ref()
+                .store()
                 .map_or(0, |ssd| ssd.expire(RECLAIM_BATCH_SIZE)),
         }
     }

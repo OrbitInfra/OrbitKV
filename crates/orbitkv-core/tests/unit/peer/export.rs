@@ -301,7 +301,7 @@ fn exports() -> (
     (
         PeerExports::new(
             dram,
-            None,
+            crate::storage::ssd::SsdTier::Disabled,
             Some(membership.clone()),
             crate::transfer_engine::tests::engine(),
             Duration::ZERO,

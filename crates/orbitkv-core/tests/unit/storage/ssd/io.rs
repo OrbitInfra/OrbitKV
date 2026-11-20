@@ -174,7 +174,7 @@ pub(super) mod engine {
     async fn engine_files_preserve_bytes_metadata_shards_and_leased_generations() {
         let dir = directory();
         let storage = storage(dir.path().to_path_buf(), 2048, 2);
-        let store = storage.ssd_store.as_ref().unwrap();
+        let store = &storage.ssd_store.store().unwrap();
         assert!(
             store.io.engine_file(0).is_some(),
             "standalone SSD must create the selected engine without a global index"
@@ -265,7 +265,7 @@ pub(super) mod engine {
     async fn engine_files_reject_misalignment_and_truncated_files() {
         let dir = directory();
         let storage = storage(dir.path().join("cache.bin"), 4096, 1);
-        let store = storage.ssd_store.as_ref().unwrap();
+        let store = &storage.ssd_store.store().unwrap();
         let file = store.io.engine_file(0).unwrap();
         let source = allocation(&storage, 512, 0x47);
         let slice = TransferSlice {
@@ -386,7 +386,7 @@ pub(super) mod engine {
     async fn engine_files_cancel_before_submit_and_drain_detached_receivers() {
         let dir = directory();
         let storage = storage(dir.path().join("cache.bin"), 4096, 1);
-        let store = storage.ssd_store.as_ref().unwrap();
+        let store = &storage.ssd_store.store().unwrap();
         let file = store.io.engine_file(0).unwrap();
         let source = allocation(&storage, 512, 0x69);
         let slices = [TransferSlice {
@@ -480,7 +480,7 @@ pub(super) mod engine {
         let size: usize = (5 << 20) + 137;
         let total = (4096 + size).next_multiple_of(4096);
         let storage = storage(dir.path().join("vectors.bin"), total as u64, 1);
-        let store = storage.ssd_store.as_ref().unwrap();
+        let store = &storage.ssd_store.store().unwrap();
         let real = store.io.engine_file(0).unwrap();
         let backend = Arc::new(ReceiptControl {
             kind: None,
@@ -669,7 +669,7 @@ pub(super) mod engine {
         ] {
             let dir = directory();
             let storage = storage(dir.path().join("cache.bin"), 512, 1);
-            let store = storage.ssd_store.as_ref().unwrap();
+            let store = &storage.ssd_store.store().unwrap();
             let real = store.io.engine_file(0).unwrap();
             let backend = Arc::new(ReceiptControl {
                 kind: Some(kind),

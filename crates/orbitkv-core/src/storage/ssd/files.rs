@@ -97,7 +97,7 @@ pub(super) fn open_shared_partition(
     shards: usize,
     shard_capacity: u64,
     root_capacity: Option<u64>,
-) -> std::io::Result<(PathBuf, super::shared_root::Admission)> {
+) -> std::io::Result<(PathBuf, super::shared_root::Admission, std::fs::File)> {
     use std::fs::DirBuilder;
     use std::os::unix::fs::DirBuilderExt;
 
@@ -114,11 +114,19 @@ pub(super) fn open_shared_partition(
         }
         Err(error) => return Err(error),
     }
-    if shards == 1 {
-        Ok((directory.join("shard-000000.dat"), lock))
-    } else {
-        Ok((directory, lock))
+    let signal = std::fs::File::open(&directory)?;
+    if super::shared_root::release_requested(&signal)? {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "shared SSD partition is being reclaimed",
+        ));
     }
+    let path = if shards == 1 {
+        directory.join("shard-000000.dat")
+    } else {
+        directory
+    };
+    Ok((path, lock, signal))
 }
 
 pub(super) fn check_shared_directory(directory: &Path) -> std::io::Result<()> {
@@ -275,10 +283,11 @@ pub(super) fn open_cache_files(
 
 pub(super) fn lock_shard(file: &std::fs::File, path: &Path) -> std::io::Result<()> {
     file.try_lock().map_err(|err| {
-        std::io::Error::other(format!(
-            "SSD shard is already owned: {}: {err}",
-            path.display()
-        ))
+        let error = std::io::Error::from(err);
+        std::io::Error::new(
+            error.kind(),
+            format!("SSD shard is already owned: {}: {error}", path.display()),
+        )
     })
 }
 

@@ -64,7 +64,7 @@ impl SsdStore {
                             "SSD watermark candidate changed under its owner lock",
                         )
                     })?;
-                    self.retire_inventory(vec![key]);
+                    self.retire_inventory([&key]);
                     stats.evicted_blocks += 1;
                     stats.evicted_bytes += entry.len;
                     core_metrics().ssd_watermark_evictions.add(1, &[]);

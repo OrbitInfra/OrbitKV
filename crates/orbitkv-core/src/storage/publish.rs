@@ -9,7 +9,7 @@ use crate::PublishDiagnostic;
 use crate::block::{InflightBlock, RawBlock, SealedBlock, SlotInsertResult, StateKey};
 use crate::memory::numa::NumaNode;
 use crate::metrics::core_metrics;
-use crate::storage::ssd::SsdStore;
+use crate::storage::ssd::SsdTier;
 
 use super::dram::DramStore;
 
@@ -127,7 +127,7 @@ pub(crate) struct PublishQueue {
 }
 
 impl PublishQueue {
-    pub(super) fn spawn(dram: Arc<DramStore>, ssd: Option<Arc<SsdStore>>) -> std::io::Result<Self> {
+    pub(super) fn spawn(dram: Arc<DramStore>, ssd: SsdTier) -> std::io::Result<Self> {
         let (insert_tx, insert_rx) = std::sync::mpsc::channel();
         let worker = PublishWorker::new(dram, ssd);
         std::thread::Builder::new()
@@ -166,12 +166,12 @@ impl PublishQueue {
 
 struct PublishWorker {
     dram: Arc<DramStore>,
-    ssd: Option<Arc<SsdStore>>,
+    ssd: SsdTier,
     inflight: HashMap<StateKey, InflightBlock>,
 }
 
 impl PublishWorker {
-    fn new(dram: Arc<DramStore>, ssd: Option<Arc<SsdStore>>) -> Self {
+    fn new(dram: Arc<DramStore>, ssd: SsdTier) -> Self {
         Self {
             dram,
             ssd,
@@ -328,7 +328,7 @@ impl PublishWorker {
 
         if !sealed_blocks.is_empty() {
             self.dram.batch_insert_refs(&sealed_blocks);
-            if let Some(ssd) = &self.ssd {
+            if let Some(ssd) = self.ssd.store() {
                 ssd.ingest_batch_diagnostic(
                     sealed_blocks.iter().map(|(key, block)| (key, block)),
                     false,

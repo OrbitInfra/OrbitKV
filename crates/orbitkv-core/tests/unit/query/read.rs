@@ -110,7 +110,12 @@ async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
     {
         let (store, _queued) = crate::storage::ssd::tests::query_store(read_path);
         let cache = Arc::new(DramStore::new(4096, false, None, None, 0));
-        let scheduler = ReadCoordinator::new(cache.clone(), Some(store), None, 0);
+        let scheduler = ReadCoordinator::new(
+            cache.clone(),
+            crate::storage::ssd::SsdTier::Local(store),
+            None,
+            0,
+        );
         let deadline = Instant::now() + Duration::from_secs(30);
         let shared = Arc::new(SharedRead::new());
         scheduler.reads.lock().insert(
@@ -185,7 +190,8 @@ async fn peer_ready_prefix_never_becomes_a_dram_cache_insert() {
 async fn a_later_shared_read_cannot_reuse_expired_owners() {
     let (store, _queued) = crate::storage::ssd::tests::query_store(None);
     let cache = Arc::new(DramStore::new(4096, false, None, None, 0));
-    let coordinator = ReadCoordinator::new(cache, Some(store), None, 0);
+    let coordinator =
+        ReadCoordinator::new(cache, crate::storage::ssd::SsdTier::Local(store), None, 0);
     let deadline = Instant::now() + Duration::from_secs(60);
     let held = block();
     let expiry = crate::storage::expiry::Expiration::new(Some(Duration::from_secs(60)))

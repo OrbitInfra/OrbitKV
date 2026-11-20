@@ -726,7 +726,8 @@ impl OrbitKVEngine {
 
         let expiration = crate::storage::expiry::Expiration::new(self.storage.cache_ttl)
             .map_err(EngineError::Storage)?;
-        let ssd_writes = match &self.storage.ssd_store {
+        let ssd = self.storage.ssd_store.store();
+        let ssd_writes = match &ssd {
             Some(store)
                 if store.gpu_io.available() && self.storage.codec == crate::StorageCodec::None =>
             {
@@ -742,11 +743,7 @@ impl OrbitKVEngine {
             _ => Vec::new(),
         };
         let codec_groups = if self.storage.codec != crate::StorageCodec::None
-            && self
-                .storage
-                .ssd_store
-                .as_ref()
-                .is_some_and(|store| store.gpu_io.available())
+            && ssd.as_ref().is_some_and(|store| store.gpu_io.available())
         {
             prepare_codec_groups(&namespace, &topology, &layer_contexts, expiration.clone())?
         } else {

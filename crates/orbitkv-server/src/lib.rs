@@ -365,7 +365,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum MaintenanceCommand {
-    /// Evict all cached blocks and release the payload reservation of one offline SSD partition.
+    /// Evict all cached blocks and release one shared SSD partition's payload reservation.
     ReclaimSsdPartition {
         /// Existing shared SSD root used by the Managers.
         #[arg(long)]
@@ -373,6 +373,9 @@ enum MaintenanceCommand {
         /// Exact storage namespace of the partition to reclaim.
         #[arg(long, value_parser = parse_storage_namespace)]
         namespace: String,
+        /// Ask a serving owner to detach its SSD tier and wait up to this many seconds for file users.
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+        wait_for_owner_secs: Option<u64>,
     },
 }
 
@@ -699,9 +702,13 @@ fn initialize_registry(cli: &Cli) -> Result<CudaTensorRegistry, Box<dyn Error>> 
 pub fn run() -> Result<(), Box<dyn Error>> {
     let mut matches = manager_command().get_matches();
     if matches.subcommand().is_some() {
-        let MaintenanceCommand::ReclaimSsdPartition { root, namespace } =
-            MaintenanceCommand::from_arg_matches_mut(&mut matches)?;
-        let bytes = orbitkv_core::reclaim_shared_ssd_partition(&root, &namespace)?;
+        let MaintenanceCommand::ReclaimSsdPartition {
+            root,
+            namespace,
+            wait_for_owner_secs,
+        } = MaintenanceCommand::from_arg_matches_mut(&mut matches)?;
+        let wait = Duration::from_secs(wait_for_owner_secs.unwrap_or_default());
+        let bytes = orbitkv_core::reclaim_shared_ssd_partition(&root, &namespace, wait)?;
         println!("Reclaimed {bytes} payload bytes from {namespace}");
         return Ok(());
     }

@@ -14,9 +14,10 @@ exercises recovery of a surviving shard by another Manager.
 [Shared-root partitions](storage-persistence.md#shared-root-namespace-partitions)
 serve concurrent namespaces with per-partition budgets and an optional root-wide
 payload limit covering active and stopped partitions. Operators can
-[reclaim an offline partition](storage-persistence.md#reclaim-an-offline-partition)
-after its writer and file users have drained. Live-owner coordination and
-cross-host fencing remain open.
+[reclaim a partition offline](storage-persistence.md#reclaim-an-offline-partition)
+or [request release from a serving Manager](storage-persistence.md#relinquish-a-live-partition).
+Capacity becomes available after file users drain and reclamation commits.
+Cross-host fencing remains open.
 Source implementation and CPU controls do not qualify installed GPU profiles,
 which remain unqualified.
 Each coherent PR stops for review before dependent work starts. Research designs
@@ -95,7 +96,7 @@ and [coordination][LC]; **F** = [FlexKV tiers/integration][F] and [distributed r
 | Host DRAM | **Have:** bounded pinned pools, replicas and leased restores. [Policies](cache-policies.md). | L/F/V host tiers, M memory objects |
 | SSD surviving Manager restart | **Partial:** opt-in [durable journal and checksum-gated recovery](storage-persistence.md); default still truncates. Tail recovery preserves a verified prefix; capacity-derived metadata admission stays bounded. CPU process-crash controls run on ext4/tmpfs; installed NVMe serving and power-loss behavior remain unqualified. | L/F disk and V filesystem tiers; persistence needs a separate crash contract |
 | Peer DRAM/SSD cluster tier | **Partial:** inventory discovery, source-owned SSD preparation and OrbiTE reads exist; durable cluster recovery/node-loss qualification remain open. [Distributed cache](distributed-cache.md). | F distributed reuse, L P2P, M replicas |
-| Shared filesystem / 3FS mount | **Partial:** [namespace partitions](storage-persistence.md#shared-root-namespace-partitions) share one root with exclusive writers, a durable payload limit, offline partition reclamation and checksum-gated recovery on the same host. Live-owner coordination, cross-host fencing and installed 3FS remain open. | L filesystem/HF3FS, V secondary filesystem, F remote storage |
+| Shared filesystem / 3FS mount | **Partial:** [namespace partitions](storage-persistence.md#shared-root-namespace-partitions) share one root with exclusive writers, a durable payload limit, offline and live partition reclamation, and checksum-gated recovery on the same host. Cross-host fencing and installed 3FS remain open. | L filesystem/HF3FS, V secondary filesystem, F remote storage |
 
 ### Distributed behavior
 
@@ -257,9 +258,10 @@ requester must observe the old placement retire, obtain a fresh grant and read
 the verified bytes over TCP. Distinct namespace partitions now accept concurrent
 writers under one root. Each has its own bounded ring and reader holds. Root-wide
 admission counts active and stopped shards through concurrent starts, crashes and
-resizing. Offline reclamation durably retires cache records before returning
-capacity to another namespace. Coordinated release by a serving owner and
-physical host or volume loss remain open.
+resizing. A serving Manager can detach its SSD partition while retaining DRAM
+service. Offline and cooperative reclamation wait for file users to drain and
+durably retire cache records before returning capacity to another namespace.
+Cross-host fencing and physical host or volume loss remain open.
 
 **CPU now:** multi-process etcd/TCP faults, epochs, bounded snapshots/events,
 router contracts, shared-file races/GC, tenant isolation and dedup accounting.

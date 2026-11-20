@@ -52,7 +52,7 @@ pub enum PeerError {
 /// Directory candidates cannot bypass this owner's incarnation/version checks.
 pub struct PeerExports {
     dram: Arc<crate::storage::dram::DramStore>,
-    ssd: Option<Arc<crate::storage::ssd::SsdStore>>,
+    ssd: crate::storage::ssd::SsdTier,
     membership: Option<Arc<orbitkv_catalog::MembershipView>>,
     locks: TransferLockManager,
     transport: Arc<crate::transfer_engine::TransferEngine>,
@@ -61,7 +61,7 @@ pub struct PeerExports {
 impl PeerExports {
     pub(crate) fn new(
         dram: Arc<crate::storage::dram::DramStore>,
-        ssd: Option<Arc<crate::storage::ssd::SsdStore>>,
+        ssd: crate::storage::ssd::SsdTier,
         membership: Option<Arc<orbitkv_catalog::MembershipView>>,
         transport: Arc<crate::transfer_engine::TransferEngine>,
         timeout: Duration,
@@ -130,7 +130,7 @@ impl PeerExports {
             return Ok(blocks);
         }
 
-        let ssd = self.ssd.as_ref().ok_or(PeerError::StaleReplica)?;
+        let ssd = self.ssd.store().ok_or(PeerError::StaleReplica)?;
         let leases = ssd
             .pin_residencies(records, options)
             .ok_or(PeerError::StaleReplica)?;

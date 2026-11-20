@@ -41,7 +41,7 @@ async fn raw_gpu_corruption_invalidates_completion_and_retains_the_extent_until_
         &[],
     )
     .unwrap();
-    let store = storage.ssd_store.as_ref().unwrap();
+    let store = &storage.ssd_store.store().unwrap();
     let allocation = storage
         .allocate(NonZeroU64::new(512).unwrap(), None)
         .unwrap();

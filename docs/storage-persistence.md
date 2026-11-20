@@ -295,6 +295,35 @@ It also checks that a neighboring Manager can still read its data and another
 namespace can use the released capacity. Cross-host fencing and physical host
 or volume loss require separate qualification.
 
+### Relinquish a live partition
+
+On the Manager's host, add a positive wait in seconds to ask a serving Manager
+to relinquish **all** SSD blocks in the named partition. For example:
+
+```sh
+orbitkv-cache-manager reclaim-ssd-partition --root "$ROOT" --namespace "$STORAGE_NAMESPACE" --wait-for-owner-secs 30
+```
+
+The command holds an exclusive lock on the namespace directory. The Manager
+checks that directory during its regular cache maintenance, even when watermarks
+are disabled. It closes SSD admission and withdraws its SSD replicas from the
+inventory. Existing DRAM copies and peer service remain available. An already
+admitted SSD read keeps its backing through completion. Startup for the same
+namespace waits for root admission and rejects an active release request.
+
+The command retries ownership checks until the wait expires. It releases the
+root lock between attempts so other namespaces can start within the remaining
+budget. Once the old writer, file descriptions and kernel I/O drain, it uses
+the same journal and shard sync sequence as offline reclamation. The wait
+bounds lock contention and drain, and a sync already in progress runs to
+completion. Success reports the payload bytes actually released.
+
+A timeout or process exit releases the request lock. If the Manager already
+observed the request, its SSD tier stays detached. Retry the command to finish
+reclamation. To attach the partition again, restart its Manager with an
+available reservation. An older Manager that cannot observe the request keeps
+its shard locks. Stop it before using offline reclamation.
+
 ## Exclusive handoff after owner loss
 
 On Linux, a replacement Manager can reopen a surviving private shard and its

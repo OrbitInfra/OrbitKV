@@ -535,7 +535,9 @@ class Gate:
         ]
 
         def reclaim(*, released=None, denied=None):
-            run = subprocess.run(command, capture_output=True, text=True, timeout=30)
+            run = subprocess.run(
+                command, check=False, capture_output=True, text=True, timeout=30
+            )
             if denied is not None:
                 assert run.returncode != 0 and denied in run.stderr, run
             else:
@@ -629,6 +631,91 @@ class Gate:
         assert policy.read_bytes() == initial_policy
         newcomer.close()
         neighbor.close()
+
+    def relinquish_live_partition(self, root):
+        root.mkdir()
+        donor = self.manager(
+            root, shared_namespace=1, capacity=2048, root_capacity=3072
+        )
+        neighbor = self.manager(root, shared_namespace=2, capacity=1024)
+        for key in (5, 6):
+            assert donor.call("write", id=key, namespace=1)["present"]
+        donor.read(5, namespace=1, operation="peer_read")  # warm one copy in DRAM
+        assert neighbor.call("write", id=8, namespace=2)["present"]
+        namespace = f"orbitkv:v2:{1:064x}"
+        partition = root / f"orbitkv-ssd-{namespace}"
+        shard, journal = (
+            partition / "shard-000000.dat",
+            partition / "shard-000000.dat.index",
+        )
+        original = (shard.read_bytes(), journal.read_bytes())
+        command = [
+            str(self.binary),
+            "reclaim-ssd-partition",
+            "--root",
+            str(root),
+            "--namespace",
+            namespace,
+            "--wait-for-owner-secs",
+        ]
+        donor.pause("ssd_read_receipt")
+        donor.call("read_start", id=6, namespace=1)
+        donor.reached("ssd_read_receipt")
+        with shard.open("rb") as prior_file_user:
+            with subprocess.Popen(command + ["90"]) as request:
+                try:
+                    donor.wait(
+                        lambda: not donor.call("report")["state"]["ssd_attached"]
+                    )
+                    donor.read(6, namespace=1, present=False)
+                    assert not donor.call("write", id=7, namespace=1)["present"]
+                    donor.read(5, namespace=1, operation="peer_read")
+                    neighbor.read(8, namespace=2)
+                    self.manager(
+                        root,
+                        shared_namespace=1,
+                        capacity=2048,
+                        reject_with="shared SSD partition is being reclaimed",
+                    ).close()
+                    self.manager(
+                        root,
+                        shared_namespace=3,
+                        capacity=2048,
+                        reject_with="shared SSD root capacity exceeded",
+                    ).close()
+                    assert request.poll() is None
+                    assert (shard.read_bytes(), journal.read_bytes()) == original
+                finally:
+                    request.kill()
+                assert request.wait(timeout=10) == -signal.SIGKILL
+            # The admitted read still returns its original bytes after detachment.
+            donor.release("ssd_read_receipt")
+            donor.read(6, namespace=1, operation="read_finish")
+            timed_out = subprocess.run(
+                command + ["1"], check=False, capture_output=True, text=True, timeout=15
+            )
+            assert (
+                timed_out.returncode != 0
+                and "drained prior file users" in timed_out.stderr
+            ), timed_out
+            assert not donor.call("report")["state"]["ssd_attached"]
+            assert (prior_file_user.read(), journal.read_bytes()) == original
+
+        completed = subprocess.run(
+            command + ["30"], check=True, capture_output=True, text=True, timeout=40
+        )
+        assert (
+            completed.stdout.strip() == f"Reclaimed 2048 payload bytes from {namespace}"
+        )
+        assert shard.stat().st_size == 0 and len(frames(journal)) == 1
+        newcomer = self.manager(root, shared_namespace=3, capacity=2048)
+        assert newcomer.call("write", id=9, namespace=3)["present"]
+        newcomer.read(9, namespace=3)
+        neighbor.read(8, namespace=2)
+        donor.read(5, namespace=1, operation="peer_read")
+        newcomer.close()
+        neighbor.close()
+        donor.close()
 
     def shared_partition_reopen(self, root):
         root.mkdir()
@@ -1045,6 +1132,7 @@ def main():
     gate.case("shared-partition-reopen", gate.shared_partition_reopen)
     gate.case("shared-root-capacity", gate.shared_root_capacity)
     gate.case("reclaim-offline-shared-partition", gate.reclaim_offline_partition)
+    gate.case("reclaim-live-shared-partition", gate.relinquish_live_partition)
     gate.case("ttl-late-write", lambda path: gate.ttl(path, False))
     gate.case("ttl-during-recovery-verification", lambda path: gate.ttl(path, True))
     gate.case("prior-file-user-blocks-restart", gate.old_file_user)

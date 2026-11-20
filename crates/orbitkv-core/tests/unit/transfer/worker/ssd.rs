@@ -189,7 +189,7 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
         &[],
     )
     .unwrap();
-    let store = storage.ssd_store.as_ref().unwrap();
+    let store = &storage.ssd_store.store().unwrap();
     assert!(store.gpu_io.available());
     let padded = payload.len().next_multiple_of(512);
     let allocation = storage

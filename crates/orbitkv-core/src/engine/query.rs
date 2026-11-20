@@ -84,7 +84,7 @@ impl OrbitKVEngine {
                 .collect();
             let candidates = crate::planning::discover::discover(
                 &self.storage.dram,
-                self.storage.ssd_store.as_ref(),
+                self.storage.ssd_store.store().as_ref(),
                 self.storage.global_index.as_ref(),
                 &topology.cache_namespace,
                 &encoded,
