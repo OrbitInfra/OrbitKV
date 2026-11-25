@@ -204,6 +204,8 @@ impl SegmentFetcher for PeerReader {
             .flat_map(|b| &b.slots)
             .map(|s| s.k_size + s.v_size)
             .sum();
+        #[cfg(feature = "test-hooks")]
+        crate::test_faults::pause("peer_read_authorized").await;
         let (result, transfer_timing) = match fetch_blocks_via_peer(
             &self.transfer,
             &self.allocate_fn,

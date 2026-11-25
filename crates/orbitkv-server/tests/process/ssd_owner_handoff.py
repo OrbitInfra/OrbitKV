@@ -9,6 +9,7 @@ import os
 import secrets
 import signal
 import socket
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -110,7 +111,7 @@ def control_bind_failure(gate, path, endpoint):
     )
 
 
-def handoff(gate, path, endpoint, credentials, token, *, expire=False):
+def cluster_controls(gate, endpoint, credentials, token):
     def node(name, data, *, address=None, **options):
         return gate.manager(
             data,
@@ -156,6 +157,26 @@ def handoff(gate, path, endpoint, credentials, token, *, expire=False):
 
         return manager.wait(receive)
 
+    return node, router
+
+
+def cold_placements(observer, router, hashes, expected):
+    def current():
+        result = router(observer, "lookup", {"hashes": hashes})
+        assert not result["local"], "requester must remain cold before its peer READ"
+        rows = result["placements"]
+        assert [row["hash"] for row in rows] == hashes
+        owners = [[p["owner"] for p in row["peers"]] for row in rows]
+        if owners == expected and all(
+            row["peer_coverage"] == "complete_at_watermarks" for row in rows
+        ):
+            return rows
+        return None
+
+    return observer.wait(current)
+
+
+def handoff(gate, path, endpoint, node, router, *, expire=False):
     storage = {}
     shard = path
     if expire:
@@ -179,21 +200,7 @@ def handoff(gate, path, endpoint, credentials, token, *, expire=False):
     requester = lookup(observer)["source"]["incarnation"]
 
     def placements(expected):
-        def current():
-            result = lookup(observer)
-            assert not result["local"], (
-                "requester must remain cold until its final peer READ"
-            )
-            rows = result["placements"]
-            assert [row["hash"] for row in rows] == hashes
-            owners = [[p["owner"] for p in row["peers"]] for row in rows]
-            if owners == expected and all(
-                row["peer_coverage"] == "complete_at_watermarks" for row in rows
-            ):
-                return rows
-            return None
-
-        return observer.wait(current)
+        return cold_placements(observer, router, hashes, expected)
 
     rows = placements([[old], [old]])
     old_sequence = rows[0]["peers"][0]["sequence"]
@@ -378,6 +385,138 @@ def handoff(gate, path, endpoint, credentials, token, *, expire=False):
     replacement.close()
 
 
+def transfer_charges(source, requester):
+    values = {}
+    for manager, names in (
+        (source, ("orbitkv_transfer_lock_active", "orbitkv_transfer_reserved_bytes")),
+        (requester, ("orbitkv_transfer_completion_outstanding",)),
+    ):
+        with urlopen(f"http://{manager.http}/metrics", timeout=2) as response:
+            for line in response.read().decode().splitlines():
+                for name in names:
+                    if line.startswith((name + "{", name + " ")):
+                        assert name not in values, line
+                        values[name] = float(line.split()[-1])
+        assert all(name in values for name in names), values
+    return values
+
+
+def live_reclaim_authorized_read(gate, root, endpoint, node, router):
+    root.mkdir()
+    capacity = 4096
+    donor = node("live-donor", root, shared_namespace=0, root_capacity=capacity)
+    observer = node("live-reader", root.parent / "reader")
+    key = 1
+    stored = donor.call("write", id=key)
+    assert stored["present"]
+    hashes = [stored["hash"]]
+    original = donor.read(key)["slots"]
+    registered = member(endpoint, "live-donor")
+    source = registered["owner"]
+    requester = router(observer, "lookup", {"hashes": hashes})["source"]["incarnation"]
+    (row,) = cold_placements(observer, router, hashes, [[source]])
+    (residency,) = row["peers"]
+    assert residency["metadata"]["medium"] == "Ssd"
+    idle = transfer_charges(donor, observer)
+    assert all(value == 0 for value in idle.values()), idle
+    gate.manager(
+        root, shared_namespace=1, reject_with="shared SSD root capacity exceeded"
+    ).close()
+
+    point = "peer_read_authorized"
+    observer.pause(point)
+    observer.send("peer_read", id=key)
+    observer.reached(point)
+    try:
+        held = transfer_charges(donor, observer)
+        assert held["orbitkv_transfer_lock_active"] == 1
+        assert held["orbitkv_transfer_completion_outstanding"] == 1
+        assert held["orbitkv_transfer_reserved_bytes"] >= sum(
+            len(slot["bytes"]) for slot in original
+        )
+        namespace = "orbitkv:v2:" + "0" * 64
+        reclaimed = subprocess.run(
+            [
+                str(gate.binary),
+                "reclaim-ssd-partition",
+                "--root",
+                str(root),
+                "--namespace",
+                namespace,
+                "--wait-for-owner-secs",
+                "30",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=40,
+        )
+        assert (
+            reclaimed.stdout.strip()
+            == f"Reclaimed {capacity} payload bytes from {namespace}"
+        )
+        assert not donor.call("report")["state"]["ssd_attached"]
+        cold_placements(observer, router, hashes, [[]])
+        assert member(endpoint, "live-donor") == registered
+        newcomer = gate.manager(root, shared_namespace=1)
+        overwrite = newcomer.call("write", namespace=1, id=key, fill=173)
+        assert overwrite["present"] and overwrite["hash"] == stored["hash"]
+        reused = newcomer.read(key, namespace=1, fill=173)["slots"]
+        assert reused != original
+        # A new window tests the old residency without reusing the admitted ticket.
+        denied = donor.call(
+            "grant",
+            id=key,
+            grant={
+                "source": source,
+                "requester": requester,
+                "residency": residency["sequence"],
+            },
+        )
+        assert denied["grpc_code"] == "FailedPrecondition", denied
+        assert denied["detail"] == "stale owner or residency candidate", denied
+        after_reuse = transfer_charges(donor, observer)
+        assert after_reuse == held, after_reuse
+    finally:
+        observer.release(point)
+
+    received = observer.reply()
+    assert received["present"] and received["slots"] == original
+
+    def released():
+        current = transfer_charges(donor, observer)
+        return current if current == idle else None
+
+    drained = donor.wait(released)
+    (gate.artifacts / "live-reclaim-authorized-read.json").write_text(
+        json.dumps(
+            {
+                "source": source,
+                "residency": residency["sequence"],
+                "reclaimed_bytes": capacity,
+                "stale_grant_status": denied["grpc_code"],
+                "verified_peer_slot_bytes": [
+                    len(slot["bytes"]) for slot in received["slots"]
+                ],
+                "peer_slot_sha256": [
+                    hashlib.sha256(bytes(s["bytes"])).hexdigest()
+                    for s in received["slots"]
+                ],
+                "replacement_slot_sha256": [
+                    hashlib.sha256(bytes(s["bytes"])).hexdigest() for s in reused
+                ],
+                "held": held,
+                "after_reuse": after_reuse,
+                "drained": drained,
+            },
+            indent=2,
+        )
+    )
+    observer.close()
+    newcomer.close()
+    donor.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ["binary", "root", "artifacts"]:
@@ -404,17 +543,24 @@ def main():
             )
         )
         with etcd_server(directory) as (endpoint, _):
+            node, router = cluster_controls(gate, endpoint, config, token)
             gate.case(
                 "owner-handoff",
-                lambda path: handoff(gate, path, endpoint, config, token),
+                lambda path: handoff(gate, path, endpoint, node, router),
             )
             gate.case(
                 "expired-owner-handoff",
-                lambda path: handoff(gate, path, endpoint, config, token, expire=True),
+                lambda path: handoff(gate, path, endpoint, node, router, expire=True),
             )
             gate.case(
                 "control-bind-failure",
                 lambda path: control_bind_failure(gate, path, endpoint),
+            )
+            gate.case(
+                "live-reclaim-authorized-read",
+                lambda path: live_reclaim_authorized_read(
+                    gate, path, endpoint, node, router
+                ),
             )
 
 
