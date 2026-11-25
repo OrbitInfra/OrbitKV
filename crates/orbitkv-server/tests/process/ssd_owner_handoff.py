@@ -2,10 +2,12 @@
 """Exercise an exclusive SSD handoff between real Managers on the same Linux host."""
 
 import argparse
+import base64
 import hashlib
 import json
 import os
 import secrets
+import signal
 import tempfile
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -16,12 +18,36 @@ from ssd_persistence import Gate, frames
 from tests.support.cluster import etcd_server
 
 
-def handoff(gate, path, endpoint, credentials, token):
-    def node(name, data, *, address=None, pauses=()):
+def member(endpoint, node):
+    key = base64.b64encode(f"/orbitkv/v2/orbitkv/members/{node}".encode()).decode()
+    request = Request(
+        f"{endpoint}/v3/kv/range",
+        data=json.dumps({"key": key}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    with urlopen(request, timeout=2) as response:
+        reply = json.load(response)
+    assert int(reply["header"]["revision"]) > 0
+    rows = reply.get("kvs", [])
+    if not rows:
+        return None
+    (row,) = rows
+    assert row["key"] == key and int(row["lease"]) != 0
+    return json.loads(base64.b64decode(row["value"]))
+
+
+def partition_snapshot(shard, root):
+    files = (shard, Path(str(shard) + ".index"), root / ".orbitkv-ssd-capacity")
+    return {
+        file.name: [file.stat().st_ino, hashlib.sha256(file.read_bytes()).hexdigest()]
+        for file in files
+    }
+
+
+def handoff(gate, path, endpoint, credentials, token, *, expire=False):
+    def node(name, data, **options):
         return gate.manager(
             data,
-            address=address,
-            pauses=pauses,
             cluster_args=(
                 "--node-id",
                 name,
@@ -32,6 +58,7 @@ def handoff(gate, path, endpoint, credentials, token):
                 "--router-credentials",
                 str(credentials),
             ),
+            **options,
         )
 
     def router(manager, route, body, expected=200):
@@ -62,7 +89,13 @@ def handoff(gate, path, endpoint, credentials, token):
 
         return manager.wait(receive)
 
-    source = node("writer", path)
+    storage = {}
+    shard = path
+    if expire:
+        path.mkdir()
+        storage = {"shared_namespace": 0, "capacity": 4096, "root_capacity": 4096}
+        shard = path / f"orbitkv-ssd-orbitkv:v2:{0:064x}" / "shard-000000.dat"
+    source = node("writer", path, **storage)
     observer = node("requester", path.parent / "requester")
     good_id = 1
     good = source.call("write", id=good_id)
@@ -106,16 +139,82 @@ def handoff(gate, path, endpoint, credentials, token):
     assert "window" in issued, issued
     UUID(issued["window"])
     assert issued["epoch"]
-    source.close(kill=True)
+    expiry = {}
+    if expire:
+        writer = member(endpoint, "writer")
+        assert writer["owner"] == old
+        source.process.send_signal(signal.SIGSTOP)
+
+        def stopped():
+            pid, status = os.waitpid(source.process.pid, os.WUNTRACED | os.WNOHANG)
+            return status if pid == source.process.pid else None
+
+        status = source.wait(stopped)
+        assert os.WIFSTOPPED(status) and os.WSTOPSIG(status) == signal.SIGSTOP
+        observer.wait(lambda: member(endpoint, "writer") is None)
+        assert member(endpoint, "requester")["owner"]["incarnation"] == requester
+        placements([[], []])
+        original = partition_snapshot(shard, path)
+        challenger = node(
+            "contender", path, **storage, reject_with="SSD shard is already owned"
+        )
+        assert challenger.address != source.address
+        challenger.close()
+        # Engine construction failed after membership registration. The process
+        # must revoke its own lease before returning the storage error.
+        assert member(endpoint, "contender") is None
+        gate.manager(
+            path,
+            shared_namespace=1,
+            capacity=4096,
+            reject_with="shared SSD root capacity exceeded",
+        ).close()
+        assert partition_snapshot(shard, path) == original
+
+        # A resumed Manager keeps local storage but its expired incarnation
+        # cannot regain distributed authority.
+        source.process.send_signal(signal.SIGCONT)
+
+        def fenced():
+            with urlopen(f"http://{source.http}/cache/metadata", timeout=2) as response:
+                return json.load(response)["index"]["registration_valid"] is False
+
+        source.wait(fenced)
+        assert member(endpoint, "writer") is None
+        denied = authorize(grant)
+        assert denied["grpc_code"] == "FailedPrecondition", denied
+        assert denied["detail"] == "stale owner or residency candidate", denied
+        source.read(good_id)
+        with shard.open("rb") as reader:
+            source.close(kill=True)
+            node(
+                "contender",
+                path,
+                **storage,
+                reject_with="drained prior file users",
+            ).close()
+            assert member(endpoint, "contender") is None
+            assert os.fstat(reader.fileno()).st_ino == original[shard.name][0]
+            assert partition_snapshot(shard, path) == original
+        expiry = {
+            "expired_epoch": writer["epoch"],
+            "resumed_grant_status": denied["grpc_code"],
+            "stopped_writer_rejection": "SSD shard is already owned",
+            "other_namespace_rejection": "shared SSD root capacity exceeded",
+            "held_reader_rejection": "drained prior file users",
+            "preserved_files": original,
+        }
+    else:
+        source.close(kill=True)
     placements([[], []])
 
-    commits = frames(Path(str(path) + ".index"))
+    commits = frames(Path(str(shard) + ".index"))
     (bad,) = [
         item
         for item in commits
         if item.get("checksum") is not None and item["key"]["hash"] == hashes[1]
     ]
-    with path.open("r+b", buffering=0) as data:
+    with shard.open("r+b", buffering=0) as data:
         data.seek(bad["offset"])
         original = data.read(1)
         data.seek(bad["offset"])
@@ -123,8 +222,9 @@ def handoff(gate, path, endpoint, credentials, token):
         os.fsync(data.fileno())
 
     replacement = node(
-        "replacement",
+        "writer" if expire else "replacement",
         path,
+        **storage,
         address=old["endpoint"],
         pauses=("ssd_before_verification",),
     )
@@ -134,6 +234,12 @@ def handoff(gate, path, endpoint, credentials, token):
     assert (
         new["endpoint"] == old["endpoint"] and new["incarnation"] != old["incarnation"]
     )
+    if expire:
+        successor = member(endpoint, "writer")
+        assert (
+            successor["owner"] == new and successor["epoch"] > expiry["expired_epoch"]
+        )
+        expiry["replacement_epoch"] = successor["epoch"]
     assert reopened["local"] == []
     assert (
         router(replacement, "events", {"cursor": initial["cursor"]}, 409)
@@ -174,9 +280,11 @@ def handoff(gate, path, endpoint, credentials, token):
     assert rebound["grpc_code"] == "NotFound", rebound
     observer.read(2, present=False, operation="peer_read")
     received = observer.read(good_id, operation="peer_read")
-    (gate.artifacts / "handoff.json").write_text(
+    receipt = "expired-owner-handoff.json" if expire else "handoff.json"
+    (gate.artifacts / receipt).write_text(
         json.dumps(
             {
+                **expiry,
                 "old_owner": old,
                 "new_owner": new,
                 "old_ticket_status": stale["grpc_code"],
@@ -223,6 +331,10 @@ def main():
             gate.case(
                 "owner-handoff",
                 lambda path: handoff(gate, path, endpoint, config, token),
+            )
+            gate.case(
+                "expired-owner-handoff",
+                lambda path: handoff(gate, path, endpoint, config, token, expire=True),
             )
 
 
