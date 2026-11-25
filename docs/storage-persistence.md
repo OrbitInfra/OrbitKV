@@ -312,6 +312,13 @@ admitted SSD read keeps its backing through completion. `flush_all` still waits
 for earlier writes to reach a logical outcome. Startup for the same
 namespace waits for root admission and rejects an active release request.
 
+For a remote READ, the source reads the SSD block into pinned memory before
+issuing the grant. The transfer ticket keeps those bytes registered and
+charged until the requester completes the READ and releases the ticket.
+The file can therefore drain and its capacity can be reused by another
+namespace while the earlier grant is still live. Once the source has
+withdrawn its SSD replica, a fresh grant for that residency is rejected.
+
 The command retries ownership checks until the wait expires. It releases the
 root lock between attempts so other namespaces can start within the remaining
 budget. Once the old writer, file descriptions and kernel I/O drain, it uses
@@ -361,9 +368,13 @@ A third case holds the Manager's gRPC port open during startup. It observes
 the leased member in etcd, the bind error after SSD initialization and the
 removal of that member by process exit. The same node ID then reopens the
 partition and listens on a free port before the original TTL elapses.
-CI runs all three cases on ext4 and tmpfs and saves `handoff.json`,
-`expired-owner-handoff.json` and `control-bind-failure.json` in the
-`ssd-process-crash` artifact.
+The live-reclaim case pauses a cold requester after authorization and before
+its first TCP READ. Another namespace claims the released capacity and writes
+different bytes under the same block hash. The requester checks the original
+bytes after resuming, and the transfer counters return to zero.
+CI runs all four cases on ext4 and tmpfs and saves `handoff.json`,
+`expired-owner-handoff.json`, `control-bind-failure.json` and
+`live-reclaim-authorized-read.json` in the `ssd-process-crash` artifact.
 
 To run the cases with the same test-hooks binary and host-registration shim as
 the persistent SSD gate, choose an existing scratch directory for `MOUNT` and

@@ -261,6 +261,10 @@ admission counts active and stopped shards through concurrent starts, crashes an
 resizing. A serving Manager can detach its SSD partition while retaining DRAM
 service. Offline and cooperative reclamation wait for file users to drain and
 durably retire cache records before returning capacity to another namespace.
+The live-reclaim gate pauses an authorized remote READ across that capacity
+reuse. The requester observes the old SSD placement disappear, the source
+rejects a fresh grant for that residency, and the original transfer reads its
+retained bytes before its ticket and byte charge drain.
 The same-host expiry control suspends a shared-partition writer until etcd
 removes it. The shard lock and root reservation survive that expiry. A retained
 reader delays takeover after process exit. The Manager attempts to revoke its own
