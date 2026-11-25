@@ -263,10 +263,12 @@ service. Offline and cooperative reclamation wait for file users to drain and
 durably retire cache records before returning capacity to another namespace.
 The same-host expiry control suspends a shared-partition writer until etcd
 removes it. The shard lock and root reservation survive that expiry. A retained
-reader delays takeover after process exit. A rejected contender revokes its own
-membership lease so the same node ID can retry. Closing the reader permits recovery
-under a new membership epoch. Cross-host fencing and physical host or volume
-loss remain open.
+reader delays takeover after process exit. The Manager attempts to revoke its own
+membership lease on every return after registration. The gate covers both a
+rejected SSD contender and a gRPC bind failure after the SSD opened. With etcd
+available, the same node ID can retry immediately. Closing the reader permits
+recovery under a new membership epoch. Cross-host fencing and physical host or
+volume loss remain open.
 
 **CPU now:** multi-process etcd/TCP faults, epochs, bounded snapshots/events,
 router contracts, shared-file races/GC, tenant isolation and dedup accounting.

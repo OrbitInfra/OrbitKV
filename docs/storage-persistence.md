@@ -357,8 +357,13 @@ attempts. Once the reader closes, the original node ID and peer address can
 return with a higher membership epoch and a new incarnation. The requester
 then obtains verified bytes from that owner.
 
-CI runs both cases on ext4 and tmpfs and saves `handoff.json` and
-`expired-owner-handoff.json` in the `ssd-process-crash` artifact.
+A third case holds the Manager's gRPC port open during startup. It observes
+the leased member in etcd, the bind error after SSD initialization and the
+removal of that member by process exit. The same node ID then reopens the
+partition and listens on a free port before the original TTL elapses.
+CI runs all three cases on ext4 and tmpfs and saves `handoff.json`,
+`expired-owner-handoff.json` and `control-bind-failure.json` in the
+`ssd-process-crash` artifact.
 
 To run the cases with the same test-hooks binary and host-registration shim as
 the persistent SSD gate, choose an existing scratch directory for `MOUNT` and

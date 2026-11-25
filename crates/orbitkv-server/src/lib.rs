@@ -918,8 +918,10 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         )
     };
     let runtime_handle = runtime.handle().clone();
-    let result = runtime.block_on(async move {
-        let membership = match membership_view.clone() {
+    // Keep the lease outside the service future so every return after join runs cleanup.
+    let mut membership = None;
+    let result = runtime.block_on(async {
+        membership = match membership_view.clone() {
             Some(view) => Some(
                 cluster::Cluster::join(
                     &cli.etcd_endpoints,
@@ -936,20 +938,11 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             ),
             None => None,
         };
-        // SSD initialization can reject a still-owned shard after this node joined etcd.
-        let engine = match OrbitKVEngine::new_with_config(
+        let engine = Arc::new(OrbitKVEngine::new_with_config(
             cli.pool_size,
             cli.use_hugepages,
             storage_config,
-        ) {
-            Ok(engine) => Arc::new(engine),
-            Err(error) => {
-                if let Some(membership) = membership {
-                    membership.shutdown().await;
-                }
-                return Err(error.into());
-            }
-        };
+        )?);
         let inventory_runtime = membership.as_ref().map(cluster::Cluster::inventory);
         #[cfg(feature = "test-hooks")]
         orbitkv_core::test_faults::spawn_ssd_process(Arc::clone(&engine));
@@ -1130,20 +1123,21 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         channel_endpoint.stop();
         let _ = http_server_handle.await;
 
+        Ok(())
+    });
+    runtime.block_on(async {
         if let Some(membership) = membership {
             membership.shutdown().await;
         }
 
-        // Flush metrics before exit
-        if let Some(provider) = metrics_state.meter_provider
-            && let Err(err) = provider.shutdown()
-        {
-            error!("Failed to shutdown metrics provider: {err}");
+        if result.is_ok() {
+            if let Some(provider) = metrics_state.meter_provider
+                && let Err(err) = provider.shutdown()
+            {
+                error!("Failed to shutdown metrics provider: {err}");
+            }
+            trace::flush();
         }
-
-        trace::flush();
-
-        Ok(())
     });
     orbitkv_common::timeline::flush_diagnostic();
     result
