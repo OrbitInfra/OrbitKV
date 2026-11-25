@@ -261,7 +261,12 @@ admission counts active and stopped shards through concurrent starts, crashes an
 resizing. A serving Manager can detach its SSD partition while retaining DRAM
 service. Offline and cooperative reclamation wait for file users to drain and
 durably retire cache records before returning capacity to another namespace.
-Cross-host fencing and physical host or volume loss remain open.
+The same-host expiry control suspends a shared-partition writer until etcd
+removes it. The shard lock and root reservation survive that expiry. A retained
+reader delays takeover after process exit. A rejected contender revokes its own
+membership lease so the same node ID can retry. Closing the reader permits recovery
+under a new membership epoch. Cross-host fencing and physical host or volume
+loss remain open.
 
 **CPU now:** multi-process etcd/TCP faults, epochs, bounded snapshots/events,
 router contracts, shared-file races/GC, tenant isolation and dedup accounting.

@@ -936,13 +936,21 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             ),
             None => None,
         };
-        let inventory_runtime = membership.as_ref().map(cluster::Cluster::inventory);
-        // Create OrbitKVEngine inside tokio runtime context (needed for SSD cache tokio::spawn)
-        let engine = Arc::new(OrbitKVEngine::new_with_config(
+        // SSD initialization can reject a still-owned shard after this node joined etcd.
+        let engine = match OrbitKVEngine::new_with_config(
             cli.pool_size,
             cli.use_hugepages,
             storage_config,
-        )?);
+        ) {
+            Ok(engine) => Arc::new(engine),
+            Err(error) => {
+                if let Some(membership) = membership {
+                    membership.shutdown().await;
+                }
+                return Err(error.into());
+            }
+        };
+        let inventory_runtime = membership.as_ref().map(cluster::Cluster::inventory);
         #[cfg(feature = "test-hooks")]
         orbitkv_core::test_faults::spawn_ssd_process(Arc::clone(&engine));
         let lifecycle = cache::lifecycle::LifecycleService::new(Arc::clone(&engine), registry);

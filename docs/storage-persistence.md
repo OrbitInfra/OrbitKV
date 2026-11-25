@@ -334,16 +334,33 @@ A requester must rediscover the extent and open a new transfer window, even if
 the replacement listens at the old address. Unverified and corrupt extents
 stay out of its inventory.
 
-The required Linux CI case runs three Manager processes across the handoff, an
+The private-shard CI case runs three Manager processes across the handoff, an
 isolated etcd and the real OrbiTE io_uring and TCP paths. It kills a writer
 with an issued grant, keeps the requester running, and reuses the peer address
 under a different node ID. A verification pause and a damaged neighboring
 extent check visibility. The replacement rejects the old owner and window,
 and the requester checks every byte in two slots obtained through a fresh
-source grant. CI runs the case on ext4 and tmpfs and saves `handoff.json` in
-the `ssd-process-crash` artifact.
+source grant.
 
-To run the case with the same test-hooks binary and host-registration shim as
+A second case suspends the writer of a shared partition while it holds an
+issued grant. The test observes the writer's leased member key disappear from
+etcd and its placements disappear from the requester. The stopped process still
+owns the shard. A contender on a different port fails to acquire its lock, and
+the root budget rejects a reservation for another namespace. When engine
+initialization fails after joining the cluster, the contender revokes its own
+etcd lease before returning the storage error. If the coordinator is
+unreachable, the registration expires at its TTL. After resuming,
+the old Manager can read locally and rejects the same peer grant request it
+previously served. Even after it exits, an open reader on the shard prevents takeover.
+The test checks the data, journal and root capacity file across the rejected
+attempts. Once the reader closes, the original node ID and peer address can
+return with a higher membership epoch and a new incarnation. The requester
+then obtains verified bytes from that owner.
+
+CI runs both cases on ext4 and tmpfs and saves `handoff.json` and
+`expired-owner-handoff.json` in the `ssd-process-crash` artifact.
+
+To run the cases with the same test-hooks binary and host-registration shim as
 the persistent SSD gate, choose an existing scratch directory for `MOUNT` and
 a new external results directory for `OUT`:
 
