@@ -112,6 +112,11 @@ See [peer Restore](transport.md#peer-restore-into-gpu) and
 - Registration requires an absent live Node ID, advances its persistent epoch,
   and binds the endpoint/runtime UUID and stream protocol to an etcd lease.
   Lease renewal and the membership Watch are independent of inventory sessions.
+- A Manager that returns an error after joining the cluster fences its membership
+  view, stops the membership tasks and asks etcd to revoke its lease before
+  returning the original error. After a successful revoke, the same Node ID can
+  retry on a free port immediately. If etcd is unreachable, the lease expires
+  at its configured TTL.
 - Every requester installs one complete view per remote owner. A snapshot stays
   hidden until its ordered pages, contiguous replay, page count and transcript
   commit validate. Journal overflow resets only that owner view and restarts a

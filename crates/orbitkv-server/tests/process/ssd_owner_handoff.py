@@ -8,7 +8,9 @@ import json
 import os
 import secrets
 import signal
+import socket
 import tempfile
+import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -42,6 +44,70 @@ def partition_snapshot(shard, root):
         file.name: [file.stat().st_ino, hashlib.sha256(file.read_bytes()).hexdigest()]
         for file in files
     }
+
+
+def control_bind_failure(gate, path, endpoint):
+    node = "bind-contender"
+    ttl = 300
+    cluster = (
+        "--node-id",
+        node,
+        "--etcd-endpoints",
+        endpoint,
+        "--membership-ttl-secs",
+        str(ttl),
+    )
+    path.mkdir()
+    storage = {"cluster_args": cluster, "shared_namespace": 0, "root_capacity": 4096}
+    started = time.monotonic()
+    with socket.create_server(("127.0.0.1", 0)) as occupied:
+        failed = gate.manager(
+            path,
+            **storage,
+            address=f"127.0.0.1:{occupied.getsockname()[1]}",
+            pauses=("ssd_root_admitted",),
+            defer_start=True,
+        )
+        failed.reached("ssd_root_admitted")
+        registered = member(endpoint, node)
+        assert registered["owner"]["endpoint"] == failed.address
+        failed.release("ssd_root_admitted")
+        failed.rejected("AddrInUse")
+        assert member(endpoint, node) is None, (
+            "failed gRPC listener retained its membership"
+        )
+        assert "SSD cache initialized at" in failed.log_path.read_text()
+        failed.close()
+
+        port = find_available_port()
+        retry = gate.manager(path, **storage, address=f"127.0.0.1:{port}")
+
+    def listening():
+        with socket.socket() as probe:
+            probe.settimeout(1)
+            return probe.connect_ex(("127.0.0.1", port)) == 0
+
+    retry.wait(listening)
+    replacement = member(endpoint, node)
+    assert replacement["owner"]["endpoint"] == retry.address
+    assert replacement["epoch"] > registered["epoch"]
+    assert replacement["owner"]["incarnation"] != registered["owner"]["incarnation"]
+    elapsed = time.monotonic() - started
+    assert elapsed < ttl, "retry must precede natural expiry of the first lease"
+    retry.close()
+    assert retry.process.returncode == 0
+    assert member(endpoint, node) is None
+    (gate.artifacts / "control-bind-failure.json").write_text(
+        json.dumps(
+            {
+                "failed": registered,
+                "retry": replacement,
+                "ttl_seconds": ttl,
+                "elapsed_seconds": elapsed,
+            },
+            indent=2,
+        )
+    )
 
 
 def handoff(gate, path, endpoint, credentials, token, *, expire=False):
@@ -345,6 +411,10 @@ def main():
             gate.case(
                 "expired-owner-handoff",
                 lambda path: handoff(gate, path, endpoint, config, token, expire=True),
+            )
+            gate.case(
+                "control-bind-failure",
+                lambda path: control_bind_failure(gate, path, endpoint),
             )
 
 
