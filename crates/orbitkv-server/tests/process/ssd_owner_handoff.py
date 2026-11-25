@@ -156,9 +156,17 @@ def handoff(gate, path, endpoint, credentials, token, *, expire=False):
         placements([[], []])
         original = partition_snapshot(shard, path)
         challenger = node(
-            "contender", path, **storage, reject_with="SSD shard is already owned"
+            "contender",
+            path,
+            **storage,
+            pauses=("ssd_root_admitted",),
+            defer_start=True,
         )
-        assert challenger.address != source.address
+        challenger.reached("ssd_root_admitted")
+        registered = member(endpoint, "contender")
+        assert registered["owner"]["endpoint"] == challenger.address != source.address
+        challenger.release("ssd_root_admitted")
+        challenger.rejected("SSD shard is already owned")
         challenger.close()
         # Engine construction failed after membership registration. The process
         # must revoke its own lease before returning the storage error.
@@ -198,6 +206,7 @@ def handoff(gate, path, endpoint, credentials, token, *, expire=False):
             assert partition_snapshot(shard, path) == original
         expiry = {
             "expired_epoch": writer["epoch"],
+            "rejected_contender": registered["owner"],
             "resumed_grant_status": denied["grpc_code"],
             "stopped_writer_rejection": "SSD shard is already owned",
             "other_namespace_rejection": "shared SSD root capacity exceeded",

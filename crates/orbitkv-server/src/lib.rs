@@ -937,7 +937,11 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             None => None,
         };
         // SSD initialization can reject a still-owned shard after this node joined etcd.
-        let engine = match OrbitKVEngine::new_with_config(cli.pool_size, cli.use_hugepages, storage_config) {
+        let engine = match OrbitKVEngine::new_with_config(
+            cli.pool_size,
+            cli.use_hugepages,
+            storage_config,
+        ) {
             Ok(engine) => Arc::new(engine),
             Err(error) => {
                 if let Some(membership) = membership {
