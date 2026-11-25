@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 from uuid import UUID
 
 from ssd_persistence import Gate, frames
-from tests.support.cluster import etcd_server
+from tests.support.cluster import etcd_server, find_available_port
 
 
 def member(endpoint, node):
@@ -45,9 +45,10 @@ def partition_snapshot(shard, root):
 
 
 def handoff(gate, path, endpoint, credentials, token, *, expire=False):
-    def node(name, data, **options):
+    def node(name, data, *, address=None, **options):
         return gate.manager(
             data,
+            address=address or f"127.0.0.1:{find_available_port()}",
             cluster_args=(
                 "--node-id",
                 name,
