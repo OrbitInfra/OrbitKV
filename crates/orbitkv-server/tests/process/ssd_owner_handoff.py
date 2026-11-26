@@ -114,7 +114,16 @@ def control_bind_failure(gate, path, endpoint):
 
 
 def cluster_controls(gate, endpoint, credentials, token):
-    def node(name, data, *, address=None, advertise=None, lock_timeout=None, **options):
+    def node(
+        name,
+        data,
+        *,
+        address=None,
+        advertise=None,
+        lock_timeout=None,
+        transfer_budget=None,
+        **options,
+    ):
         peer_args = ("--peer-advertise-addr", advertise) if advertise else ()
         timeout_args = (
             ("--transfer-lock-timeout-secs", str(lock_timeout))
@@ -135,6 +144,11 @@ def cluster_controls(gate, endpoint, credentials, token):
                 str(credentials),
                 *peer_args,
                 *timeout_args,
+                *(
+                    ("--transfer-budget", str(transfer_budget))
+                    if transfer_budget is not None
+                    else ()
+                ),
             ),
             **options,
         )
@@ -176,7 +190,12 @@ def cold_placements(observer, router, hashes, expected):
         assert not result["local"], "requester must remain cold before its peer READ"
         rows = result["placements"]
         assert [row["hash"] for row in rows] == hashes
-        owners = [[p["owner"] for p in row["peers"]] for row in rows]
+        owners = [
+            sorted(
+                (p["owner"] for p in row["peers"]), key=lambda owner: owner["endpoint"]
+            )
+            for row in rows
+        ]
         if owners == expected and all(
             row["peer_coverage"] == "complete_at_watermarks" for row in rows
         ):
@@ -395,10 +414,12 @@ def handoff(gate, path, endpoint, node, router, *, expire=False):
     replacement.close()
 
 
-def transfer_metrics(manager, *names):
+def transfer_metrics(manager, *names, label=None):
     values = {}
     with urlopen(f"http://{manager.http}/metrics", timeout=2) as response:
         for line in response.read().decode().splitlines():
+            if label is not None and label not in line.partition(" ")[0]:
+                continue
             for name in names:
                 if line.startswith((name + "{", name + " ")):
                     assert name not in values, line
@@ -961,6 +982,136 @@ def release_during_grpc_outage(gate, path, endpoint, node, router, case):
         source.close()
 
 
+def peer_source_budget_fallback(gate, path, endpoint, node, router):
+    # SSD staging also reserves a 512-byte pool allocation for the file tail.
+    # The two payload allocations retain 1536 bytes after staging completes.
+    budget = 2048
+    peers = []
+    for name in ("budget-source-a", "budget-source-b"):
+        source = node(name, path.parent / name, capacity=16384, transfer_budget=budget)
+        peers.append((member(endpoint, name)["owner"], source))
+    # Equal one-key prefixes are ordered by CacheOwner (endpoint first).
+    peers.sort(key=lambda pair: pair[0]["endpoint"])
+    owners = [owner for owner, _ in peers]
+    preferred, alternate = [source for _, source in peers]
+    point = "peer_read_authorized"
+    holder = node("budget-holder", path.parent / "holder", pauses=(point,))
+    probe = node("budget-probe", path.parent / "probe", pauses=(point,))
+    keys = {}
+    for key in (1, 2, 3):
+        stored = preferred.call("write", id=key)
+        assert stored["present"]
+        keys[key] = stored["hash"]
+        if key != 1:
+            replica = alternate.call("write", id=key)
+            assert replica["present"] and replica["hash"] == keys[key]
+    cold_placements(holder, router, [keys[1]], [[owners[0]]])
+    rows = cold_placements(probe, router, [keys[2], keys[3]], [owners, owners])
+    assert all(p["metadata"]["medium"] == "Ssd" for row in rows for p in row["peers"])
+
+    active = "orbitkv_transfer_lock_active"
+    reserved = "orbitkv_transfer_reserved_bytes"
+    outstanding = "orbitkv_transfer_completion_outstanding"
+    fetched = "orbitkv_remote_fetch_bytes_total"
+    rejected = "orbitkv_transfer_lock_rejections_total"
+    idle = {active: 0, reserved: 0, outstanding: 0}
+    charged = {active: 1, reserved: 1536, outstanding: 1}
+
+    def wait_charges(preferred_holder, alternate_probe):
+        def observe():
+            current = (
+                transfer_charges(preferred, holder),
+                transfer_charges(alternate, probe),
+            )
+            return current if current == (preferred_holder, alternate_probe) else None
+
+        return probe.wait(observe)
+
+    def byte_rejections(source):
+        return transfer_metrics(source, rejected, label='reason="bytes"').get(
+            rejected, 0
+        )
+
+    wait_charges(idle, idle)
+    assert byte_rejections(preferred) == byte_rejections(alternate) == 0
+    holder.send("peer_read", id=1)
+    holder.reached(point)
+    first = wait_charges(charged, idle)
+    probe.send("peer_read", id=2)
+    probe.reached(point)
+    both = wait_charges(charged, charged)
+    rejected_before_payload = byte_rejections(preferred)
+    assert rejected_before_payload == 1 and byte_rejections(alternate) == 0
+    assert transfer_metrics(probe, fetched).get(fetched, 0) == 0
+    assert all(r["released_blocks"] == 0 for r in source_releases(preferred))
+    assert source_releases(alternate) == []
+
+    fallback_slots = alternate.read(2)["slots"]
+    probe.release(point)
+    result = probe.reply()
+    assert result["present"] and result["slots"] == fallback_slots
+    after_fallback = wait_charges(charged, idle)
+    fallback_bytes = transfer_metrics(probe, fetched)[fetched]
+    assert fallback_bytes == sum(len(s["bytes"]) for s in fallback_slots)
+    alternate_releases = source_releases(alternate)
+    assert sum(r["released_blocks"] for r in alternate_releases) == 1
+    assert all(r["released_blocks"] == 0 for r in source_releases(preferred))
+
+    holder_slots = preferred.read(1)["slots"]
+    holder.release(point)
+    result = holder.reply()
+    assert result["present"] and result["slots"] == holder_slots
+    wait_charges(idle, idle)
+    completed = [r for r in source_releases(preferred) if r["released_blocks"]]
+    assert len(completed) == 1 and completed[0]["released_blocks"] == 1
+
+    cold_placements(probe, router, [keys[3]], [owners])
+    recovered_slots = probe.read(3, operation="peer_read")["slots"]
+    final = wait_charges(idle, idle)
+    total_bytes = transfer_metrics(probe, fetched)[fetched]
+    assert total_bytes == fallback_bytes + sum(len(s["bytes"]) for s in recovered_slots)
+    preferred_releases = source_releases(preferred)
+    recovered = [r for r in preferred_releases if r["released_blocks"]]
+    assert recovered[:1] == completed and len(recovered) == 2
+    assert (
+        recovered[1]["released_blocks"] == 1
+        and recovered[1]["ticket"] != recovered[0]["ticket"]
+    )
+    assert source_releases(alternate) == alternate_releases
+    assert (
+        byte_rejections(preferred) == rejected_before_payload
+        and byte_rejections(alternate) == 0
+    )
+
+    (gate.artifacts / "peer-source-budget-fallback.json").write_text(
+        json.dumps(
+            {
+                "budget_bytes_per_source": budget,
+                "preferred": owners[0],
+                "alternate": owners[1],
+                "preferred_holder_and_alternate_probe": {
+                    "holder_authorized": first,
+                    "fallback_authorized": both,
+                    "fallback_complete": after_fallback,
+                    "final": final,
+                },
+                "preferred_byte_rejections_before_payload": rejected_before_payload,
+                "preferred_releases": preferred_releases,
+                "alternate_releases": alternate_releases,
+                "probe_bytes_after_fallback": fallback_bytes,
+                "probe_bytes_after_recovery": total_bytes,
+                "probe_slot_sha256": [
+                    [hashlib.sha256(bytes(s["bytes"])).hexdigest() for s in slots]
+                    for slots in (fallback_slots, recovered_slots)
+                ],
+            },
+            indent=2,
+        )
+    )
+    for manager in (probe, holder, alternate, preferred):
+        manager.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ["binary", "root", "artifacts"]:
@@ -1018,6 +1169,12 @@ def main():
                         gate, path, endpoint, node, router, case
                     ),
                 )
+            gate.case(
+                "peer-source-budget-fallback",
+                lambda path: peer_source_budget_fallback(
+                    gate, path, endpoint, node, router
+                ),
+            )
 
 
 if __name__ == "__main__":

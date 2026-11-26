@@ -208,7 +208,10 @@ The source reservation budget is `--transfer-budget` (default: half the pinned
 pool), with a maximum of 1024 active or overdue sessions. It charges entire pinned
 allocations, deduplicated within each session, so a small slice cannot retain an
 unaccounted large slab. Concurrent sessions each reserve their full allocation
-footprint. Exhaustion returns a bounded miss to the requesting cache path.
+footprint. If a source rejects a host-fill grant for lack of budget, the
+requester can try another advertised replica within the authorization retry
+limit. Only an authorized source serves the payload. If the candidates are
+exhausted, the cache path returns a bounded miss.
 
 Run native builds and runtime gates sequentially in a checkout; builds restage
 OrbiTE build prerequisites. The etcd gate starts isolated temporary processes:
