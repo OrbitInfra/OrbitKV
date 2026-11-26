@@ -377,10 +377,15 @@ source gRPC endpoint after it has granted an SSD READ. The requester checks
 the bytes before reconnecting. A failed release must leave the source block,
 reserved bytes and requester completion slot outstanding. After reconnecting,
 all three gauges return to zero and the successful fetch byte count stays fixed.
+A sixth case drops traffic from the source gRPC endpoint after the source has
+processed the release. Its block and byte charges have drained, while the
+requester still holds one completion record. After reconnection the same ticket
+releases zero further blocks, its ACK clears the record, and the verified READ
+bytes are counted once.
 The `ssd-process-crash` CI artifact contains separate ext4 and tmpfs directories.
 Each includes `handoff.json`, `expired-owner-handoff.json`,
-`control-bind-failure.json`, `live-reclaim-authorized-read.json` and
-`grpc-release-retry.json`.
+`control-bind-failure.json`, `live-reclaim-authorized-read.json`,
+`grpc-release-retry.json` and `grpc-release-ack-loss.json`.
 
 To run the cases with the same test-hooks binary and host-registration shim as
 the persistent SSD gate, choose an existing scratch directory for `MOUNT` and

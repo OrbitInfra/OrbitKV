@@ -109,6 +109,10 @@ TCP READ can still return its bytes. While the release request cannot reach
 the source, the source retains the block and its reserved bytes and the
 requester retains its completion record. Once gRPC recovers, the retry
 releases the source ticket and its ACK retires the requester record.
+If the source releases the ticket but its ACK is lost, its block and byte
+charges are already zero for that ticket. The requester keeps its completion
+record and retries the same window, slot and generation. The source reports
+zero additional blocks released, and that ACK retires the record.
 See [peer Restore](transport.md#peer-restore-into-gpu) and
 [peer control](distributed-cache.md#application-and-transport-boundary) for retained owners and retirement.
 

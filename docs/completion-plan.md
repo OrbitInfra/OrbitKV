@@ -269,6 +269,9 @@ A separate same-host control disconnects the source gRPC endpoint after
 authorization. It checks the READ bytes during the outage, observes a failed
 release with both peers' charges still held, and requires those charges to
 drain after reconnecting without another payload fetch.
+A companion case drops the reply after the source has released the ticket.
+The requester keeps its completion record until a retry of the same ticket
+acknowledges zero additional blocks released.
 The same-host expiry control suspends a shared-partition writer until etcd
 removes it. The shard lock and root reservation survive that expiry. A retained
 reader delays takeover after process exit. The Manager attempts to revoke its own
