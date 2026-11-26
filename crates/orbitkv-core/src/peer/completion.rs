@@ -369,6 +369,8 @@ impl Completion {
                 return;
             }
             core_metrics().transfer_completion_retries.add(1, &[]);
+            #[cfg(feature = "test-hooks")]
+            crate::test_faults::pause("peer_release_before_retry").await;
             if backoff == MIN_RETRY {
                 warn!(
                     "Retaining transfer completion until acknowledged: remote={} ticket={:?}",

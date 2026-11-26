@@ -272,6 +272,9 @@ drain after reconnecting without another payload fetch.
 A companion case drops the reply after the source has released the ticket.
 The requester keeps its completion record until a retry of the same ticket
 acknowledges zero additional blocks released.
+The restart case repeats that retry against a new source incarnation at the
+same address. It checks that the old completion drains while a fresh reader's
+grant stays charged and can still complete its own READ and release.
 The same-host expiry control suspends a shared-partition writer until etcd
 removes it. The shard lock and root reservation survive that expiry. A retained
 reader delays takeover after process exit. The Manager attempts to revoke its own

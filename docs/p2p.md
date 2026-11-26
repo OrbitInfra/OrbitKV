@@ -113,6 +113,9 @@ If the source releases the ticket but its ACK is lost, its block and byte
 charges are already zero for that ticket. The requester keeps its completion
 record and retries the same window, slot and generation. The source reports
 zero additional blocks released, and that ACK retires the record.
+If a restarted source receives the retry at the same address, it looks up the
+window UUID first. The old window is absent, so the source acknowledges zero
+blocks even when the same slot and generation are active in a new window.
 See [peer Restore](transport.md#peer-restore-into-gpu) and
 [peer control](distributed-cache.md#application-and-transport-boundary) for retained owners and retirement.
 
