@@ -114,8 +114,13 @@ def control_bind_failure(gate, path, endpoint):
 
 
 def cluster_controls(gate, endpoint, credentials, token):
-    def node(name, data, *, address=None, advertise=None, **options):
+    def node(name, data, *, address=None, advertise=None, lock_timeout=None, **options):
         peer_args = ("--peer-advertise-addr", advertise) if advertise else ()
+        timeout_args = (
+            ("--transfer-lock-timeout-secs", str(lock_timeout))
+            if lock_timeout is not None
+            else ()
+        )
         return gate.manager(
             data,
             address=address or f"127.0.0.1:{find_available_port()}",
@@ -129,6 +134,7 @@ def cluster_controls(gate, endpoint, credentials, token):
                 "--router-credentials",
                 str(credentials),
                 *peer_args,
+                *timeout_args,
             ),
             **options,
         )
@@ -654,9 +660,148 @@ def restart_during_release_retry(
     )
 
 
+def restart_requester_before_release(
+    source, reader, endpoint, path, node, router, proxy, registered, held, authorized_at
+):
+    active = "orbitkv_transfer_lock_active"
+    reserved = "orbitkv_transfer_reserved_bytes"
+    outstanding = "orbitkv_transfer_completion_outstanding"
+    expired = "orbitkv_transfer_expired_sessions"
+    # The Prometheus exporter appends _total to this already-suffixed OTel counter.
+    timeouts = "orbitkv_transfer_lock_timeouts_total_total"
+    fetched = "orbitkv_remote_fetch_bytes_total"
+    old = registered["release-reader"]
+    owner = registered["release-source"]
+    pinned = {name: held[name] for name in (active, reserved)}
+    assert source_releases(source) == []
+    reader.close(kill=True)
+    timeline = {"requester_exit": time.monotonic() - authorized_at}
+    after_exit = transfer_metrics(source, active, reserved)
+    assert after_exit == pinned, after_exit
+    source.wait(lambda: member(endpoint, "release-reader") is None)
+    timeline["requester_membership_absent"] = time.monotonic() - authorized_at
+    after_expiry = transfer_metrics(source, active, reserved)
+    assert after_expiry == pinned, after_expiry
+    proxy.heal()
+    point = "peer_read_authorized"
+    fresh = node(
+        "release-reader",
+        path.parent / "reader",
+        address=reader.address,
+        pauses=(point,),
+    )
+    new = member(endpoint, "release-reader")
+    assert new["owner"]["endpoint"] == old["owner"]["endpoint"] == fresh.address
+    assert new["owner"]["incarnation"] != old["owner"]["incarnation"]
+    assert new["epoch"] > old["epoch"]
+    assert member(endpoint, "release-source") == owner
+    after_restart = transfer_charges(source, fresh)
+    assert after_restart == {**pinned, outstanding: 0}, after_restart
+
+    # Observe the source's normal GC sweep before admitting the second ticket.
+    def overdue():
+        counts = transfer_metrics(source, expired, timeouts, active, reserved)
+        return counts if counts.get(expired, 0) and counts.get(timeouts, 0) else None
+
+    overdue_counts = source.wait(overdue)
+    timeline["overdue_observed"] = time.monotonic() - authorized_at
+    assert overdue_counts == {**pinned, expired: 1, timeouts: 1}, overdue_counts
+    (record,) = re.findall(
+        r"Transfer overdue, retaining source memory: window=([0-9a-f-]+) slot=(\d+) "
+        r"generation=(\d+) requester=([0-9a-f-]+) blocks=(\d+) age=(\S+)",
+        source.log_path.read_text(),
+    )
+    window, slot, generation, requester, blocks, age = record
+    assert requester == old["owner"]["incarnation"] and int(blocks) == 1
+    old_ticket = {
+        "window": str(UUID(window)),
+        "slot": int(slot),
+        "generation": int(generation),
+    }
+    assert source_releases(source) == []
+
+    stored = source.call("write", id=2)
+    assert stored["present"]
+    expected = source.read(2)["slots"]
+    (row,) = cold_placements(fresh, router, [stored["hash"]], [[owner["owner"]]])
+    assert row["peers"][0]["metadata"]["medium"] == "Ssd"
+    fresh.send("peer_read", id=2)
+    fresh.reached(point)
+    both = transfer_charges(source, fresh)
+    assert both == {active: 2, reserved: 2 * pinned[reserved], outstanding: 1}, both
+    fresh.release(point)
+    received = fresh.reply()
+    assert received["present"] and received["slots"] == expected
+    fresh.wait(lambda: transfer_charges(source, fresh) == after_restart)
+    after_read = transfer_charges(source, fresh)
+    assert after_read == after_restart
+    delivered = transfer_metrics(fresh, fetched)
+    assert delivered == {fetched: sum(len(s["bytes"]) for s in expected)}
+    releases = source_releases(source)
+    assert releases and releases[0]["released_blocks"] == 1, releases
+    ticket = releases[0]["ticket"]
+    assert ticket["window"] != old_ticket["window"]
+    assert (ticket["slot"], ticket["generation"]) == (
+        old_ticket["slot"],
+        old_ticket["generation"],
+    )
+    assert all(r == {"ticket": ticket, "released_blocks": 0} for r in releases[1:]), (
+        releases
+    )
+    final = transfer_metrics(source, expired, active, reserved)
+    assert final == {**pinned, expired: 1}, final
+    assert member(endpoint, "release-source") == owner
+
+    source.close()
+    log = source.log_path.read_text()
+    gc = re.search(r"Background GC task started \(interval=(\d+)s,", log)
+    assert gc and "after drain failed:" not in log
+    assert source_releases(source) == releases
+    fresh.wait(lambda: member(endpoint, "release-source") is None)
+    replacement = node(
+        "release-source",
+        path,
+        address=source.address,
+        advertise=owner["owner"]["endpoint"],
+    )
+    restarted = member(endpoint, "release-source")
+    assert restarted["owner"]["endpoint"] == owner["owner"]["endpoint"]
+    assert restarted["epoch"] > owner["epoch"]
+    assert restarted["owner"]["incarnation"] != owner["owner"]["incarnation"]
+    empty = transfer_metrics(replacement, active, reserved)
+    assert empty == {active: 0, reserved: 0}, empty
+    fresh.close()
+    replacement.close()
+    return {
+        "requester_exit_code": reader.process.returncode,
+        "after_requester_exit": after_exit,
+        "after_requester_membership_expiry": after_expiry,
+        "restarted_requester": new,
+        "after_requester_restart": after_restart,
+        "seconds_since_authorization_observed": timeline,
+        "overdue_ticket": old_ticket,
+        "overdue_session_age": age,
+        "gc_interval_seconds": int(gc[1]),
+        "overdue_requester": requester,
+        "overdue_source": overdue_counts,
+        "both_tickets_held": both,
+        "after_fresh_read": after_read,
+        "source_releases": releases,
+        "fresh_fetched": delivered,
+        "fresh_slot_sha256": [
+            hashlib.sha256(bytes(s["bytes"])).hexdigest() for s in received["slots"]
+        ],
+        "before_source_shutdown": final,
+        "source_exit_code": source.process.returncode,
+        "restarted_source": restarted,
+        "after_source_restart": empty,
+    }
+
+
 def release_during_grpc_outage(gate, path, endpoint, node, router, case):
-    lose_reply = case != "grpc-release-retry"
+    lose_reply = case in ("grpc-release-ack-loss", "grpc-release-ack-loss-restart")
     restart = case == "grpc-release-ack-loss-restart"
+    requester_restart = case == "grpc-requester-restart-before-release"
     # Reserve the bind address until the proxy has chosen its own listener.
     with socket.socket() as reserved:
         port = find_available_port()
@@ -665,7 +810,14 @@ def release_during_grpc_outage(gate, path, endpoint, node, router, case):
         proxy = TcpGate(f"http://{address}")
     with closing(proxy):
         advertised = proxy.endpoint.removeprefix("http://")
-        source = node("release-source", path, address=address, advertise=advertised)
+        lock_timeout = 15 if requester_restart else None
+        source = node(
+            "release-source",
+            path,
+            address=address,
+            advertise=advertised,
+            lock_timeout=lock_timeout,
+        )
         point = "peer_read_authorized"
         reader = node("release-reader", path.parent / "reader", pauses=(point,))
 
@@ -694,6 +846,7 @@ def release_during_grpc_outage(gate, path, endpoint, node, router, case):
         fetched = "orbitkv_remote_fetch_bytes_total"
         reader.send("peer_read", id=1)
         reader.reached(point)
+        authorized_at = time.monotonic()
         held = transfer_charges(source, reader)
         assert held["orbitkv_transfer_lock_active"] == 1
         assert held["orbitkv_transfer_reserved_bytes"] >= payload_bytes
@@ -741,6 +894,38 @@ def release_during_grpc_outage(gate, path, endpoint, node, router, case):
         retained = transfer_charges(source, reader)
         assert retained == (unconfirmed if lose_reply else held), retained
         assert members() == registered
+        receipt.update(
+            {
+                "members": registered,
+                "held": held,
+                "read_complete_while_disconnected": blocked,
+                "retained": retained,
+                "verified_slot_bytes": [len(s["bytes"]) for s in received["slots"]],
+                "slot_sha256": [
+                    hashlib.sha256(bytes(s["bytes"])).hexdigest()
+                    for s in received["slots"]
+                ],
+            }
+        )
+        output = gate.artifacts / f"{case}.json"
+        if requester_restart:
+            receipt["lock_timeout_seconds"] = lock_timeout
+            receipt.update(
+                restart_requester_before_release(
+                    source,
+                    reader,
+                    endpoint,
+                    path,
+                    node,
+                    router,
+                    proxy,
+                    registered,
+                    held,
+                    authorized_at,
+                )
+            )
+            output.write_text(json.dumps(receipt, indent=2))
+            return
 
         expected_members = registered
         if restart:
@@ -770,25 +955,8 @@ def release_during_grpc_outage(gate, path, endpoint, node, router, case):
                 assert duplicate["ticket"] == first["ticket"], releases
                 assert duplicate["released_blocks"] == 0, releases
             receipt["source_releases_after_reconnect"] = recovered
-        (gate.artifacts / f"{case}.json").write_text(
-            json.dumps(
-                {
-                    **receipt,
-                    "members": registered,
-                    "held": held,
-                    "read_complete_while_disconnected": blocked,
-                    "retained": retained,
-                    "drained": drained,
-                    "after_reconnect": after,
-                    "verified_slot_bytes": [len(s["bytes"]) for s in received["slots"]],
-                    "slot_sha256": [
-                        hashlib.sha256(bytes(s["bytes"])).hexdigest()
-                        for s in received["slots"]
-                    ],
-                },
-                indent=2,
-            )
-        )
+        receipt.update(drained=drained, after_reconnect=after)
+        output.write_text(json.dumps(receipt, indent=2))
         reader.close()
         source.close()
 
@@ -842,6 +1010,7 @@ def main():
                 "grpc-release-retry",
                 "grpc-release-ack-loss",
                 "grpc-release-ack-loss-restart",
+                "grpc-requester-restart-before-release",
             ):
                 gate.case(
                     case,

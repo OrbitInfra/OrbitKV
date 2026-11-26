@@ -610,9 +610,13 @@ exhaustion, retained source allocations after timeout, cancellation during a
 blocking transfer, bounded retry of lost release replies, lost authorization
 replies after pinning, close-before-authorize races, stale slot generations and
 idle-window eviction. Connection recovery verifies that an old requester
-completion cannot release a new runtime’s hold. These tests cannot prove
-transport revocation after a permanently lost requester. Such source pins remain
-charged until safe release or coordinated Manager teardown. Real partitions,
+completion cannot release a new runtime’s hold. The
+[requester-restart process test](storage-persistence.md#exclusive-handoff-after-owner-loss)
+checks that old pins stay charged after the requester's lease expires and the
+source marks its ticket overdue. The replacement requester reads and releases
+its own grant. Reclaiming pins online after permanent requester loss requires a
+transport revocation or drain receipt. Without a matching release, these pins
+stay charged for the lifetime of the source Manager. Real partitions,
 multi-rank replicas and metadata HA remain separate gates; historical results do not qualify the current OrbiTE path.
 
 

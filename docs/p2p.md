@@ -116,6 +116,12 @@ zero additional blocks released, and that ACK retires the record.
 If a restarted source receives the retry at the same address, it looks up the
 window UUID first. The old window is absent, so the source acknowledges zero
 blocks even when the same slot and generation are active in a new window.
+If the requester exits before delivering its release, its in-memory completion
+record dies with it. The running source keeps the old ticket and its byte
+reservation across membership expiry and address reuse. The timeout sweep marks
+the ticket overdue. A replacement requester can read with a fresh ticket when
+there is budget for both grants. Releasing the fresh ticket leaves the old
+reservation charged until a matching release or coordinated source shutdown.
 See [peer Restore](transport.md#peer-restore-into-gpu) and
 [peer control](distributed-cache.md#application-and-transport-boundary) for retained owners and retirement.
 
