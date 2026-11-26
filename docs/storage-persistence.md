@@ -372,9 +372,15 @@ The live-reclaim case pauses a cold requester after authorization and before
 its first TCP READ. Another namespace claims the released capacity and writes
 different bytes under the same block hash. The requester checks the original
 bytes after resuming, and the transfer counters return to zero.
-CI runs all four cases on ext4 and tmpfs and saves `handoff.json`,
-`expired-owner-handoff.json`, `control-bind-failure.json` and
-`live-reclaim-authorized-read.json` in the `ssd-process-crash` artifact.
+A fifth case keeps etcd and the TCP data path reachable and disconnects the
+source gRPC endpoint after it has granted an SSD READ. The requester checks
+the bytes before reconnecting. A failed release must leave the source block,
+reserved bytes and requester completion slot outstanding. After reconnecting,
+all three gauges return to zero and the successful fetch byte count stays fixed.
+The `ssd-process-crash` CI artifact contains separate ext4 and tmpfs directories.
+Each includes `handoff.json`, `expired-owner-handoff.json`,
+`control-bind-failure.json`, `live-reclaim-authorized-read.json` and
+`grpc-release-retry.json`.
 
 To run the cases with the same test-hooks binary and host-registration shim as
 the persistent SSD gate, choose an existing scratch directory for `MOUNT` and

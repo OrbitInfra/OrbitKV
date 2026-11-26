@@ -104,6 +104,11 @@ pending releases, then retry authorization once. This is pre-submit admission,
 not a payload replay or a reset of the read deadline. Lost authorization replies
 use the known-ticket cleanup owner. Source release ACKs may outlive active READs;
 64 per source incarnation / 1,024 globally bound completion records.
+If the source gRPC endpoint becomes unreachable after authorization, an OrbiTE
+TCP READ can still return its bytes. While the release request cannot reach
+the source, the source retains the block and its reserved bytes and the
+requester retains its completion record. Once gRPC recovers, the retry
+releases the source ticket and its ACK retires the requester record.
 See [peer Restore](transport.md#peer-restore-into-gpu) and
 [peer control](distributed-cache.md#application-and-transport-boundary) for retained owners and retirement.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise an exclusive SSD handoff between real Managers on the same Linux host."""
+"""Exercise SSD ownership and peer READ lifetimes between real Linux Managers."""
 
 import argparse
 import base64
@@ -12,13 +12,14 @@ import socket
 import subprocess
 import tempfile
 import time
+from contextlib import closing
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import UUID
 
 from ssd_persistence import Gate, frames
-from tests.support.cluster import etcd_server, find_available_port
+from tests.support.cluster import TcpGate, etcd_server, find_available_port
 
 
 def member(endpoint, node):
@@ -112,7 +113,8 @@ def control_bind_failure(gate, path, endpoint):
 
 
 def cluster_controls(gate, endpoint, credentials, token):
-    def node(name, data, *, address=None, **options):
+    def node(name, data, *, address=None, advertise=None, **options):
+        peer_args = ("--peer-advertise-addr", advertise) if advertise else ()
         return gate.manager(
             data,
             address=address or f"127.0.0.1:{find_available_port()}",
@@ -125,6 +127,7 @@ def cluster_controls(gate, endpoint, credentials, token):
                 "12",
                 "--router-credentials",
                 str(credentials),
+                *peer_args,
             ),
             **options,
         )
@@ -385,19 +388,25 @@ def handoff(gate, path, endpoint, node, router, *, expire=False):
     replacement.close()
 
 
-def transfer_charges(source, requester):
+def transfer_metrics(manager, *names):
     values = {}
-    for manager, names in (
-        (source, ("orbitkv_transfer_lock_active", "orbitkv_transfer_reserved_bytes")),
-        (requester, ("orbitkv_transfer_completion_outstanding",)),
-    ):
-        with urlopen(f"http://{manager.http}/metrics", timeout=2) as response:
-            for line in response.read().decode().splitlines():
-                for name in names:
-                    if line.startswith((name + "{", name + " ")):
-                        assert name not in values, line
-                        values[name] = float(line.split()[-1])
-        assert all(name in values for name in names), values
+    with urlopen(f"http://{manager.http}/metrics", timeout=2) as response:
+        for line in response.read().decode().splitlines():
+            for name in names:
+                if line.startswith((name + "{", name + " ")):
+                    assert name not in values, line
+                    values[name] = float(line.split()[-1])
+    return values
+
+
+def transfer_charges(source, requester):
+    values = transfer_metrics(
+        source, "orbitkv_transfer_lock_active", "orbitkv_transfer_reserved_bytes"
+    )
+    values.update(
+        transfer_metrics(requester, "orbitkv_transfer_completion_outstanding")
+    )
+    assert len(values) == 3, values
     return values
 
 
@@ -517,6 +526,99 @@ def live_reclaim_authorized_read(gate, root, endpoint, node, router):
     donor.close()
 
 
+def release_during_grpc_outage(gate, path, endpoint, node, router):
+    # Reserve the bind address until the proxy has chosen its own listener.
+    with socket.socket() as reserved:
+        port = find_available_port()
+        reserved.bind(("127.0.0.1", port))
+        address = f"127.0.0.1:{port}"
+        proxy = TcpGate(f"http://{address}")
+    with closing(proxy):
+        advertised = proxy.endpoint.removeprefix("http://")
+        source = node("release-source", path, address=address, advertise=advertised)
+        point = "peer_read_authorized"
+        reader = node("release-reader", path.parent / "reader", pauses=(point,))
+
+        def members():
+            return {
+                name: member(endpoint, name)
+                for name in ("release-source", "release-reader")
+            }
+
+        registered = members()
+        owner = registered["release-source"]["owner"]
+        assert (
+            owner["endpoint"] == advertised
+            and reader.address == registered["release-reader"]["owner"]["endpoint"]
+        )
+        stored = source.call("write", id=1)
+        assert stored["present"]
+        original = source.read(1)["slots"]
+        payload_bytes = sum(len(slot["bytes"]) for slot in original)
+        (row,) = cold_placements(reader, router, [stored["hash"]], [[owner]])
+        assert row["peers"][0]["metadata"]["medium"] == "Ssd"
+
+        idle = transfer_charges(source, reader)
+        assert all(value == 0 for value in idle.values()), idle
+        retries = "orbitkv_transfer_completion_retries_total"
+        fetched = "orbitkv_remote_fetch_bytes_total"
+        reader.send("peer_read", id=1)
+        reader.reached(point)
+        held = transfer_charges(source, reader)
+        assert held["orbitkv_transfer_lock_active"] == 1
+        assert held["orbitkv_transfer_reserved_bytes"] >= payload_bytes
+        assert held["orbitkv_transfer_completion_outstanding"] == 1
+        # Counters on a fresh requester can be absent until their first event.
+        before = transfer_metrics(reader, retries, fetched)
+        assert all(value == 0 for value in before.values()), before
+
+        proxy.partition()
+        reader.release(point)
+        received = reader.reply()
+        assert received["present"] and received["slots"] == original
+
+        def release_failed():
+            counts = transfer_metrics(reader, retries, fetched)
+            return counts if counts.get(retries, 0) > 0 else None
+
+        blocked = reader.wait(release_failed)
+        assert blocked[fetched] == payload_bytes, blocked
+        retained = transfer_charges(source, reader)
+        assert retained == held, retained
+        assert members() == registered
+
+        proxy.heal()
+
+        def released():
+            charges = transfer_charges(source, reader)
+            return charges if charges == idle else None
+
+        drained = reader.wait(released)
+        after = transfer_metrics(reader, retries, fetched)
+        assert after[fetched] == blocked[fetched] and after[retries] >= blocked[retries]
+        assert members() == registered
+        (gate.artifacts / "grpc-release-retry.json").write_text(
+            json.dumps(
+                {
+                    "members": registered,
+                    "held": held,
+                    "read_complete_while_disconnected": blocked,
+                    "retained": retained,
+                    "drained": drained,
+                    "after_reconnect": after,
+                    "verified_slot_bytes": [len(s["bytes"]) for s in received["slots"]],
+                    "slot_sha256": [
+                        hashlib.sha256(bytes(s["bytes"])).hexdigest()
+                        for s in received["slots"]
+                    ],
+                },
+                indent=2,
+            )
+        )
+        reader.close()
+        source.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ["binary", "root", "artifacts"]:
@@ -559,6 +661,12 @@ def main():
             gate.case(
                 "live-reclaim-authorized-read",
                 lambda path: live_reclaim_authorized_read(
+                    gate, path, endpoint, node, router
+                ),
+            )
+            gate.case(
+                "grpc-release-retry",
+                lambda path: release_during_grpc_outage(
                     gate, path, endpoint, node, router
                 ),
             )

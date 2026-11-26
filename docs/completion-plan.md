@@ -265,6 +265,10 @@ The live-reclaim gate pauses an authorized remote READ across that capacity
 reuse. The requester observes the old SSD placement disappear, the source
 rejects a fresh grant for that residency, and the original transfer reads its
 retained bytes before its ticket and byte charge drain.
+A separate same-host control disconnects the source gRPC endpoint after
+authorization. It checks the READ bytes during the outage, observes a failed
+release with both peers' charges still held, and requires those charges to
+drain after reconnecting without another payload fetch.
 The same-host expiry control suspends a shared-partition writer until etcd
 removes it. The shard lock and root reservation survive that expiry. A retained
 reader delays takeover after process exit. The Manager attempts to revoke its own
