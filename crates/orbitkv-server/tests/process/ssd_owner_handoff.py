@@ -667,7 +667,8 @@ def restart_requester_before_release(
     reserved = "orbitkv_transfer_reserved_bytes"
     outstanding = "orbitkv_transfer_completion_outstanding"
     expired = "orbitkv_transfer_expired_sessions"
-    timeouts = "orbitkv_transfer_lock_timeouts_total"
+    # The Prometheus exporter appends _total to this already-suffixed OTel counter.
+    timeouts = "orbitkv_transfer_lock_timeouts_total_total"
     fetched = "orbitkv_remote_fetch_bytes_total"
     old = registered["release-reader"]
     owner = registered["release-source"]
@@ -700,7 +701,7 @@ def restart_requester_before_release(
     # Observe the source's normal GC sweep before admitting the second ticket.
     def overdue():
         counts = transfer_metrics(source, expired, timeouts, active, reserved)
-        return counts if counts.get(expired) == 1 else None
+        return counts if counts.get(expired, 0) and counts.get(timeouts, 0) else None
 
     overdue_counts = source.wait(overdue)
     timeline["overdue_observed"] = time.monotonic() - authorized_at

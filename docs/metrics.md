@@ -240,7 +240,7 @@ Correlate load bytes and failures rather than adding these denominators.
 | `orbitkv_remote_stage_duration_seconds{stage,status}` | Authorization (including setup), allocation, read, rebuild and release-to-ACK/retry latency |
 | `orbitkv_orbite_nic_inflight_bytes`, `orbitkv_orbite_nic_bandwidth_bytes_per_second` | Engine RDMA load by NIC after successful batches; not proof of that batch's transport |
 | `orbitkv_transfer_reserved_bytes` | Whole source allocations charged once per session, including overdue holds |
-| `orbitkv_transfer_expired_sessions`, `orbitkv_transfer_lock_timeouts_total` | Retained overdue sessions and their once-only timeout transitions |
+| `orbitkv_transfer_expired_sessions`, `orbitkv_transfer_lock_timeouts_total_total` | Retained overdue sessions and cumulative timeout transitions. On `/metrics`, the Prometheus exporter appends `_total` to the OpenTelemetry counter `orbitkv_transfer_lock_timeouts_total`. |
 | `orbitkv_transfer_completion_outstanding` | Requester slots through source release ACK: 1,024 total / 64 per source incarnation |
 | `orbitkv_transfer_completion_retries_total`, `orbitkv_transfer_completion_rejections_total` | Failed releases / new authorizations skipped at capacity |
 | `orbitkv_transfer_lock_rejections_total{reason="bytes|sessions"}` | Source-budget refusal |
