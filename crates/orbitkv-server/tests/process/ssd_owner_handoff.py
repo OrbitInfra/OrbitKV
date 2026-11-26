@@ -983,7 +983,9 @@ def release_during_grpc_outage(gate, path, endpoint, node, router, case):
 
 
 def peer_source_budget_fallback(gate, path, endpoint, node, router):
-    budget = 1536
+    # SSD staging also reserves a 512-byte pool allocation for the file tail.
+    # The two payload allocations retain 1536 bytes after staging completes.
+    budget = 2048
     peers = []
     for name in ("budget-source-a", "budget-source-b"):
         source = node(name, path.parent / name, capacity=16384, transfer_budget=budget)
@@ -1013,7 +1015,7 @@ def peer_source_budget_fallback(gate, path, endpoint, node, router):
     fetched = "orbitkv_remote_fetch_bytes_total"
     rejected = "orbitkv_transfer_lock_rejections_total"
     idle = {active: 0, reserved: 0, outstanding: 0}
-    charged = {active: 1, reserved: budget, outstanding: 1}
+    charged = {active: 1, reserved: 1536, outstanding: 1}
 
     def wait_charges(preferred_holder, alternate_probe):
         def observe():

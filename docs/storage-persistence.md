@@ -394,8 +394,9 @@ requester exit, etcd lease expiry, address reuse and the source's timeout sweep.
 The restarted requester reads a different block with a fresh ticket. Its release
 leaves the old grant charged. The gate also checks the empty accounting of a
 new source process after the original source shuts down.
-A separate case fills the preferred source's transfer budget with a paused
-READ. Both sources advertise the next requested block. The requester observes
+A separate case holds a READ at the preferred source, leaving too little of
+its transfer budget to stage a second SSD block. Both sources advertise that
+second block. The requester observes
 a grant rejection at the first source, reads the bytes from the second and
 releases its ticket there. Resuming the paused READ returns the first source's
 budget, which a subsequent cold READ can use.
