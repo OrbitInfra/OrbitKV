@@ -394,11 +394,17 @@ requester exit, etcd lease expiry, address reuse and the source's timeout sweep.
 The restarted requester reads a different block with a fresh ticket. Its release
 leaves the old grant charged. The gate also checks the empty accounting of a
 new source process after the original source shuts down.
+A separate case fills the preferred source's transfer budget with a paused
+READ. Both sources advertise the next requested block. The requester observes
+a grant rejection at the first source, reads the bytes from the second and
+releases its ticket there. Resuming the paused READ returns the first source's
+budget, which a subsequent cold READ can use.
 The `ssd-process-crash` CI artifact contains separate ext4 and tmpfs directories.
 Each includes `handoff.json`, `expired-owner-handoff.json`,
 `control-bind-failure.json`, `live-reclaim-authorized-read.json`,
 `grpc-release-retry.json`, `grpc-release-ack-loss.json`,
-`grpc-release-ack-loss-restart.json` and `grpc-requester-restart-before-release.json`.
+`grpc-release-ack-loss-restart.json`, `grpc-requester-restart-before-release.json`
+and `peer-source-budget-fallback.json`.
 
 To run the cases with the same test-hooks binary and host-registration shim as
 the persistent SSD gate, choose an existing scratch directory for `MOUNT` and

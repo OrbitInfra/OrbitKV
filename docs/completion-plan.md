@@ -279,6 +279,10 @@ The requester-restart case verifies that a completed TCP READ whose release
 never reached the source leaves an overdue reservation. A new requester at the
 same address can read within the remaining budget. Online reclamation of the
 lost requester's reservation still needs proof that its transfers have drained.
+The source-budget case holds a live grant at the preferred source and checks
+that a cold requester can read the same block from a second replica after a
+budget rejection. It also checks read admission on the first source once its
+held grant drains.
 The same-host expiry control suspends a shared-partition writer until etcd
 removes it. The shard lock and root reservation survive that expiry. A retained
 reader delays takeover after process exit. The Manager attempts to revoke its own
