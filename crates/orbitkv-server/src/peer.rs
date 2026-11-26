@@ -224,6 +224,11 @@ impl Engine for P2pTransferService {
             .peer_exports()
             .release(ticket, &request.corrupt_block_hashes)
             .map_err(Self::authorization_error)?;
+        #[cfg(feature = "test-hooks")]
+        {
+            log::info!("Peer release handled: ticket={ticket:?} released_blocks={released}");
+            orbitkv_core::test_faults::pause("peer_release_before_reply").await;
+        }
         Ok(Response::new(ReleaseTransferLockResponse {
             status: Some(Self::ok_status()),
             released_blocks: released as u64,

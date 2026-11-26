@@ -54,6 +54,8 @@ class TcpGate:
         self._condition = threading.Condition()
         self._connections: set[tuple[socket.socket, socket.socket]] = set()
         self._partitioned = False
+        self._drop_responses = False
+        self._dropped_response_bytes = 0
         self._delay_seconds = 0.0
         self._stopped = False
         self._thread = threading.Thread(target=self._serve, name="orbitkv-etcd-gate", daemon=True)
@@ -73,9 +75,22 @@ class TcpGate:
                     raise TimeoutError("TCP gate connections did not drain")
                 self._condition.wait(remaining)
 
+    def drop_responses(self) -> None:
+        """Discard traffic from the target while continuing to forward requests."""
+        with self._condition:
+            self._dropped_response_bytes = 0
+            self._drop_responses = True
+
+    def wait_for_dropped_response(self) -> int:
+        with self._condition:
+            if not self._condition.wait_for(lambda: self._dropped_response_bytes > 0, timeout=5):
+                raise TimeoutError("TCP gate did not observe a response to drop")
+            return self._dropped_response_bytes
+
     def heal(self) -> None:
         with self._condition:
             self._partitioned = False
+            self._drop_responses = False
 
     def set_delay(self, seconds: float) -> None:
         if seconds < 0:
@@ -144,6 +159,10 @@ class TcpGate:
                     if not data:
                         return
                     with self._condition:
+                        if source is upstream and self._drop_responses:
+                            self._dropped_response_bytes += len(data)
+                            self._condition.notify_all()
+                            continue
                         delay = self._delay_seconds
                     if delay:
                         time.sleep(delay)

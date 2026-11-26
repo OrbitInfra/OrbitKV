@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import secrets
 import signal
 import socket
@@ -526,7 +527,31 @@ def live_reclaim_authorized_read(gate, root, endpoint, node, router):
     donor.close()
 
 
-def release_during_grpc_outage(gate, path, endpoint, node, router):
+def source_releases(source):
+    releases = []
+    for line in source.log_path.read_text().splitlines():
+        if "Peer release handled:" in line:
+            match = re.search(
+                r"Peer release handled: ticket=TransferTicket \{ window: ([0-9a-f-]+), "
+                r"slot: (\d+), generation: (\d+) \} released_blocks=(\d+)",
+                line,
+            )
+            assert match, line
+            window, slot, generation, blocks = match.groups()
+            releases.append(
+                {
+                    "ticket": {
+                        "window": str(UUID(window)),
+                        "slot": int(slot),
+                        "generation": int(generation),
+                    },
+                    "released_blocks": int(blocks),
+                }
+            )
+    return releases
+
+
+def release_during_grpc_outage(gate, path, endpoint, node, router, *, lose_reply=False):
     # Reserve the bind address until the proxy has chosen its own listener.
     with socket.socket() as reserved:
         port = find_available_port()
@@ -572,8 +597,26 @@ def release_during_grpc_outage(gate, path, endpoint, node, router):
         before = transfer_metrics(reader, retries, fetched)
         assert all(value == 0 for value in before.values()), before
 
-        proxy.partition()
-        reader.release(point)
+        receipt = {}
+        if lose_reply:
+            reply_point = "peer_release_before_reply"
+            source.pause(reply_point)
+            reader.release(point)
+            source.reached(reply_point)
+            proxy.drop_responses()
+            unconfirmed = dict(idle, orbitkv_transfer_completion_outstanding=1)
+            before_reply = transfer_charges(source, reader)
+            assert before_reply == unconfirmed, before_reply
+            (first,) = source_releases(source)
+            assert first["released_blocks"] == 1, first
+            receipt["released_before_reply"] = before_reply
+            source.release(reply_point)
+            dropped = proxy.wait_for_dropped_response()
+            assert dropped > 0, dropped
+            receipt["dropped_control_response_bytes"] = dropped
+        else:
+            proxy.partition()
+            reader.release(point)
         received = reader.reply()
         assert received["present"] and received["slots"] == original
 
@@ -583,8 +626,13 @@ def release_during_grpc_outage(gate, path, endpoint, node, router):
 
         blocked = reader.wait(release_failed)
         assert blocked[fetched] == payload_bytes, blocked
+        if lose_reply:
+            # Discard the HTTP/2 connections that lost bytes before reconnecting.
+            proxy.partition()
+            before_reconnect = source_releases(source)
+            receipt["source_releases_before_reconnect"] = before_reconnect
         retained = transfer_charges(source, reader)
-        assert retained == held, retained
+        assert retained == (unconfirmed if lose_reply else held), retained
         assert members() == registered
 
         proxy.heal()
@@ -597,9 +645,20 @@ def release_during_grpc_outage(gate, path, endpoint, node, router):
         after = transfer_metrics(reader, retries, fetched)
         assert after[fetched] == blocked[fetched] and after[retries] >= blocked[retries]
         assert members() == registered
-        (gate.artifacts / "grpc-release-retry.json").write_text(
+        if lose_reply:
+            releases = source_releases(source)
+            assert releases[: len(before_reconnect)] == before_reconnect
+            recovered = releases[len(before_reconnect) :]
+            assert recovered, releases
+            for duplicate in releases[1:]:
+                assert duplicate["ticket"] == first["ticket"], releases
+                assert duplicate["released_blocks"] == 0, releases
+            receipt["source_releases_after_reconnect"] = recovered
+        name = "grpc-release-ack-loss" if lose_reply else "grpc-release-retry"
+        (gate.artifacts / f"{name}.json").write_text(
             json.dumps(
                 {
+                    **receipt,
                     "members": registered,
                     "held": held,
                     "read_complete_while_disconnected": blocked,
@@ -668,6 +727,12 @@ def main():
                 "grpc-release-retry",
                 lambda path: release_during_grpc_outage(
                     gate, path, endpoint, node, router
+                ),
+            )
+            gate.case(
+                "grpc-release-ack-loss",
+                lambda path: release_during_grpc_outage(
+                    gate, path, endpoint, node, router, lose_reply=True
                 ),
             )
 
