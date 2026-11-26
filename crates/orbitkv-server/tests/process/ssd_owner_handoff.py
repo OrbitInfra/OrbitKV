@@ -551,7 +551,112 @@ def source_releases(source):
     return releases
 
 
-def release_during_grpc_outage(gate, path, endpoint, node, router, *, lose_reply=False):
+def restart_during_release_retry(
+    source, reader, node, router, endpoint, path, proxy, ticket
+):
+    old = member(endpoint, "release-source")
+    reader.reached("peer_release_before_retry")
+    source.close(kill=True)
+    reader.wait(lambda: member(endpoint, "release-source") is None)
+    replacement = node(
+        "release-source",
+        path,
+        address=source.address,
+        advertise=old["owner"]["endpoint"],
+    )
+    new = member(endpoint, "release-source")
+    assert new["owner"]["endpoint"] == old["owner"]["endpoint"]
+    assert new["owner"]["incarnation"] != old["owner"]["incarnation"]
+    assert new["epoch"] > old["epoch"]
+    proxy.heal()
+
+    point = "peer_read_authorized"
+    fresh = node("fresh-reader", path.parent / "fresh-reader", pauses=(point,))
+    stored = replacement.call("write", id=2)
+    assert stored["present"]
+    expected = replacement.read(2)["slots"]
+    payload_bytes = sum(len(s["bytes"]) for s in expected)
+    (row,) = cold_placements(fresh, router, [stored["hash"]], [[new["owner"]]])
+    assert row["peers"][0]["metadata"]["medium"] == "Ssd"
+    idle = transfer_charges(replacement, fresh)
+    assert all(value == 0 for value in idle.values()), idle
+    fresh.send("peer_read", id=2)
+    fresh.reached(point)
+    held = transfer_charges(replacement, fresh)
+    assert held["orbitkv_transfer_lock_active"] == 1
+    assert held["orbitkv_transfer_reserved_bytes"] >= payload_bytes
+    assert held["orbitkv_transfer_completion_outstanding"] == 1
+
+    outstanding = "orbitkv_transfer_completion_outstanding"
+    reply_point = "peer_release_before_reply"
+    before_stale = transfer_metrics(reader, outstanding)
+    assert before_stale == {outstanding: 1}
+    assert source_releases(replacement) == []
+    replacement.pause(reply_point)
+    reader.release("peer_release_before_retry")
+    replacement.reached(reply_point)
+    stale = source_releases(replacement)
+    noop = {"ticket": ticket, "released_blocks": 0}
+    assert stale and all(release == noop for release in stale), stale
+    after_stale = transfer_charges(replacement, fresh)
+    assert after_stale == held, after_stale
+    before_ack = transfer_metrics(reader, outstanding)
+    assert before_ack == before_stale
+    replacement.release(reply_point)
+    reader.wait(lambda: transfer_metrics(reader, outstanding) == {outstanding: 0})
+    after_ack = transfer_charges(replacement, fresh)
+    assert after_ack == held, after_ack
+    old_drained = transfer_metrics(reader, outstanding)
+    assert old_drained == {outstanding: 0}
+
+    fresh.release(point)
+    received = fresh.reply()
+    assert received["present"] and received["slots"] == expected
+    fresh.wait(lambda: transfer_charges(replacement, fresh) == idle)
+    drained = transfer_charges(replacement, fresh)
+    assert drained == idle, drained
+    fetched = transfer_metrics(fresh, "orbitkv_remote_fetch_bytes_total")
+    assert fetched["orbitkv_remote_fetch_bytes_total"] == payload_bytes
+    releases = source_releases(replacement)
+    stale = [release for release in releases if release["ticket"] == ticket]
+    assert stale and all(release == noop for release in stale), releases
+    fresh_releases = [release for release in releases if release["ticket"] != ticket]
+    assert fresh_releases and fresh_releases[0]["released_blocks"] == 1, releases
+    fresh_ticket = fresh_releases[0]["ticket"]
+    assert fresh_ticket["window"] != ticket["window"]
+    assert (fresh_ticket["slot"], fresh_ticket["generation"]) == (
+        ticket["slot"],
+        ticket["generation"],
+    )
+    assert all(
+        release == {"ticket": fresh_ticket, "released_blocks": 0}
+        for release in fresh_releases[1:]
+    ), releases
+    fresh.close()
+    return (
+        replacement,
+        new,
+        {
+            "replacement_member": new,
+            "fresh_held": held,
+            "fresh_held_after_stale_release": after_stale,
+            "fresh_held_after_stale_ack": after_ack,
+            "old_requester_before_retry": before_stale,
+            "old_requester_before_ack": before_ack,
+            "old_requester_after_ack": old_drained,
+            "replacement_releases": releases,
+            "fresh_drained": drained,
+            "fresh_fetched": fetched,
+            "fresh_slot_sha256": [
+                hashlib.sha256(bytes(s["bytes"])).hexdigest() for s in expected
+            ],
+        },
+    )
+
+
+def release_during_grpc_outage(gate, path, endpoint, node, router, case):
+    lose_reply = case != "grpc-release-retry"
+    restart = case == "grpc-release-ack-loss-restart"
     # Reserve the bind address until the proxy has chosen its own listener.
     with socket.socket() as reserved:
         port = find_available_port()
@@ -600,6 +705,8 @@ def release_during_grpc_outage(gate, path, endpoint, node, router, *, lose_reply
         receipt = {}
         if lose_reply:
             reply_point = "peer_release_before_reply"
+            if restart:
+                reader.pause("peer_release_before_retry")
             source.pause(reply_point)
             reader.release(point)
             source.reached(reply_point)
@@ -635,7 +742,16 @@ def release_during_grpc_outage(gate, path, endpoint, node, router, *, lose_reply
         assert retained == (unconfirmed if lose_reply else held), retained
         assert members() == registered
 
-        proxy.heal()
+        expected_members = registered
+        if restart:
+            assert before_reconnect == [first], before_reconnect
+            source, new, restart_receipt = restart_during_release_retry(
+                source, reader, node, router, endpoint, path, proxy, first["ticket"]
+            )
+            expected_members = {**registered, "release-source": new}
+            receipt.update(restart_receipt)
+        else:
+            proxy.heal()
 
         def released():
             charges = transfer_charges(source, reader)
@@ -644,8 +760,8 @@ def release_during_grpc_outage(gate, path, endpoint, node, router, *, lose_reply
         drained = reader.wait(released)
         after = transfer_metrics(reader, retries, fetched)
         assert after[fetched] == blocked[fetched] and after[retries] >= blocked[retries]
-        assert members() == registered
-        if lose_reply:
+        assert members() == expected_members
+        if lose_reply and not restart:
             releases = source_releases(source)
             assert releases[: len(before_reconnect)] == before_reconnect
             recovered = releases[len(before_reconnect) :]
@@ -654,8 +770,7 @@ def release_during_grpc_outage(gate, path, endpoint, node, router, *, lose_reply
                 assert duplicate["ticket"] == first["ticket"], releases
                 assert duplicate["released_blocks"] == 0, releases
             receipt["source_releases_after_reconnect"] = recovered
-        name = "grpc-release-ack-loss" if lose_reply else "grpc-release-retry"
-        (gate.artifacts / f"{name}.json").write_text(
+        (gate.artifacts / f"{case}.json").write_text(
             json.dumps(
                 {
                     **receipt,
@@ -723,18 +838,17 @@ def main():
                     gate, path, endpoint, node, router
                 ),
             )
-            gate.case(
+            for case in (
                 "grpc-release-retry",
-                lambda path: release_during_grpc_outage(
-                    gate, path, endpoint, node, router
-                ),
-            )
-            gate.case(
                 "grpc-release-ack-loss",
-                lambda path: release_during_grpc_outage(
-                    gate, path, endpoint, node, router, lose_reply=True
-                ),
-            )
+                "grpc-release-ack-loss-restart",
+            ):
+                gate.case(
+                    case,
+                    lambda path, case=case: release_during_grpc_outage(
+                        gate, path, endpoint, node, router, case
+                    ),
+                )
 
 
 if __name__ == "__main__":

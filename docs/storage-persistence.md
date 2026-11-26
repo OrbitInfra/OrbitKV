@@ -382,10 +382,17 @@ processed the release. Its block and byte charges have drained, while the
 requester still holds one completion record. After reconnection the same ticket
 releases zero further blocks, its ACK clears the record, and the verified READ
 bytes are counted once.
+The restart case kills the source after the lost ACK and waits for its etcd
+lease to expire. The replacement reopens the same storage with the same node ID
+and address. A second requester holds a grant in a new window with the same
+slot and generation. The gate checks that retrying the old ticket clears the
+original requester's record while the new grant remains charged, then verifies
+the second requester's READ and release.
 The `ssd-process-crash` CI artifact contains separate ext4 and tmpfs directories.
 Each includes `handoff.json`, `expired-owner-handoff.json`,
 `control-bind-failure.json`, `live-reclaim-authorized-read.json`,
-`grpc-release-retry.json` and `grpc-release-ack-loss.json`.
+`grpc-release-retry.json`, `grpc-release-ack-loss.json` and
+`grpc-release-ack-loss-restart.json`.
 
 To run the cases with the same test-hooks binary and host-registration shim as
 the persistent SSD gate, choose an existing scratch directory for `MOUNT` and
