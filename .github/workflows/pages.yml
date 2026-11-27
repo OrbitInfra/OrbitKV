@@ -18,7 +18,10 @@ jobs:
     permissions:
       contents: read
       pages: read
+    env:
+      PAGES_ARTIFACT_NAME: github-pages-${{ github.run_attempt }}
     outputs:
+      artifact_name: ${{ env.PAGES_ARTIFACT_NAME }}
       artifact_id: ${{ steps.upload.outputs.artifact_id }}
     runs-on: ubuntu-latest
     steps:
@@ -42,6 +45,7 @@ jobs:
       - id: upload
         uses: actions/upload-pages-artifact@v3
         with:
+          name: ${{ env.PAGES_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/orbitkv-docs
 
   deploy:
@@ -58,14 +62,15 @@ jobs:
       - name: Wait for the uploaded Pages artifact
         env:
           GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: ${{ needs.build.outputs.artifact_name }}
           ARTIFACT_ID: ${{ needs.build.outputs.artifact_id }}
         shell: bash
         run: |
-          : "${ARTIFACT_ID:?Missing Pages artifact ID from the build job}"
+          : "${ARTIFACT_NAME:?Missing Pages artifact name}" "${ARTIFACT_ID:?Missing Pages artifact ID}"
           run_artifacts="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts"
           deadline=$((SECONDS + 60))
           while true; do
-            visible_ids=$(gh api "$run_artifacts?name=github-pages" --jq '.artifacts[] | select(.expired == false) | .id')
+            visible_ids=$(gh api "$run_artifacts?name=$ARTIFACT_NAME" --jq '.artifacts[] | select(.expired == false) | .id')
             if [[ "$visible_ids" == "$ARTIFACT_ID" ]]; then
               break
             fi
@@ -78,3 +83,5 @@ jobs:
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: ${{ needs.build.outputs.artifact_name }}
