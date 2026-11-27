@@ -9,20 +9,17 @@ on:
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
 concurrency:
   group: pages
   cancel-in-progress: true
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  build:
+    permissions:
+      contents: read
+      pages: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact_id }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,9 +39,42 @@ jobs:
           python docs/check_site.py "$RUNNER_TEMP/orbitkv-docs"
           python -m unittest discover -s docs/tests
       - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - id: upload
+        uses: actions/upload-pages-artifact@v3
         with:
           path: ${{ runner.temp }}/orbitkv-docs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Wait for the uploaded Pages artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.build.outputs.artifact_id }}
+        shell: bash
+        run: |
+          : "${ARTIFACT_ID:?Missing Pages artifact ID from the build job}"
+          run_artifacts="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts"
+          deadline=$((SECONDS + 60))
+          while true; do
+            visible_ids=$(gh api "$run_artifacts?name=github-pages" --jq '.artifacts[] | select(.expired == false) | .id')
+            if [[ "$visible_ids" == "$ARTIFACT_ID" ]]; then
+              break
+            fi
+            if (( SECONDS >= deadline )); then
+              echo "::error::Pages artifact $ARTIFACT_ID was not uniquely visible in run $GITHUB_RUN_ID"
+              exit 1
+            fi
+            sleep 5
+          done
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
